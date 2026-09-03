@@ -114,10 +114,21 @@ type Line struct {
 	// Width is the line's total advance.
 	Width core.Unit
 	// Ascent and Descent are distances above/below the baseline (both
-	// positive); Gap is the leading below the descent.
+	// positive); Gap is the leading below the descent. They size the line's
+	// BOX, so each is ceiled: a box must hold what is in it.
 	Ascent, Descent, Gap core.Unit
 	// Baseline is the line's baseline Y relative to the paragraph top.
+	//
+	// A POSITION, and so floored from the same ascent the box ceils. Ceiling
+	// both is a downward bias chosen twice over: the box grows to hold the
+	// glyphs and the glyphs are then pushed down inside it, which is how
+	// every run came to sit low in its row and reach the bottom edge.
 	Baseline core.Unit
+
+	// ascFloor is the floored ascent Baseline is built from, kept beside the
+	// ceiled one because the box and the position want different roundings
+	// of the same measurement.
+	ascFloor core.Unit
 
 	// advance is Width before it was rounded to whole units, kept for
 	// measurement that has to land ON a glyph rather than near it. See
@@ -520,7 +531,7 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 	y := core.Unit(0)
 	for _, lineRuns := range wrapped {
 		line := buildLine(lineRuns)
-		line.Baseline = y + line.Ascent
+		line.Baseline = y + line.ascFloor
 		y += line.Height()
 		sp.Lines = append(sp.Lines, line)
 	}
@@ -531,9 +542,13 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 		size := emFor(face, p.Font)
 		scale := float32(size) / float32(face.Upem()) / 64
 		asc := core.Unit(math.Ceil(float64(ext.Ascender * scale)))
+		ascFloor := core.Unit(math.Floor(float64(ext.Ascender * scale)))
 		desc := core.Unit(math.Ceil(float64(-ext.Descender * scale)))
 		gap := core.Unit(math.Ceil(float64(ext.LineGap * scale)))
-		sp.Lines = []Line{{Ascent: asc, Descent: desc, Gap: gap, Baseline: asc}}
+		sp.Lines = []Line{{
+			Ascent: asc, Descent: desc, Gap: gap,
+			Baseline: ascFloor, ascFloor: ascFloor,
+		}}
 	}
 	if cacheable {
 		e.cache.put(key, sp)
@@ -574,6 +589,7 @@ func buildLine(runs shaping.Line) Line {
 		}
 		if a := core.Unit(out.LineBounds.Ascent.Ceil()); a > line.Ascent {
 			line.Ascent = a
+			line.ascFloor = core.Unit(out.LineBounds.Ascent.Floor())
 		}
 		if d := core.Unit((-out.LineBounds.Descent).Ceil()); d > line.Descent {
 			line.Descent = d

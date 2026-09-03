@@ -306,11 +306,15 @@ func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
 	item := tv.CurrentItem()
 	zx, zw := tv.treeCellEditZone(lay.spans[0], item)
 
-	c := b.Image().RGBAAt(int(zx+zw/2), 16+8) // inside the zone
+	// Two rows down from the row's top, which is above the cap height and so
+	// clear of the item's own glyphs: what is being read here is which
+	// BACKGROUND fills the zone, and a sample that lands on ink reads the
+	// text's colour instead.
+	c := b.Image().RGBAAt(int(zx+zw/2), 16+2) // inside the zone
 	if c.R != itR || c.G != itG || c.B != itB {
 		t.Errorf("zone = %d,%d,%d want FocusedListItem %d,%d,%d", c.R, c.G, c.B, itR, itG, itB)
 	}
-	c = b.Image().RGBAAt(int(zx+zw+16), 16+8) // right of the zone
+	c = b.Image().RGBAAt(int(zx+zw+16), 16+2) // right of the zone
 	if c.R != rowR || c.G != rowG || c.B != rowB {
 		t.Errorf("right of zone = %d,%d,%d want SelectedListItem %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
 	}
