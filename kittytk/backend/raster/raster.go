@@ -206,6 +206,14 @@ func (b *Backend) pxPerUnit() float64 {
 	return float64(b.scale) * float64(b.fontSize) / 12
 }
 
+// pxCeil is pxLen for a length that must not fall SHORT: a background's
+// trailing edge, which the next thing painted beside it begins from. Rounding
+// an extent down opens a seam; ceiling it can only overlap by less than a
+// pixel, which nothing can see.
+func (b *Backend) pxCeil(u core.Unit) int {
+	return int(math.Ceil(float64(u) * b.pxPerUnit()))
+}
+
 // pxLen rounds an axis-agnostic length (radius, stroke) to device pixels.
 func (b *Backend) pxLen(u core.Unit) int {
 	return int(math.Round(float64(u) * b.pxPerUnit()))
@@ -966,7 +974,15 @@ func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 	h := engine().LineHeight(f)
 	// Proportional text is not cell-aligned: size and rasterize it at the
 	// unsnapped fractional pixels-per-unit.
-	img := image.NewRGBA(image.Rect(0, 0, b.pxLen(w), b.pxLen(h)))
+	//
+	// The image's WIDTH is an extent, and an extent ceils. It is also this
+	// run's BACKGROUND, and the advance DrawTextPx hands back for placing
+	// whatever comes next: rounded, a run whose width fell short left the
+	// surface showing in the seam between itself and the segment after it.
+	// Ceiled, the next segment starts at or before this one's right edge, so
+	// their backgrounds meet whatever the two rates do. The ink is free to
+	// fall where it falls -- what must not gap is the background.
+	img := image.NewRGBA(image.Rect(0, 0, b.pxCeil(w), b.pxLen(h)))
 	if opaque {
 		for i := range img.Pix {
 			switch i % 4 {
@@ -1181,10 +1197,20 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 
 	ti := b.cachedTextImage(f, s, fg, bg, underline, opaque)
 
+	x0, y0 := b.pxX(x), b.pxY(y)
 	if ti.opaque {
-		b.blitRGBA(b.pxX(x), b.pxY(y), ti.img)
+		b.blitRGBA(x0, y0, ti.img)
+		// A run placed after this one goes at x + the advance returned here,
+		// which lands on the SNAPPED pixel of that unit -- and snapping can
+		// put it past this image's right edge. Carry the background out to
+		// meet it, so the two runs' backgrounds abut however the rates
+		// diverge. The ink may fall a fraction from where a unit measurement
+		// would put it; the background may not gap.
+		if end := b.pxX(x + ti.width); end > x0+ti.img.Bounds().Dx() {
+			b.fillPx(x0+ti.img.Bounds().Dx(), y0, end, y0+ti.img.Bounds().Dy(), bg)
+		}
 	} else {
-		b.compositeRGBA(b.pxX(x), b.pxY(y), ti.img)
+		b.compositeRGBA(x0, y0, ti.img)
 	}
 	return ti.width
 }

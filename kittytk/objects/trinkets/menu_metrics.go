@@ -15,11 +15,11 @@ import (
 // both scales gets chrome that reads as one system.
 
 // MenuSeparatorAlpha is how strongly a menu's separator rule inks over the
-// background it sits on, on surfaces that can blend. Half: enough to read as
-// a division between groups of items, not enough to read as a line drawn
-// through the menu. Cell surfaces keep their dashed rule, having no alpha to
-// spend.
-const MenuSeparatorAlpha = 0.5
+// background it sits on, on surfaces that can blend. A quarter: enough to
+// read as a division between groups of items, not enough to read as a line
+// drawn through the menu. Cell surfaces keep their dashed rule, having no
+// alpha to spend.
+const MenuSeparatorAlpha = 0.25
 
 // MenuMetrics is the resolved geometry of one menu row at the current
 // core.MenuScale: the row height, the cell pitch the gutters, checkmarks,
