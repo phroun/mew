@@ -9,14 +9,23 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// shortcutNativeSizeNum/Den scale the native-mode shortcut to 80% of the base
-// font size: Apple's UI face renders visually larger than the menu's body
-// face at the same point size, so the shortcut column is shrunk to sit
-// comfortably beside the item text.
+// shortcutSizeNum/Den scale a shortcut to 80% of the menu's body size, so the
+// column sits quietly beside the item text rather than competing with it.
+// Graphical only: a terminal draws one size, its cell's.
 const (
-	shortcutNativeSizeNum = 4
-	shortcutNativeSizeDen = 5
+	shortcutSizeNum = 4
+	shortcutSizeDen = 5
 )
+
+// MenuShortcutInk is how much of an item's own text colour its shortcut
+// keeps on the graphical path, the rest being the background it sits on.
+//
+// The cell path says StyleDim and the terminal renders the reduced intensity
+// itself. The graphical backend honours no such attribute -- styleColors
+// reads StyleReverse and nothing else -- so a shortcut there drew in exactly
+// the item's colour, as loud as the item. This is that dimming, done where
+// the surface will not do it.
+const MenuShortcutInk = 0.6
 
 // graphicalMenuTrailingUnits is the small gap kept to the right of a
 // graphical menu's shortcut, between it and the menu's right edge. Graphical
@@ -33,16 +42,32 @@ func graphicalMenuTrailingUnits(cellW core.Unit) core.Unit {
 // and colors of the base font; otherwise it returns the base unchanged. The
 // returned font is a copy, so the shared base font is never mutated, and
 // callers measure and draw with this same font so widths stay exact.
-func shortcutFont(base *core.Font) *core.Font {
-	if base == nil || !core.MacNativeShortcuts() {
+func shortcutFont(base *core.Font, graphical bool) *core.Font {
+	native := core.MacNativeShortcuts()
+	if base == nil || (!graphical && !native) {
 		return base
 	}
 	f := *base
-	f.Name = core.MacShortcutFontFamily
-	if s := base.Size * shortcutNativeSizeNum / shortcutNativeSizeDen; s > 0 {
-		f.Size = s
+	if native {
+		f.Name = core.MacShortcutFontFamily
+	}
+	if graphical {
+		if s := base.Size * shortcutSizeNum / shortcutSizeDen; s > 0 {
+			f.Size = s
+		}
 	}
 	return &f
+}
+
+// shortcutInk is an item's text colour let down toward the background it sits
+// on, for a surface that will not honour StyleDim itself.
+func shortcutInk(st style.CellStyle) style.Color {
+	fr, fg, fb := st.Fg.RGBComponents()
+	br, bg, bb := st.Bg.RGBComponents()
+	mix := func(f, b uint8) int {
+		return int(float64(f)*MenuShortcutInk + float64(b)*(1-MenuShortcutInk) + 0.5)
+	}
+	return style.RGB(mix(fr, br), mix(fg, bg), mix(fb, bb))
 }
 
 // MenuItem represents an item in a menu.
@@ -1038,6 +1063,7 @@ func (m *Menu) calculateSize() core.UnitSize {
 	mm := m.menuMetrics()
 
 	// Calculate max width using font for text, cells for decorative elements
+	g := m.graphicalSurface()
 	maxWidth := core.Unit(0)
 	for _, item := range m.items {
 		// Item text uses font measurement, counted in THIS menu's
@@ -1048,11 +1074,11 @@ func (m *Menu) calculateSize() core.UnitSize {
 		itemWidth := mm.TextWidth(item.Text)
 
 		// Shortcut: spacing (3 cells) + shortcut text (font-based). Measure
-		// with the same font used to draw it (native mode swaps in Apple's
-		// face) so width and render never disagree.
+		// with the same font used to draw it -- 80% on a graphical surface,
+		// Apple's face in native mode -- so width and render never disagree.
 		if sc := item.ShortcutDisplay(); sc != "" {
 			itemWidth += mm.CellW * 3 // spacing before shortcut
-			itemWidth += mm.Width(sc, shortcutFont(mm.Font))
+			itemWidth += mm.Width(sc, shortcutFont(mm.Font, g))
 		}
 
 		// Submenu arrow (3 cells) - decorative
@@ -1071,7 +1097,6 @@ func (m *Menu) calculateSize() core.UnitSize {
 	// Sum the heights of the visible item rows (thin separators on
 	// graphical surfaces are shorter than a text row), plus a full row
 	// for each scroll indicator when scrolling.
-	g := m.graphicalSurface()
 	var height core.Unit
 	visible := m.visibleItemCount()
 	for i := 0; i < visible; i++ {
@@ -1629,13 +1654,20 @@ func (m *Menu) Paint(p *core.Painter) {
 			// Native mode renders the shortcut in Apple's UI face at 80%;
 			// measure and draw with that same font so the right-alignment is
 			// exact, and center the shorter line box within the item's row.
-			sf := shortcutFont(font)
+			sf := shortcutFont(font, g)
 			shortcutWidth := mm.Width(shortcutStr, sf)
 			shortcutX := m.popupX + size.Width - shortcutWidth - rightPad
 			shortcutY := itemY + mm.GlyphYOff(sf)
 			shortcutStyle := contentStyle
 			if item.Enabled {
+				// The attribute for a terminal, which renders the reduced
+				// intensity itself; the colour for a graphical surface, which
+				// honours no such attribute and would otherwise draw the
+				// shortcut as loud as the item it belongs to.
 				shortcutStyle = contentStyle.WithAttrs(style.StyleDim)
+				if g {
+					shortcutStyle = shortcutStyle.WithFg(shortcutInk(contentStyle))
+				}
 			}
 			p.DrawText(shortcutX, shortcutY, shortcutStr, shortcutStyle, sf)
 		}

@@ -275,3 +275,77 @@ func TestMenuCheckmarkKeepsItsCellOnACellSurface(t *testing.T) {
 		t.Fatal("no tick was drawn")
 	}
 }
+
+// A shortcut is quieter than the item it belongs to, on the graphical path
+// as well as in a terminal.
+//
+// The cell path says StyleDim and the terminal renders the reduced intensity
+// itself. The graphical backend honours no such attribute -- styleColors
+// reads StyleReverse and nothing else -- so the shortcut drew in exactly the
+// item's colour, as loud as the item. Read off the paint: the darkest pixel
+// the shortcut lays against the lightest the item's own text does.
+func TestMenuShortcutIsQuieterThanItsItem(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil); core.SetMacNativeShortcuts(false) })
+	b, err := raster.NewScaled(400, 200, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	d := NewDesktop()
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 400, Height: 200})
+	bar := NewMenuBar()
+	d.AddChild(bar)
+	m := NewMenu("File")
+	it := NewMenuItem("Save")
+	it.SetShortcutText("^K S")
+	m.AddItem(it)
+	bar.AddMenu(m)
+	m.inheritDisplayContext(bar.EffectiveCellMetrics(), bar.EffectiveFont())
+	m.setGraphicalHint(true)
+	m.Show(0, 0)
+	b.Clear(style.DefaultStyle())
+	m.Paint(core.NewPainter(b))
+
+	mm := m.menuMetrics()
+	p := core.NewPainter(b)
+	img := b.Image()
+	rowPx := p.UnitSpanPxY(0, mm.RowH)
+	width := p.UnitSpanPxX(0, m.calculateSize().Width)
+
+	// The darkest ink laid in a span of the row.
+	darkest := func(x0, x1 int) int {
+		d := 255 * 3
+		for x := x0; x < x1; x++ {
+			for y := 0; y < rowPx; y++ {
+				c := img.RGBAAt(x, y)
+				if v := int(c.R) + int(c.G) + int(c.B); v < d {
+					d = v
+				}
+			}
+		}
+		return d
+	}
+	// Where the shortcut actually is, by the same reckoning the paint uses:
+	// right-aligned, a trailing gap in from the menu's right edge.
+	sf := shortcutFont(mm.Font, true)
+	scW := mm.Width("^K S", sf)
+	scX := m.calculateSize().Width - scW - graphicalMenuTrailingUnits(mm.CellW)
+	label := darkest(p.UnitSpanPxX(0, mm.CellW*3)+2, p.UnitSpanPxX(0, scX)-2)
+	shortcut := darkest(p.UnitSpanPxX(0, scX), p.UnitSpanPxX(0, scX+scW))
+	_ = width
+
+	if shortcut <= label {
+		t.Errorf("the shortcut's darkest ink is %d against the item's %d; it is not the quieter of the two",
+			shortcut, label)
+	}
+	// And not merely a shade quieter: it is the item's colour let down
+	// toward the background, which at 60%% of black over white is 102 a
+	// channel. Written out rather than read from MenuShortcutInk, so the
+	// expectation does not move with the code.
+	if want := 102 * 3; shortcut < want-90 || shortcut > want+90 {
+		t.Errorf("the shortcut's darkest ink is %d, want about %d (three fifths of the item's black over white)",
+			shortcut, want)
+	}
+}

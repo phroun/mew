@@ -455,7 +455,7 @@ func TestMenuScaleCentresASmallerFaceInTheRow(t *testing.T) {
 			// An underscore is the case that showed it: all of its ink is at
 			// the very bottom of the face, so a rule that sits the face low
 			// puts the whole run under the row.
-			{"shortcut", shortcutFont(mm.Font), "^K _"},
+			{"shortcut", shortcutFont(mm.Font, true), "^K _"},
 			{"clock", clock, "Mon 15:04"},
 		} {
 			if core.FontBaseline(c.f) == 0 {
