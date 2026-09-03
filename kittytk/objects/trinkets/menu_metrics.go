@@ -280,7 +280,12 @@ func (mm MenuMetrics) DrawGlyph(p *core.Painter, x, y core.Unit, ch rune, st sty
 	// run inks only its own advance, and a scaled face's advance is not the
 	// cell it stands in -- which is what opened gaps down the middle of
 	// "[<]" and made it read wider than it is.
-	p.FillRect(core.UnitRect{X: x, Y: y, Width: mm.CellW, Height: mm.RowH}, ' ', st)
+	// A transparent background is the caller asking for the glyph over what
+	// is already painted there, so there is no cell to lay first -- and
+	// nothing can gap against it either, the fill beneath it being whole.
+	if st.Bg != style.ColorTransparent {
+		p.FillRect(core.UnitRect{X: x, Y: y, Width: mm.CellW, Height: mm.RowH}, ' ', st)
+	}
 	// Then the glyph, centred in the cell it belongs to, the way the cell
 	// font's own pitch centres it at 1.0.
 	w := mm.Width(string(ch), mm.Mono)

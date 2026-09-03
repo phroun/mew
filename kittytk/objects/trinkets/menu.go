@@ -1560,10 +1560,14 @@ func (m *Menu) Paint(p *core.Painter) {
 
 		x := m.popupX + mm.CellW
 
-		// Draw checkmark or icon in gutter area
+		// Draw checkmark or icon in gutter area. The tick draws OVER the
+		// gutter rather than laying a cell of its own: the gutter's
+		// background is already there, and on the graphical path it is that
+		// colour blended over the menu, which a cell of the flat gutter
+		// colour would stamp back out around the tick.
 		if item.Checkable {
 			if item.Checked {
-				mm.DrawGlyph(p, x, itemY, '✓', gutterStyle)
+				mm.DrawGlyph(p, x, itemY, '✓', gutterStyle.WithBg(style.ColorTransparent))
 			}
 		} else if item.Icon != nil && len(item.Icon.Cells) > 0 {
 			cell := item.Icon.Cells[0]

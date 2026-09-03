@@ -154,3 +154,63 @@ func TestMenuGutterInksOverTheMenuBackground(t *testing.T) {
 			f.R, f.G, f.B, fr, fg, fb)
 	}
 }
+
+// A checked item's tick draws OVER the gutter, rather than laying a cell of
+// its own first.
+//
+// The gutter's background is already there, and on the graphical path it is
+// the gutter colour blended over the menu -- so a cell of the flat gutter
+// colour, which is what drawing a glyph with an opaque style lays, stamped
+// that blend back out in a square around the tick.
+func TestMenuCheckmarkDrawsOverTheGutter(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil); core.SetMenuScale(1) })
+
+	for _, scale := range []float64{1, 0.9} {
+		b, err := raster.NewScaled(300, 200, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(b)
+		core.SetMenuScale(scale)
+
+		d := NewDesktop()
+		d.SetBackend(b)
+		d.SetBounds(core.UnitRect{Width: 300, Height: 200})
+		bar := NewMenuBar()
+		d.AddChild(bar)
+		m := NewMenu("File")
+		ticked := NewMenuItem("Word Wrap")
+		ticked.SetCheckable(true)
+		ticked.SetChecked(true)
+		m.AddItem(ticked)
+		m.AddItem(NewMenuItem("Plain"))
+		bar.AddMenu(m)
+		m.inheritDisplayContext(bar.EffectiveCellMetrics(), bar.EffectiveFont())
+		m.setGraphicalHint(true)
+		m.Show(0, 0)
+		b.Clear(style.DefaultStyle())
+		m.Paint(core.NewPainter(b))
+
+		mm := m.menuMetrics()
+		p := core.NewPainter(b)
+		img := b.Image()
+
+		// A corner of the tick's own cell, which the glyph does not ink, and
+		// the same spot one row down where no tick is drawn at all.
+		x := p.UnitSpanPxX(0, mm.CellW) + 1
+		got := img.RGBAAt(x, 1)
+		plain := img.RGBAAt(x, p.UnitSpanPxY(0, mm.RowH)+1)
+		if got != plain {
+			t.Errorf("scale %v: the gutter around the tick is %d,%d,%d where a plain row's is %d,%d,%d",
+				scale, got.R, got.G, got.B, plain.R, plain.G, plain.B)
+		}
+
+		// And what it is NOT is the scheme's flat gutter colour, which is
+		// what laying a cell would have put back.
+		gr, gg, gb := m.GetScheme().GetMenuGutter().Bg.RGBComponents()
+		if got.R == gr && got.G == gg && got.B == gb {
+			t.Errorf("scale %v: the tick laid a cell of the flat gutter colour (%d,%d,%d)",
+				scale, gr, gg, gb)
+		}
+	}
+}
