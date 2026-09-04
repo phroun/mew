@@ -8,12 +8,12 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// zeroCharTabStrip builds the strip in the state where the last visible tab is
-// the selected one, has more tabs after it, and has been squeezed until not one
-// character of its label fits -- so all it can show of itself is an ellipsis.
+// zeroCharTabStrip builds the strip with the selected tab squeezed until not
+// one character of its label fits, so all it can show of itself is an
+// ellipsis -- and with room for those dots inside it.
 //
-// The widths are the ones that reach that state; the sweep that found them
-// covered current tab, strip width and scroll offset.
+// The width is one the sweep found for that state; the sweep covered current
+// tab, strip width and scroll offset.
 func zeroCharTabStrip(t *testing.T, bottom bool) (*TabTrinket, *raster.Backend) {
 	t.Helper()
 	px, err := raster.New(700, 96)
@@ -30,8 +30,8 @@ func zeroCharTabStrip(t *testing.T, bottom bool) (*TabTrinket, *raster.Backend) 
 	if bottom {
 		tw.SetTabPosition(TabsBottom)
 	}
-	tw.SetBounds(core.UnitRect{Width: 172, Height: 96})
-	tw.tabScrollOffset = 2
+	tw.SetBounds(core.UnitRect{Width: 112, Height: 96})
+	tw.tabScrollOffset = 3
 	return tw, px
 }
 
@@ -110,6 +110,110 @@ func TestTabEllipsisOnlyTabIsClosedAroundItsDots(t *testing.T) {
 		if !closes {
 			t.Errorf("%s: the tab's material stops at column %d with nothing closing it there; the shape ends somewhere else and the dots are outside it",
 				name, tabRight)
+		}
+	}
+}
+
+// A tab with room for neither a character nor its own ellipsis is not shown at
+// all: the strip stops before it and the strip's own "more tabs" ellipsis
+// stands there instead, in the strip's colours.
+//
+// Drawing it anyway gave a stub with nothing in it -- a shape opening onto
+// three dots that had to be squeezed in beside it, and at the widths where
+// they would not fit beside it either, spilling back over the run that led
+// into the tab.
+func TestTabTooNarrowForItsEllipsisIsNotShown(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	for _, bottom := range []bool{false, true} {
+		name := "top"
+		if bottom {
+			name = "bottom"
+		}
+		px, err := raster.New(700, 96)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+
+		tw := NewTabTrinket()
+		for _, label := range []string{"Alphabet", "Nested", "Windows", "Vertical Tabs", "More", "Extra", "Final"} {
+			tw.AddTab(label, NewLabel(label))
+		}
+		// The scroll offset at which the selected tab has room for neither: a
+		// bottom strip's separators are a cell narrower, so it reaches that
+		// state one tab further along than a top strip does.
+		tw.SetCurrentIndex(0)
+		offset := 0
+		if bottom {
+			tw.SetTabPosition(TabsBottom)
+			tw.SetCurrentIndex(1)
+			offset = 1
+		}
+		tw.SetBounds(core.UnitRect{Width: 100, Height: 96})
+		tw.tabScrollOffset = offset
+
+		px.Clear(style.DefaultStyle().WithBg(style.RGB(0, 255, 0)))
+		p := core.NewPainter(px)
+		tw.Paint(p)
+
+		rowH := tw.tabBarHeight()
+		rowPx := p.UnitSpanPxY(0, rowH)
+		top := 0
+		if bottom {
+			top = p.UnitSpanPxY(0, tw.Bounds().Height-rowH)
+		}
+		edgeY := top + rowPx - 1
+		if bottom {
+			edgeY = top
+		}
+		buttonsPx := p.UnitSpanPxX(0, tw.Bounds().Width-tw.scrollButtonWidth()*2)
+
+		img := px.Image()
+		lineC := img.RGBAAt(0, edgeY)
+		barBg := img.RGBAAt(0, top+rowPx/2)
+
+		// No tab is shaped here, so the strip's edge line runs straight
+		// across: a silhouette would carry it up and around the tab.
+		broke := false
+		for x := 0; x < buttonsPx && !broke; x++ {
+			if got := img.RGBAAt(x, edgeY); got != lineC {
+				t.Errorf("%s: the strip's edge line breaks at column %d (%v); a tab was shaped where none should be drawn",
+					name, x, got)
+				broke = true
+			}
+		}
+
+		// Nor is any of the run that led into it left behind: the selected
+		// tab's own colour appears nowhere in a strip that is not showing it.
+		sel := tw.GetScheme().GetActiveTab().Bg
+		r, g, b := sel.RGBComponents()
+		left := false
+		for x := 0; x < buttonsPx && !left; x++ {
+			for y := top; y < top+rowPx; y++ {
+				if c := img.RGBAAt(x, y); c.R == r && c.G == g && c.B == b {
+					t.Errorf("%s: the selected tab's colour is painted at (%d,%d), left over from a tab the strip is not showing",
+						name, x, y)
+					left = true
+					break
+				}
+			}
+		}
+
+		// And the dots that stand there are the strip's, on the strip's ground
+		// -- read on the row just inside the strip's edge line, which is above
+		// where the dots themselves ink.
+		groundY := top
+		if bottom {
+			groundY = top + 1
+		}
+		dotsPx := p.UnitSpanPxX(0, tw.overflowEllipsisWidth())
+		for x := buttonsPx - dotsPx; x < buttonsPx; x++ {
+			if got := img.RGBAAt(x, groundY); got != barBg {
+				t.Errorf("%s: column %d of the trailing ellipsis sits on %v, not the strip's own %v",
+					name, x, got, barBg)
+				break
+			}
 		}
 	}
 }

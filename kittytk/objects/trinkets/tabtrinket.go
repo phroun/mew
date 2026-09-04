@@ -1328,6 +1328,10 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
 	drewAnyText := false // Track if we drew at least 1 character of text for last tab
+	// pendingLeadStartX is where the NEXT tab's run into the strip begins: a
+	// selected tab is led into by the previous tab's separator, and that run
+	// belongs to the selected tab rather than to the one before it.
+	pendingLeadStartX := core.Unit(-1)
 
 	// Track positions for external ellipsis handling
 	// lastTextEndX: where the last visible tab's text ended (for interior ellipsis)
@@ -1348,6 +1352,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		isFirstVisible := i == 0
 		isLastVisible := tabIndex == len(t.tabs)-1
 		nextIsSelected := !isLastVisible && tabIndex+1 == t.currentIndex
+
+		// Where this tab's own material starts, including the run led into it
+		// by the tab before. If this tab turns out not to be shown at all the
+		// paint rolls back to here, and that run goes with it.
+		leadStartX := x
+		if pendingLeadStartX >= 0 {
+			leadStartX = pendingLeadStartX
+		}
+		pendingLeadStartX = -1
 
 		// Calculate this tab's width
 		// When left ellipsis is showing, omit leading "_" from prefix
@@ -1647,17 +1660,40 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 						tabWasTruncated = true
 					}
 					drewAnyText = true
-				} else {
-					// No text drawn - reset tracking for external ellipsis
+				} else if needsScrolling && x+t.overflowEllipsisWidth() <= availableWidth {
+					// Not one character of the label fits, but the tab's own
+					// ellipsis does: the dots stand for the whole label and are
+					// the only thing in the tab. Marked truncated like any other
+					// clipped tab, so the strip closes the tab around them.
+					if p.Graphical() {
+						p.FillRect(core.UnitRect{X: x, Width: t.overflowEllipsisWidth(), Height: metrics.UnitsPerCellHeight}, ' ', s)
+						p.DrawText(x, 0, "...", s, font)
+					} else {
+						for i := 0; i < 3; i++ {
+							p.DrawCell(x+core.Unit(i)*metrics.UnitsPerCellWidth, 0, '.', s)
+						}
+					}
+					x += t.overflowEllipsisWidth()
+					lastTextEndX = x
 					lastSlashX = -1
 					lastTabStyle = s
-					drewAnyText = false
+					truncatedTabStyle = s
+					tabWasTruncated = true
+				} else {
+					// Room for neither a character nor the ellipsis: the tab is
+					// not shown at all. Roll the paint back over its run into
+					// the strip, so what stands here instead is the strip's own
+					// "more tabs" ellipsis, in the strip's colours.
+					if lastSlashX >= leadStartX {
+						lastSlashX = -1
+					}
+					x = leadStartX
+					selLeadX, selTrailX, selEndX = -1, -1, -1
+					lastTabStyle = tabBarUnderlined
 				}
-				if isSelected {
+				if isSelected && selLeadX >= 0 {
 					selEndX = x
 				}
-				// If charsToShow == 0, we didn't draw any text for this tab,
-				// so we don't set tabWasTruncated - let the "more tabs" ellipsis handle it
 			}
 			break
 		}
@@ -1767,6 +1803,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, ' ', tabBarUnderlined)
 			x += metrics.UnitsPerCellWidth * 4
 		} else if nextIsSelected {
+			pendingLeadStartX = x
 			// " _/<" (4 chars) when focused, " _/ " when not focused
 			// Underlined except slash and space/bracket adjacent to selected label
 			p.DrawCell(x, 0, ' ', tabBarUnderlined)
@@ -2049,6 +2086,10 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
 	drewAnyText := false // Track if we drew at least 1 character of text for last tab
+	// pendingLeadStartX is where the NEXT tab's run into the strip begins: a
+	// selected tab is led into by the previous tab's separator, and that run
+	// belongs to the selected tab rather than to the one before it.
+	pendingLeadStartX := core.Unit(-1)
 
 	// Track positions for external ellipsis handling
 	// lastTextEndX: where the last visible tab's text ended (for interior ellipsis)
@@ -2072,6 +2113,15 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		isFirstVisible := i == 0
 		isLastVisible := tabIndex == len(t.tabs)-1
 		nextIsSelected := !isLastVisible && tabIndex+1 == t.currentIndex
+
+		// Where this tab's own material starts, including the run led into it
+		// by the tab before. If this tab turns out not to be shown at all the
+		// paint rolls back to here, and that run goes with it.
+		leadStartX := x
+		if pendingLeadStartX >= 0 {
+			leadStartX = pendingLeadStartX
+		}
+		pendingLeadStartX = -1
 
 		// Calculate this tab's width
 		// When left ellipsis is showing, omit one leading space from prefix
@@ -2247,18 +2297,42 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 						tabWasTruncated = true
 					}
 					drewAnyText = true
-				} else {
-					// No text drawn - reset tracking for external ellipsis
+				} else if needsScrolling && x+t.overflowEllipsisWidth() <= availableWidth {
+					// Not one character of the label fits, but the tab's own
+					// ellipsis does: the dots stand for the whole label and are
+					// the only thing in the tab. Marked truncated like any other
+					// clipped tab, so the strip closes the tab around them.
+					if p.Graphical() {
+						p.FillRect(core.UnitRect{X: x, Y: tabY, Width: t.overflowEllipsisWidth(), Height: metrics.UnitsPerCellHeight}, ' ', s)
+						p.DrawText(x, tabY, "...", s, font)
+					} else {
+						for i := 0; i < 3; i++ {
+							p.DrawCell(x+core.Unit(i)*metrics.UnitsPerCellWidth, tabY, '.', s)
+						}
+					}
+					x += t.overflowEllipsisWidth()
+					lastTextEndX = x
 					lastSlashX = -1
 					lastTabWasSelected = false
 					lastTabStyle = s
-					drewAnyText = false
+					truncatedTabStyle = s
+					tabWasTruncated = true
+				} else {
+					// Room for neither a character nor the ellipsis: the tab is
+					// not shown at all. Roll the paint back over its run into
+					// the strip, so what stands here instead is the strip's own
+					// "more tabs" ellipsis, in the strip's colours.
+					if lastSlashX >= leadStartX {
+						lastSlashX = -1
+						lastTabWasSelected = false
+					}
+					x = leadStartX
+					selLeadX, selTrailX, selEndX = -1, -1, -1
+					lastTabStyle = tabBarOverlined
 				}
-				if isSelected {
+				if isSelected && selLeadX >= 0 {
 					selEndX = x
 				}
-				// If charsToShow == 0, we didn't draw any text for this tab,
-				// so we don't set tabWasTruncated - let the "more tabs" ellipsis handle it
 			}
 			break
 		}
@@ -2351,6 +2425,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, ' ', tabBarOverlined)
 			x += metrics.UnitsPerCellWidth * 3
 		} else if nextIsSelected {
+			pendingLeadStartX = x
 			// " \_" (3 chars) before selected tab
 			// Space before \ gets overline (outside active tab)
 			p.DrawCell(x, tabY, ' ', tabBarOverlined)
