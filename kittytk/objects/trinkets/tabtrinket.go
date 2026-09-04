@@ -1594,8 +1594,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				if forceInternalEllipsis {
 					fullTextWidth := t.MeasureText(tab.Text)
 					if maxTextWidth >= fullTextWidth {
-						// Reduce to force at least some truncation
-						maxTextWidth = fullTextWidth - metrics.UnitsPerCellWidth
+						// Trim by ONE UNIT, the finest step there is, so the
+						// budget falls just short of the whole label and the
+						// last character is the only one that cannot be drawn.
+						// Trimming a whole CELL instead spent a cell of budget
+						// on a label measured in proportional glyphs: where the
+						// last letter was narrower than a cell it took the one
+						// before it down as well, so widening the strip by a
+						// pixel could turn "Termina..." into "Termin...".
+						maxTextWidth = fullTextWidth - 1
 						if maxTextWidth < 0 {
 							maxTextWidth = 0
 						}
@@ -2195,8 +2202,15 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				if forceInternalEllipsis {
 					fullTextWidth := t.MeasureText(tab.Text)
 					if maxTextWidth >= fullTextWidth {
-						// Reduce to force at least some truncation
-						maxTextWidth = fullTextWidth - metrics.UnitsPerCellWidth
+						// Trim by ONE UNIT, the finest step there is, so the
+						// budget falls just short of the whole label and the
+						// last character is the only one that cannot be drawn.
+						// Trimming a whole CELL instead spent a cell of budget
+						// on a label measured in proportional glyphs: where the
+						// last letter was narrower than a cell it took the one
+						// before it down as well, so widening the strip by a
+						// pixel could turn "Termina..." into "Termin...".
+						maxTextWidth = fullTextWidth - 1
 						if maxTextWidth < 0 {
 							maxTextWidth = 0
 						}
