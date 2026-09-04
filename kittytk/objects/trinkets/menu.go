@@ -1232,6 +1232,35 @@ func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSiz
 	mm.DrawGlyph(p, centerX+mm.CellW*2, y, glyph, contentStyle)
 }
 
+// paintGutterIcon draws a menu item's icon in the gutter beside its label.
+//
+// The gutter is three cells -- the frame, the mark, and the space before the
+// label -- and a small text icon is three cells across, so it spans the
+// gutter exactly. A narrower one centres on whole cells, which puts a
+// single-cell icon on the middle cell where a checkmark goes. Only the icon's
+// first row is drawn; a menu row is one cell tall.
+//
+// The icon brings the ink and the gutter the ground, which is the rule the
+// checkmark follows: on the graphical path the gutter's colour is already
+// blended over the menu beneath it, and a cell of flat background laid by the
+// icon would stamp that blend back out in a square. Everything else an icon
+// cell carries -- its colour, its attributes -- is the icon's own.
+func (m *Menu) paintGutterIcon(p *core.Painter, mm MenuMetrics, y core.Unit, icon *style.TextIcon, ground style.CellStyle) {
+	if icon == nil || icon.Width <= 0 || icon.Height <= 0 || len(icon.Cells) == 0 {
+		return
+	}
+	cells := mm.GutterWidth() / mm.CellW
+	w := core.Unit(icon.Width)
+	if w > cells {
+		w = cells
+	}
+	x := m.popupX + (cells-w)/2*mm.CellW
+	for i := core.Unit(0); i < w; i++ {
+		cell := icon.CellAt(int(i), 0)
+		mm.DrawGlyph(p, x+i*mm.CellW, y, cell.Char, cell.Style.WithBg(ground.Bg))
+	}
+}
+
 // paintGutterBackground fills a menu row's gutter span.
 //
 // On the graphical path the gutter's own colour is laid at MenuGutterAlpha
@@ -1603,9 +1632,8 @@ func (m *Menu) Paint(p *core.Painter) {
 			if item.Checked {
 				mm.DrawGlyph(p, x, itemY, '✓', tickStyle)
 			}
-		} else if item.Icon != nil && len(item.Icon.Cells) > 0 {
-			cell := item.Icon.Cells[0]
-			mm.DrawGlyph(p, x, itemY, cell.Char, cell.Style)
+		} else if item.Icon != nil {
+			m.paintGutterIcon(p, mm, itemY, item.Icon, tickStyle)
 		}
 		x += mm.CellW * 2 // Move past checkmark + 1 gutter space
 
