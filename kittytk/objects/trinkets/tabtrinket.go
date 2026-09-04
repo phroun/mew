@@ -1324,7 +1324,6 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	x := leftEllipseWidth
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
-	var truncatedTabStyle style.CellStyle
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
 	// zeroCharTab records that the last visible tab was clipped so hard that
@@ -1654,7 +1653,6 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 							}
 						}
 						x += t.overflowEllipsisWidth()
-						truncatedTabStyle = s
 						tabWasTruncated = true
 					}
 					drewAnyText = true
@@ -1815,21 +1813,34 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		ellipsisWidth := t.overflowEllipsisWidth()
 		idealEllipsisX := scrollAreaStart - ellipsisWidth
 
-		// Determine fill style
-		fillStyle := tabBarUnderlined
 		if tabWasTruncated {
-			fillStyle = truncatedTabStyle
-		}
-
-		if tabWasTruncated {
-			// Ellipsis was already drawn after truncated text
-			// Just fill remaining space to scroll buttons
-			for x < scrollAreaStart {
-				p.DrawCell(x, 0, ' ', fillStyle)
-				x += metrics.UnitsPerCellWidth
-			}
+			// The tab has already drawn its own ellipsis, so it has said
+			// everything it can: close it there rather than running its colour
+			// on to the scroll buttons, and the rest of the strip is strip.
 			if selEndX >= 0 {
-				selEndX = scrollAreaStart
+				selEndX = x
+			}
+			// The strip's own "more tabs" ellipsis goes in that space when the
+			// whole of it fits. When it does not, it is left out: the tab's own
+			// dots at the end of the run already say there is more than this.
+			if dotsX := idealEllipsisX; dotsX >= x {
+				for x < dotsX {
+					p.DrawCell(x, 0, ' ', tabBarUnderlined)
+					x += metrics.UnitsPerCellWidth
+				}
+				if p.Graphical() {
+					p.FillRect(core.UnitRect{X: dotsX, Y: 0, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', tabBarUnderlined)
+					p.DrawText(dotsX, 0, "...", tabBarUnderlined, font)
+				} else {
+					for i := 0; i < 3; i++ {
+						p.DrawCell(dotsX+core.Unit(i)*metrics.UnitsPerCellWidth, 0, '.', tabBarUnderlined)
+					}
+				}
+				x = dotsX + ellipsisWidth
+			}
+			for x < scrollAreaStart {
+				p.DrawCell(x, 0, ' ', tabBarUnderlined)
+				x += metrics.UnitsPerCellWidth
 			}
 		} else {
 			// Text wasn't truncated - need to draw ellipsis
@@ -2053,7 +2064,6 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	x := leftEllipseWidth
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
-	var truncatedTabStyle style.CellStyle
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
 	// zeroCharTab records that the last visible tab was clipped so hard that
@@ -2262,7 +2272,6 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 							}
 						}
 						x += t.overflowEllipsisWidth()
-						truncatedTabStyle = s
 						tabWasTruncated = true
 					}
 					drewAnyText = true
@@ -2407,21 +2416,34 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		ellipsisWidth := t.overflowEllipsisWidth()
 		idealEllipsisX := scrollAreaStart - ellipsisWidth
 
-		// Determine fill style
-		fillStyle := tabBarOverlined
 		if tabWasTruncated {
-			fillStyle = truncatedTabStyle
-		}
-
-		if tabWasTruncated {
-			// Ellipsis was already drawn after truncated text
-			// Just fill remaining space to scroll buttons
-			for x < scrollAreaStart {
-				p.DrawCell(x, tabY, ' ', fillStyle)
-				x += metrics.UnitsPerCellWidth
-			}
+			// The tab has already drawn its own ellipsis, so it has said
+			// everything it can: close it there rather than running its colour
+			// on to the scroll buttons, and the rest of the strip is strip.
 			if selEndX >= 0 {
-				selEndX = scrollAreaStart
+				selEndX = x
+			}
+			// The strip's own "more tabs" ellipsis goes in that space when the
+			// whole of it fits. When it does not, it is left out: the tab's own
+			// dots at the end of the run already say there is more than this.
+			if dotsX := idealEllipsisX; dotsX >= x {
+				for x < dotsX {
+					p.DrawCell(x, tabY, ' ', tabBarOverlined)
+					x += metrics.UnitsPerCellWidth
+				}
+				if p.Graphical() {
+					p.FillRect(core.UnitRect{X: dotsX, Y: tabY, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', tabBarOverlined)
+					p.DrawText(dotsX, tabY, "...", tabBarOverlined, font)
+				} else {
+					for i := 0; i < 3; i++ {
+						p.DrawCell(dotsX+core.Unit(i)*metrics.UnitsPerCellWidth, tabY, '.', tabBarOverlined)
+					}
+				}
+				x = dotsX + ellipsisWidth
+			}
+			for x < scrollAreaStart {
+				p.DrawCell(x, tabY, ' ', tabBarOverlined)
+				x += metrics.UnitsPerCellWidth
 			}
 		} else {
 			// Text wasn't truncated - need to draw ellipsis
