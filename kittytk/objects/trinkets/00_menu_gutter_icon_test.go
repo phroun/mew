@@ -79,19 +79,20 @@ func TestMenuGutterIconCentresWhenNarrow(t *testing.T) {
 	t.Fatal("the icon was not drawn at all")
 }
 
-// On a cell surface the icon's cells carry the gutter's background.
+// A TRANSPARENT icon cell takes the gutter's ground; anything else the icon
+// asked for is the icon's, a picture's background being its own to choose.
 //
-// A terminal cell holds ONE background attribute, so a transparent one is not
-// the gutter showing through -- it is the terminal's own default cell, and
-// the icon would sit in a hole in the gutter.
-func TestMenuGutterIconTakesTheGutterGroundOnACellSurface(t *testing.T) {
+// On a cell surface the gutter's ground is its flat colour: a terminal cell
+// holds one background attribute, so a transparent one is not the gutter
+// showing through -- it is the terminal's own default, and the icon would sit
+// in a hole in the gutter.
+func TestMenuGutterIconGroundOnACellSurface(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	rec := &cellRecorder{nullBackend: &nullBackend{}}
 
-	// An icon insisting on a background of its own: the gutter's is what it
-	// gets, since a menu's gutter is not the icon's to repaint.
-	icon := style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(style.RGB(255, 0, 0)))
-	m := iconMenu(t, rec, &icon)
+	// Transparent: the gutter's colour is what the cell gets.
+	rec := &cellRecorder{nullBackend: &nullBackend{}}
+	clear := style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(style.ColorTransparent))
+	m := iconMenu(t, rec, &clear)
 
 	want := m.GetScheme().GetMenuGutter().Bg
 	found := 0
@@ -110,52 +111,88 @@ func TestMenuGutterIconTakesTheGutterGroundOnACellSurface(t *testing.T) {
 	if found == 0 {
 		t.Fatal("no icon glyph was drawn")
 	}
-}
 
-// On the graphical path the icon draws OVER the gutter rather than laying
-// cells of its own.
-//
-// The gutter's colour there is blended over the menu beneath it, and a cell
-// of flat background laid by the icon stamps that blend back out in a square.
-// Read off the paint: the blend survives across the icon's row, and the
-// icon's own background colour is nowhere in it.
-func TestMenuGutterIconDoesNotStampOverTheBlend(t *testing.T) {
-	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	b, err := raster.NewScaled(300, 200, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core.SetTextMeasurer(b)
-	b.Clear(style.DefaultStyle().WithBg(style.RGB(255, 255, 255)))
+	// A background the icon actually asked for is drawn as asked.
+	rec = &cellRecorder{nullBackend: &nullBackend{}}
+	red := style.RGB(255, 0, 0)
+	painted := style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(red))
+	iconMenu(t, rec, &painted)
 
-	icon := style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(style.RGB(255, 0, 0)))
-	m := iconMenu(t, b, &icon)
-	mm := m.menuMetrics()
-	p := core.NewPainter(b)
-
-	rowPx := p.UnitSpanPxY(0, mm.RowH)
-	gutterPx := p.UnitSpanPxX(0, mm.GutterWidth())
-	img := b.Image()
-
-	// The gutter's blend, sampled from the SECOND row, which carries no icon.
-	blend := img.RGBAAt(gutterPx/2, rowPx+rowPx/2)
-	if blend.R == 255 && blend.G == 255 && blend.B == 255 {
-		t.Fatal("precondition: the gutter should be a shade of its own, not the menu's white")
-	}
-
-	seenBlend := false
-	for x := 1; x < gutterPx-1; x++ {
-		for y := 1; y < rowPx-1; y++ {
-			c := img.RGBAAt(x, y)
-			if c.R > 200 && c.G < 80 && c.B < 80 {
-				t.Fatalf("the icon stamped its own background over the gutter at (%d,%d)", x, y)
-			}
-			if c == blend {
-				seenBlend = true
-			}
+	found = 0
+	for _, c := range rec.cells {
+		if c.ch != '<' && c.ch != '-' && c.ch != '>' {
+			continue
+		}
+		found++
+		if c.st.Bg != red {
+			t.Errorf("icon glyph %q has cell background %v, want the icon's own %v", c.ch, c.st.Bg, red)
 		}
 	}
-	if !seenBlend {
-		t.Error("the gutter's blend is nowhere in the icon's row; something painted over all of it")
+	if found == 0 {
+		t.Fatal("no icon glyph was drawn")
+	}
+}
+
+// The same on the graphical path, read off the paint: a transparent icon cell
+// leaves the gutter's blend standing, and a cell that asked for a colour gets
+// it.
+//
+// The blend is the gutter's colour laid over the menu beneath it, so a cell of
+// flat background stamps it back out in a square around the glyph -- which is
+// what the checkmark was fixed for and what an icon must not do uninvited.
+func TestMenuGutterIconGroundOnAPixelSurface(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	// The top pixel row of a menu row, which is above where any glyph inks,
+	// so what is read there is the ground and nothing else.
+	groundRow := func(icon style.TextIcon) (row []struct{ R, G, B uint8 }, blend struct{ R, G, B uint8 }) {
+		b, err := raster.NewScaled(300, 200, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(b)
+		b.Clear(style.DefaultStyle().WithBg(style.RGB(255, 255, 255)))
+
+		m := iconMenu(t, b, &icon)
+		mm := m.menuMetrics()
+		p := core.NewPainter(b)
+		rowPx := p.UnitSpanPxY(0, mm.RowH)
+		gutterPx := p.UnitSpanPxX(0, mm.GutterWidth())
+		img := b.Image()
+
+		// The gutter's blend, from the SECOND row, which carries no icon.
+		c := img.RGBAAt(gutterPx/2, rowPx+rowPx/2)
+		blend = struct{ R, G, B uint8 }{c.R, c.G, c.B}
+		if blend.R == 255 && blend.G == 255 && blend.B == 255 {
+			t.Fatal("precondition: the gutter should be a shade of its own, not the menu's white")
+		}
+		// Short of the gutter's last pixel column, which carries the divider
+		// rule and is not ground.
+		for x := 0; x < gutterPx-1; x++ {
+			c := img.RGBAAt(x, 1)
+			row = append(row, struct{ R, G, B uint8 }{c.R, c.G, c.B})
+		}
+		return row, blend
+	}
+
+	// Transparent: every pixel across the icon's gutter is the blend.
+	row, blend := groundRow(style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(style.ColorTransparent)))
+	for x, c := range row {
+		if c != blend {
+			t.Fatalf("a transparent icon stamped %v over the gutter's blend %v at column %d", c, blend, x)
+		}
+	}
+
+	// A colour the icon asked for: painted, and covering the blend.
+	row, blend = groundRow(style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(style.RGB(255, 0, 0))))
+	painted := 0
+	for _, c := range row {
+		if c.R > 200 && c.G < 80 && c.B < 80 {
+			painted++
+		}
+	}
+	if painted != len(row) {
+		t.Errorf("the icon asked for a red ground and got it on %d of the gutter's %d columns (the blend is %v)",
+			painted, len(row), blend)
 	}
 }

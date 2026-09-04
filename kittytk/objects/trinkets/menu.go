@@ -1240,11 +1240,13 @@ func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSiz
 // single-cell icon on the middle cell where a checkmark goes. Only the icon's
 // first row is drawn; a menu row is one cell tall.
 //
-// The icon brings the ink and the gutter the ground, which is the rule the
-// checkmark follows: on the graphical path the gutter's colour is already
-// blended over the menu beneath it, and a cell of flat background laid by the
-// icon would stamp that blend back out in a square. Everything else an icon
-// cell carries -- its colour, its attributes -- is the icon's own.
+// An icon cell keeps its own background, that being a picture's to choose.
+// A TRANSPARENT one takes the gutter's instead, on the checkmark's terms: on
+// the graphical path the gutter's colour is already blended over the menu
+// beneath it, so leaving the cell transparent lets that blend stand; on a
+// cell surface it becomes the gutter's own flat colour, a terminal cell
+// having no transparency to express and a default one being the terminal's
+// background rather than anything showing through.
 func (m *Menu) paintGutterIcon(p *core.Painter, mm MenuMetrics, y core.Unit, icon *style.TextIcon, ground style.CellStyle) {
 	if icon == nil || icon.Width <= 0 || icon.Height <= 0 || len(icon.Cells) == 0 {
 		return
@@ -1257,7 +1259,11 @@ func (m *Menu) paintGutterIcon(p *core.Painter, mm MenuMetrics, y core.Unit, ico
 	x := m.popupX + (cells-w)/2*mm.CellW
 	for i := core.Unit(0); i < w; i++ {
 		cell := icon.CellAt(int(i), 0)
-		mm.DrawGlyph(p, x+i*mm.CellW, y, cell.Char, cell.Style.WithBg(ground.Bg))
+		st := cell.Style
+		if st.Bg == style.ColorTransparent {
+			st = st.WithBg(ground.Bg)
+		}
+		mm.DrawGlyph(p, x+i*mm.CellW, y, cell.Char, st)
 	}
 }
 
