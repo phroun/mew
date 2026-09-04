@@ -531,9 +531,13 @@ type textSegment struct {
 // previous one exactly on the glyphs - instead of re-snapping each
 // intermediate unit position through the cell rate, which at a fractional
 // font size leaves a gap (or overlap) where the two rates diverge. On a
-// cell surface it falls back to whole-unit DrawText advances. Returns the
-// total advance in units.
-func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, metrics core.CellMetrics, segs ...textSegment) core.Unit {
+// cell surface it falls back to whole-unit DrawText advances.
+//
+// It answers with nothing, because the two paths advance in different
+// currencies and only the painter knows which one ran: a unit total handed
+// back from the pixel path is not where the ink stopped, and anything placed
+// at it lands beside the text rather than after it.
+func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, metrics core.CellMetrics, segs ...textSegment) {
 	_, usePx := p.DrawTextOffset(x, y, 0, 0, "", style.CellStyle{}, font)
 	total := core.Unit(0)
 	xPx := 0
@@ -546,10 +550,9 @@ func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, metrics 
 			xPx += adv
 		} else {
 			p.DrawText(x+total, y, seg.text, seg.style, font)
+			total += font.MeasureTextIn(seg.text, metrics)
 		}
-		total += font.MeasureTextIn(seg.text, metrics)
 	}
-	return total
 }
 
 // NewMenu creates a new menu.
@@ -1629,11 +1632,10 @@ func (m *Menu) Paint(p *core.Painter) {
 			if item.acceleratorPos < len(textRunes)-1 {
 				segs = append(segs, textSegment{string(textRunes[item.acceleratorPos+1:]), contentStyle})
 			}
-			x += drawTextSegments(p, x, itemY+mm.YOff, font, m.EffectiveCellMetrics(), segs...)
+			drawTextSegments(p, x, itemY+mm.YOff, font, m.EffectiveCellMetrics(), segs...)
 		} else {
 			// No accelerator or disabled - draw entire text
 			p.DrawText(x, itemY+mm.YOff, item.Text, contentStyle, font)
-			x += mm.TextWidth(item.Text)
 		}
 
 		// Draw shortcut or submenu arrow at the right (in content area). The
