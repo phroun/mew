@@ -1876,6 +1876,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			}
 
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
+			gapStart := x
 			for x < ellipsisX {
 				p.DrawCell(x, 0, ' ', tabBarUnderlined)
 				x += metrics.UnitsPerCellWidth
@@ -1920,6 +1921,16 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				}
 				if selEndX >= 0 && fillX > selEndX {
 					selEndX = fillX
+				}
+				// The shape now reaches past the dots, so the run between the
+				// tab and them is INSIDE the tab and wears the tab's colour.
+				// Left as strip it was a notch of bar cut out of the tab: the
+				// run is filled before the dots are placed, when whose ground
+				// it will turn out to be is not yet known. Laid as one rect
+				// stopping exactly at the dots, so the whole-cell steps of
+				// that fill cannot reach across them.
+				if gapStart < ellipsisX {
+					p.FillRect(core.UnitRect{X: gapStart, Y: 0, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
 				}
 			}
 			for fillX < scrollAreaStart {
@@ -2483,6 +2494,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			}
 
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
+			gapStart := x
 			for x < ellipsisX {
 				p.DrawCell(x, tabY, ' ', tabBarOverlined)
 				x += metrics.UnitsPerCellWidth
@@ -2527,6 +2539,16 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				}
 				if selEndX >= 0 && fillX > selEndX {
 					selEndX = fillX
+				}
+				// The shape now reaches past the dots, so the run between the
+				// tab and them is INSIDE the tab and wears the tab's colour.
+				// Left as strip it was a notch of bar cut out of the tab: the
+				// run is filled before the dots are placed, when whose ground
+				// it will turn out to be is not yet known. Laid as one rect
+				// stopping exactly at the dots, so the whole-cell steps of
+				// that fill cannot reach across them.
+				if gapStart < ellipsisX {
+					p.FillRect(core.UnitRect{X: gapStart, Y: tabY, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
 				}
 			}
 			for fillX < scrollAreaStart {

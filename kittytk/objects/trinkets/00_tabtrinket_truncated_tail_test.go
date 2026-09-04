@@ -167,3 +167,90 @@ func TestTruncatedTabTailCarriesTheStripsEllipsisOnlyWhenItFits(t *testing.T) {
 		}
 	}
 }
+
+// A tab has no strip showing through its middle.
+//
+// The run between a tab and its own dots is filled before the dots are placed,
+// when whose ground it will turn out to be is not yet known, so it went down in
+// the strip's colour. Where the dots then turned out to be the tab's, the
+// silhouette closed around the lot and that run became a notch of bar cut out
+// of the tab's interior.
+func TestTabInteriorHasNoStripShowingThrough(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	for _, bottom := range []bool{false, true} {
+		name := "top"
+		if bottom {
+			name = "bottom"
+		}
+		tw, px := truncatedTailStrip(t, bottom, 2, 214, 0)
+		px.Clear(style.DefaultStyle().WithBg(style.RGB(0, 255, 0)))
+		p := core.NewPainter(px)
+		tw.Paint(p)
+
+		rowH := tw.tabBarHeight()
+		rowPx := p.UnitSpanPxY(0, rowH)
+		top := 0
+		if bottom {
+			top = p.UnitSpanPxY(0, tw.Bounds().Height-rowH)
+		}
+		midY := top + rowPx/2
+		buttonsPx := p.UnitSpanPxX(0, tw.Bounds().Width-tw.scrollButtonWidth()*2)
+
+		img := px.Image()
+		// The selected tab's own ground, and the strip's. A focused strip
+		// paints its selected tab in the focused colour.
+		tabBg := tw.GetScheme().GetActiveTab().Bg
+		if tw.HasFocus() {
+			tabBg = tw.GetScheme().GetFocusedTab().Bg
+		}
+		fr, fg, fb := tabBg.RGBComponents()
+		barBg := img.RGBAAt(0, top)
+
+		// The tab's extent, from the first to the last column carrying its
+		// ground. Its label and its dots break the run, but they are ink, not
+		// strip.
+		first, last := -1, -1
+		for x := 0; x < buttonsPx; x++ {
+			if c := img.RGBAAt(x, midY); c.R == fr && c.G == fg && c.B == fb {
+				if first < 0 {
+					first = x
+				}
+				last = x
+			}
+		}
+		if first < 0 || last-first < 8 {
+			t.Fatalf("%s: precondition -- no tab of any width found at mid-height (first %d, last %d)",
+				name, first, last)
+		}
+
+		for x := first; x <= last; x++ {
+			if img.RGBAAt(x, midY) == barBg {
+				t.Fatalf("%s: the strip's own colour shows at column %d, inside a tab running from %d to %d",
+					name, x, first, last)
+			}
+		}
+
+		// And the dots the tab is showing instead of its name are still
+		// there: the fill that closes the notch stops at them rather than
+		// running on over them.
+		tabFg := tw.GetScheme().GetActiveTab().Fg
+		if tw.HasFocus() {
+			tabFg = tw.GetScheme().GetFocusedTab().Fg
+		}
+		ir, ig, ib := tabFg.RGBComponents()
+		ink := 0
+		for x := first; x <= last; x++ {
+			for y := top + 1; y < top+rowPx-1; y++ {
+				if c := img.RGBAAt(x, y); c.R == ir && c.G == ig && c.B == ib {
+					ink++
+					break
+				}
+			}
+		}
+		if ink == 0 {
+			t.Errorf("%s: the tab from %d to %d carries none of its own ink; its dots were painted over",
+				name, first, last)
+		}
+	}
+}
