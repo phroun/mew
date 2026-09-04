@@ -1817,24 +1817,9 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if selEndX >= 0 {
 				selEndX = x
 			}
-			// The strip's own "more tabs" ellipsis goes in that space when the
-			// whole of it fits. When it does not, it is left out: the tab's own
-			// dots at the end of the run already say there is more than this.
-			if dotsX := idealEllipsisX; dotsX >= x {
-				for x < dotsX {
-					p.DrawCell(x, 0, ' ', tabBarUnderlined)
-					x += metrics.UnitsPerCellWidth
-				}
-				if p.Graphical() {
-					p.FillRect(core.UnitRect{X: dotsX, Y: 0, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', tabBarUnderlined)
-					p.DrawText(dotsX, 0, "...", tabBarUnderlined, font)
-				} else {
-					for i := 0; i < 3; i++ {
-						p.DrawCell(dotsX+core.Unit(i)*metrics.UnitsPerCellWidth, 0, '.', tabBarUnderlined)
-					}
-				}
-				x = dotsX + ellipsisWidth
-			}
+			// And the strip adds no ellipsis of its own. One mark at this end
+			// of the run, never two: the tab's dots already say the run is cut
+			// short, and the [>] button says whether there is more to reach.
 			for x < scrollAreaStart {
 				p.DrawCell(x, 0, ' ', tabBarUnderlined)
 				x += metrics.UnitsPerCellWidth
@@ -2432,24 +2417,9 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			if selEndX >= 0 {
 				selEndX = x
 			}
-			// The strip's own "more tabs" ellipsis goes in that space when the
-			// whole of it fits. When it does not, it is left out: the tab's own
-			// dots at the end of the run already say there is more than this.
-			if dotsX := idealEllipsisX; dotsX >= x {
-				for x < dotsX {
-					p.DrawCell(x, tabY, ' ', tabBarOverlined)
-					x += metrics.UnitsPerCellWidth
-				}
-				if p.Graphical() {
-					p.FillRect(core.UnitRect{X: dotsX, Y: tabY, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', tabBarOverlined)
-					p.DrawText(dotsX, tabY, "...", tabBarOverlined, font)
-				} else {
-					for i := 0; i < 3; i++ {
-						p.DrawCell(dotsX+core.Unit(i)*metrics.UnitsPerCellWidth, tabY, '.', tabBarOverlined)
-					}
-				}
-				x = dotsX + ellipsisWidth
-			}
+			// And the strip adds no ellipsis of its own. One mark at this end
+			// of the run, never two: the tab's dots already say the run is cut
+			// short, and the [>] button says whether there is more to reach.
 			for x < scrollAreaStart {
 				p.DrawCell(x, tabY, ' ', tabBarOverlined)
 				x += metrics.UnitsPerCellWidth

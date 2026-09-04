@@ -109,65 +109,6 @@ func TestTruncatedTabClosesAfterItsEllipsis(t *testing.T) {
 	}
 }
 
-// The strip's own "more tabs" ellipsis goes in that space when the whole of it
-// fits, and is left out when it does not: the tab's own dots at the end of the
-// run already say there is more than this.
-func TestTruncatedTabTailCarriesTheStripsEllipsisOnlyWhenItFits(t *testing.T) {
-	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-
-	for _, bottom := range []bool{false, true} {
-		name := "top"
-		if bottom {
-			name = "bottom"
-		}
-
-		// Room for it: the dots stand in the slot against the scroll buttons.
-		tw, px := truncatedTailStrip(t, bottom, 1, 140, 1)
-		tabRight, buttonsPx, rowPx, top, barBg, _ := tailGeometry(t, tw, px, bottom)
-		p := core.NewPainter(px)
-		ellipsisPx := p.UnitSpanPxX(0, tw.overflowEllipsisWidth())
-		if buttonsPx-1-tabRight < ellipsisPx {
-			t.Fatalf("%s: precondition -- no room for the strip's ellipsis after the tab", name)
-		}
-		img := px.Image()
-		inked := 0
-		for x := buttonsPx - ellipsisPx; x < buttonsPx; x++ {
-			for y := top + 1; y < top+rowPx-2; y++ {
-				c := img.RGBAAt(x, y)
-				if int(c.R)<<16|int(c.G)<<8|int(c.B) != barBg {
-					inked++
-					break
-				}
-			}
-		}
-		if inked == 0 {
-			t.Errorf("%s: nothing is drawn in the %d px against the scroll buttons; the strip's own ellipsis should be there",
-				name, ellipsisPx)
-		}
-
-		// No room for it: nothing is drawn in the sliver that is left.
-		tw, px = truncatedTailStrip(t, bottom, 0, 110, 0)
-		tabRight, buttonsPx, rowPx, top, barBg, _ = tailGeometry(t, tw, px, bottom)
-		p = core.NewPainter(px)
-		ellipsisPx = p.UnitSpanPxX(0, tw.overflowEllipsisWidth())
-		gap := buttonsPx - 1 - tabRight
-		if gap <= 0 || gap >= ellipsisPx {
-			t.Fatalf("%s: precondition -- the tail is %d px, wanted a sliver narrower than the %d px an ellipsis needs",
-				name, gap, ellipsisPx)
-		}
-		img = px.Image()
-		for x := tabRight + 1; x < buttonsPx; x++ {
-			for y := top + 1; y < top+rowPx-2; y++ {
-				c := img.RGBAAt(x, y)
-				if int(c.R)<<16|int(c.G)<<8|int(c.B) != barBg {
-					t.Fatalf("%s: something is drawn at column %d in a tail too narrow (%d px) for the strip's ellipsis (%d px)",
-						name, x, gap, ellipsisPx)
-				}
-			}
-		}
-	}
-}
-
 // A tab has no strip showing through its middle.
 //
 // The run between a tab and its own dots is filled before the dots are placed,
@@ -252,5 +193,96 @@ func TestTabInteriorHasNoStripShowingThrough(t *testing.T) {
 			t.Errorf("%s: the tab from %d to %d carries none of its own ink; its dots were painted over",
 				name, first, last)
 		}
+	}
+}
+
+// ellipsisCounter remembers where every run was drawn, so a test can tell the
+// ellipsis at the LEFT of the strip -- which says there are tabs before these
+// -- from any drawn further along.
+type ellipsisCounter struct {
+	*raster.Backend
+	runs []string
+	xs   []core.Unit
+}
+
+func (r *ellipsisCounter) DrawText(x, y core.Unit, text string, s style.CellStyle, font *core.Font) core.Unit {
+	r.runs = append(r.runs, text)
+	r.xs = append(r.xs, x)
+	return r.Backend.DrawText(x, y, text, s, font)
+}
+
+// trailing counts the ellipses drawn anywhere but the very left of the strip.
+func (r *ellipsisCounter) trailing() int {
+	n := 0
+	for i, s := range r.runs {
+		if s == "..." && r.xs[i] > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// ONE mark at the right-hand end of the run, never two.
+//
+// A clipped tab says its name is cut with its own dots; the strip says there
+// are more tabs with dots of its own against the scroll buttons. Both at once
+// is the same end of the same line saying it twice -- and it happened, because
+// the strip decided whether to add its own by asking only whether it fitted.
+//
+// Stated over a sweep rather than at one width, since the widths where the two
+// coincided were never the ones anybody thought to look at.
+func TestNeverTwoEllipsesAtTheEndOfAStrip(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	px, err := raster.New(900, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(px)
+	names := []string{"Alphabet", "Nested", "Vertical Tabs", "Details", "MDI Demo", "Extra", "Final"}
+
+	painted, sawOne := 0, 0
+	for _, bottom := range []bool{false, true} {
+		for cur := 0; cur < len(names); cur++ {
+			for w := core.Unit(90); w <= 420; w += 6 {
+				for off := 0; off < len(names); off++ {
+					rec := &ellipsisCounter{Backend: px}
+
+					d := NewDesktop()
+					d.SetBackend(px)
+					d.SetBounds(core.UnitRect{Width: 900, Height: 200})
+					win := window.NewWindow("w")
+					d.WindowManager().AddWindow(win)
+					win.SetBounds(core.UnitRect{Width: 900, Height: 200})
+
+					tw := NewTabTrinket()
+					win.AddChild(tw)
+					for _, n := range names {
+						tw.AddTab(n, NewLabel(n))
+					}
+					tw.SetCurrentIndex(cur)
+					if bottom {
+						tw.SetTabPosition(TabsBottom)
+					}
+					tw.SetBounds(core.UnitRect{Width: w, Height: 96})
+					tw.tabScrollOffset = off
+
+					px.Clear(style.DefaultStyle())
+					tw.Paint(core.NewPainter(rec))
+					painted++
+
+					switch n := rec.trailing(); {
+					case n > 1:
+						t.Fatalf("bottom=%v cur=%d w=%d off=%d: %d ellipses at the end of the run: %v",
+							bottom, cur, w, off, n, rec.runs)
+					case n == 1:
+						sawOne++
+					}
+				}
+			}
+		}
+	}
+	if painted == 0 || sawOne == 0 {
+		t.Fatalf("precondition: %d strips painted, %d of them ending in an ellipsis at all", painted, sawOne)
 	}
 }
