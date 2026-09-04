@@ -1845,10 +1845,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				}
 			}
 
-			// Determine ellipsis style: use tab's internal style if no text was drawn
-			// or if we're falling back to interior ellipsis position
+			// Determine ellipsis style: use tab's internal style if no text was
+			// drawn or if we're falling back to interior ellipsis position.
+			//
+			// Either way the dots then belong to the TAB rather than to the
+			// strip, which settles both their colour and how far the selected
+			// tab's silhouette has to reach.
+			tabOwnsEllipsis := !drewAnyText || useInternalStyle
 			ellipsisStyle := tabBarUnderlined
-			if !drewAnyText || useInternalStyle {
+			if tabOwnsEllipsis {
 				ellipsisStyle = lastTabStyle
 			}
 
@@ -1881,7 +1886,12 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if p.Graphical() && dotsDrawn > 0 {
 				fillX = ellipsisX + ellipsisWidth
 			}
-			if useInternalStyle && dotsDrawn > 0 {
+			// The tab's own dots are part of the tab, so the silhouette has to
+			// reach past them. A tab truncated to NO characters at all is the
+			// case this was missing: its shape ended at the lead-in it had
+			// managed to draw and the dots sat beyond its closing edge, so the
+			// tab opened and then stopped with its own ellipsis outside it.
+			if tabOwnsEllipsis && dotsDrawn > 0 {
 				if selTrailX >= 0 && ellipsisX <= selTrailX {
 					selTrailX = -1
 					selEndX = fillX
@@ -2423,10 +2433,15 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				}
 			}
 
-			// Determine ellipsis style: use tab's internal style if no text was drawn
-			// or if we're falling back to interior ellipsis position
+			// Determine ellipsis style: use tab's internal style if no text was
+			// drawn or if we're falling back to interior ellipsis position.
+			//
+			// Either way the dots then belong to the TAB rather than to the
+			// strip, which settles both their colour and how far the selected
+			// tab's silhouette has to reach.
+			tabOwnsEllipsis := !drewAnyText || useInternalStyle
 			ellipsisStyle := tabBarOverlined
-			if !drewAnyText || useInternalStyle {
+			if tabOwnsEllipsis {
 				ellipsisStyle = lastTabStyle
 			}
 
@@ -2459,7 +2474,12 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			if p.Graphical() && dotsDrawn > 0 {
 				fillX = ellipsisX + ellipsisWidth
 			}
-			if useInternalStyle && dotsDrawn > 0 {
+			// The tab's own dots are part of the tab, so the silhouette has to
+			// reach past them. A tab truncated to NO characters at all is the
+			// case this was missing: its shape ended at the lead-in it had
+			// managed to draw and the dots sat beyond its closing edge, so the
+			// tab opened and then stopped with its own ellipsis outside it.
+			if tabOwnsEllipsis && dotsDrawn > 0 {
 				if selTrailX >= 0 && ellipsisX <= selTrailX {
 					selTrailX = -1
 					selEndX = fillX
