@@ -1327,6 +1327,10 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	var truncatedTabStyle style.CellStyle
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
+	// zeroCharTab records that the last visible tab was clipped so hard that
+	// not one character of its label was drawn. The trailing dots then stand
+	// for that tab and are drawn in its colours, so they are part of it.
+	zeroCharTab := false
 	drewAnyText := false // Track if we drew at least 1 character of text for last tab
 
 	// Track positions for external ellipsis handling
@@ -1649,6 +1653,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					drewAnyText = true
 				} else {
 					// No text drawn - reset tracking for external ellipsis
+					zeroCharTab = true
 					lastSlashX = -1
 					lastTabStyle = s
 					drewAnyText = false
@@ -1881,7 +1886,13 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if p.Graphical() && dotsDrawn > 0 {
 				fillX = ellipsisX + ellipsisWidth
 			}
-			if useInternalStyle && dotsDrawn > 0 {
+			// The dots belong to the tab when they were pulled back over its
+			// separator, and equally when they are all the tab managed to show
+			// of itself. Either way the selected tab's silhouette has to reach
+			// past them: gated on the first case alone, a tab clipped to no
+			// characters closed at the lead-in it had drawn and left its own
+			// ellipsis outside.
+			if (useInternalStyle || zeroCharTab) && dotsDrawn > 0 {
 				if selTrailX >= 0 && ellipsisX <= selTrailX {
 					selTrailX = -1
 					selEndX = fillX
@@ -2038,6 +2049,10 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	var truncatedTabStyle style.CellStyle
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
+	// zeroCharTab records that the last visible tab was clipped so hard that
+	// not one character of its label was drawn. The trailing dots then stand
+	// for that tab and are drawn in its colours, so they are part of it.
+	zeroCharTab := false
 	drewAnyText := false // Track if we drew at least 1 character of text for last tab
 
 	// Track positions for external ellipsis handling
@@ -2239,6 +2254,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 					drewAnyText = true
 				} else {
 					// No text drawn - reset tracking for external ellipsis
+					zeroCharTab = true
 					lastSlashX = -1
 					lastTabWasSelected = false
 					lastTabStyle = s
@@ -2459,7 +2475,13 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			if p.Graphical() && dotsDrawn > 0 {
 				fillX = ellipsisX + ellipsisWidth
 			}
-			if useInternalStyle && dotsDrawn > 0 {
+			// The dots belong to the tab when they were pulled back over its
+			// separator, and equally when they are all the tab managed to show
+			// of itself. Either way the selected tab's silhouette has to reach
+			// past them: gated on the first case alone, a tab clipped to no
+			// characters closed at the lead-in it had drawn and left its own
+			// ellipsis outside.
+			if (useInternalStyle || zeroCharTab) && dotsDrawn > 0 {
 				if selTrailX >= 0 && ellipsisX <= selTrailX {
 					selTrailX = -1
 					selEndX = fillX
