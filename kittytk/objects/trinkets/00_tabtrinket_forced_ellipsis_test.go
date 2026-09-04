@@ -101,3 +101,63 @@ func TestWideningAStripNeverShowsFewerCharacters(t *testing.T) {
 			best, len([]rune(label)))
 	}
 }
+
+// A tab is trimmed to leave room for the strip's own ellipsis only when its
+// LABEL and that ellipsis cannot both stand -- measured as the ellipsis
+// actually measures, a proportional run of dots.
+//
+// The reserve used to be four or five whole CELLS, and it counted the
+// separator running into the next tab as well: a separator into a tab the
+// strip was never going to show. So a name with room to be whole was trimmed
+// anyway, and the strip drew its ellipsis after it regardless -- "Neste" then
+// dots then dots again, a letter of the name paying for a second ellipsis
+// beside the first.
+func TestATabIsNotTrimmedForAnEllipsisThatFitsBesideIt(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	const label = "Nested"
+	px, err := raster.New(900, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(px)
+	rec := &tabTextRecorder{Backend: px}
+
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.SetBounds(core.UnitRect{Width: 900, Height: 200})
+	win := window.NewWindow("w")
+	d.WindowManager().AddWindow(win)
+	win.SetBounds(core.UnitRect{Width: 900, Height: 200})
+
+	tw := NewTabTrinket()
+	win.AddChild(tw)
+	for _, name := range []string{"Alphabet", label, "Vertical Tabs", "Details", "MDI Demo", "Extra", "Final"} {
+		tw.AddTab(name, NewLabel(name))
+	}
+	tw.SetCurrentIndex(2) // the tab AFTER the one under test is the selected one
+	tw.SetBounds(core.UnitRect{Width: 184, Height: 96})
+	tw.tabScrollOffset = 0
+	if !core.FindSmoothPositioning(tw.Self()) {
+		t.Fatal("precondition: this strip should measure its ellipsis proportionally")
+	}
+
+	px.Clear(style.DefaultStyle())
+	tw.Paint(core.NewPainter(rec))
+
+	if n := rec.drawnPrefix(label); n != len([]rune(label)) {
+		t.Errorf("the strip drew %d characters of %q where the whole name and the strip's ellipsis both had room (runs: %v)",
+			n, label, rec.texts)
+	}
+
+	// And one ellipsis stands at the end of the run, not two.
+	trailing := 0
+	for _, s := range rec.texts {
+		if s == "..." {
+			trailing++
+		}
+	}
+	if trailing > 1 {
+		t.Errorf("%d ellipses drawn where one says it: %v", trailing, rec.texts)
+	}
+}

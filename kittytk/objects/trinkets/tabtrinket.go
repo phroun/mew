@@ -1377,25 +1377,22 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
 		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.UnitsPerCellWidth + t.MeasureText(tab.Text)
 
-		// For tabs with backslash/slash separator when scrolling is needed, check if we can fit
-		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
-		// This reserve only matters when there are MORE tabs after this one - the trailing
-		// "more tabs" ellipsis is what it makes room for. The actual last tab has nothing after
-		// it, so reserving room there would truncate it for an ellipsis that never renders.
-		// We add 1 cell safety margin for boundary cases.
+		// A tab with more tabs after it has to leave the strip room for its own
+		// "more tabs" ellipsis. Where the label and that ellipsis cannot both
+		// stand, this tab carries the mark itself: the label is trimmed and
+		// the dots go on the end of it.
+		//
+		// The room the ellipsis needs is what it MEASURES -- a proportional
+		// run of dots -- and what it has to fit beside is the LABEL. Charging
+		// four or five whole cells, and counting the separator that leads into
+		// the next tab, trimmed names that had room to be whole: the strip
+		// drew its ellipsis after them anyway, so the name paid a letter for a
+		// second ellipsis beside the first, and for a separator into a tab the
+		// strip was never going to show.
 		forceInternalEllipsis := false
 		if needsScrolling && (isSelected || nextIsSelected) && tabIndex != len(t.tabs)-1 {
-			textWidth := t.MeasureText(tab.Text)
-			var minCells core.Unit
-			if isSelected {
-				// Selected tabs: need 4 cells (space/> + backslash + 1 dot + margin) for ">\.."
-				minCells = 4
-			} else {
-				// nextIsSelected tabs: need 5 cells (space + _ + / + 1 dot + margin) for " _/."
-				minCells = 5
-			}
-			minRequired := x + core.Unit(prefixWidth)*metrics.UnitsPerCellWidth + textWidth + minCells*metrics.UnitsPerCellWidth
-			if minRequired >= availableWidth {
+			labelEnd := x + core.Unit(prefixWidth)*metrics.UnitsPerCellWidth + t.MeasureText(tab.Text)
+			if labelEnd+t.overflowEllipsisWidth() > availableWidth {
 				forceInternalEllipsis = true
 			}
 		}
@@ -2131,21 +2128,22 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
 		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.UnitsPerCellWidth + t.MeasureText(tab.Text)
 
-		// For tabs with slash/backslash separator when scrolling is needed, check if we can fit
-		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
-		// This reserve only matters when there are MORE tabs after this one - the trailing
-		// "more tabs" ellipsis is what it makes room for. The actual last tab has nothing after
-		// it, so reserving room there would truncate it for an ellipsis that never renders.
-		// We use minCells = 4 to give a 1-cell safety margin for boundary cases.
+		// A tab with more tabs after it has to leave the strip room for its own
+		// "more tabs" ellipsis. Where the label and that ellipsis cannot both
+		// stand, this tab carries the mark itself: the label is trimmed and
+		// the dots go on the end of it.
+		//
+		// The room the ellipsis needs is what it MEASURES -- a proportional
+		// run of dots -- and what it has to fit beside is the LABEL. Charging
+		// four or five whole cells, and counting the separator that leads into
+		// the next tab, trimmed names that had room to be whole: the strip
+		// drew its ellipsis after them anyway, so the name paid a letter for a
+		// second ellipsis beside the first, and for a separator into a tab the
+		// strip was never going to show.
 		forceInternalEllipsis := false
 		if needsScrolling && (isSelected || nextIsSelected) && tabIndex != len(t.tabs)-1 {
-			textWidth := t.MeasureText(tab.Text)
-			// Need separator char + slash/backslash + at least 1 dot + safety margin
-			// isSelected: _ + / + 1 dot + margin = 4
-			// nextIsSelected: space + \ + 1 dot + margin = 4
-			minCells := core.Unit(4)
-			minRequired := x + core.Unit(prefixWidth)*metrics.UnitsPerCellWidth + textWidth + minCells*metrics.UnitsPerCellWidth
-			if minRequired >= availableWidth {
+			labelEnd := x + core.Unit(prefixWidth)*metrics.UnitsPerCellWidth + t.MeasureText(tab.Text)
+			if labelEnd+t.overflowEllipsisWidth() > availableWidth {
 				forceInternalEllipsis = true
 			}
 		}
