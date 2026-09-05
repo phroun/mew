@@ -370,6 +370,12 @@ type TrinketBase struct {
 	layoutAlign    Alignment
 	layoutAlignSet bool
 
+	// Hints one layout manager each reads; see layouthints.go.
+	gridPlacement    GridPlacement
+	gridPlacementSet bool
+	flexHints        FlexHints
+	flexHintsSet     bool
+
 	// direction is the side text begins on for this trinket and everything
 	// below it. DirInherit -- the zero value -- takes it from the ancestors.
 	direction Direction

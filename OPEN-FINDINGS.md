@@ -87,11 +87,6 @@ wire that silently does the opposite of what it says. Either implement it or
 delete the constant.
 *Verified against current code.*
 
-### Panel: give flex and grid a wire spelling
-**Title only.** Related surface: `objects/trinkets/panel_protocol.go:68` reaches
-the layout manager through an interface assertion for `SetSpacing`, so layout
-properties are currently spelled ad hoc.
-
 ### MenuItem: decide what an item with no `action=` should emit
 **Title only.** A design question, not a bug report — the entry records that the
 behaviour is undecided, not that it is wrong.
@@ -137,44 +132,6 @@ worth filing.
 ---
 
 ## KittyTK — layout and the cell grid
-
-### FlexLayout: three of the things it offers do nothing
-*Found 2026-09-05 while documenting the layout managers. Verified against
-current code.*
-
-`layout/flex.go` presents a flexbox-shaped API, and part of it is inert:
-
-- **Wrapping is not implemented.** `SetWrap`/`Wrap` store and return the value
-  (`flex.go:93-100`) and `Layout` never reads it. The run is laid out as one
-  line at any setting, `FlexWrapNormal` included.
-- **`FlexItem.AlignSelf` is unreachable.** The field is exported and
-  `alignCross` honours it (`flex.go:330`), but no exported method returns an
-  item: `AddTrinket` and `AddTrinketWithFlex` do not take it, and there is no
-  `ItemAt`. The container's `AlignItems` is the only reachable setting.
-- **Shrink ignores minimums.** The shrink pass floors at zero (`flex.go:216`),
-  not at the child's `MinimumSize`, so a child with a shrink factor can be
-  reduced to nothing in a box too small for it. A box floors every item at its
-  minimum through `itemSize`.
-
-`alignContent` is a fourth: set in the constructor (`flex.go:78`), never read,
-and with no setter.
-
-Either finish them or remove the API that promises them; a stored setting that
-changes nothing is worse than an absent one.
-
-### GridLayout: `min_width` does not widen a column
-*Found 2026-09-05 while documenting the layout managers. Verified against
-current code.*
-
-`calculateColumnWidths` measures children by `SizeHint()` alone
-(`layout/grid.go:200`), so a child's `min_width` has no effect on the column it
-sits in during layout. The same minimum DOES reach `GridLayout.MinimumSize`
-(`grid.go:358`), which measures `MinimumSize()` — so a grid reports a floor it
-does not then apply to its own columns.
-
-A box floors every item at its minimum through `itemSize`, so the two managers
-disagree about what a minimum means. `SetColumnMinimumWidth` is the working
-route in a grid today.
 
 ### Nothing keeps a trinket's bounds on the cell grid
 On a cell surface, drawing rounds and hit-testing does not: `UnitsToCellX`

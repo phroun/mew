@@ -126,7 +126,7 @@ func (a *app) wireMainWindow() {
 // terminalTabIndex is the Terminal tab's position in the main window's
 // strip. The change event reports an index, so the tab has to be named by
 // one; a test checks the caption at this index is still "Terminal".
-const terminalTabIndex = 12
+const terminalTabIndex = 14
 
 // wireTerminalTab drives the Terminal tab's surface. The PTY starts the
 // first time the tab is selected rather than at build: a shell is a child

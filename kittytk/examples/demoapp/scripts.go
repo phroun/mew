@@ -313,6 +313,62 @@ dn=new tab caption="Denomination" children={
 	}
 }
 
+new tab caption="Grid" children={
+	new panel layout=vbox spacing=8 children={
+		new label caption="A form: labels in a column that sizes to them, fields in one that takes the rest."
+		new panel border layout=grid spacing=8 children={
+			new label caption="Name:" row=0 column=0 halign=textend fill=none
+			new textinput row=0 column=1 column_stretch=1 placeholder="Ada Lovelace"
+			new label caption="Address:" row=1 column=0 halign=textend fill=none
+			new textinput row=1 column=1 column_stretch=1 placeholder="12 Marylebone Road"
+			new label caption="Notes:" row=2 column=0 halign=textend valign=top fill=none
+			new textinput row=2 column=1 column_stretch=1 placeholder="anything at all"
+			new panel layout=hbox spacing=8 row=3 column=0 column_span=2 halign=textend fill=none children={
+				new button caption="Save" action=demo.grid.save
+				new button caption="Cancel" action=demo.grid.cancel
+			}
+		}
+		new label caption="A span: the button row above covers both columns and sits at the trailing edge."
+		new panel border layout=grid spacing=4 children={
+			new button caption="1" row=0 column=0 column_stretch=1
+			new button caption="2" row=0 column=1 column_stretch=1
+			new button caption="3" row=0 column=2 column_stretch=1
+			new button caption="tall" row=0 column=3 row_span=2 column_stretch=1 fill=both
+			new button caption="4" row=1 column=0 column_stretch=1
+			new button caption="wide" row=1 column=1 column_span=2 column_stretch=1
+		}
+		new spacer
+	}
+}
+
+new tab caption="Flex" children={
+	new panel layout=vbox spacing=8 children={
+		new label caption="Wrapping: eight fixed cards in a run that breaks when it runs out of room."
+		new panel border layout=flex flex_wrap=wrap spacing=4 align_items=begin children={
+			new button caption="Alpha"
+			new button caption="Bravo"
+			new button caption="Charlie"
+			new button caption="Delta"
+			new button caption="Echo"
+			new button caption="Foxtrot"
+			new button caption="Golf"
+			new button caption="Hotel"
+		}
+		new label caption="Justify: the same three buttons, with the leftover space spread between them."
+		new panel border layout=flex justify=space_between spacing=0 align_items=center children={
+			new button caption="Left"
+			new button caption="Middle"
+			new button caption="Right"
+		}
+		new label caption="Grow: one part to three, so the second field takes three times the leftover."
+		new panel border layout=flex spacing=8 align_items=center children={
+			new textinput grow=1 placeholder="one part"
+			new textinput grow=3 placeholder="three parts"
+		}
+		new spacer
+	}
+}
+
 new tab caption="Progress" children={
 	new panel layout=vbox spacing=16 children={
 		new label caption="Horizontal Progress Bars:"

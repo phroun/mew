@@ -227,6 +227,7 @@ func init() {
 	})).Def("0").Tip("Layout stretch factor relative to siblings."))
 
 	registerAlignmentProperties()
+	registerLayoutProperties()
 
 	protocol.RegisterCommonProperty("direction", protocol.NewProperty("enum", wprop("direction", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		word, err := protocol.AsWord("direction", v, f)

@@ -146,7 +146,7 @@ func TestAGridItemFillsOneAxisAndSitsOnTheOther(t *testing.T) {
 
 	l := NewGridLayout()
 	l.SetSpacing(0)
-	l.AddTrinket(item, 0, 0)
+	l.AddTrinketAt(item, 0, 0)
 	// A stretching row and column, so the cell is bigger than the item and
 	// there is something for one axis to fill and the other to sit in.
 	l.SetColumnStretch(0, 1)

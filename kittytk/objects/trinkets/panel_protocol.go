@@ -46,13 +46,58 @@ func init() {
 					p.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
 				case "hbox":
 					p.SetLayoutManager(layout.NewBoxLayout(core.Horizontal))
+				case "grid":
+					p.SetLayoutManager(layout.NewGridLayout())
+				case "flex":
+					p.SetLayoutManager(layout.NewFlexLayout())
 				case "none":
 					// no layout manager
 				default:
-					return fmt.Errorf("layout: unknown value %q (grid arrives later)", w)
+					return fmt.Errorf("layout: unknown value %q", w)
 				}
 				return nil
-			})).OneOf("vbox", "hbox", "none").Tip("Child layout manager"),
+			})).OneOf("vbox", "hbox", "grid", "flex", "none").Tip("Child layout manager"),
+			"flex_direction": flexEnumProp("flex_direction",
+				map[string]layout.FlexDirection{
+					"row":            layout.FlexRow,
+					"row_reverse":    layout.FlexRowReverse,
+					"column":         layout.FlexColumn,
+					"column_reverse": layout.FlexColumnReverse,
+				},
+				func(l *layout.FlexLayout, v layout.FlexDirection) { l.SetDirection(v) },
+			).OneOf("row", "row_reverse", "column", "column_reverse").Def("row").
+				Tip("Flex main axis, and whether it runs backwards."),
+			"flex_wrap": flexEnumProp("flex_wrap",
+				map[string]layout.FlexWrap{
+					"none":         layout.FlexNoWrap,
+					"wrap":         layout.FlexWrapNormal,
+					"wrap_reverse": layout.FlexWrapReverse,
+				},
+				func(l *layout.FlexLayout, v layout.FlexWrap) { l.SetWrap(v) },
+			).OneOf("none", "wrap", "wrap_reverse").Def("none").
+				Tip("Whether a flex run breaks into further lines when it overflows."),
+			"justify": flexEnumProp("justify",
+				map[string]layout.FlexJustify{
+					"begin":         layout.FlexJustifyStart,
+					"end":           layout.FlexJustifyEnd,
+					"center":        layout.FlexJustifyCenter,
+					"space_between": layout.FlexJustifySpaceBetween,
+					"space_around":  layout.FlexJustifySpaceAround,
+					"space_evenly":  layout.FlexJustifySpaceEvenly,
+				},
+				func(l *layout.FlexLayout, v layout.FlexJustify) { l.SetJustify(v) },
+			).OneOf("begin", "end", "center", "space_between", "space_around", "space_evenly").
+				Def("begin").Tip("Where a flex line's leftover space along the main axis goes."),
+			"align_items": flexEnumProp("align_items",
+				map[string]layout.FlexAlign{
+					"stretch": layout.FlexAlignStretch,
+					"begin":   layout.FlexAlignStart,
+					"end":     layout.FlexAlignEnd,
+					"center":  layout.FlexAlignCenter,
+				},
+				func(l *layout.FlexLayout, v layout.FlexAlign) { l.SetAlignItems(v) },
+			).OneOf("stretch", "begin", "end", "center").Def("stretch").
+				Tip("Where flex children sit across the line; a child's own alignment wins."),
 			"fixed_width": protocol.NewProperty("int", wprop("fixed_width", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
 				n, err := protocol.AsInt("fixed_width", v, f)
 				if err != nil {

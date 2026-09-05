@@ -36,13 +36,42 @@ func NewGridLayout() *GridLayout {
 	}
 }
 
-// AddTrinket adds a trinket at the specified position.
-func (l *GridLayout) AddTrinket(trinket core.Trinket, row, column int) {
-	l.AddTrinketWithSpan(trinket, row, column, 1, 1)
+// AddTrinket adds a trinket where its own placement hint puts it. A child that
+// states none lands in a row of its own, in column zero, so a grid nobody has
+// placed anything in reads down the page like a column.
+//
+// This is the one-argument shape a container calls when it attaches a child,
+// which is how a grid is reachable from a build script at all: everything the
+// grid needs to know travels on the child.
+func (l *GridLayout) AddTrinket(trinket core.Trinket) {
+	row, column := len(l.items), 0
+	rowSpan, columnSpan := 1, 1
+	if h, ok := trinket.(interface {
+		LayoutGridPlacement() (core.GridPlacement, bool)
+	}); ok {
+		if p, set := h.LayoutGridPlacement(); set {
+			row, column = p.Row, p.Column
+			rowSpan, columnSpan = p.RowSpan, p.ColumnSpan
+			// A row is one thing and cannot take two answers, so where two
+			// children in it ask for different stretches the largest wins.
+			if p.RowStretch > l.rowStretch[row] {
+				l.rowStretch[row] = p.RowStretch
+			}
+			if p.ColumnStretch > l.columnStretch[column] {
+				l.columnStretch[column] = p.ColumnStretch
+			}
+		}
+	}
+	l.AddTrinketAtWithSpan(trinket, row, column, rowSpan, columnSpan)
 }
 
-// AddTrinketWithSpan adds a trinket that spans multiple cells.
-func (l *GridLayout) AddTrinketWithSpan(trinket core.Trinket, row, column, rowSpan, columnSpan int) {
+// AddTrinketAt adds a trinket at the given row and column.
+func (l *GridLayout) AddTrinketAt(trinket core.Trinket, row, column int) {
+	l.AddTrinketAtWithSpan(trinket, row, column, 1, 1)
+}
+
+// AddTrinketAtWithSpan adds a trinket that spans several cells.
+func (l *GridLayout) AddTrinketAtWithSpan(trinket core.Trinket, row, column, rowSpan, columnSpan int) {
 	if rowSpan < 1 {
 		rowSpan = 1
 	}
@@ -67,6 +96,27 @@ func (l *GridLayout) AddTrinketWithSpan(trinket core.Trinket, row, column, rowSp
 		}
 	}
 	l.items = append(l.items, item)
+}
+
+// RemoveTrinket removes a trinket from the layout.
+func (l *GridLayout) RemoveTrinket(trinket core.Trinket) {
+	for i, item := range l.items {
+		if item.Trinket == trinket {
+			l.items = append(l.items[:i], l.items[i+1:]...)
+			return
+		}
+	}
+}
+
+// Count returns the number of items.
+func (l *GridLayout) Count() int { return len(l.items) }
+
+// ItemAt returns the item at the given index, or nil.
+func (l *GridLayout) ItemAt(index int) *GridItem {
+	if index < 0 || index >= len(l.items) {
+		return nil
+	}
+	return l.items[index]
 }
 
 // SetRowStretch sets the stretch factor for a row.
@@ -191,15 +241,16 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int) []core
 	items := make([]stretchItem, cols)
 
 	for c := 0; c < cols; c++ {
-		// Start with configured minimum
+		// The column's own floor, then what its children need. itemSize is
+		// the child's hint raised to its own min_width, so a minimum written
+		// on a child reaches the column it sits in -- as it reaches the line
+		// it sits in inside a box.
 		minWidth := l.columnMinWidth[c]
 
-		// Check trinkets in this column
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
-				hint := item.Trinket.SizeHint()
-				if hint.Width > minWidth {
-					minWidth = hint.Width
+				if w := itemSize(item.Trinket).Width; w > minWidth {
+					minWidth = w
 				}
 			}
 		}
@@ -223,15 +274,13 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.U
 	items := make([]stretchItem, rows)
 
 	for r := 0; r < rows; r++ {
-		// Start with configured minimum
+		// The row's own floor, then what its children need (see above).
 		minHeight := l.rowMinHeight[r]
 
-		// Check trinkets in this row
 		for _, item := range l.items {
 			if item.Row == r && item.RowSpan == 1 {
-				hint := item.Trinket.SizeHint()
-				if hint.Height > minHeight {
-					minHeight = hint.Height
+				if h := itemSize(item.Trinket).Height; h > minHeight {
+					minHeight = h
 				}
 			}
 		}
