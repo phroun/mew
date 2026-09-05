@@ -5,7 +5,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for the spacer trinket (see docs/property-vocabulary.md).
+// Wire registration for the spacer trinket; the wiki's Spacer page is
+// generated from it.
 func init() {
 	regTrinket("spacer",
 		func() core.Trinket { return NewSpacer() },

@@ -7,7 +7,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for ComboBox (see docs/property-vocabulary.md).
+// Wire registration for ComboBox; the wiki's ComboBox page is
+// generated from it.
 // Per D13's unification, combobox entries are children of the shared
 // virtual `item` type (items_protocol.go):
 //

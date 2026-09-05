@@ -7,7 +7,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for Checkbox (see docs/property-vocabulary.md).
+// Wire registration for Checkbox; the wiki's CheckBox page is
+// generated from it.
 // `checked` is tri-capable per D16: checked / !checked / ?checked.
 func init() {
 	regTrinket("checkbox",

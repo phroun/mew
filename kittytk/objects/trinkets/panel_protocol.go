@@ -9,7 +9,8 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// Wire registration for Panel (see docs/property-vocabulary.md).
+// Wire registration for Panel; the wiki's Panel page is
+// generated from it.
 // Order matters where properties interact: set layout before spacing.
 func init() {
 	regTrinket("panel",

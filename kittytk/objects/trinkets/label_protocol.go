@@ -5,7 +5,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for Label (see docs/property-vocabulary.md).
+// Wire registration for Label; the wiki's Label page is
+// generated from it.
 func init() {
 	regTrinket("label",
 		func() core.Trinket { return NewLabel("") },

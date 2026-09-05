@@ -7,7 +7,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for TextInput (see docs/property-vocabulary.md).
+// Wire registration for TextInput; the wiki's TextInput page is
+// generated from it.
 //
 // cursor, selection_start and selection_end are NOT here: they are deferred,
 // with the reasoning in d2-read-audit.md (C2 exception 3). The vocabulary doc

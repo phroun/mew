@@ -32,13 +32,48 @@ two options it names are still the question. Reversing it needs the event half
 designed, not just properties registered — a `cursor` property a client can
 write but never read tells it nothing about where the caret went.
 
-`docs/property-vocabulary.md:196-197` now carries `cursor`, `selection_start`
-and `selection_end` marked **not implemented** against this deferral, so the
-docs and the wire agree on their absence.
-
 Go API a wire client still cannot reach: `SetCursorPosition`, `SelectAll`,
 `SelectedText`, `HasSelection`.
 *Verified against current code and docs.*
+
+### `parent=` has no wire spelling: containment is children-blocks only
+*Recovered 2026-09-05 from the retired `docs/property-vocabulary.md` draft.*
+
+The draft's identity table listed `parent=<id or key>` as how an object states
+its containment "at creation or reparent". It was never registered: it is not a
+common property, and nothing in `protocol/` resolves it. Structure is built with
+`children={}` blocks and nothing else.
+
+Two consequences, and the second is the sharper one:
+
+- A trinket can only be placed where it is created. There is no wire spelling
+  for **reparenting** at all -- `destroy` and rebuild is the only route.
+- A build script's shape is forced to match the tree's shape. Anything that
+  wants to declare objects flat and then assemble them cannot.
+
+Whether `parent=` should exist is the open question; if it does, it needs an
+answer for what happens when it names an object in another connection's tree,
+and for whether it can move a trinket that is already placed.
+
+### Forward references within a batch
+*Recovered 2026-09-05 from the retired `docs/property-vocabulary.md` draft,
+where it was open question 5, marked "left open by owner".*
+
+Whether a later statement in one batch may reference a correlation key bound by
+an earlier one:
+
+```
+key1=new window ...
+new button parent=key1 ...
+```
+
+The draft's argument for it was building whole trees in one burst. It depends on
+`parent=` above, so the two stand or fall together, and it is the reason to
+decide `parent=` rather than simply drop it.
+
+Against: `children={}` already builds a whole tree in one burst, and scoped keys
+(`k1.sk1`) already address inside one. What forward references add is the flat
+declaration order, not the single round trip.
 
 ### TextInput: `EchoPasswordOnEdit` is declared but does nothing
 `EchoPasswordOnEdit` is one of four `EchoMode` constants (`textinput.go:101`,
@@ -102,6 +137,44 @@ worth filing.
 ---
 
 ## KittyTK — layout and the cell grid
+
+### FlexLayout: three of the things it offers do nothing
+*Found 2026-09-05 while documenting the layout managers. Verified against
+current code.*
+
+`layout/flex.go` presents a flexbox-shaped API, and part of it is inert:
+
+- **Wrapping is not implemented.** `SetWrap`/`Wrap` store and return the value
+  (`flex.go:93-100`) and `Layout` never reads it. The run is laid out as one
+  line at any setting, `FlexWrapNormal` included.
+- **`FlexItem.AlignSelf` is unreachable.** The field is exported and
+  `alignCross` honours it (`flex.go:330`), but no exported method returns an
+  item: `AddTrinket` and `AddTrinketWithFlex` do not take it, and there is no
+  `ItemAt`. The container's `AlignItems` is the only reachable setting.
+- **Shrink ignores minimums.** The shrink pass floors at zero (`flex.go:216`),
+  not at the child's `MinimumSize`, so a child with a shrink factor can be
+  reduced to nothing in a box too small for it. A box floors every item at its
+  minimum through `itemSize`.
+
+`alignContent` is a fourth: set in the constructor (`flex.go:78`), never read,
+and with no setter.
+
+Either finish them or remove the API that promises them; a stored setting that
+changes nothing is worse than an absent one.
+
+### GridLayout: `min_width` does not widen a column
+*Found 2026-09-05 while documenting the layout managers. Verified against
+current code.*
+
+`calculateColumnWidths` measures children by `SizeHint()` alone
+(`layout/grid.go:200`), so a child's `min_width` has no effect on the column it
+sits in during layout. The same minimum DOES reach `GridLayout.MinimumSize`
+(`grid.go:358`), which measures `MinimumSize()` — so a grid reports a floor it
+does not then apply to its own columns.
+
+A box floors every item at its minimum through `itemSize`, so the two managers
+disagree about what a minimum means. `SetColumnMinimumWidth` is the working
+route in a grid today.
 
 ### Nothing keeps a trinket's bounds on the cell grid
 On a cell surface, drawing rounds and hit-testing does not: `UnitsToCellX`

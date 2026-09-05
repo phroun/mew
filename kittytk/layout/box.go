@@ -168,8 +168,8 @@ func isInlineTrinket(w core.Trinket) bool {
 // itemSize is the size a box gives one item: not below min_width and
 // min_height, and otherwise whatever the trinket answers for itself.
 //
-// min_width and min_height are properties, set in units on any trinket
-// (docs/property-vocabulary.md). A box read only the trinket's own answer
+// min_width and min_height are common wire properties, set in units on any
+// trinket. A box read only the trinket's own answer
 // and never the properties, so setting them on anything in a box changed
 // nothing -- the value was applied and then nothing consulted it.
 // GridLayout has always read them.

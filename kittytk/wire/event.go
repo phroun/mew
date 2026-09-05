@@ -15,7 +15,7 @@ type Event struct {
 }
 
 // NewEvent creates an event record of the given type ("click",
-// "toggle", "change", "command", ...; see docs/property-vocabulary.md).
+// "toggle", "change", "command", ...; the wiki's Events page lists them).
 func NewEvent(eventType string) *Event {
 	return &Event{Type: eventType}
 }
