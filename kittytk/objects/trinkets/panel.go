@@ -167,6 +167,9 @@ func (p *Panel) SetLayoutManager(layout core.LayoutManager) {
 	p.Update()
 }
 
+// Border reports whether the panel draws a frame inside its own bounds.
+func (p *Panel) Border() bool { return p.border }
+
 // SetBorder enables or disables the border. Enabling defaults the
 // border style to single lines if none was set (the zero-value
 // BorderStyle would render invisibly).
@@ -198,17 +201,35 @@ func (p *Panel) SizeHint() core.UnitSize {
 	outer, interior := p.denominations()
 	var sh core.UnitSize
 	if p.layoutManager != nil {
-		sh = core.ExchangeSize(p.layoutManager.SizeHint(p), interior, outer)
+		// What the content needs, plus the frame that has to go round it.
+		sh = p.plusChrome(p.layoutManager.SizeHint(p), interior)
 	} else {
-		sh = core.ExchangeSize(core.UnitSize{
+		// The fallback is the whole of what a panel nobody has sized asks
+		// for, frame included: it is there to be seen and corrected, not to
+		// hold anything.
+		sh = core.UnitSize{
 			Width:  interior.UnitsPerCellWidth * defaultSizeCells,
 			Height: interior.UnitsPerCellHeight * defaultContainerHeightCells,
-		}, interior, outer)
+		}
 	}
+	sh = core.ExchangeSize(sh, interior, outer)
 	if p.fixedWidth > 0 {
 		sh.Width = p.fixedWidth
 	}
 	return sh
+}
+
+// plusChrome adds what the panel's own frame takes out of its content. Layout
+// hands the manager the rect INSIDE the border, so a panel that asked only for
+// what its content needs was two rows and two columns short of holding it --
+// and a panel sitting at its hint drew its frame through its own children.
+func (p *Panel) plusChrome(sz core.UnitSize, interior core.CellMetrics) core.UnitSize {
+	if !p.border {
+		return sz
+	}
+	sz.Width += 2 * interior.UnitsPerCellWidth
+	sz.Height += 2 * interior.UnitsPerCellHeight
+	return sz
 }
 
 // SetFixedWidth pins the panel's SizeHint width (0 clears it). Height
@@ -223,7 +244,7 @@ func (p *Panel) SetFixedWidth(w core.Unit) {
 func (p *Panel) MinimumSize() core.UnitSize {
 	if p.layoutManager != nil {
 		outer, interior := p.denominations()
-		return core.ExchangeSize(p.layoutManager.MinimumSize(p), interior, outer)
+		return core.ExchangeSize(p.plusChrome(p.layoutManager.MinimumSize(p), interior), interior, outer)
 	}
 	return core.UnitSize{Width: 16, Height: 16}
 }

@@ -527,6 +527,36 @@ func (l *FlexLayout) alignFromChild(item *FlexItem, layoutDir core.Direction) Fl
 	return FlexAlignCenter
 }
 
+// HasHeightForWidth reports whether this layout's height depends on the width
+// it is given, which a wrapping run's does: how many lines it takes is not
+// known until the width is.
+//
+// Only along a horizontal main axis. A column that wraps would need width for
+// height, and nothing in the toolkit asks a question that way round.
+func (l *FlexLayout) HasHeightForWidth() bool {
+	return l.wrap != FlexNoWrap && l.isMainHorizontal() && len(l.items) > 0
+}
+
+// HeightForWidth is the height the wrapped run needs at the given width: the
+// lines it breaks into, stacked.
+func (l *FlexLayout) HeightForWidth(width core.Unit) core.Unit {
+	if !l.HasHeightForWidth() {
+		return l.SizeHint(nil).Height
+	}
+	mainSize := width - l.margins.Horizontal()
+	base := make([]core.Unit, len(l.items))
+	for i, item := range l.items {
+		base[i] = l.baseSize(item)
+	}
+
+	lines := l.breakIntoLines(base, mainSize)
+	total := l.spacing * core.Unit(len(lines)-1)
+	for _, line := range lines {
+		total += l.lineCross(line)
+	}
+	return total + l.margins.Vertical()
+}
+
 // SizeHint returns the preferred size for the container.
 func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 	var mainTotal, crossMax core.Unit
@@ -564,22 +594,23 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 }
 
 // MinimumSize returns the minimum size for the container.
+//
+// A run that wraps is as narrow as its widest item, since it can always break;
+// one that does not is as wide as all of them together.
 func (l *FlexLayout) MinimumSize(container core.Container) core.UnitSize {
 	var mainTotal, crossMax core.Unit
 
 	for _, item := range l.items {
 		minSize := item.Trinket.MinimumSize()
-		var main, cross core.Unit
+		main, cross := l.mainCross(minSize.Width, minSize.Height)
 
-		if l.isMainHorizontal() {
-			main = minSize.Width
-			cross = minSize.Height
+		if l.wrap != FlexNoWrap {
+			if main > mainTotal {
+				mainTotal = main
+			}
 		} else {
-			main = minSize.Height
-			cross = minSize.Width
+			mainTotal += main
 		}
-
-		mainTotal += main
 		if cross > crossMax {
 			crossMax = cross
 		}

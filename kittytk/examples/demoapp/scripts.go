@@ -343,7 +343,7 @@ new tab caption="Grid" children={
 
 new tab caption="Flex" children={
 	new panel layout=vbox spacing=8 children={
-		new label caption="Wrapping: eight fixed cards in a run that breaks when it runs out of room."
+		new label caption="Wrapping: eight cards in a run that breaks when it runs out of room."
 		new panel border layout=flex flex_wrap=wrap spacing=4 align_items=begin children={
 			new button caption="Alpha"
 			new button caption="Bravo"
@@ -354,7 +354,7 @@ new tab caption="Flex" children={
 			new button caption="Golf"
 			new button caption="Hotel"
 		}
-		new label caption="Justify: the same three buttons, with the leftover space spread between them."
+		new label caption="Justify: leftover space spread between the buttons, which no box can do."
 		new panel border layout=flex justify=space_between spacing=0 align_items=center children={
 			new button caption="Left"
 			new button caption="Middle"
