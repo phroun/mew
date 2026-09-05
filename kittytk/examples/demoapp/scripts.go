@@ -316,14 +316,17 @@ dn=new tab caption="Denomination" children={
 new tab caption="Grid" children={
 	new panel layout=vbox spacing=8 children={
 		new label caption="A form: labels in a column that sizes to them, fields in one that takes the rest."
-		new panel border layout=grid spacing=8 children={
-			new label caption="Name:" row=0 column=0 halign=textend fill=none
-			new textinput row=0 column=1 column_stretch=1 placeholder="Ada Lovelace"
-			new label caption="Address:" row=1 column=0 halign=textend fill=none
-			new textinput row=1 column=1 column_stretch=1 placeholder="12 Marylebone Road"
-			new label caption="Notes:" row=2 column=0 halign=textend valign=top fill=none
-			new textinput row=2 column=1 column_stretch=1 placeholder="anything at all"
-			new panel layout=hbox spacing=8 row=3 column=0 column_span=2 halign=textend fill=none children={
+		new panel border layout=grid spacing=8 columns={
+			new band id=labels
+			new band id=fields stretch=1
+		} children={
+			new label caption="Name:" row=0 column=labels halign=textend fill=none
+			new textinput row=0 column=fields placeholder="Ada Lovelace"
+			new label caption="Address:" row=1 column=labels halign=textend fill=none
+			new textinput row=1 column=fields placeholder="12 Marylebone Road"
+			new label caption="Notes:" row=2 column=labels halign=textend valign=top fill=none
+			new textinput row=2 column=fields placeholder="anything at all"
+			new panel layout=hbox spacing=8 row=3 column=labels column_span=2 halign=textend fill=none children={
 				new button caption="Save" action=demo.grid.save
 				new button caption="Cancel" action=demo.grid.cancel
 			}

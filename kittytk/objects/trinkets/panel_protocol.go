@@ -57,6 +57,10 @@ func init() {
 				}
 				return nil
 			})).OneOf("vbox", "hbox", "grid", "flex", "none").Tip("Child layout manager"),
+			"columns": bandCollection("columns", (*layout.GridLayout).AddColumn).
+				Tip("The grid's columns, in order, left to right."),
+			"rows": bandCollection("rows", (*layout.GridLayout).AddRow).
+				Tip("The grid's rows, in order, top to bottom."),
 			"flex_direction": flexEnumProp("flex_direction",
 				map[string]layout.FlexDirection{
 					"row":            layout.FlexRow,

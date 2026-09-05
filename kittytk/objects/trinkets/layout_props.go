@@ -72,6 +72,33 @@ func gridProp(name string, into func(*core.GridPlacement, int), min int) protoco
 	}))
 }
 
+// gridTrackProp is a child's row or column, which is either an index or the
+// id of a band. A name is kept as written and settled against the grid's
+// bands at layout time, so a child may be given before the band it names.
+func gridTrackProp(name string, into func(*core.GridPlacement, int, string)) protocol.Property {
+	return protocol.NewProperty("int", wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+		h, ok := w.(interface{ SetLayoutGridPlacement(core.GridPlacement) })
+		if !ok {
+			return fmt.Errorf("%s: not supported by this type", name)
+		}
+		p := gridPlacementOf(w)
+		switch {
+		case f == protocol.FlagNone && v != nil && v.Kind == protocol.WordValue:
+			into(&p, 0, v.Word)
+		case f == protocol.FlagNone && v != nil && v.Kind == protocol.NumberValue && v.IsInt:
+			n := int(v.Number)
+			if n < 0 {
+				return fmt.Errorf("%s: %d is below 0", name, n)
+			}
+			into(&p, n, "")
+		default:
+			return fmt.Errorf("%s: expected an index or a band id", name)
+		}
+		h.SetLayoutGridPlacement(p)
+		return nil
+	}))
+}
+
 // flexHintsOf reads a trinket's flex hints, starting from the defaults a flex
 // layout gives a child that says nothing: no growing, ordinary shrinking, and
 // a size taken from the child itself.
@@ -114,12 +141,12 @@ func flexFloatProp(name string, into func(*core.FlexHints, float64)) protocol.Pr
 // registerLayoutProperties wires the grid and flex hints that travel with a
 // child.
 func registerLayoutProperties() {
-	protocol.RegisterCommonProperty("row", gridProp("row",
-		func(p *core.GridPlacement, n int) { p.Row = n }, 0).
-		Def("0").Tip("Grid row this child occupies."))
-	protocol.RegisterCommonProperty("column", gridProp("column",
-		func(p *core.GridPlacement, n int) { p.Column = n }, 0).
-		Def("0").Tip("Grid column this child occupies."))
+	protocol.RegisterCommonProperty("row", gridTrackProp("row",
+		func(p *core.GridPlacement, n int, id string) { p.Row, p.RowID = n, id }).
+		Def("0").Tip("Grid row this child occupies: an index, or the id of a band."))
+	protocol.RegisterCommonProperty("column", gridTrackProp("column",
+		func(p *core.GridPlacement, n int, id string) { p.Column, p.ColumnID = n, id }).
+		Def("0").Tip("Grid column this child occupies: an index, or the id of a band."))
 	protocol.RegisterCommonProperty("row_span", gridProp("row_span",
 		func(p *core.GridPlacement, n int) { p.RowSpan = n }, 1).
 		Def("1").Tip("How many grid rows this child covers."))

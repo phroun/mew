@@ -13,28 +13,44 @@ type GridItem struct {
 	RowSpan    int
 	ColumnSpan int
 	Align      core.Alignment
+	// RowID and ColumnID are the bands the child named, if it named any.
+	// They settle into Row and Column on every pass, because a grid may be
+	// given its bands after its children.
+	RowID    string
+	ColumnID string
+	// RowStretch and ColumnStretch are what the child asked of the bands it
+	// sits in, folded into them once those bands are known.
+	RowStretch    int
+	ColumnStretch int
 }
 
 // GridLayout arranges trinkets in a grid of rows and columns.
 // This is similar to Qt's QGridLayout.
 type GridLayout struct {
 	BaseLayout
-	items          []*GridItem
-	rowStretch     map[int]int
-	columnStretch  map[int]int
-	rowMinHeight   map[int]core.Unit
-	columnMinWidth map[int]core.Unit
+	items   []*GridItem
+	columns []Band
+	rows    []Band
 }
 
 // NewGridLayout creates a new grid layout.
 func NewGridLayout() *GridLayout {
-	return &GridLayout{
-		rowStretch:     make(map[int]int),
-		columnStretch:  make(map[int]int),
-		rowMinHeight:   make(map[int]core.Unit),
-		columnMinWidth: make(map[int]core.Unit),
-	}
+	return &GridLayout{}
 }
+
+// AddColumn and AddRow append a band, which takes the index its position
+// gives it. A grid may be described only as far as it needs describing: the
+// bands past the last one given behave as bands that ask for nothing.
+func (l *GridLayout) AddColumn(b Band) { l.columns = append(l.columns, b) }
+
+// AddRow appends a row band (see AddColumn).
+func (l *GridLayout) AddRow(b Band) { l.rows = append(l.rows, b) }
+
+// Columns and Rows return the bands as given.
+func (l *GridLayout) Columns() []Band { return l.columns }
+
+// Rows returns the row bands as given (see Columns).
+func (l *GridLayout) Rows() []Band { return l.rows }
 
 // effectiveMetrics resolves grid metrics from the given container if it is a
 // trinket, else the defaults. Layouts are not trinkets, so they cannot walk the
@@ -54,25 +70,43 @@ func (l *GridLayout) effectiveMetrics(container core.Container) core.CellMetrics
 // which is how a grid is reachable from a build script at all: everything the
 // grid needs to know travels on the child.
 func (l *GridLayout) AddTrinket(trinket core.Trinket) {
-	row, column := len(l.items), 0
-	rowSpan, columnSpan := 1, 1
+	p := core.GridPlacement{Row: len(l.items), RowSpan: 1, ColumnSpan: 1}
 	if h, ok := trinket.(interface {
 		LayoutGridPlacement() (core.GridPlacement, bool)
 	}); ok {
-		if p, set := h.LayoutGridPlacement(); set {
-			row, column = p.Row, p.Column
-			rowSpan, columnSpan = p.RowSpan, p.ColumnSpan
-			// A row is one thing and cannot take two answers, so where two
-			// children in it ask for different stretches the largest wins.
-			if p.RowStretch > l.rowStretch[row] {
-				l.rowStretch[row] = p.RowStretch
-			}
-			if p.ColumnStretch > l.columnStretch[column] {
-				l.columnStretch[column] = p.ColumnStretch
-			}
+		if hint, set := h.LayoutGridPlacement(); set {
+			p = hint
 		}
 	}
-	l.AddTrinketAtWithSpan(trinket, row, column, rowSpan, columnSpan)
+	l.AddTrinketAtWithSpan(trinket, p.Row, p.Column, p.RowSpan, p.ColumnSpan)
+	item := l.items[len(l.items)-1]
+	item.RowID, item.ColumnID = p.RowID, p.ColumnID
+	item.RowStretch, item.ColumnStretch = p.RowStretch, p.ColumnStretch
+}
+
+// resolveBands settles where each item sits and what its bands were asked
+// for. A child that named a band is put in the band with that name, and the
+// stretch it asked of that band is folded in -- both here rather than when
+// the child was added, because a grid may be given its bands afterwards.
+//
+// A band is one thing and cannot take two answers, so where two children in
+// it ask for different stretches the largest is what the band gets. Folding
+// the same answer in twice changes nothing, so every pass may run this.
+func (l *GridLayout) resolveBands() {
+	for _, item := range l.items {
+		if i := bandIndex(l.columns, item.ColumnID); i >= 0 {
+			item.Column = i
+		}
+		if i := bandIndex(l.rows, item.RowID); i >= 0 {
+			item.Row = i
+		}
+		if item.RowStretch > 0 {
+			l.SetRowStretch(item.Row, maxInt(item.RowStretch, bandAt(l.rows, item.Row).Stretch))
+		}
+		if item.ColumnStretch > 0 {
+			l.SetColumnStretch(item.Column, maxInt(item.ColumnStretch, bandAt(l.columns, item.Column).Stretch))
+		}
+	}
 }
 
 // AddTrinketAt adds a trinket at the given row and column.
@@ -131,26 +165,39 @@ func (l *GridLayout) ItemAt(index int) *GridItem {
 
 // SetRowStretch sets the stretch factor for a row.
 func (l *GridLayout) SetRowStretch(row, stretch int) {
-	l.rowStretch[row] = stretch
+	l.rows = growBands(l.rows, row)
+	l.rows[row].Stretch = stretch
 }
 
 // SetColumnStretch sets the stretch factor for a column.
 func (l *GridLayout) SetColumnStretch(column, stretch int) {
-	l.columnStretch[column] = stretch
+	l.columns = growBands(l.columns, column)
+	l.columns[column].Stretch = stretch
 }
 
 // SetRowMinimumHeight sets the minimum height for a row.
 func (l *GridLayout) SetRowMinimumHeight(row int, height core.Unit) {
-	l.rowMinHeight[row] = height
+	l.rows = growBands(l.rows, row)
+	l.rows[row].Minimum = height
 }
 
 // SetColumnMinimumWidth sets the minimum width for a column.
 func (l *GridLayout) SetColumnMinimumWidth(column int, width core.Unit) {
-	l.columnMinWidth[column] = width
+	l.columns = growBands(l.columns, column)
+	l.columns[column].Minimum = width
+}
+
+// maxInt is the larger of two stretch factors.
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // RowCount returns the number of rows.
 func (l *GridLayout) RowCount() int {
+	l.resolveBands()
 	maxRow := 0
 	for _, item := range l.items {
 		endRow := item.Row + item.RowSpan
@@ -163,6 +210,7 @@ func (l *GridLayout) RowCount() int {
 
 // ColumnCount returns the number of columns.
 func (l *GridLayout) ColumnCount() int {
+	l.resolveBands()
 	maxCol := 0
 	for _, item := range l.items {
 		endCol := item.Column + item.ColumnSpan
@@ -327,7 +375,7 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, metric
 		// the child's hint raised to its own min_width, so a minimum written
 		// on a child reaches the column it sits in -- as it reaches the line
 		// it sits in inside a box.
-		minWidth := l.columnMinWidth[c]
+		minWidth := bandAt(l.columns, c).Minimum
 
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
@@ -342,7 +390,7 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, metric
 
 		items[c] = stretchItem{
 			minimum: minWidth,
-			stretch: l.columnStretch[c],
+			stretch: bandAt(l.columns, c).Stretch,
 		}
 	}
 
@@ -357,7 +405,7 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.U
 
 	for r := 0; r < rows; r++ {
 		// The row's own floor, then what its children need (see above).
-		minHeight := l.rowMinHeight[r]
+		minHeight := bandAt(l.rows, r).Minimum
 
 		for _, item := range l.items {
 			if item.Row == r && item.RowSpan == 1 {
@@ -369,7 +417,7 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.U
 
 		items[r] = stretchItem{
 			minimum: minHeight,
-			stretch: l.rowStretch[r],
+			stretch: bandAt(l.rows, r).Stretch,
 		}
 	}
 
@@ -438,7 +486,7 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 	// hold them, so the grid has to ask for them.
 	colWidths := make([]core.Unit, cols)
 	for c := 0; c < cols; c++ {
-		colWidths[c] = l.columnMinWidth[c]
+		colWidths[c] = bandAt(l.columns, c).Minimum
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
 				w := item.Trinket.SizeHint().Width + 2*sideBearing(item.Trinket, metrics)
@@ -452,7 +500,7 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 	// Calculate preferred row heights
 	rowHeights := make([]core.Unit, rows)
 	for r := 0; r < rows; r++ {
-		rowHeights[r] = l.rowMinHeight[r]
+		rowHeights[r] = bandAt(l.rows, r).Minimum
 		for _, item := range l.items {
 			if item.Row == r && item.RowSpan == 1 {
 				hint := item.Trinket.SizeHint()
@@ -497,7 +545,7 @@ func (l *GridLayout) MinimumSize(container core.Container) core.UnitSize {
 	// Calculate minimum column widths, bearings included (see SizeHint).
 	colWidths := make([]core.Unit, cols)
 	for c := 0; c < cols; c++ {
-		colWidths[c] = l.columnMinWidth[c]
+		colWidths[c] = bandAt(l.columns, c).Minimum
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
 				w := item.Trinket.MinimumSize().Width + 2*sideBearing(item.Trinket, metrics)
@@ -511,7 +559,7 @@ func (l *GridLayout) MinimumSize(container core.Container) core.UnitSize {
 	// Calculate minimum row heights
 	rowHeights := make([]core.Unit, rows)
 	for r := 0; r < rows; r++ {
-		rowHeights[r] = l.rowMinHeight[r]
+		rowHeights[r] = bandAt(l.rows, r).Minimum
 		for _, item := range l.items {
 			if item.Row == r && item.RowSpan == 1 {
 				minSize := item.Trinket.MinimumSize()

@@ -151,6 +151,25 @@ only as far as it must. The same is true of `RowSpan` and row heights. Either
 distribute it, or say plainly that a span never sizes a column and leave the
 author to give the columns minimums.
 
+### Alignment cannot say which axis it was asked about
+*Found 2026-09-05 while giving grid bands their properties.*
+
+`core.Alignment` carries `H`, `V`, `FillH` and `FillV` behind a single "was one
+set" flag. A child that writes only `halign=textend` gets the whole default
+struct with `H` replaced, and nothing downstream can tell that from a child
+that stated both axes.
+
+This is why a band carries no alignment of its own. A column band saying "my
+labels end at the trailing edge" would be the obvious way to write the Grid
+demo's form -- `halign=textend fill=none` appears on three labels that all mean
+the same thing -- but under one flag a child that then wrote `valign=top` would
+silently lose the band's horizontal answer as well.
+
+Per-axis "stated" flags on `Alignment` would settle it, and a band could then
+supply the horizontal from the column it is and the vertical from the row.
+That is a change to a struct box, flex and grid all read, so it wants doing on
+its own rather than inside a band change.
+
 ### Nothing keeps a trinket's bounds on the cell grid
 On a cell surface, drawing rounds and hit-testing does not: `UnitsToCellX`
 integer-divides (`backend/tui/tui.go:993`) while `UnitRect.Contains` works in

@@ -14,8 +14,13 @@ package core
 // A span of zero is one cell. The stretches are weights, and where two children
 // in the same row or column ask for different ones the largest is what that row
 // or column gets -- a row is one thing, and cannot take two answers.
+//
+// RowID and ColumnID name a band instead of counting to one. A child that
+// names a band the grid has is put in that band whatever Row or Column says,
+// which is what lets a track be inserted without renumbering the form.
 type GridPlacement struct {
 	Row, Column         int
+	RowID, ColumnID     string
 	RowSpan, ColumnSpan int
 	RowStretch          int
 	ColumnStretch       int
