@@ -499,6 +499,12 @@ func canMaximize(flags WindowFlags) bool {
 	return flags&WindowFlagNoMaximize == 0 && flags&WindowFlagNoResize == 0
 }
 
+// CanMaximize reports whether this window may be maximized, so a host outside
+// this package asks the same question its own chrome does.
+func (w *Window) CanMaximize() bool {
+	return canMaximize(w.Flags())
+}
+
 // hasTitleBar reports whether the window shows a title bar in the given state,
 // and thus whether its title-bar hit regions are live: the caption buttons,
 // drag-to-move/detach, and double-click-to-restore. A NoTitle or Frameless

@@ -23,10 +23,38 @@ type Band struct {
 	// Minimum is the floor, in units, that the band holds whatever its
 	// children ask for.
 	Minimum core.Unit
+
+	// Maximum is how far the band grows, in units, and MaximumSet says
+	// whether it was given one -- zero is a real maximum, and collapses the
+	// track, so a band that names none has to be told apart from one capped
+	// at nothing. Ceiling is how to read the pair.
+	//
+	// A flag rather than the core.Unbounded a size property carries, because
+	// a Band is written as a literal and its zero value has to be a band that
+	// asks for nothing. It is the arrangement FlexHints.ShrinkSet already
+	// uses, for the same reason.
+	Maximum    core.Unit
+	MaximumSet bool
 }
 
-// bandAt returns the band at index, or a zero band where the grid has fewer
-// bands than it has tracks -- a grid is as wide as its children make it, and
+// Capped returns the band, grown no further than max. Zero collapses the
+// track it stands for; core.Unbounded takes the limit off again.
+func (b Band) Capped(max core.Unit) Band {
+	b.Maximum, b.MaximumSet = max, true
+	return b
+}
+
+// Ceiling is how far the band grows, or core.Unbounded where it was given no
+// maximum -- the spelling everything outside a Band uses.
+func (b Band) Ceiling() core.Unit {
+	if b.MaximumSet {
+		return b.Maximum
+	}
+	return core.Unbounded
+}
+
+// bandAt returns the band at index, or one asking for nothing where the grid
+// has fewer bands than it has tracks -- a grid is as wide as its children make it, and
 // bands describe only as far as they were given.
 func bandAt(bands []Band, index int) Band {
 	if index < 0 || index >= len(bands) {

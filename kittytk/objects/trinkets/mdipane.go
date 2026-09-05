@@ -653,6 +653,12 @@ func (m *MDIPane) cycle(forward bool) {
 
 // MaximizeWindow maximizes a window to fill the MDI pane.
 func (m *MDIPane) MaximizeWindow(win *window.Window) {
+	// A window that cannot be maximized is left alone, as the desktop's
+	// manager leaves it: maximizing is a resize, and a fixed-size dialog
+	// asked not to be resized.
+	if !win.CanMaximize() {
+		return
+	}
 	clientArea := m.ClientArea()
 	win.Maximize()
 	win.SetBounds(clientArea)
@@ -1595,7 +1601,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				m.lastClickWindow = win
 				m.mu.Unlock()
 
-				if isDoubleClick && win.Flags()&window.WindowFlagNoMaximize == 0 {
+				if isDoubleClick && win.CanMaximize() {
 					if win.IsMaximized() {
 						win.Restore()
 					} else {
@@ -1719,7 +1725,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// Maximize gesture: only when the POINTER itself moves above the pane's
 		// top (into/past the pane edge), not merely when the window's top edge
 		// is lifted there by the grab offset - which fired too eagerly.
-		if event.Y < clientArea.Y && dragging.Flags()&window.WindowFlagNoMaximize == 0 && !justRestored {
+		if event.Y < clientArea.Y && dragging.CanMaximize() && !justRestored {
 			if !dragging.IsMaximized() {
 				m.MaximizeWindow(dragging)
 			}

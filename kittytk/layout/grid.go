@@ -171,6 +171,19 @@ func (l *GridLayout) SetColumnMinimumWidth(column int, width core.Unit) {
 	l.columns[column].Minimum = width
 }
 
+// SetRowMaximumHeight sets how far a row grows. core.Unbounded removes the
+// limit; zero collapses the row.
+func (l *GridLayout) SetRowMaximumHeight(row int, height core.Unit) {
+	l.rows = growBands(l.rows, row)
+	l.rows[row] = l.rows[row].Capped(height)
+}
+
+// SetColumnMaximumWidth sets how far a column grows (see SetRowMaximumHeight).
+func (l *GridLayout) SetColumnMaximumWidth(column int, width core.Unit) {
+	l.columns = growBands(l.columns, column)
+	l.columns[column] = l.columns[column].Capped(width)
+}
+
 // RowCount returns the number of rows.
 func (l *GridLayout) RowCount() int {
 	l.resolveBands()
@@ -397,7 +410,7 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, gaps [
 	items := make([]stretchItem, cols)
 	for c := 0; c < cols; c++ {
 		band := bandAt(l.columns, c)
-		items[c] = stretchItem{minimum: floors[c], maximum: core.Unbounded, stretch: band.Stretch}
+		items[c] = stretchItem{minimum: floors[c], maximum: band.Ceiling(), stretch: band.Stretch}
 	}
 	// The boundaries were taken out by the caller (see columnGaps).
 	return calculateStretch(available, items)
@@ -409,7 +422,7 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int, gaps []c
 	items := make([]stretchItem, rows)
 	for r := 0; r < rows; r++ {
 		band := bandAt(l.rows, r)
-		items[r] = stretchItem{minimum: floors[r], maximum: core.Unbounded, stretch: band.Stretch}
+		items[r] = stretchItem{minimum: floors[r], maximum: band.Ceiling(), stretch: band.Stretch}
 	}
 	return calculateStretch(available-sumGaps(gaps), items)
 }

@@ -147,3 +147,29 @@ func TestATrackIsAnIndexOrABandId(t *testing.T) {
 		t.Errorf("a negative row: %q", err)
 	}
 }
+
+// max_size on a band caps the track, and -1 is how a band says it has no
+// limit -- the same spelling max_width uses on a trinket.
+func TestABandsMaximumOnTheWire(t *testing.T) {
+	p := buildBandPanel(t, `
+new panel layout=grid columns={
+	new band id=narrow max_size=96
+	new band id=open
+	new band id=gone max_size=0
+	new band id=stated max_size=-1
+}`)
+	cols := p.LayoutManager().(*layout.GridLayout).Columns()
+	if len(cols) != 4 {
+		t.Fatalf("the grid has %d columns, want 4", len(cols))
+	}
+	for i, want := range []core.Unit{96, core.Unbounded, 0, core.Unbounded} {
+		if got := cols[i].Ceiling(); got != want {
+			t.Errorf("column %d (%s) has a ceiling of %d, want %d", i, cols[i].ID, got, want)
+		}
+	}
+
+	err := buildBandErr(t, `new panel layout=grid columns={ new band max_size=-2 }`)
+	if !strings.Contains(err, "max_size") || !strings.Contains(err, "below -1") {
+		t.Errorf("max_size=-2 gave %q", err)
+	}
+}

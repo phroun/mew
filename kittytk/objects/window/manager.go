@@ -2421,7 +2421,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				m.lastClickWindow = win
 				m.mu.Unlock()
 
-				if isDoubleClick && win.Flags()&WindowFlagNoMaximize == 0 {
+				if isDoubleClick && canMaximize(win.Flags()) {
 					if win.IsMaximized() {
 						win.Restore()
 					} else {

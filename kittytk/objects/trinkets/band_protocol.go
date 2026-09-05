@@ -13,7 +13,7 @@ import (
 // than by anything it says about itself:
 //
 //	new panel layout=grid spacing=8 columns={
-//	    new band id=labels
+//	    new band id=labels max_size=96
 //	    new band id=fields stretch=1 min_size=80
 //	} children={
 //	    new label caption="Name:" row=0 column=labels halign=textend fill=none
@@ -63,6 +63,17 @@ func init() {
 				b.band.Minimum = core.Unit(n)
 				return nil
 			})).Def("0").Tip("Floor across the band -- width for a column, height for a row -- in units."),
+			"max_size": protocol.NewProperty("units", wprop("max_size", func(_ *protocol.BindContext, b *wireBand, v *protocol.Value, f protocol.FlagState) error {
+				n, err := protocol.AsInt("max_size", v, f)
+				if err != nil {
+					return err
+				}
+				if core.Unit(n) < core.Unbounded {
+					return fmt.Errorf("max_size: %d is below %d", n, core.Unbounded)
+				}
+				b.band = b.band.Capped(core.Unit(n))
+				return nil
+			})).Def("-1").Tip("How far the band grows, in units. -1 is no limit; 0 collapses the track while its boundaries stay."),
 		},
 	})
 }
