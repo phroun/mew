@@ -223,10 +223,11 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// What the boundaries take -- or give back, where two bearings close up --
 	// is not the columns' to divide.
 	gaps := l.columnGaps(cols, metrics)
-	colWidths := l.calculateColumnWidths(rect.Width-sumGaps(gaps), cols, metrics)
+	colWidths := l.calculateColumnWidths(rect.Width-sumGaps(gaps), cols, gaps, metrics)
 
 	// Calculate row heights
-	rowHeights := l.calculateRowHeights(rect.Height, rows)
+	rowGaps := l.rowGaps(rows)
+	rowHeights := l.calculateRowHeights(rect.Height, rows, rowGaps)
 
 	// Calculate column positions.
 	colX := make([]core.Unit, cols+1)
@@ -341,67 +342,74 @@ func sumGaps(gaps []core.Unit) core.Unit {
 	return total
 }
 
-// calculateColumnWidths calculates the width of each column.
-func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, metrics core.CellMetrics) []core.Unit {
-	// Collect minimum widths and stretch factors
-	items := make([]stretchItem, cols)
-
+// columnFloors is how wide each column has to be before anything is shared
+// out: its band's own minimum, raised by what the children in it need.
+//
+// size reads the extent the calling pass is measuring, and takes the child's
+// side-bearings with it -- the column has to hold them, so it has to ask for
+// them: a cell is where the child goes, bearings and all.
+func (l *GridLayout) columnFloors(cols int, gaps []core.Unit, size func(core.Trinket) core.Unit) []core.Unit {
+	floors := make([]core.Unit, cols)
 	for c := 0; c < cols; c++ {
-		// The column's own floor, then what its children need. itemSize is
-		// the child's hint raised to its own min_width, so a minimum written
-		// on a child reaches the column it sits in -- as it reaches the line
-		// it sits in inside a box.
-		minWidth := bandAt(l.columns, c).Minimum
-
+		floors[c] = bandAt(l.columns, c).Minimum
 		for _, item := range l.items {
+			// A spanning child is not one column's to hold; it makes its claim
+			// on the run below, once every column has what is its own.
 			if item.Column == c && item.ColumnSpan == 1 {
-				// Plus the child's own side-bearings, which the column has to
-				// hold for it: a cell is where the child goes, bearings and all.
-				w := itemSize(item.Trinket).Width + 2*sideBearing(item.Trinket, metrics)
-				if w > minWidth {
-					minWidth = w
+				if w := size(item.Trinket); w > floors[c] {
+					floors[c] = w
 				}
 			}
 		}
+	}
+	raiseForSpans(floors, l.columns, gaps, l.columnSpans(size))
+	return floors
+}
 
-		items[c] = stretchItem{
-			minimum: minWidth,
-			stretch: bandAt(l.columns, c).Stretch,
+// rowFloors is columnFloors down the other axis.
+func (l *GridLayout) rowFloors(rows int, gaps []core.Unit, size func(core.Trinket) core.Unit) []core.Unit {
+	floors := make([]core.Unit, rows)
+	for r := 0; r < rows; r++ {
+		floors[r] = bandAt(l.rows, r).Minimum
+		for _, item := range l.items {
+			if item.Row == r && item.RowSpan == 1 {
+				if h := size(item.Trinket); h > floors[r] {
+					floors[r] = h
+				}
+			}
 		}
 	}
+	raiseForSpans(floors, l.rows, gaps, l.rowSpans(size))
+	return floors
+}
 
+// laidOutWidth is what a child occupies across its columns: its hint raised to
+// its own min_width, plus the side-bearings the cell holds for it.
+func laidOutWidth(metrics core.CellMetrics) func(core.Trinket) core.Unit {
+	return func(w core.Trinket) core.Unit {
+		return itemSize(w).Width + 2*sideBearing(w, metrics)
+	}
+}
+
+// calculateColumnWidths calculates the width of each column.
+func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, gaps []core.Unit, metrics core.CellMetrics) []core.Unit {
+	floors := l.columnFloors(cols, gaps, laidOutWidth(metrics))
+	items := make([]stretchItem, cols)
+	for c := 0; c < cols; c++ {
+		items[c] = stretchItem{minimum: floors[c], stretch: bandAt(l.columns, c).Stretch}
+	}
 	// The boundaries were taken out by the caller (see columnGaps).
 	return calculateStretch(available, items)
 }
 
 // calculateRowHeights calculates the height of each row.
-func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.Unit {
-	// Collect minimum heights and stretch factors
+func (l *GridLayout) calculateRowHeights(available core.Unit, rows int, gaps []core.Unit) []core.Unit {
+	floors := l.rowFloors(rows, gaps, func(w core.Trinket) core.Unit { return itemSize(w).Height })
 	items := make([]stretchItem, rows)
-
 	for r := 0; r < rows; r++ {
-		// The row's own floor, then what its children need (see above).
-		minHeight := bandAt(l.rows, r).Minimum
-
-		for _, item := range l.items {
-			if item.Row == r && item.RowSpan == 1 {
-				if h := itemSize(item.Trinket).Height; h > minHeight {
-					minHeight = h
-				}
-			}
-		}
-
-		items[r] = stretchItem{
-			minimum: minHeight,
-			stretch: bandAt(l.rows, r).Stretch,
-		}
+		items[r] = stretchItem{minimum: floors[r], stretch: bandAt(l.rows, r).Stretch}
 	}
-
-	// Account for spacing
-	totalSpacing := l.spacing * core.Unit(rows-1)
-	availableForRows := available - totalSpacing
-
-	return calculateStretch(availableForRows, items)
+	return calculateStretch(available-sumGaps(gaps), items)
 }
 
 // alignItem adjusts item bounds based on alignment. Each axis is placed on
@@ -457,54 +465,37 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 	}
 
 	metrics := l.effectiveMetrics(container)
+	return l.measure(cols, rows, metrics,
+		func(w core.Trinket) core.Unit {
+			return w.SizeHint().Width + 2*sideBearing(w, metrics)
+		},
+		func(w core.Trinket) core.Unit { return w.SizeHint().Height })
+}
 
-	// Calculate preferred column widths, bearings included: a column has to
-	// hold them, so the grid has to ask for them.
-	colWidths := make([]core.Unit, cols)
-	for c := 0; c < cols; c++ {
-		colWidths[c] = bandAt(l.columns, c).Minimum
-		for _, item := range l.items {
-			if item.Column == c && item.ColumnSpan == 1 {
-				w := item.Trinket.SizeHint().Width + 2*sideBearing(item.Trinket, metrics)
-				if w > colWidths[c] {
-					colWidths[c] = w
-				}
-			}
-		}
+// measure is what the grid asks for: every track at the floor the given
+// extents put it at, plus what the boundaries between them cost, plus the
+// margins.
+//
+// SizeHint and MinimumSize differ only in the extent they read off a child, so
+// they share this -- and they charge the same boundaries Layout goes on to
+// consume. A grid that counted them differently reported a size it would not
+// then lay out: two inline children whose bearings close the boundary up by a
+// column had it charged as a column of spacing instead.
+func (l *GridLayout) measure(cols, rows int, metrics core.CellMetrics, width, height func(core.Trinket) core.Unit) core.UnitSize {
+	colGaps := l.columnGaps(cols, metrics)
+	rowGaps := l.rowGaps(rows)
+
+	var w, h core.Unit
+	for _, size := range l.columnFloors(cols, colGaps, width) {
+		w += size
+	}
+	for _, size := range l.rowFloors(rows, rowGaps, height) {
+		h += size
 	}
 
-	// Calculate preferred row heights
-	rowHeights := make([]core.Unit, rows)
-	for r := 0; r < rows; r++ {
-		rowHeights[r] = bandAt(l.rows, r).Minimum
-		for _, item := range l.items {
-			if item.Row == r && item.RowSpan == 1 {
-				hint := item.Trinket.SizeHint()
-				if hint.Height > rowHeights[r] {
-					rowHeights[r] = hint.Height
-				}
-			}
-		}
-	}
-
-	// Sum up
-	var width, height core.Unit
-	for _, w := range colWidths {
-		width += w
-	}
-	for _, h := range rowHeights {
-		height += h
-	}
-
-	// Add spacing
-	width += l.spacing * core.Unit(cols-1)
-	height += l.spacing * core.Unit(rows-1)
-
-	// Add margins
-	width += l.margins.Horizontal()
-	height += l.margins.Vertical()
-
-	return core.UnitSize{Width: width, Height: height}
+	w += sumGaps(colGaps) + l.margins.Horizontal()
+	h += sumGaps(rowGaps) + l.margins.Vertical()
+	return core.UnitSize{Width: w, Height: h}
 }
 
 // MinimumSize returns the minimum size for the container.
@@ -517,51 +508,9 @@ func (l *GridLayout) MinimumSize(container core.Container) core.UnitSize {
 	}
 
 	metrics := l.effectiveMetrics(container)
-
-	// Calculate minimum column widths, bearings included (see SizeHint).
-	colWidths := make([]core.Unit, cols)
-	for c := 0; c < cols; c++ {
-		colWidths[c] = bandAt(l.columns, c).Minimum
-		for _, item := range l.items {
-			if item.Column == c && item.ColumnSpan == 1 {
-				w := item.Trinket.MinimumSize().Width + 2*sideBearing(item.Trinket, metrics)
-				if w > colWidths[c] {
-					colWidths[c] = w
-				}
-			}
-		}
-	}
-
-	// Calculate minimum row heights
-	rowHeights := make([]core.Unit, rows)
-	for r := 0; r < rows; r++ {
-		rowHeights[r] = bandAt(l.rows, r).Minimum
-		for _, item := range l.items {
-			if item.Row == r && item.RowSpan == 1 {
-				minSize := item.Trinket.MinimumSize()
-				if minSize.Height > rowHeights[r] {
-					rowHeights[r] = minSize.Height
-				}
-			}
-		}
-	}
-
-	// Sum up
-	var width, height core.Unit
-	for _, w := range colWidths {
-		width += w
-	}
-	for _, h := range rowHeights {
-		height += h
-	}
-
-	// Add spacing
-	width += l.spacing * core.Unit(cols-1)
-	height += l.spacing * core.Unit(rows-1)
-
-	// Add margins
-	width += l.margins.Horizontal()
-	height += l.margins.Vertical()
-
-	return core.UnitSize{Width: width, Height: height}
+	return l.measure(cols, rows, metrics,
+		func(w core.Trinket) core.Unit {
+			return w.MinimumSize().Width + 2*sideBearing(w, metrics)
+		},
+		func(w core.Trinket) core.Unit { return w.MinimumSize().Height })
 }

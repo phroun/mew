@@ -133,28 +133,6 @@ worth filing.
 
 ## KittyTK — layout and the cell grid
 
-### GridLayout: a spanning child contributes to no column's width
-*Found 2026-09-05 while testing the column boundaries. Verified against current
-code.*
-
-`calculateColumnWidths` and the two size passes measure only children whose
-`ColumnSpan` is 1 (`layout/grid.go`, the `item.ColumnSpan == 1` guards). A child
-that spans several columns is therefore invisible to all of them, so columns
-holding nothing else collapse to zero and the span comes out at the width of the
-boundaries it crosses.
-
-Reproduced: a 120-wide child spanning columns 0 and 1, with nothing else in
-either column, in a grid 400 wide -- the span was laid out 8 units wide.
-
-Qt divides a spanning item's width across the columns it covers, raising each
-only as far as it must. The same is true of `RowSpan` and row heights. Either
-distribute it, or say plainly that a span never sizes a column and leave the
-author to give the columns minimums.
-
-The related question -- whether a span may set a column's stretch -- is
-settled: stretch is written on the band and never on a child, so a span has
-nothing to set.
-
 ### Alignment cannot say which axis it was asked about
 *Found 2026-09-05 while giving grid bands their properties.*
 
