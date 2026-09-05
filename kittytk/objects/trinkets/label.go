@@ -16,6 +16,10 @@ type Label struct {
 	text      string
 	alignment core.Alignment
 	wordWrap  bool
+
+	// textDirection overrides what the caption itself says about which way
+	// it runs. DirInherit -- the zero value -- reads the caption.
+	textDirection core.Direction
 }
 
 // NewLabel creates a new label with the given text.
@@ -52,6 +56,19 @@ func (l *Label) Alignment() core.Alignment {
 // SetAlignment sets the text alignment.
 func (l *Label) SetAlignment(align core.Alignment) {
 	l.alignment = align
+	l.Update()
+}
+
+// TextDirection implements core.TextDirectioner: the direction set on the
+// label, else what its caption says, else no opinion.
+func (l *Label) TextDirection() (core.Direction, bool) {
+	return textDirectionOf(l.textDirection, l.text)
+}
+
+// SetTextDirection overrides which way the caption is taken to run;
+// core.DirInherit hands the question back to the caption itself.
+func (l *Label) SetTextDirection(d core.Direction) {
+	l.textDirection = d
 	l.Update()
 }
 

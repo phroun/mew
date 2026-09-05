@@ -250,6 +250,23 @@ func init() {
 		return fmt.Errorf("align: not supported by this type")
 	})).OneOf("fill", "left", "center", "right", "top", "middle", "bottom").Tip("Layout alignment of this item in its cell."))
 
+	protocol.RegisterCommonProperty("direction", protocol.NewProperty("enum", wprop("direction", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+		word, err := protocol.AsWord("direction", v, f)
+		if err != nil {
+			return err
+		}
+		d, err := directionWord("direction", word)
+		if err != nil {
+			return err
+		}
+		if h, ok := w.(interface{ SetDirection(core.Direction) }); ok {
+			h.SetDirection(d)
+			return nil
+		}
+		return fmt.Errorf("direction: not supported by this type")
+	})).OneOf("inherit", "ltr", "rtl").Def("inherit").
+		Tip("Side text begins on, here and below; inherit takes it from the container."))
+
 	// Colors (vocabulary decision 2026-07-05): named colors as bare
 	// words, RGB as quoted "#rrggbb". fg/bg build on the trinket's
 	// custom style override.

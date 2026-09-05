@@ -370,6 +370,10 @@ type TrinketBase struct {
 	layoutAlign    Alignment
 	layoutAlignSet bool
 
+	// direction is the side text begins on for this trinket and everything
+	// below it. DirInherit -- the zero value -- takes it from the ancestors.
+	direction Direction
+
 	visible bool
 	enabled bool
 	focused bool
@@ -624,6 +628,27 @@ func (w *TrinketBase) SetLayoutAlignment(a Alignment) {
 	defer w.mu.Unlock()
 	w.layoutAlign = a
 	w.layoutAlignSet = true
+}
+
+// Direction returns the direction named on this trinket, or DirInherit to
+// take it from the parent chain. See FindEffectiveDirection.
+func (w *TrinketBase) Direction() Direction {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.direction
+}
+
+// SetDirection names the side text begins on for this trinket and everything
+// below it; DirInherit hands the question back to the ancestors.
+//
+// Everything under it is placed against this, so the tree below repaints.
+func (w *TrinketBase) SetDirection(d Direction) {
+	w.mu.Lock()
+	w.direction = d
+	w.needsRepaint = true
+	w.mu.Unlock()
+
+	w.notifyAncestorsOfRepaint()
 }
 
 // Margins returns the margins.

@@ -34,6 +34,7 @@ func init() {
 				}
 				return nil
 			})).OneOf("left", "center", "right").Tip("Text alignment within the label."),
+			"text_direction": textDirectionProp((*Label).SetTextDirection),
 		},
 		nil,
 		nil,
