@@ -242,11 +242,22 @@ func (p *Panel) SetFixedWidth(w core.Unit) {
 
 // MinimumSize returns the minimum size in the outer currency.
 func (p *Panel) MinimumSize() core.UnitSize {
+	size := core.UnitSize{Width: 16, Height: 16}
 	if p.layoutManager != nil {
 		outer, interior := p.denominations()
-		return core.ExchangeSize(p.plusChrome(p.layoutManager.MinimumSize(p), interior), interior, outer)
+		size = core.ExchangeSize(p.plusChrome(p.layoutManager.MinimumSize(p), interior), interior, outer)
 	}
-	return core.UnitSize{Width: 16, Height: 16}
+	// What its content needs, or what min_width and min_height demanded of it,
+	// whichever is larger: a panel that answered only for its content dropped
+	// a minimum written on it.
+	own := p.TrinketBase.MinimumSize()
+	if own.Width > size.Width {
+		size.Width = own.Width
+	}
+	if own.Height > size.Height {
+		size.Height = own.Height
+	}
+	return size
 }
 
 // HasHeightForWidth reports whether this panel's content height depends

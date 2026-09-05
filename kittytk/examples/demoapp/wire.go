@@ -120,13 +120,61 @@ func (a *app) wireMainWindow() {
 	ui.Object("tfmn").On("toggle", setMask(`echo=normal`))
 
 	a.wireDenomination(win)
+	a.wireLimits()
 	a.wireTerminalTab(tabs)
+}
+
+// wireLimits drives the Limits tab: the two bounds a trinket may carry, and
+// what a layout does when they bite.
+//
+// The middle box of the run takes a maximum and a minimum, so the maximum can
+// be watched stopping it -- and then watched losing to a minimum that
+// contradicts it. The capped button below shows the other half: a maximum
+// stops it filling its cell, and where it stops short its alignment places it.
+func (a *app) wireLimits() {
+	ui := a.ui
+	mid := ui.Object("lmid")
+	capped := ui.Object("lfill")
+
+	// Written as raw toggle events, the way the other radio groups here are:
+	// a group reports every button that changed, so each handler acts only on
+	// the one that came on.
+	set := func(target client.Handle, arg string) func(*protocol.Event) {
+		return func(ev *protocol.Event) {
+			if ev.Flag("checked") == protocol.FlagTrue {
+				_ = target.Set(arg)
+			}
+		}
+	}
+
+	ui.Object("lmaxnone").On("toggle", set(mid, "max_width=-1"))
+	ui.Object("lmax200").On("toggle", set(mid, "max_width=200"))
+	ui.Object("lmax120").On("toggle", set(mid, "max_width=120"))
+	ui.Object("lmax40").On("toggle", set(mid, "max_width=40"))
+	ui.Object("lmax0").On("toggle", set(mid, "max_width=0"))
+
+	ui.Object("lmin0").On("toggle", set(mid, "min_width=0"))
+	ui.Object("lmin160").On("toggle", set(mid, "min_width=160"))
+
+	ui.Object("lhbegin").On("toggle", set(capped, "halign=textbegin"))
+	ui.Object("lhcenter").On("toggle", set(capped, "halign=center"))
+	ui.Object("lhend").On("toggle", set(capped, "halign=textend"))
+
+	// Filling is what the maximum interrupts, so it is worth turning off to
+	// see that the two arrive at the same placement.
+	ui.Checkbox("lhfill").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = capped.Set("fill=both")
+			return
+		}
+		_ = capped.Set("fill=none")
+	})
 }
 
 // terminalTabIndex is the Terminal tab's position in the main window's
 // strip. The change event reports an index, so the tab has to be named by
 // one; a test checks the caption at this index is still "Terminal".
-const terminalTabIndex = 14
+const terminalTabIndex = 15
 
 // wireTerminalTab drives the Terminal tab's surface. The PTY starts the
 // first time the tab is selected rather than at build: a shell is a child

@@ -133,6 +133,26 @@ worth filing.
 
 ## KittyTK — layout and the cell grid
 
+### Layout hints other than alignment are snapshotted when a child is added
+*Found 2026-09-05 while building the demo's Limits tab.*
+
+A layout reads a child's hints in its `AddTrinket` and keeps the answer, so a
+hint set on a child that is ALREADY in a layout never reaches it. Over the
+wire that is `set k grow=3` on a trinket an earlier build placed -- accepted,
+stored on the trinket, and then read by nobody until the child is added to
+something again.
+
+Alignment is now read when the layout runs (`alignmentFor`), and a grid's band
+names and its bands' stretch already were (`resolveBands`). Still snapshotted:
+
+- `BoxLayout.AddTrinket` -> `item.Stretch`
+- `FlexLayout.AddTrinket` -> `item.Grow`, `item.Shrink`, `item.Basis`
+- `GridLayout.AddTrinket` -> `item.Row`, `item.Column`, and the two spans
+
+The same treatment fits all of them -- read the hint where it is used, keeping
+the stored value as the fallback for a Go caller that wrote the field
+directly. It is worth doing as one change rather than one manager at a time.
+
 ### Alignment cannot say which axis it was asked about
 *Found 2026-09-05 while giving grid bands their properties.*
 

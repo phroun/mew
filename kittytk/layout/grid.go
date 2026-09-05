@@ -429,9 +429,10 @@ func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir c
 	// the two arrive at the same question and are answered together.
 	hint := itemSize(item.Trinket)
 	max := item.Trinket.MaximumSize()
+	align := alignmentFor(item.Trinket, item.Align)
 
 	width := bounds.Width
-	if !item.Align.FillH {
+	if !align.FillH {
 		width = hint.Width
 	}
 	if max.Width >= 0 && width > max.Width {
@@ -443,7 +444,7 @@ func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir c
 	// Horizontal placement, once the logical alignment is spent against the
 	// item's own text and the direction around the grid.
 	if width < bounds.Width {
-		switch core.ResolveHAlign(item.Align.H, core.FindTextDirection(item.Trinket), layoutDir) {
+		switch core.ResolveHAlign(align.H, core.FindTextDirection(item.Trinket), layoutDir) {
 		case core.SideCenter:
 			bounds.X += (bounds.Width - width) / 2
 		case core.SideRight:
@@ -453,7 +454,7 @@ func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir c
 	}
 
 	height := bounds.Height
-	if !item.Align.FillV {
+	if !align.FillV {
 		height = hint.Height
 	}
 	if max.Height >= 0 && height > max.Height {
@@ -464,7 +465,7 @@ func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir c
 	}
 	// Vertical placement.
 	if height < bounds.Height {
-		switch item.Align.V {
+		switch align.V {
 		case core.AlignMiddle:
 			bounds.Y += (bounds.Height - height) / 2
 		case core.AlignBottom:

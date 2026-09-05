@@ -102,6 +102,29 @@ func (l *BaseLayout) effectiveBounds(bounds core.UnitRect) core.UnitRect {
 	}
 }
 
+// alignmentFor is how a child asks to be placed: what it says when it says
+// anything, else what the layout was given for it when it was added.
+//
+// Read when the layout runs rather than when the child was added, because
+// halign, valign and fill may be set on a child that is already placed --
+// over the wire, a `set` on a trinket the script built earlier.
+func alignmentFor(w core.Trinket, fallback core.Alignment) core.Alignment {
+	if a, set := statedAlignment(w); set {
+		return a
+	}
+	return fallback
+}
+
+// statedAlignment is the alignment a child states, and whether it states one.
+func statedAlignment(w core.Trinket) (core.Alignment, bool) {
+	if h, ok := w.(interface {
+		LayoutAlignment() (core.Alignment, bool)
+	}); ok {
+		return h.LayoutAlignment()
+	}
+	return core.Alignment{}, false
+}
+
 // calculateStretch distributes available space among stretching items.
 func calculateStretch(available core.Unit, items []stretchItem) []core.Unit {
 	if len(items) == 0 {

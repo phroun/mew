@@ -425,7 +425,7 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 	hint.Width -= ins.Horizontal()
 	hint.Height -= ins.Vertical()
 	policy := item.Trinket.SizePolicy()
-	align := item.Align
+	align := alignmentFor(item.Trinket, item.Align)
 
 	if l.orientation == core.Horizontal {
 		// A cross axis the trinket says is FIXED does not grow, whatever it is

@@ -377,6 +377,49 @@ new tab caption="Flex" children={
 	}
 }
 
+lim=new tab caption="Limits" children={
+	limv=new panel layout=vbox spacing=8 children={
+		new label caption="A maximum stops one child, and the others take what it turned down."
+		limrun=new panel border layout=hbox spacing=8 children={
+			new panel border layout=vbox stretch=1 children={ new label caption="grows" }
+			lmid=new panel border layout=vbox stretch=1 children={ new label caption="capped" }
+			new panel border layout=vbox stretch=1 children={ new label caption="grows" }
+		}
+		limg=new panel layout=grid spacing=4 columns={
+			new band id=lcap
+			new band id=lval stretch=1
+		} children={
+			new label caption="max_width:" row=0 column=lcap halign=textend fill=none
+			limmaxrow=new panel layout=hbox spacing=4 row=0 column=lval children={
+				lmaxnone=new radiobutton caption="none" group=limmax checked
+				lmax200=new radiobutton caption="200" group=limmax
+				lmax120=new radiobutton caption="120" group=limmax
+				lmax40=new radiobutton caption="40" group=limmax
+				lmax0=new radiobutton caption="0" group=limmax
+			}
+			new label caption="min_width:" row=1 column=lcap halign=textend fill=none
+			limminrow=new panel layout=hbox spacing=4 row=1 column=lval children={
+				lmin0=new radiobutton caption="none" group=limmin checked
+				lmin160=new radiobutton caption="160" group=limmin
+			}
+		}
+		new label caption="A minimum beats a maximum. At max_width=0 the box keeps the two columns its own border needs."
+
+		new label caption="Stopped short of the room it was given, it sits where its alignment says."
+		limcell=new panel border layout=grid spacing=0 columns={ new band stretch=1 } children={
+			lfill=new button caption="max 120" max_width=120
+		}
+		limalignrow=new panel layout=hbox spacing=4 children={
+			new label caption="halign:" fill=none
+			lhbegin=new radiobutton caption="textbegin" group=limalign
+			lhcenter=new radiobutton caption="center" group=limalign checked
+			lhend=new radiobutton caption="textend" group=limalign
+			lhfill=new checkbox caption="fill" checked
+		}
+		new spacer
+	}
+}
+
 new tab caption="Progress" children={
 	new panel layout=vbox spacing=16 children={
 		new label caption="Horizontal Progress Bars:"
@@ -692,6 +735,19 @@ sbggray=w.t.ss.sp.sa.sr.sbggray
 mdi=w.t.mtab.mdisp.mdisa.mdi
 mdistatus=w.t.mtab.mdisp.mdisa.mdi.mdicp.mdistatus
 mdidock=w.t.mtab.mdisp.mdidock
+lmid=w.t.lim.limv.limrun.lmid
+lfill=w.t.lim.limv.limcell.lfill
+lmaxnone=w.t.lim.limv.limg.limmaxrow.lmaxnone
+lmax200=w.t.lim.limv.limg.limmaxrow.lmax200
+lmax120=w.t.lim.limv.limg.limmaxrow.lmax120
+lmax40=w.t.lim.limv.limg.limmaxrow.lmax40
+lmax0=w.t.lim.limv.limg.limmaxrow.lmax0
+lmin0=w.t.lim.limv.limg.limminrow.lmin0
+lmin160=w.t.lim.limv.limg.limminrow.lmin160
+lhbegin=w.t.lim.limv.limalignrow.lhbegin
+lhcenter=w.t.lim.limv.limalignrow.lhcenter
+lhend=w.t.lim.limv.limalignrow.lhend
+lhfill=w.t.lim.limv.limalignrow.lhfill
 `)
 
 	// The menu bar and status bar are adopted as this application's

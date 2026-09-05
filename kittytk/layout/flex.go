@@ -608,8 +608,10 @@ func (l *FlexLayout) calculatePositions(mainSize core.Unit, sizes []core.Unit, s
 // AlignItems, which is what that setting is for.
 func (l *FlexLayout) alignCross(item *FlexItem, bounds core.UnitRect, layoutDir core.Direction) core.UnitRect {
 	align := l.alignItems
-	if item.AlignSet {
-		align = l.alignFromChild(item, layoutDir)
+	if stated, set := statedAlignment(item.Trinket); set {
+		align = l.alignFromChild(stated, item.Trinket, layoutDir)
+	} else if item.AlignSet {
+		align = l.alignFromChild(item.Align, item.Trinket, layoutDir)
 	}
 
 	hint := itemSize(item.Trinket)
@@ -653,7 +655,7 @@ func (l *FlexLayout) alignCross(item *FlexItem, bounds core.UnitRect, layoutDir 
 	if size >= boundsCross {
 		return bounds
 	}
-	switch l.crossSide(item, layoutDir) {
+	switch l.crossSide(alignmentFor(item.Trinket, item.Align), item.Trinket, layoutDir) {
 	case FlexAlignStart:
 		return set(origin, size)
 	case FlexAlignEnd:
@@ -664,21 +666,21 @@ func (l *FlexLayout) alignCross(item *FlexItem, bounds core.UnitRect, layoutDir 
 
 // alignFromChild reads the child's own alignment as a cross-axis placement.
 // Filling that axis is stretch; anything else is where it sits.
-func (l *FlexLayout) alignFromChild(item *FlexItem, layoutDir core.Direction) FlexAlign {
-	if l.isMainHorizontal() && item.Align.FillV {
+func (l *FlexLayout) alignFromChild(a core.Alignment, w core.Trinket, layoutDir core.Direction) FlexAlign {
+	if l.isMainHorizontal() && a.FillV {
 		return FlexAlignStretch
 	}
-	if !l.isMainHorizontal() && item.Align.FillH {
+	if !l.isMainHorizontal() && a.FillH {
 		return FlexAlignStretch
 	}
-	return l.crossSide(item, layoutDir)
+	return l.crossSide(a, w, layoutDir)
 }
 
 // crossSide is where a child says it sits across its line, filling aside. It
 // is what places one that asked to fill and was stopped by a maximum.
-func (l *FlexLayout) crossSide(item *FlexItem, layoutDir core.Direction) FlexAlign {
+func (l *FlexLayout) crossSide(a core.Alignment, w core.Trinket, layoutDir core.Direction) FlexAlign {
 	if l.isMainHorizontal() {
-		switch item.Align.V {
+		switch a.V {
 		case core.AlignTop:
 			return FlexAlignStart
 		case core.AlignBottom:
@@ -688,7 +690,7 @@ func (l *FlexLayout) crossSide(item *FlexItem, layoutDir core.Direction) FlexAli
 	}
 	// The horizontal cross axis is the one a direction turns over, so the
 	// logical alignments are spent here rather than read as sides.
-	switch core.ResolveHAlign(item.Align.H, core.FindTextDirection(item.Trinket), layoutDir) {
+	switch core.ResolveHAlign(a.H, core.FindTextDirection(w), layoutDir) {
 	case core.SideLeft:
 		return FlexAlignStart
 	case core.SideRight:
