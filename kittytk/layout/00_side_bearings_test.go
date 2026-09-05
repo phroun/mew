@@ -118,6 +118,158 @@ func TestABlockInAGridGetsNoBearings(t *testing.T) {
 	}
 }
 
+// Two inline children side by side are as far apart in a grid as the same two
+// are in a row. A grid's columns are a layout, not a different kind of space.
+//
+// A cell kept its child's bearings inside it and the next cell kept its own, so
+// a boundary opened two columns of air where a row opens one -- and the
+// configured spacing on top of that. The boundary now closes up by the column
+// the two bearings collapse into.
+func TestAGridBoundaryIsAsWideAsARowsGap(t *testing.T) {
+	const spacing = core.Unit(8)
+
+	// The same two children, in a row.
+	box := NewHBoxLayout()
+	box.SetSpacing(spacing)
+	bc := newDirContainer(core.DirLTR)
+	ba, bb := newFlexChild(64, 20), newFlexChild(64, 20)
+	bc.AddChild(ba)
+	bc.AddChild(bb)
+	box.AddTrinket(ba)
+	box.AddTrinket(bb)
+	box.Layout(bc, core.UnitRect{Width: 300, Height: 40})
+	rowGap := bb.Bounds().X - (ba.Bounds().X + ba.Bounds().Width)
+
+	// And in two columns of a grid.
+	grid := NewGridLayout()
+	grid.SetSpacing(spacing)
+	gc := newDirContainer(core.DirLTR)
+	ga := placed(64, 20, core.GridPlacement{Row: 0, Column: 0})
+	gb := placed(64, 20, core.GridPlacement{Row: 0, Column: 1})
+	gc.AddChild(ga)
+	gc.AddChild(gb)
+	grid.AddTrinket(ga)
+	grid.AddTrinket(gb)
+	grid.Layout(gc, core.UnitRect{Width: 300, Height: 40})
+	gridGap := gb.Bounds().X - (ga.Bounds().X + ga.Bounds().Width)
+
+	cell := core.FindEffectiveCellMetrics(gc.Self()).UnitsPerCellWidth
+	if rowGap != cell {
+		t.Fatalf("test setup: a row puts %d between two inline children, want one column of %d",
+			rowGap, cell)
+	}
+	if gridGap != rowGap {
+		t.Errorf("a grid puts %d between two inline children where a row puts %d", gridGap, rowGap)
+	}
+}
+
+// Two blocks have no bearings to collapse, so the configured spacing is the
+// whole of the air between their columns.
+func TestAGridBoundaryBetweenBlocksIsTheSpacing(t *testing.T) {
+	const spacing = core.Unit(24)
+
+	grid := NewGridLayout()
+	grid.SetSpacing(spacing)
+	c := newDirContainer(core.DirLTR)
+	a, b := newGridBlock(64, 20), newGridBlock(64, 20)
+	a.SetLayoutGridPlacement(core.GridPlacement{Row: 0, Column: 0, RowSpan: 1, ColumnSpan: 1})
+	b.SetLayoutGridPlacement(core.GridPlacement{Row: 0, Column: 1, RowSpan: 1, ColumnSpan: 1})
+	c.AddChild(a)
+	c.AddChild(b)
+	grid.AddTrinket(a)
+	grid.AddTrinket(b)
+	grid.Layout(c, core.UnitRect{Width: 300, Height: 40})
+
+	if gap := b.Bounds().X - (a.Bounds().X + a.Bounds().Width); gap != spacing {
+		t.Errorf("two blocks are %d apart, want the %d asked for", gap, spacing)
+	}
+	if a.Bounds().X != 0 {
+		t.Errorf("a block starts at %d, want the grid's own edge at 0", a.Bounds().X)
+	}
+}
+
+// One inline side and one block: the single bearing is the whole of the air,
+// and the boundary adds nothing on top of it.
+func TestAGridBoundaryWithOneInlineSide(t *testing.T) {
+	grid := NewGridLayout()
+	grid.SetSpacing(24)
+	c := newDirContainer(core.DirLTR)
+	inline := placed(64, 20, core.GridPlacement{Row: 0, Column: 0})
+	block := newGridBlock(64, 20)
+	block.SetLayoutGridPlacement(core.GridPlacement{Row: 0, Column: 1, RowSpan: 1, ColumnSpan: 1})
+	c.AddChild(inline)
+	c.AddChild(block)
+	grid.AddTrinket(inline)
+	grid.AddTrinket(block)
+	grid.Layout(c, core.UnitRect{Width: 300, Height: 40})
+
+	cell := core.FindEffectiveCellMetrics(c.Self()).UnitsPerCellWidth
+	gap := block.Bounds().X - (inline.Bounds().X + inline.Bounds().Width)
+	if gap != cell {
+		t.Errorf("an inline child and a block are %d apart, want the one column of %d the bearing opens",
+			gap, cell)
+	}
+}
+
+// A child that SPANS a boundary straddles it and brings no bearing to it, but
+// it does bring one to the boundary at the far END of its span -- that is where
+// its trailing bearing falls.
+//
+// The columns get their width from the blocks below, because a spanning child
+// contributes to no column's width (see OPEN-FINDINGS); what is being read here
+// is the boundary, not the widths.
+func TestASpansBearingFallsAtTheEndOfItsSpan(t *testing.T) {
+	grid := NewGridLayout()
+	grid.SetSpacing(24)
+	c := newDirContainer(core.DirLTR)
+
+	span := placed(120, 20, core.GridPlacement{Row: 0, Column: 0, ColumnSpan: 2})
+	last := placed(64, 20, core.GridPlacement{Row: 0, Column: 2})
+	fill0 := newGridBlock(64, 20)
+	fill0.SetLayoutGridPlacement(core.GridPlacement{Row: 1, Column: 0, RowSpan: 1, ColumnSpan: 1})
+	fill1 := newGridBlock(64, 20)
+	fill1.SetLayoutGridPlacement(core.GridPlacement{Row: 1, Column: 1, RowSpan: 1, ColumnSpan: 1})
+
+	for _, k := range []core.Trinket{span, last, fill0, fill1} {
+		c.AddChild(k)
+		grid.AddTrinket(k)
+	}
+	grid.Layout(c, core.UnitRect{Width: 400, Height: 80})
+
+	cell := core.FindEffectiveCellMetrics(c.Self()).UnitsPerCellWidth
+	// The far boundary: the span's trailing bearing meets the last child's
+	// leading one, and the two are one column. Two columns of air here would
+	// mean the span had been taken to end where it starts.
+	if gap := last.Bounds().X - (span.Bounds().X + span.Bounds().Width); gap != cell {
+		t.Errorf("the span and the child after it are %d apart, want the one column of %d "+
+			"their bearings collapse to", gap, cell)
+	}
+}
+
+// A grid fills the width it is given: what the boundaries take, or give back
+// where two bearings close up, is not the columns' to divide, so the last
+// column still reaches the far edge.
+func TestAGridFillsTheWidthItIsGiven(t *testing.T) {
+	grid := NewGridLayout()
+	grid.SetSpacing(8)
+	c := newDirContainer(core.DirLTR)
+	first := placed(64, 20, core.GridPlacement{Row: 0, Column: 0})
+	last := placed(64, 20, core.GridPlacement{Row: 0, Column: 1, ColumnStretch: 1})
+	c.AddChild(first)
+	c.AddChild(last)
+	grid.AddTrinket(first)
+	grid.AddTrinket(last)
+
+	const width = core.Unit(300)
+	grid.Layout(c, core.UnitRect{Width: width, Height: 40})
+
+	cell := core.FindEffectiveCellMetrics(c.Self()).UnitsPerCellWidth
+	if want := width - cell; last.Bounds().X+last.Bounds().Width != want {
+		t.Errorf("the stretching column's child ends at %d, want %d -- the grid's edge less its bearing",
+			last.Bounds().X+last.Bounds().Width, want)
+	}
+}
+
 // A flex run gives its inline children the same bearings a box does: a column
 // before the first, one between, one after the last.
 func TestAFlexRunKeepsSideBearings(t *testing.T) {

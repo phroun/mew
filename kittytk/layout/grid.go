@@ -196,17 +196,22 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		return
 	}
 
-	// Calculate column widths
-	colWidths := l.calculateColumnWidths(rect.Width, cols, metrics)
+	// What the boundaries take -- or give back, where two bearings close up --
+	// is not the columns' to divide.
+	gaps := l.columnGaps(cols, metrics)
+	colWidths := l.calculateColumnWidths(rect.Width-sumGaps(gaps), cols, metrics)
 
 	// Calculate row heights
 	rowHeights := l.calculateRowHeights(rect.Height, rows)
 
-	// Calculate column positions
+	// Calculate column positions.
 	colX := make([]core.Unit, cols+1)
 	colX[0] = rect.X
 	for i := 0; i < cols; i++ {
-		colX[i+1] = colX[i] + colWidths[i] + l.spacing
+		colX[i+1] = colX[i] + colWidths[i]
+		if i < cols-1 {
+			colX[i+1] += gaps[i]
+		}
 	}
 
 	// Calculate row positions
@@ -221,12 +226,12 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		x := colX[item.Column]
 		y := rowY[item.Row]
 
-		// Calculate width (sum of spanned columns)
+		// Calculate width (sum of spanned columns, and the boundaries between)
 		width := core.Unit(0)
 		for c := item.Column; c < item.Column+item.ColumnSpan && c < cols; c++ {
 			width += colWidths[c]
 			if c > item.Column {
-				width += l.spacing
+				width += gaps[c-1]
 			}
 		}
 
@@ -245,6 +250,71 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		itemBounds = l.alignItem(item, itemBounds, layoutDir, metrics)
 		item.Trinket.SetBounds(itemBounds)
 	}
+}
+
+// columnGaps is the space between one column and the next, one entry per
+// boundary, and it is the box's rule read for columns.
+//
+// A cell keeps its child's side-bearings INSIDE it, which is what lets a block
+// whose cell reaches the grid's edge line up with an inline child beside it --
+// the block's own trailing bearing lands where the inline child's cell-inset
+// one does. So the OUTER bearings stay where they are, and only the boundaries
+// between columns are settled here:
+//
+//   - both sides inline: their two bearings are one column of air, not two, so
+//     the boundary closes up by a column to bring them together;
+//   - one side inline: its single bearing is the whole of the air, and the
+//     boundary adds nothing;
+//   - neither: nothing has opened any air, so the configured spacing does.
+//
+// Which is what a box does along its run -- a column between two items where
+// either is inline, the configured spacing between two blocks -- so a form's
+// columns are as far apart as the same controls in a row would be.
+//
+// A column is shared by every row and a boundary can have only one answer, so
+// any row that puts an inline child on a side settles that side, as the largest
+// stretch asked of a column settles its stretch. A child that SPANS the
+// boundary straddles it and brings no bearing to it.
+func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics) []core.Unit {
+	if cols < 2 {
+		return nil
+	}
+	endsInline := make([]bool, cols)
+	startsInline := make([]bool, cols)
+	for _, item := range l.items {
+		if !isInlineTrinket(item.Trinket) {
+			continue
+		}
+		if end := item.Column + item.ColumnSpan - 1; end >= 0 && end < cols {
+			endsInline[end] = true
+		}
+		if item.Column >= 0 && item.Column < cols {
+			startsInline[item.Column] = true
+		}
+	}
+
+	gaps := make([]core.Unit, cols-1)
+	for c := 0; c < cols-1; c++ {
+		left, right := endsInline[c], startsInline[c+1]
+		switch {
+		case left && right:
+			gaps[c] = -metrics.UnitsPerCellWidth
+		case left || right:
+			gaps[c] = 0
+		default:
+			gaps[c] = l.spacing
+		}
+	}
+	return gaps
+}
+
+// sumGaps is what all the boundaries take out of the room the columns divide.
+func sumGaps(gaps []core.Unit) core.Unit {
+	total := core.Unit(0)
+	for _, g := range gaps {
+		total += g
+	}
+	return total
 }
 
 // calculateColumnWidths calculates the width of each column.
@@ -276,11 +346,8 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, metric
 		}
 	}
 
-	// Account for spacing
-	totalSpacing := l.spacing * core.Unit(cols-1)
-	availableForCols := available - totalSpacing
-
-	return calculateStretch(availableForCols, items)
+	// The boundaries were taken out by the caller (see columnGaps).
+	return calculateStretch(available, items)
 }
 
 // calculateRowHeights calculates the height of each row.
