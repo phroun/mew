@@ -36,6 +36,16 @@ func NewGridLayout() *GridLayout {
 	}
 }
 
+// effectiveMetrics resolves grid metrics from the given container if it is a
+// trinket, else the defaults. Layouts are not trinkets, so they cannot walk the
+// inheritance chain themselves.
+func (l *GridLayout) effectiveMetrics(container core.Container) core.CellMetrics {
+	if w, ok := container.(core.Trinket); ok && w != nil {
+		return core.FindEffectiveCellMetrics(w)
+	}
+	return core.DefaultCellMetrics()
+}
+
 // AddTrinket adds a trinket where its own placement hint puts it. A child that
 // states none lands in a row of its own, in column zero, so a grid nobody has
 // placed anything in reads down the page like a column.
@@ -172,8 +182,10 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// The direction items are placed against is the grid's own, not each
 	// item's (see BoxLayout.effectiveDirection).
 	layoutDir := core.DirLTR
+	metrics := core.DefaultCellMetrics()
 	if w, ok := container.(core.Trinket); ok && w != nil {
 		layoutDir = core.FindEffectiveDirection(w)
+		metrics = core.FindEffectiveCellMetrics(w)
 	}
 
 	rect := l.effectiveBounds(bounds)
@@ -185,7 +197,7 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 	}
 
 	// Calculate column widths
-	colWidths := l.calculateColumnWidths(rect.Width, cols)
+	colWidths := l.calculateColumnWidths(rect.Width, cols, metrics)
 
 	// Calculate row heights
 	rowHeights := l.calculateRowHeights(rect.Height, rows)
@@ -230,13 +242,13 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		itemBounds := core.UnitRect{X: x, Y: y, Width: width, Height: height}
 
 		// Apply alignment
-		itemBounds = l.alignItem(item, itemBounds, layoutDir)
+		itemBounds = l.alignItem(item, itemBounds, layoutDir, metrics)
 		item.Trinket.SetBounds(itemBounds)
 	}
 }
 
 // calculateColumnWidths calculates the width of each column.
-func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int) []core.Unit {
+func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, metrics core.CellMetrics) []core.Unit {
 	// Collect minimum widths and stretch factors
 	items := make([]stretchItem, cols)
 
@@ -249,7 +261,10 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int) []core
 
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
-				if w := itemSize(item.Trinket).Width; w > minWidth {
+				// Plus the child's own side-bearings, which the column has to
+				// hold for it: a cell is where the child goes, bearings and all.
+				w := itemSize(item.Trinket).Width + 2*sideBearing(item.Trinket, metrics)
+				if w > minWidth {
 					minWidth = w
 				}
 			}
@@ -300,7 +315,13 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.U
 
 // alignItem adjusts item bounds based on alignment. Each axis is placed on
 // its own: an item can fill its column and sit at the top of its row.
-func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir core.Direction) core.UnitRect {
+func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir core.Direction, metrics core.CellMetrics) core.UnitRect {
+	// The child's side-bearings come off the cell before anything is placed in
+	// it, so an inline child in a grid sits a column in from its cell's edges --
+	// exactly as it does in a box, and level with one that got there through a
+	// box nested in the cell beside it.
+	bounds = insetForBearing(item.Trinket, metrics, bounds)
+
 	hint := item.Trinket.SizeHint()
 
 	// Horizontal placement, once the logical alignment is spent against the
@@ -344,15 +365,18 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 		return core.UnitSize{}
 	}
 
-	// Calculate preferred column widths
+	metrics := l.effectiveMetrics(container)
+
+	// Calculate preferred column widths, bearings included: a column has to
+	// hold them, so the grid has to ask for them.
 	colWidths := make([]core.Unit, cols)
 	for c := 0; c < cols; c++ {
 		colWidths[c] = l.columnMinWidth[c]
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
-				hint := item.Trinket.SizeHint()
-				if hint.Width > colWidths[c] {
-					colWidths[c] = hint.Width
+				w := item.Trinket.SizeHint().Width + 2*sideBearing(item.Trinket, metrics)
+				if w > colWidths[c] {
+					colWidths[c] = w
 				}
 			}
 		}
@@ -401,15 +425,17 @@ func (l *GridLayout) MinimumSize(container core.Container) core.UnitSize {
 		return core.UnitSize{}
 	}
 
-	// Calculate minimum column widths
+	metrics := l.effectiveMetrics(container)
+
+	// Calculate minimum column widths, bearings included (see SizeHint).
 	colWidths := make([]core.Unit, cols)
 	for c := 0; c < cols; c++ {
 		colWidths[c] = l.columnMinWidth[c]
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
-				minSize := item.Trinket.MinimumSize()
-				if minSize.Width > colWidths[c] {
-					colWidths[c] = minSize.Width
+				w := item.Trinket.MinimumSize().Width + 2*sideBearing(item.Trinket, metrics)
+				if w > colWidths[c] {
+					colWidths[c] = w
 				}
 			}
 		}

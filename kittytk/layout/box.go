@@ -151,20 +151,6 @@ func (l *BoxLayout) ItemAt(index int) *LayoutItem {
 	return l.items[index]
 }
 
-// isInlineTrinket returns true if the trinket is an inline (non-container) trinket.
-func isInlineTrinket(w core.Trinket) bool {
-	// If it implements InlineTrinket interface and returns true, it's inline
-	if inline, ok := w.(core.InlineTrinket); ok && inline.IsInlineTrinket() {
-		return true
-	}
-	// If it's a Container, it's not inline
-	if _, ok := w.(core.Container); ok {
-		return false
-	}
-	// Default: treat as inline if not a container
-	return true
-}
-
 // spacingTotal is ALL the room Layout puts between and around the items along
 // the main axis, which is what SizeHint and MinimumSize have to promise: a box
 // handed less than Layout then consumes lays its children out past its own

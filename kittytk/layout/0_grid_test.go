@@ -91,9 +91,21 @@ func TestAGridSpanCoversItsCells(t *testing.T) {
 		placed(50, 20, core.GridPlacement{Row: 1, Column: 1}),
 	)
 
-	wide := got[0].Width
-	if want := got[1].Width + got[2].Width; wide != want {
-		t.Errorf("a child spanning two columns is %d wide, want the two columns' %d", wide, want)
+	// It covers both columns: it starts no later than the child in the first
+	// and ends no earlier than the child in the second. Comparing widths would
+	// not say that -- a spanning child carries two side-bearings where two
+	// separate children carry four.
+	span, first, second := got[0], got[1], got[2]
+	if span.X > first.X {
+		t.Errorf("the spanning child starts at %d, after the first column's child at %d", span.X, first.X)
+	}
+	if span.X+span.Width < second.X+second.Width {
+		t.Errorf("the spanning child ends at %d, before the second column's child at %d",
+			span.X+span.Width, second.X+second.Width)
+	}
+	if span.Width <= first.Width || span.Width <= second.Width {
+		t.Errorf("the spanning child is %d wide, no wider than the %d and %d it spans",
+			span.Width, first.Width, second.Width)
 	}
 }
 

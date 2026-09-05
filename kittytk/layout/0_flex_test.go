@@ -48,23 +48,43 @@ func TestAFlexRunWrapsWhenItOverflows(t *testing.T) {
 	l.SetWrap(FlexWrapNormal)
 	l.SetSpacing(0)
 
-	// Four 100-wide children in a 300-wide box: three fit, the fourth does not.
+	// Four 100-wide children in a 300-wide box: they do not all fit.
 	kids := []core.Trinket{
 		newFlexChild(100, 20), newFlexChild(100, 20),
 		newFlexChild(100, 20), newFlexChild(100, 20),
 	}
 	got := flexBounds(l, kids...)
 
-	for i := 0; i < 3; i++ {
-		if got[i].Y != 0 {
-			t.Errorf("child %d is at y=%d, want the first line at 0", i, got[i].Y)
+	// The first child is on the first line, the last on a later one, and the
+	// lines run in order down the layout.
+	if got[0].Y != 0 {
+		t.Errorf("the first child is at y=%d, want the first line at 0", got[0].Y)
+	}
+	if got[3].Y <= got[0].Y {
+		t.Fatalf("all four children are on one line at y=%d; the run should break", got[0].Y)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].Y < got[i-1].Y {
+			t.Errorf("child %d is at y=%d, above child %d at y=%d", i, got[i].Y, i-1, got[i-1].Y)
 		}
 	}
-	if got[3].Y != got[0].Height {
-		t.Errorf("the fourth child is at y=%d, want the second line at %d", got[3].Y, got[0].Height)
+	// Every line starts at the same place, and no line runs past the box.
+	starts := map[core.Unit]core.Unit{}
+	for _, r := range got {
+		if x, seen := starts[r.Y]; !seen || r.X < x {
+			starts[r.Y] = r.X
+		}
+		if right := r.X + r.Width; right > 300 {
+			t.Errorf("a child ends at %d, past the 300 the box has", right)
+		}
 	}
-	if got[3].X != 0 {
-		t.Errorf("the fourth child is at x=%d, want the start of its own line", got[3].X)
+	var first core.Unit = -1
+	for _, x := range starts {
+		if first < 0 {
+			first = x
+		} else if x != first {
+			t.Errorf("lines start at %d and %d", first, x)
+		}
 	}
 
 	// And without wrapping it is one line, however far it overflows.
@@ -95,8 +115,10 @@ func TestAFlexLineIsNeverEmpty(t *testing.T) {
 	if got[0].Y == got[1].Y {
 		t.Fatalf("two oversized children share line y=%d; each should have its own", got[0].Y)
 	}
-	if got[0].X != 0 || got[1].X != 0 {
-		t.Errorf("oversized children start at x=%d and x=%d, want both at 0", got[0].X, got[1].X)
+	// Both start at the same place -- a column in, which is their own leading
+	// side-bearing, and the same on every line.
+	if got[0].X != got[1].X {
+		t.Errorf("the two lines start at x=%d and x=%d", got[0].X, got[1].X)
 	}
 }
 
@@ -170,11 +192,15 @@ func TestFlexGrowSharesTheLeftover(t *testing.T) {
 	c.AddChild(two)
 	l.Layout(c, core.UnitRect{Width: 300, Height: 100})
 
-	// 200 left over, split one part to three.
-	if one.Bounds().Width != 100 {
-		t.Errorf("grow=1 got %d, want 50 plus a quarter of 200", one.Bounds().Width)
+	// Whatever is left after the children and their side-bearings is split one
+	// part to three, which is the proportion the factors ask for.
+	gotOne := one.Bounds().Width - 50
+	gotTwo := two.Bounds().Width - 50
+	if gotOne <= 0 || gotTwo != 3*gotOne {
+		t.Errorf("grow=1 grew by %d and grow=3 by %d, want one part to three",
+			gotOne, gotTwo)
 	}
-	if two.Bounds().Width != 200 {
-		t.Errorf("grow=3 got %d, want 50 plus three quarters of 200", two.Bounds().Width)
+	if right := two.Bounds().X + two.Bounds().Width; right > 300 {
+		t.Errorf("the run ends at %d, past the 300 it was given", right)
 	}
 }

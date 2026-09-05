@@ -154,8 +154,11 @@ func TestAGridItemFillsOneAxisAndSitsOnTheOther(t *testing.T) {
 	l.Layout(c, core.UnitRect{Width: 400, Height: 400})
 
 	got := item.Bounds()
-	if got.Width != 400 {
-		t.Errorf("the item is %d wide, want the column's 400 -- it asked to fill horizontally", got.Width)
+	// The whole column less the item's own side-bearings, which come off the
+	// cell before anything is placed in it.
+	m := core.FindEffectiveCellMetrics(c.Self())
+	if want := core.Unit(400) - 2*m.UnitsPerCellWidth; got.Width != want {
+		t.Errorf("the item is %d wide, want %d -- the column less its bearings", got.Width, want)
 	}
 	if got.Y != 0 || got.Height != 16 {
 		t.Errorf("the item is at y=%d h=%d, want y=0 h=16 -- it asked to sit at the top, not to fill", got.Y, got.Height)
