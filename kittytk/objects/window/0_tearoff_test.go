@@ -625,3 +625,34 @@ func TestTearOffHostZoomsMinimumBeatsItsMaximum(t *testing.T) {
 		t.Errorf("a minimum of 640 against a maximum of 100 gave %d, want the minimum", surf.size.Width)
 	}
 }
+
+// Zooming is what maximizing means once a window is out on the OS, so a window
+// that may not be maximized may not be zoomed: not by a title double-click,
+// and not by ToggleZoom itself.
+func TestTearOffHostRefusesToZoomAWindowThatMayNot(t *testing.T) {
+	for _, flags := range []WindowFlags{WindowFlagNoResize, WindowFlagNoMaximize} {
+		surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+		win := NewWindow("torn")
+		win.SetFlags(flags)
+		h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+		h.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 120, Y: 8, Button: core.LeftButton})
+		h.Event(core.MousePressEvent{X: 121, Y: 8, Button: core.LeftButton})
+		if win.IsMaximized() || surf.size.Width != 200 {
+			t.Errorf("flags %v: a title double-click zoomed it to %v", flags, surf.size)
+		}
+		// The press is not swallowed either: it starts a drag, so a fixed
+		// window can still be moved by someone who clicked twice. Checked
+		// before the release, which is what ends the drag.
+		if !h.Dragging() {
+			t.Errorf("flags %v: the second click was swallowed instead of dragging", flags)
+		}
+		h.Event(core.MouseReleaseEvent{X: 121, Y: 8, Button: core.LeftButton})
+
+		h.ToggleZoom()
+		if win.IsMaximized() || surf.size.Width != 200 {
+			t.Errorf("flags %v: ToggleZoom zoomed it to %v", flags, surf.size)
+		}
+	}
+}

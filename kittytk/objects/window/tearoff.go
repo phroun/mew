@@ -956,7 +956,14 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			break
 		}
 		handled = h.win.HandleMousePress(e)
-		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
+		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) &&
+			!h.win.CanMaximize() {
+			// A window that may not be maximized may not be zoomed either:
+			// the gesture is the same one. Fall through to the drag rather
+			// than swallowing the press.
+			h.beginDragAt(e.X, e.Y)
+			handled = true
+		} else if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
 			// Double-click on the title bar toggles the zoom, exactly
 			// as it toggles maximize in-surface.
 			metrics := core.DefaultCellMetrics()
@@ -1415,7 +1422,10 @@ func (h *TearOffHost) ZoomToFill() {
 }
 
 func (h *TearOffHost) ToggleZoom() {
-	if h.native == nil {
+	// Zooming is what maximizing means out here, so a window that may not be
+	// maximized may not be zoomed. ZoomToFill is deliberately not guarded:
+	// solo mode makes the torn window the whole display whatever it says.
+	if h.native == nil || !h.win.CanMaximize() {
 		return
 	}
 	if h.zoomed {

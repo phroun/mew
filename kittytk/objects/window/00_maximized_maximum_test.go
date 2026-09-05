@@ -228,3 +228,36 @@ func TestARestoredMaximizedWindowKeepsItsCap(t *testing.T) {
 		t.Errorf("it came back %v, want its maximum of 480x320", got.Size())
 	}
 }
+
+// Every gesture that maximizes asks the same question. A window that may not
+// be maximized is not maximized by any of them: the desktop's title
+// double-click, the keyboard toggle, the title button's own case, or a torn
+// window's zoom -- which is what maximizing means once it is out on the OS.
+func TestNoGestureMaximizesAWindowThatMayNot(t *testing.T) {
+	for _, flags := range []WindowFlags{WindowFlagNoResize, WindowFlagNoMaximize} {
+		// The desktop's title double-click.
+		m := NewWindowManager()
+		m.SetScreenBounds(core.UnitRect{Width: 800, Height: 600})
+		win := NewWindow("dlg")
+		win.SetFlags(flags)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 240, Height: 160})
+		m.AddWindow(win)
+		before := win.Bounds()
+		for i := 0; i < 2; i++ {
+			m.HandleMousePress(core.MousePressEvent{X: 180, Y: 104, Button: core.LeftButton})
+			m.HandleMouseRelease(core.MouseReleaseEvent{X: 180, Y: 104, Button: core.LeftButton})
+		}
+		if win.IsMaximized() || win.Bounds() != before {
+			t.Errorf("flags %v: a title double-click maximized it to %v", flags, win.Bounds())
+		}
+
+		// The keyboard toggle.
+		win = NewWindow("dlg")
+		win.SetFlags(flags)
+		win.SetBounds(core.UnitRect{X: 10, Y: 10, Width: 240, Height: 160})
+		win.HandleKeyPress(core.KeyPressEvent{Key: "M-F10"})
+		if win.IsMaximized() {
+			t.Errorf("flags %v: the keyboard toggle maximized it", flags)
+		}
+	}
+}
