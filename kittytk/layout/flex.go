@@ -328,11 +328,7 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 	free := mainSize - total
 	switch {
 	case free > 0 && totalGrow > 0:
-		for i := line.first; i < line.last; i++ {
-			if g := l.items[i].Grow; g > 0 {
-				line.sizes[i-line.first] += core.Unit(float64(free) * g / totalGrow)
-			}
-		}
+		l.growLine(line, free)
 	case free < 0 && totalShrink > 0:
 		deficit := -free
 		for i := line.first; i < line.last; i++ {
@@ -351,6 +347,76 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 			line.sizes[i-line.first] -= take
 		}
 	}
+}
+
+// growLine hands out a line's spare room among the items that grow, in
+// proportion. An item that reaches its maximum stops there and the rest share
+// what it turned down, which takes going round again: each item's share
+// depends on who is still growing, and that is only known once the ones that
+// stopped have stopped.
+func (l *FlexLayout) growLine(line *flexLine, free core.Unit) {
+	stopped := make([]bool, line.last-line.first)
+	for free > 0 {
+		total := 0.0
+		for i := line.first; i < line.last; i++ {
+			if g := l.items[i].Grow; g > 0 && !stopped[i-line.first] {
+				total += g
+			}
+		}
+		if total == 0 {
+			return
+		}
+
+		given := core.Unit(0)
+		anyStopped := false
+		for i := line.first; i < line.last; i++ {
+			k := i - line.first
+			g := l.items[i].Grow
+			if g <= 0 || stopped[k] {
+				continue
+			}
+			portion := core.Unit(float64(free) * g / total)
+			if max := l.maxMain(l.items[i]); max >= 0 {
+				room := max - line.sizes[k]
+				if room < 0 {
+					room = 0
+				}
+				if portion >= room {
+					portion = room
+					stopped[k] = true
+					anyStopped = true
+				}
+			}
+			line.sizes[k] += portion
+			given += portion
+		}
+		free -= given
+		if !anyStopped {
+			return
+		}
+	}
+}
+
+// maxMain and maxCross are the largest an item may be along each axis, and
+// minCross the smallest across. A maximum of core.Unbounded does not bound.
+func (l *FlexLayout) maxMain(item *FlexItem) core.Unit {
+	max := item.Trinket.MaximumSize()
+	main, _ := l.mainCross(max.Width, max.Height)
+	return main
+}
+
+// maxCross is maxMain across the line.
+func (l *FlexLayout) maxCross(item *FlexItem) core.Unit {
+	max := item.Trinket.MaximumSize()
+	_, cross := l.mainCross(max.Width, max.Height)
+	return cross
+}
+
+// minCross is the smallest an item may be made across its line.
+func (l *FlexLayout) minCross(item *FlexItem) core.Unit {
+	min := item.Trinket.MinimumSize()
+	_, cross := l.mainCross(min.Width, min.Height)
+	return cross
 }
 
 // lineCross is how deep a line is: the deepest thing in it.
@@ -573,18 +639,45 @@ func (l *FlexLayout) alignCross(item *FlexItem, bounds core.UnitRect, layoutDir 
 	case FlexAlignCenter:
 		return set(origin+(boundsCross-itemCross)/2, itemCross)
 	}
-	// Stretch and baseline take the line's whole depth; a baseline pass would
-	// need a shared baseline to align to, which nothing reports yet.
-	return bounds
+	// Stretch and baseline take the line's whole depth, unless a maximum stops
+	// them short -- and an item stopped short is placed in what is left over
+	// exactly as one that asked not to fill. A baseline pass would need a
+	// shared baseline to align to, which nothing reports yet.
+	size := boundsCross
+	if max := l.maxCross(item); max >= 0 && max < size {
+		size = max
+	}
+	if m := l.minCross(item); size < m {
+		size = m
+	}
+	if size >= boundsCross {
+		return bounds
+	}
+	switch l.crossSide(item, layoutDir) {
+	case FlexAlignStart:
+		return set(origin, size)
+	case FlexAlignEnd:
+		return set(origin+boundsCross-size, size)
+	}
+	return set(origin+(boundsCross-size)/2, size)
 }
 
 // alignFromChild reads the child's own alignment as a cross-axis placement.
 // Filling that axis is stretch; anything else is where it sits.
 func (l *FlexLayout) alignFromChild(item *FlexItem, layoutDir core.Direction) FlexAlign {
+	if l.isMainHorizontal() && item.Align.FillV {
+		return FlexAlignStretch
+	}
+	if !l.isMainHorizontal() && item.Align.FillH {
+		return FlexAlignStretch
+	}
+	return l.crossSide(item, layoutDir)
+}
+
+// crossSide is where a child says it sits across its line, filling aside. It
+// is what places one that asked to fill and was stopped by a maximum.
+func (l *FlexLayout) crossSide(item *FlexItem, layoutDir core.Direction) FlexAlign {
 	if l.isMainHorizontal() {
-		if item.Align.FillV {
-			return FlexAlignStretch
-		}
 		switch item.Align.V {
 		case core.AlignTop:
 			return FlexAlignStart
@@ -592,9 +685,6 @@ func (l *FlexLayout) alignFromChild(item *FlexItem, layoutDir core.Direction) Fl
 			return FlexAlignEnd
 		}
 		return FlexAlignCenter
-	}
-	if item.Align.FillH {
-		return FlexAlignStretch
 	}
 	// The horizontal cross axis is the one a direction turns over, so the
 	// logical alignments are spent here rather than read as sides.

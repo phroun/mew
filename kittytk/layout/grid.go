@@ -396,7 +396,8 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, gaps [
 	floors := l.columnFloors(cols, gaps, laidOutWidth(metrics))
 	items := make([]stretchItem, cols)
 	for c := 0; c < cols; c++ {
-		items[c] = stretchItem{minimum: floors[c], stretch: bandAt(l.columns, c).Stretch}
+		band := bandAt(l.columns, c)
+		items[c] = stretchItem{minimum: floors[c], maximum: core.Unbounded, stretch: band.Stretch}
 	}
 	// The boundaries were taken out by the caller (see columnGaps).
 	return calculateStretch(available, items)
@@ -407,7 +408,8 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int, gaps []c
 	floors := l.rowFloors(rows, gaps, func(w core.Trinket) core.Unit { return itemSize(w).Height })
 	items := make([]stretchItem, rows)
 	for r := 0; r < rows; r++ {
-		items[r] = stretchItem{minimum: floors[r], stretch: bandAt(l.rows, r).Stretch}
+		band := bandAt(l.rows, r)
+		items[r] = stretchItem{minimum: floors[r], maximum: core.Unbounded, stretch: band.Stretch}
 	}
 	return calculateStretch(available-sumGaps(gaps), items)
 }
@@ -421,35 +423,54 @@ func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir c
 	// box nested in the cell beside it.
 	bounds = insetForBearing(item.Trinket, metrics, bounds)
 
-	hint := item.Trinket.SizeHint()
+	// What the item takes of its cell on each axis: the whole of it when it
+	// fills, else what it asks for -- and either way no more than it may grow
+	// to. A maximum turns a filling item into one placed in what is left, so
+	// the two arrive at the same question and are answered together.
+	hint := itemSize(item.Trinket)
+	max := item.Trinket.MaximumSize()
 
+	width := bounds.Width
+	if !item.Align.FillH {
+		width = hint.Width
+	}
+	if max.Width >= 0 && width > max.Width {
+		width = max.Width
+	}
+	if m := item.Trinket.MinimumSize().Width; width < m {
+		width = m
+	}
 	// Horizontal placement, once the logical alignment is spent against the
 	// item's own text and the direction around the grid.
-	if !item.Align.FillH && hint.Width < bounds.Width {
+	if width < bounds.Width {
 		switch core.ResolveHAlign(item.Align.H, core.FindTextDirection(item.Trinket), layoutDir) {
-		case core.SideLeft:
-			bounds.Width = hint.Width
 		case core.SideCenter:
-			bounds.X += (bounds.Width - hint.Width) / 2
-			bounds.Width = hint.Width
+			bounds.X += (bounds.Width - width) / 2
 		case core.SideRight:
-			bounds.X += bounds.Width - hint.Width
-			bounds.Width = hint.Width
+			bounds.X += bounds.Width - width
 		}
+		bounds.Width = width
 	}
 
+	height := bounds.Height
+	if !item.Align.FillV {
+		height = hint.Height
+	}
+	if max.Height >= 0 && height > max.Height {
+		height = max.Height
+	}
+	if m := item.Trinket.MinimumSize().Height; height < m {
+		height = m
+	}
 	// Vertical placement.
-	if !item.Align.FillV && hint.Height < bounds.Height {
+	if height < bounds.Height {
 		switch item.Align.V {
-		case core.AlignTop:
-			bounds.Height = hint.Height
 		case core.AlignMiddle:
-			bounds.Y += (bounds.Height - hint.Height) / 2
-			bounds.Height = hint.Height
+			bounds.Y += (bounds.Height - height) / 2
 		case core.AlignBottom:
-			bounds.Y += bounds.Height - hint.Height
-			bounds.Height = hint.Height
+			bounds.Y += bounds.Height - height
 		}
+		bounds.Height = height
 	}
 
 	return bounds

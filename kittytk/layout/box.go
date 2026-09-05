@@ -175,16 +175,23 @@ func (l *BoxLayout) spacingTotal(container core.Container) core.Unit {
 	return total
 }
 
-// itemSize is the size a box gives one item: not below min_width and
-// min_height, and otherwise whatever the trinket answers for itself.
+// itemSize is what a child asks for: what it answers for itself, lowered to
+// max_width and max_height and then raised to min_width and min_height.
 //
-// min_width and min_height are common wire properties, set in units on any
-// trinket. A box read only the trinket's own answer
-// and never the properties, so setting them on anything in a box changed
-// nothing -- the value was applied and then nothing consulted it.
-// GridLayout has always read them.
+// The order is the rule: where a maximum and a minimum conflict the minimum
+// wins. A maximum says how far a trinket may grow and a minimum how small it
+// may be made, and being made too small is the worse failure -- a control
+// squeezed under its minimum stops being usable, where one that overruns a
+// maximum is merely bigger than asked.
 func itemSize(w core.Trinket) core.UnitSize {
 	size := w.SizeHint()
+	max := w.MaximumSize()
+	if max.Width >= 0 && size.Width > max.Width {
+		size.Width = max.Width
+	}
+	if max.Height >= 0 && size.Height > max.Height {
+		size.Height = max.Height
+	}
 	min := w.MinimumSize()
 	if size.Width < min.Width {
 		size.Width = min.Width
@@ -254,6 +261,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 			stretchItems[i] = stretchItem{
 				minimum: minSize,
+				maximum: item.Trinket.MaximumSize().Height,
 				stretch: stretch,
 			}
 		}
@@ -564,6 +572,7 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 
 		stretchItems[i] = stretchItem{
 			minimum: hint.Width,
+			maximum: item.Trinket.MaximumSize().Width,
 			stretch: stretch,
 		}
 	}

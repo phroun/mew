@@ -163,34 +163,91 @@ func calculateStretch(available core.Unit, items []stretchItem) []core.Unit {
 		return sizes
 	}
 
-	// Distribute proportionally
 	sizes := make([]core.Unit, len(items))
-	usedStretch := 0
-	usedExtra := core.Unit(0)
-
 	for i, item := range items {
 		sizes[i] = item.minimum
-		if item.stretch > 0 && totalStretch > 0 {
-			portion := (extra * core.Unit(item.stretch)) / core.Unit(totalStretch)
-			sizes[i] += portion
-			usedExtra += portion
-		}
-		usedStretch += item.stretch
 	}
-
-	// Distribute any remaining pixels due to rounding
-	remainder := extra - usedExtra
-	for i := 0; i < len(items) && remainder > 0; i++ {
-		if items[i].stretch > 0 {
-			sizes[i]++
-			remainder--
-		}
-	}
-
+	growByStretch(sizes, items, extra)
 	return sizes
 }
 
+// growByStretch hands out extra among the items that stretch, in proportion.
+//
+// An item that reaches its maximum stops there and what it turned down is
+// shared among the others, which is done by going round again rather than in
+// one pass: the share each item gets depends on who is still growing, and that
+// is only known once the ones that stopped have stopped.
+//
+// The loop ends because every round either clamps an item -- and there are
+// finitely many -- or hands out the whole remainder and returns.
+func growByStretch(sizes []core.Unit, items []stretchItem, extra core.Unit) {
+	stopped := make([]bool, len(items))
+	for extra > 0 {
+		totalStretch := 0
+		for i, item := range items {
+			if item.stretch > 0 && !stopped[i] {
+				totalStretch += item.stretch
+			}
+		}
+		if totalStretch == 0 {
+			return
+		}
+
+		given := core.Unit(0)
+		anyStopped := false
+		for i, item := range items {
+			if item.stretch == 0 || stopped[i] {
+				continue
+			}
+			portion := extra * core.Unit(item.stretch) / core.Unit(totalStretch)
+			if room := roomAbove(item, sizes[i]); room >= 0 && portion >= room {
+				portion = room
+				stopped[i] = true
+				anyStopped = true
+			}
+			sizes[i] += portion
+			given += portion
+		}
+		extra -= given
+
+		if !anyStopped {
+			// Nobody stopped, so nothing will be shared out again and what
+			// integer division left over goes a unit at a time to the items
+			// still growing.
+			for i, item := range items {
+				if extra == 0 {
+					return
+				}
+				if item.stretch > 0 && !stopped[i] && roomAbove(item, sizes[i]) != 0 {
+					sizes[i]++
+					extra--
+				}
+			}
+			return
+		}
+	}
+}
+
+// roomAbove is how much further an item may grow, or -1 where nothing bounds
+// it. A maximum below where the item already sits leaves no room at all: the
+// minimum put it there, and a minimum is the stronger statement.
+func roomAbove(item stretchItem, size core.Unit) core.Unit {
+	if item.maximum < 0 {
+		return -1
+	}
+	if room := item.maximum - size; room > 0 {
+		return room
+	}
+	return 0
+}
+
+// stretchItem is one thing sharing out a run: how small it may be made, how
+// far it may grow, and its weight in what is left over.
+//
+// A maximum of core.Unbounded does not bound. Zero is a real maximum and
+// stops the item where its minimum leaves it.
 type stretchItem struct {
 	minimum core.Unit
+	maximum core.Unit
 	stretch int
 }
