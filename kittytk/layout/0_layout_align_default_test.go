@@ -6,15 +6,14 @@ import (
 	"github.com/phroun/kittytk/core"
 )
 
-// An item gets fill unless something sets align, which is what the property's
-// documentation says and what AlignFill being the zero value of Alignment
-// already says. NewLayoutItem said left instead, so every trinket in a box was
+// An item fills both axes unless something says otherwise, which is what the
+// properties' documentation says. Anything else and every trinket in a box is
 // laid out at its own width in a vertical box and its own height in a
-// horizontal one, and align=fill had to be written on anything meant to take
-// the room it was given.
+// horizontal one, and fill has to be written on anything meant to take the
+// room it was given.
 func TestAnItemFillsUnlessItSaysOtherwise(t *testing.T) {
-	if got := NewLayoutItem(nil).Align; got != core.AlignFill {
-		t.Errorf("a fresh layout item aligns %v, want fill", got)
+	if got := NewLayoutItem(nil).Align; got != core.DefaultAlignment() {
+		t.Errorf("a fresh layout item aligns %+v, want %+v", got, core.DefaultAlignment())
 	}
 
 	// And it reaches the layout: the cross axis is the box's, not the item's.

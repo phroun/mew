@@ -119,7 +119,7 @@ globalsk1=k1.sk1
 }
 
 func TestParseTemplate(t *testing.T) {
-	s := mustParse(t, `template MyBtn=button align=right caption="Click Me"`)
+	s := mustParse(t, `template MyBtn=button halign=opticalright fill=none caption="Click Me"`)
 	st := s.Statements[0]
 	if st.Verb != "template" || st.Key != "" {
 		t.Fatalf("template stmt = %+v", st)
@@ -129,8 +129,8 @@ func TestParseTemplate(t *testing.T) {
 		st.Args[0].Value.Word != "button" {
 		t.Errorf("template target = %+v", st.Args[0])
 	}
-	if st.Args[1].Name != "align" || st.Args[1].Value.Word != "right" {
-		t.Errorf("align = %+v", st.Args[1])
+	if st.Args[1].Name != "halign" || st.Args[1].Value.Word != "opticalright" {
+		t.Errorf("halign = %+v", st.Args[1])
 	}
 }
 

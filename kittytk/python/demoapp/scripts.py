@@ -94,21 +94,21 @@ b=new tab caption="Basic Trinkets" children={
 
 s=new tab caption="Selection" children={
     o=new panel layout=vbox spacing=0 children={
-        new panel layout=hbox spacing=8 align=fill children={
+        new panel layout=hbox spacing=8 children={
             new panel border layout=vbox fixed_width=256 children={
-                new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap align=fill
+                new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap
             }
             new panel border layout=vbox fixed_width=256 children={
-                new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap align=fill
+                new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap
             }
             new panel border layout=vbox fixed_width=288 children={
-                new panel layout=vbox align=fill children={
+                new panel layout=vbox children={
                     new checkbox caption="Enable the experimental feature that reticulates splines while the moon is full" wrap
                     new radiobutton caption="Prefer the long-form explanation whenever the assistant answers a question" wrap
                 }
             }
         }
-        sp=new splitter orientation=vertical position=0.4 stretch=1 align=fill children={
+        sp=new splitter orientation=vertical position=0.4 stretch=1 children={
             c=new panel layout=vbox spacing=0 children={
                 new label caption="Checkboxes:"
                 new checkbox caption="Enable feature A" checked
@@ -323,7 +323,7 @@ new tab caption="Vertical Tabs" children={
 mtab=new tab caption="MDI Demo" children={
     mdisp=new splitter orientation=vertical position=0.9 caption="Dock" children={
         mdisa=new scrollarea children={
-            mdi=new mdipane fill="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
+            mdi=new mdipane background_char="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
                 mdicp=new panel layout=vbox spacing=8 children={
                     new label caption="MDIPane Trinket Demo"
                     new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."

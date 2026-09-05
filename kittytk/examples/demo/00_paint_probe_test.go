@@ -60,7 +60,7 @@ func (g *gridBackend) DrawText(x, y core.Unit, text string, _ style.CellStyle, _
 	}
 	return core.Unit(len([]rune(text)) * 8)
 }
-func (g *gridBackend) DrawTextAligned(b core.UnitRect, text string, _, _ core.Alignment, s style.CellStyle, f *core.Font) {
+func (g *gridBackend) DrawTextAligned(b core.UnitRect, text string, _ core.HSide, _ core.VAlign, s style.CellStyle, f *core.Font) {
 	g.DrawText(b.X, b.Y, text, s, f)
 }
 func (g *gridBackend) FillRect(r core.UnitRect, ch rune, _ style.CellStyle) {

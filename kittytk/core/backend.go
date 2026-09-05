@@ -49,7 +49,7 @@ type RenderBackend interface {
 
 	// DrawTextAligned draws text aligned within a box using the given font.
 	// If font is nil, uses DefaultFont().
-	DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle, font *Font)
+	DrawTextAligned(bounds UnitRect, text string, hSide HSide, vAlign VAlign, s style.CellStyle, font *Font)
 
 	// FillRect fills a rectangle with a character and style.
 	FillRect(r UnitRect, ch rune, s style.CellStyle)
@@ -1452,10 +1452,10 @@ func (p *Painter) DrawText(x, y Unit, text string, s style.CellStyle, font *Font
 
 // DrawTextAligned draws text aligned within a box using the specified font.
 // If font is nil, uses DefaultFont().
-func (p *Painter) DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle, font *Font) {
+func (p *Painter) DrawTextAligned(bounds UnitRect, text string, hSide HSide, vAlign VAlign, s style.CellStyle, font *Font) {
 	screenBounds := p.transform.ApplyRect(bounds)
 	p.applyClip()
-	p.backend.DrawTextAligned(screenBounds, text, hAlign, vAlign, s, font)
+	p.backend.DrawTextAligned(screenBounds, text, hSide, vAlign, s, font)
 }
 
 // FillRect fills a rectangle.

@@ -1281,14 +1281,14 @@ func (b *Backend) DrawTextPxClipped(xPx, yPx int, s string, st style.CellStyle, 
 	return ti.img.Bounds().Dx()
 }
 
-func (b *Backend) DrawTextAligned(bounds core.UnitRect, s string, hAlign, vAlign core.Alignment, st style.CellStyle, f *core.Font) {
+func (b *Backend) DrawTextAligned(bounds core.UnitRect, s string, hSide core.HSide, vAlign core.VAlign, st style.CellStyle, f *core.Font) {
 	w := engine().Measure(f, s)
 	h := engine().LineHeight(f)
 	x := bounds.X
-	switch hAlign {
-	case core.AlignCenter:
+	switch hSide {
+	case core.SideCenter:
 		x += (bounds.Width - w) / 2
-	case core.AlignRight:
+	case core.SideRight:
 		x += bounds.Width - w
 	}
 	y := bounds.Y

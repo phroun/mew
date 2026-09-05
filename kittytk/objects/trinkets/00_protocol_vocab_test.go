@@ -239,7 +239,7 @@ func TestStretchAndAlignTravelWithChild(t *testing.T) {
 new panel layout=hbox children={
 	new label caption="fixed"
 	new spacer stretch=1
-	new button caption="OK" align=right
+	new button caption="OK" halign=opticalright fill=v
 }
 `)
 	spacer := f.targets[2].(*Spacer)
@@ -247,8 +247,9 @@ new panel layout=hbox children={
 	if spacer.LayoutStretch() != 1 {
 		t.Errorf("spacer stretch = %d, want 1", spacer.LayoutStretch())
 	}
-	if a, set := btn.LayoutAlignment(); !set || a != core.AlignRight {
-		t.Errorf("button align = %v/%v, want AlignRight", a, set)
+	want := core.Alignment{H: core.AlignOpticalRight, V: core.AlignMiddle, FillV: true}
+	if a, set := btn.LayoutAlignment(); !set || a != want {
+		t.Errorf("button align = %+v/%v, want %+v", a, set, want)
 	}
 }
 
@@ -262,7 +263,7 @@ func TestMDIPaneAndDockFromProtocol(t *testing.T) {
 	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
 
 	script, _ := protocol.Parse(`
-mdi=new mdipane fill="░" children={
+mdi=new mdipane background_char="░" children={
 	new panel layout=vbox children={new label caption="background"}
 }
 dock=new dockrow entry_width=20

@@ -33,6 +33,20 @@ func (l *BoxLayout) effectiveMetrics(container core.Container) core.CellMetrics 
 	return core.DefaultCellMetrics()
 }
 
+// effectiveDirection resolves the direction items are placed against from the
+// given container if it is a trinket, else from the stored metrics source,
+// else left to right. Layouts are not trinkets, so they cannot walk the
+// inheritance chain themselves.
+func (l *BoxLayout) effectiveDirection(container core.Container) core.Direction {
+	if w, ok := container.(core.Trinket); ok && w != nil {
+		return core.FindEffectiveDirection(w)
+	}
+	if l.metricsSource != nil {
+		return core.FindEffectiveDirection(l.metricsSource)
+	}
+	return core.DirLTR
+}
+
 // NewBoxLayout creates a new box layout with the given orientation.
 func NewBoxLayout(orientation core.Orientation) *BoxLayout {
 	return &BoxLayout{
@@ -180,6 +194,11 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// Apply margins
 	rect := l.effectiveBounds(bounds)
 
+	// The direction items are placed against is the CONTAINER's, not each
+	// item's own: a right-to-left panel sitting in a left-to-right row is
+	// placed against the row it sits in.
+	layoutDir := l.effectiveDirection(container)
+
 	// Round spacing to whole cell size based on orientation
 	metrics := l.effectiveMetrics(container)
 	var spacing core.Unit
@@ -309,7 +328,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		}
 
 		// Apply alignment within the item bounds
-		itemBounds = l.alignItem(item, itemBounds, allowance)
+		itemBounds = l.alignItem(item, itemBounds, allowance, layoutDir)
 		item.Trinket.SetBounds(itemBounds)
 	}
 }
@@ -367,7 +386,7 @@ func (l *BoxLayout) styleAllowance() core.UnitMargins {
 // takes its own size whether or not the box is wide enough to hold it -- a
 // panel that came out narrower than its contents still shows them -- and
 // clamping here would take that away.
-func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance core.UnitMargins) core.UnitRect {
+func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance core.UnitMargins, layoutDir core.Direction) core.UnitRect {
 	ins := core.FindStyleInsets(item.Trinket)
 
 	// The band is what a FILLING item may take: decoration room is not room to
@@ -384,7 +403,7 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance 
 		band.Height = 0
 	}
 
-	out := l.alignContent(item, bounds, band, ins)
+	out := l.alignContent(item, bounds, band, ins, layoutDir)
 
 	// Only on the CROSS axis, which is the one alignment placed from the
 	// content size. Along the main axis the allocation came from the sizing
@@ -400,7 +419,7 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance 
 
 // alignContent places an item's CONTENT: positioned within bounds, the whole
 // allocation, and grown no further than band when it fills.
-func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, ins core.UnitMargins) core.UnitRect {
+func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, ins core.UnitMargins, layoutDir core.Direction) core.UnitRect {
 	hint := itemSize(item.Trinket)
 	hint.Width -= ins.Horizontal()
 	hint.Height -= ins.Vertical()
@@ -411,10 +430,9 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 		// A cross axis the trinket says is FIXED does not grow, whatever it is
 		// asked to do: a button's cap is one row and a field is one row, and a
 		// row three deep holds them at their own height rather than stretching
-		// them to it. Fill has nothing to fill, so it centres like the rest.
-		if policy.Vertical == core.SizeFixed && align == core.AlignFill {
-			align = core.AlignMiddle
-		}
+		// them to it. There is nothing to fill, so the item sits where its
+		// alignment puts it.
+		fill := align.FillV && policy.Vertical != core.SizeFixed
 
 		// A trinket whose cross-axis policy is Expanding fills the
 		// allocation; alignment clamps only trinkets that don't want
@@ -431,14 +449,16 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 			height = itemHeightForWidth(item.Trinket, bounds.Width)
 		}
 
-		// Vertical alignment in horizontal layout. AlignFill stretches the
-		// child to the row and is what an item gets when nothing sets align;
-		// every other value keeps the child's natural height, so a one-row
-		// text input beside a taller button asked for AlignMiddle stays one
-		// row instead of growing to the button's height, centered in it.
-		switch align {
-		case core.AlignFill:
+		// Filling stretches the child to the row, and is what an item gets
+		// when nothing says otherwise; an item that does not fill keeps its
+		// natural height, so a one-row text input beside a taller button stays
+		// one row instead of growing to the button's height, placed in the row
+		// by its own alignment.
+		if fill {
 			bounds.Height = band.Height
+			return bounds
+		}
+		switch align.V {
 		case core.AlignTop:
 			bounds.Height = height
 		case core.AlignBottom:
@@ -467,9 +487,7 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 			}
 		}
 	} else {
-		if policy.Horizontal == core.SizeFixed && align == core.AlignFill {
-			align = core.AlignCenter
-		}
+		fill := align.FillH && policy.Horizontal != core.SizeFixed
 
 		// Cross-axis Expanding fills the allocation (see above).
 		if policy.Horizontal == core.SizeExpanding {
@@ -484,13 +502,17 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 			return bounds
 		}
 
-		// Horizontal alignment in vertical layout
-		switch align {
-		case core.AlignFill:
+		if fill {
 			bounds.Width = band.Width
-		case core.AlignLeft:
+			return bounds
+		}
+
+		// The logical alignments are spent HERE, where the trinket and the
+		// direction around it are both known; what is left is a side.
+		switch core.ResolveHAlign(align.H, core.FindTextDirection(item.Trinket), layoutDir) {
+		case core.SideLeft:
 			bounds.Width = hint.Width
-		case core.AlignCenter:
+		case core.SideCenter:
 			if hint.Width < bounds.Width {
 				// Grid-snap the offset (see the vertical-centering note) so a
 				// cell surface draws and hit-tests the child in the same column.
@@ -501,7 +523,7 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 				bounds.X += off
 				bounds.Width = hint.Width
 			}
-		case core.AlignRight:
+		case core.SideRight:
 			// To the BAND's right edge, so a right-aligned trinket leaves the
 			// column a neighbour's shadow falls in free -- and one with a
 			// shadow of its own puts its cap there and the shadow beyond it.

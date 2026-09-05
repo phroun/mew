@@ -14,7 +14,7 @@ type Label struct {
 	core.AccessibleTrinket
 
 	text      string
-	alignment core.Alignment
+	alignment core.HAlign
 	wordWrap  bool
 
 	// textDirection overrides what the caption itself says about which way
@@ -26,7 +26,7 @@ type Label struct {
 func NewLabel(text string) *Label {
 	l := &Label{
 		text:      text,
-		alignment: core.AlignLeft,
+		alignment: core.AlignTextBegin,
 	}
 	l.TrinketBase = *core.NewTrinketBase()
 	l.Init(l)
@@ -49,12 +49,12 @@ func (l *Label) SetText(text string) {
 }
 
 // Alignment returns the text alignment.
-func (l *Label) Alignment() core.Alignment {
+func (l *Label) Alignment() core.HAlign {
 	return l.alignment
 }
 
 // SetAlignment sets the text alignment.
-func (l *Label) SetAlignment(align core.Alignment) {
+func (l *Label) SetAlignment(align core.HAlign) {
 	l.alignment = align
 	l.Update()
 }
@@ -197,7 +197,7 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 		p.DrawTextAligned(
 			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
 			line,
-			l.alignment,
+			l.textSide(),
 			core.AlignTop,
 			s,
 			l.EffectiveFont(),
@@ -226,13 +226,21 @@ func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.Cell
 		p.DrawTextAligned(
 			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
 			line,
-			l.alignment,
+			l.textSide(),
 			core.AlignTop,
 			s,
 			l.EffectiveFont(),
 		)
 		y += metrics.UnitsPerCellHeight
 	}
+}
+
+// textSide spends the label's alignment: its caption's own direction against
+// the direction in force where the label sits. A caption of digits has no
+// direction of its own and takes the label's surroundings, so an unmarked
+// number in a right-to-left form begins on the right with everything else.
+func (l *Label) textSide() core.HSide {
+	return core.ResolveHAlignFor(l.alignment, l, nil)
 }
 
 // AccessibleInfo returns accessibility information.

@@ -226,29 +226,7 @@ func init() {
 		return fmt.Errorf("stretch: not supported by this type")
 	})).Def("0").Tip("Layout stretch factor relative to siblings."))
 
-	protocol.RegisterCommonProperty("align", protocol.NewProperty("enum", wprop("align", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
-		word, err := protocol.AsWord("align", v, f)
-		if err != nil {
-			return err
-		}
-		a, ok := map[string]core.Alignment{
-			"fill":   core.AlignFill,
-			"left":   core.AlignLeft,
-			"center": core.AlignCenter,
-			"right":  core.AlignRight,
-			"top":    core.AlignTop,
-			"middle": core.AlignMiddle,
-			"bottom": core.AlignBottom,
-		}[word]
-		if !ok {
-			return fmt.Errorf("align: unknown value %q", word)
-		}
-		if h, ok := w.(interface{ SetLayoutAlignment(core.Alignment) }); ok {
-			h.SetLayoutAlignment(a)
-			return nil
-		}
-		return fmt.Errorf("align: not supported by this type")
-	})).OneOf("fill", "left", "center", "right", "top", "middle", "bottom").Tip("Layout alignment of this item in its cell."))
+	registerAlignmentProperties()
 
 	protocol.RegisterCommonProperty("direction", protocol.NewProperty("enum", wprop("direction", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		word, err := protocol.AsWord("direction", v, f)

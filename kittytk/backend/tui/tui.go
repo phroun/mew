@@ -1211,7 +1211,7 @@ func isAlphanumeric(ch rune) bool {
 }
 
 // DrawTextAligned draws text aligned within a box using the given font.
-func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAlign core.Alignment, s style.CellStyle, font *core.Font) {
+func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hSide core.HSide, vAlign core.VAlign, s style.CellStyle, font *core.Font) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -1264,12 +1264,10 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 
 	// Calculate horizontal position
 	var col int
-	switch hAlign {
-	case core.AlignLeft:
-		col = col1
-	case core.AlignCenter:
+	switch hSide {
+	case core.SideCenter:
 		col = col1 + (boxWidth-textCells)/2
-	case core.AlignRight:
+	case core.SideRight:
 		col = col2 - textCells
 	default:
 		col = col1

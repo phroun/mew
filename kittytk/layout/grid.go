@@ -49,13 +49,24 @@ func (l *GridLayout) AddTrinketWithSpan(trinket core.Trinket, row, column, rowSp
 	if columnSpan < 1 {
 		columnSpan = 1
 	}
-	l.items = append(l.items, &GridItem{
+	item := &GridItem{
 		Trinket:    trinket,
 		Row:        row,
 		Column:     column,
 		RowSpan:    rowSpan,
 		ColumnSpan: columnSpan,
-	})
+		Align:      core.DefaultAlignment(),
+	}
+	// Alignment travels with the child, as it does in a box, so halign,
+	// valign and fill mean the same thing wherever the child is put.
+	if h, ok := trinket.(interface {
+		LayoutAlignment() (core.Alignment, bool)
+	}); ok {
+		if a, set := h.LayoutAlignment(); set {
+			item.Align = a
+		}
+	}
+	l.items = append(l.items, item)
 }
 
 // SetRowStretch sets the stretch factor for a row.
@@ -106,6 +117,13 @@ func (l *GridLayout) ColumnCount() int {
 func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 	if len(l.items) == 0 {
 		return
+	}
+
+	// The direction items are placed against is the grid's own, not each
+	// item's (see BoxLayout.effectiveDirection).
+	layoutDir := core.DirLTR
+	if w, ok := container.(core.Trinket); ok && w != nil {
+		layoutDir = core.FindEffectiveDirection(w)
 	}
 
 	rect := l.effectiveBounds(bounds)
@@ -162,7 +180,7 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		itemBounds := core.UnitRect{X: x, Y: y, Width: width, Height: height}
 
 		// Apply alignment
-		itemBounds = l.alignItem(item, itemBounds)
+		itemBounds = l.alignItem(item, itemBounds, layoutDir)
 		item.Trinket.SetBounds(itemBounds)
 	}
 }
@@ -231,41 +249,35 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.U
 	return calculateStretch(availableForRows, items)
 }
 
-// alignItem adjusts item bounds based on alignment.
-func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect) core.UnitRect {
+// alignItem adjusts item bounds based on alignment. Each axis is placed on
+// its own: an item can fill its column and sit at the top of its row.
+func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect, layoutDir core.Direction) core.UnitRect {
 	hint := item.Trinket.SizeHint()
 
-	// Horizontal alignment
-	switch item.Align {
-	case core.AlignLeft:
-		if hint.Width < bounds.Width {
+	// Horizontal placement, once the logical alignment is spent against the
+	// item's own text and the direction around the grid.
+	if !item.Align.FillH && hint.Width < bounds.Width {
+		switch core.ResolveHAlign(item.Align.H, core.FindTextDirection(item.Trinket), layoutDir) {
+		case core.SideLeft:
 			bounds.Width = hint.Width
-		}
-	case core.AlignCenter:
-		if hint.Width < bounds.Width {
+		case core.SideCenter:
 			bounds.X += (bounds.Width - hint.Width) / 2
 			bounds.Width = hint.Width
-		}
-	case core.AlignRight:
-		if hint.Width < bounds.Width {
+		case core.SideRight:
 			bounds.X += bounds.Width - hint.Width
 			bounds.Width = hint.Width
 		}
 	}
 
-	// Vertical alignment
-	switch item.Align {
-	case core.AlignTop:
-		if hint.Height < bounds.Height {
+	// Vertical placement.
+	if !item.Align.FillV && hint.Height < bounds.Height {
+		switch item.Align.V {
+		case core.AlignTop:
 			bounds.Height = hint.Height
-		}
-	case core.AlignMiddle:
-		if hint.Height < bounds.Height {
+		case core.AlignMiddle:
 			bounds.Y += (bounds.Height - hint.Height) / 2
 			bounds.Height = hint.Height
-		}
-	case core.AlignBottom:
-		if hint.Height < bounds.Height {
+		case core.AlignBottom:
 			bounds.Y += bounds.Height - hint.Height
 			bounds.Height = hint.Height
 		}

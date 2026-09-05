@@ -101,7 +101,7 @@ func NewEditor() *Editor {
 	e.box.AddTrinketWithStretch(e.scroll, 1)
 	e.box.AddTrinket(e.button)
 	if it := e.box.ItemAt(e.box.Count() - 1); it != nil {
-		it.Align = core.AlignCenter // center the button horizontally in the box
+		it.Align.H, it.Align.FillH = core.AlignCenter, false // center the button horizontally in the box
 	}
 
 	e.refreshPreview()

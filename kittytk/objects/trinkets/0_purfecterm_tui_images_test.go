@@ -68,7 +68,7 @@ func (c *cellSurface) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {
 func (c *cellSurface) DrawText(core.Unit, core.Unit, string, style.CellStyle, *core.Font) core.Unit {
 	return 0
 }
-func (c *cellSurface) DrawTextAligned(core.UnitRect, string, core.Alignment, core.Alignment, style.CellStyle, *core.Font) {
+func (c *cellSurface) DrawTextAligned(core.UnitRect, string, core.HSide, core.VAlign, style.CellStyle, *core.Font) {
 }
 func (c *cellSurface) FillRect(core.UnitRect, rune, style.CellStyle)                     {}
 func (c *cellSurface) DrawRect(core.UnitRect, style.BorderStyle, style.CellStyle)        {}

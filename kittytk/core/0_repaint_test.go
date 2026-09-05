@@ -196,7 +196,7 @@ func (caretTestBackend) Clear(style.CellStyle)                                  
 func (caretTestBackend) SetClip(UnitRect)                                              {}
 func (caretTestBackend) DrawCell(Unit, Unit, rune, style.CellStyle)                    {}
 func (caretTestBackend) DrawText(x, y Unit, _ string, _ style.CellStyle, _ *Font) Unit { return 0 }
-func (caretTestBackend) DrawTextAligned(UnitRect, string, Alignment, Alignment, style.CellStyle, *Font) {
+func (caretTestBackend) DrawTextAligned(UnitRect, string, HSide, VAlign, style.CellStyle, *Font) {
 }
 func (caretTestBackend) FillRect(UnitRect, rune, style.CellStyle)                     {}
 func (caretTestBackend) DrawRect(UnitRect, style.BorderStyle, style.CellStyle)        {}

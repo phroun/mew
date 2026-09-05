@@ -139,13 +139,13 @@ func TestTemplateInstantiationWithOverrides(t *testing.T) {
 	f := newMockFactory("button")
 	s := NewSession()
 	exec(t, s, f, `
-template MyBtn=button align=right caption="Click Me" visible
+template MyBtn=button halign=opticalright fill=none caption="Click Me" visible
 new MyBtn caption="Other" !visible
 `)
 	got := strings.Join(f.created[0].sets, " ")
 	// Template properties first, instance overrides after (later wins
 	// at the object layer); !visible un-sets the template's flag (D12).
-	want := `align=right caption="Click Me" visible! caption="Other" visible~`
+	want := `halign=opticalright fill=none caption="Click Me" visible! caption="Other" visible~`
 	if got != want {
 		t.Errorf("sets:\n got  %s\n want %s", got, want)
 	}

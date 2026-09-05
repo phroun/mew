@@ -100,19 +100,6 @@ func (m Margins) Vertical() int {
 	return m.Top + m.Bottom
 }
 
-// Alignment specifies how content is aligned within its container.
-type Alignment int
-
-const (
-	AlignFill Alignment = iota // Default: fill available space
-	AlignLeft
-	AlignCenter
-	AlignRight
-	AlignTop
-	AlignMiddle
-	AlignBottom
-)
-
 // Orientation specifies layout direction.
 type Orientation int
 

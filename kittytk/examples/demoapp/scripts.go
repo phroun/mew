@@ -87,7 +87,7 @@ t=new tabs children={
 b=new tab caption="Basic Trinkets" children={
 	bw=new panel layout=vbox spacing=0 children={
 		new label caption="This is a demo of basic trinkets:"
-		brow=new panel layout=hbox spacing=8 align=fill children={
+		brow=new panel layout=hbox spacing=8 children={
 			input=new textinput placeholder="Enter text here..." stretch=1
 			new button caption="Browse..."
 		}
@@ -103,21 +103,21 @@ b=new tab caption="Basic Trinkets" children={
 
 s=new tab caption="Selection" children={
 	o=new panel layout=vbox spacing=0 children={
-		new panel layout=hbox spacing=8 align=fill children={
+		new panel layout=hbox spacing=8 children={
 			new panel border layout=vbox fixed_width=256 children={
-				new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap align=fill
+				new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap
 			}
 			new panel border layout=vbox fixed_width=256 children={
-				new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap align=fill
+				new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap
 			}
 			new panel border layout=vbox fixed_width=288 children={
-				new panel layout=vbox align=fill children={
+				new panel layout=vbox children={
 					new checkbox caption="Enable the experimental feature that reticulates splines while the moon is full" wrap
 					new radiobutton caption="Prefer the long-form explanation whenever the assistant answers a question" wrap
 				}
 			}
 		}
-		sp=new splitter orientation=vertical position=0.4 stretch=1 align=fill children={
+		sp=new splitter orientation=vertical position=0.4 stretch=1 children={
 			c=new panel layout=vbox spacing=0 children={
 				new label caption="Checkboxes:"
 				new checkbox caption="Enable feature A" checked
@@ -413,7 +413,7 @@ new tab caption="Vertical Tabs" children={
 
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
-		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 align=fill children={
+		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 children={
 			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=14 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
@@ -454,7 +454,7 @@ det=new tab caption="Details" children={
 mtab=new tab caption="MDI Demo" children={
 	mdisp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 		mdisa=new scrollarea children={
-			mdi=new mdipane fill="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
+			mdi=new mdipane background_char="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
 				mdicp=new panel layout=vbox spacing=8 children={
 					new label caption="MDIPane Trinket Demo"
 					new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."
@@ -493,67 +493,67 @@ mt=new tab caption="Terminal" children={
 }
 
 df=new tab caption="Defaults" children={
-	dfsa=new scrollarea stretch=1 align=fill children={
+	dfsa=new scrollarea stretch=1 children={
 		dfv=new panel layout=vbox spacing=0 children={
-			new label align=left caption="One of each trinket, with nothing setting a size on any of them.\nWhat you see is what each one asks for when nobody tells it.\n\nA trinket that can size itself from its own content does: a button\nfrom its caption, a label from its text, a combo box from its items.\nOne that cannot falls back to three cells, which is meant to look\nwrong -- it is how a trinket says nobody gave it a size."
+			new label halign=textbegin fill=none caption="One of each trinket, with nothing setting a size on any of them.\nWhat you see is what each one asks for when nobody tells it.\n\nA trinket that can size itself from its own content does: a button\nfrom its caption, a label from its text, a combo box from its items.\nOne that cannot falls back to three cells, which is meant to look\nwrong -- it is how a trinket says nobody gave it a size."
 
-			new label align=left caption="--- button"
-			new button align=left caption="Button"
-			new label align=left caption="--- checkbox"
-			new checkbox align=left caption="Checkbox"
-			new label align=left caption="--- radiobutton"
-			new radiobutton align=left caption="Radio button" group=dfgroup
-			new label align=left caption="--- label"
-			new label align=left caption="Label"
-			new label align=left caption="--- textinput"
-			new textinput align=left placeholder="Text input"
-			new label align=left caption="--- combobox"
-			new combobox align=left children={
+			new label halign=textbegin fill=none caption="--- button"
+			new button halign=textbegin fill=none caption="Button"
+			new label halign=textbegin fill=none caption="--- checkbox"
+			new checkbox halign=textbegin fill=none caption="Checkbox"
+			new label halign=textbegin fill=none caption="--- radiobutton"
+			new radiobutton halign=textbegin fill=none caption="Radio button" group=dfgroup
+			new label halign=textbegin fill=none caption="--- label"
+			new label halign=textbegin fill=none caption="Label"
+			new label halign=textbegin fill=none caption="--- textinput"
+			new textinput halign=textbegin fill=none placeholder="Text input"
+			new label halign=textbegin fill=none caption="--- combobox"
+			new combobox halign=textbegin fill=none children={
 				new item caption="Combo item one"
 				new item caption="Combo item two"
 			}
-			new label align=left caption="--- progress"
-			new progress align=left value=60
-			new label align=left caption="--- separator"
-			new separator align=left caption="Separator"
-			new label align=left caption="--- spacer"
-			new spacer align=left
-			new label align=left caption="--- listview"
-			new listview align=left children={
+			new label halign=textbegin fill=none caption="--- progress"
+			new progress halign=textbegin fill=none value=60
+			new label halign=textbegin fill=none caption="--- separator"
+			new separator halign=textbegin fill=none caption="Separator"
+			new label halign=textbegin fill=none caption="--- spacer"
+			new spacer halign=textbegin fill=none
+			new label halign=textbegin fill=none caption="--- listview"
+			new listview halign=textbegin fill=none children={
 				new item caption="List item one"
 				new item caption="List item two"
 				new item caption="List item three"
 			}
-			new label align=left caption="--- treeview"
-			new treeview align=left children={
+			new label halign=textbegin fill=none caption="--- treeview"
+			new treeview halign=textbegin fill=none children={
 				new item caption="Tree item" children={
 					new item caption="Tree child"
 				}
 			}
-			new label align=left caption="--- panel (no layout, bordered)"
-			new panel align=left border
-			new label align=left caption="--- scrollarea"
-			new scrollarea align=left children={
+			new label halign=textbegin fill=none caption="--- panel (no layout, bordered)"
+			new panel halign=textbegin fill=none border
+			new label halign=textbegin fill=none caption="--- scrollarea"
+			new scrollarea halign=textbegin fill=none children={
 				new label caption="Scroll area content"
 			}
-			new label align=left caption="--- splitter"
-			new splitter align=left orientation=vertical children={
+			new label halign=textbegin fill=none caption="--- splitter"
+			new splitter halign=textbegin fill=none orientation=vertical children={
 				new label caption="Splitter first"
 				new label caption="Splitter second"
 			}
-			new label align=left caption="--- tabs"
-			new tabs align=left children={
+			new label halign=textbegin fill=none caption="--- tabs"
+			new tabs halign=textbegin fill=none children={
 				new tab caption="One" children={new label caption="Tab one"}
 				new tab caption="Two" children={new label caption="Tab two"}
 			}
-			new label align=left caption="--- editor"
-			new editor align=left
-			new label align=left caption="--- terminal"
-			new terminal align=left
-			new label align=left caption="--- dockrow"
-			new dockrow align=left
-			new label align=left caption="--- mdipane"
-			new mdipane align=left
+			new label halign=textbegin fill=none caption="--- editor"
+			new editor halign=textbegin fill=none
+			new label halign=textbegin fill=none caption="--- terminal"
+			new terminal halign=textbegin fill=none
+			new label halign=textbegin fill=none caption="--- dockrow"
+			new dockrow halign=textbegin fill=none
+			new label halign=textbegin fill=none caption="--- mdipane"
+			new mdipane halign=textbegin fill=none
 		}
 	}
 }

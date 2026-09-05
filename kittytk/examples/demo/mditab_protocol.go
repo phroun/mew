@@ -20,7 +20,7 @@ import (
 const mdiTabScript = `
 sp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 	sa=new scrollarea children={
-		mdi=new mdipane fill="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
+		mdi=new mdipane background_char="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
 			cp=new panel layout=vbox spacing=8 children={
 				new label caption="MDIPane Trinket Demo"
 				new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."

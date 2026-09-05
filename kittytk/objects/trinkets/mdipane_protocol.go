@@ -101,14 +101,16 @@ func init() {
 			})
 		},
 		Props: map[string]protocol.Property{
-			"fill": protocol.NewProperty("string", wprop("fill", func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
-				s, err := protocol.AsString("fill", v, f)
+			// background_char, not fill: fill is the common property for
+			// which axes an item grows to, and this names a character.
+			"background_char": protocol.NewProperty("string", wprop("background_char", func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("background_char", v, f)
 				if err != nil {
 					return err
 				}
 				runes := []rune(s)
 				if len(runes) != 1 {
-					return fmt.Errorf("fill: expected exactly one character")
+					return fmt.Errorf("background_char: expected exactly one character")
 				}
 				m.SetBackgroundChar(runes[0])
 				return nil

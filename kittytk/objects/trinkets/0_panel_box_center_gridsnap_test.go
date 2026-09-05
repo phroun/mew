@@ -21,7 +21,7 @@ func TestHBoxCenteringSnapsToCellRow(t *testing.T) {
 	p.SetLayoutManager(layout.NewBoxLayout(core.Horizontal))
 
 	input := NewTextInput() // one row tall
-	input.SetLayoutAlignment(core.AlignMiddle)
+	input.SetLayoutAlignment(core.Alignment{H: core.AlignCenter, V: core.AlignMiddle})
 	button := NewButton("Browse...")
 	p.AddChild(input)
 	p.AddChild(button)

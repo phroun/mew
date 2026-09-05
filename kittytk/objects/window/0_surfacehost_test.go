@@ -73,7 +73,7 @@ func (nullPaintBackend) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {}
 func (nullPaintBackend) DrawText(x, y core.Unit, t string, s style.CellStyle, f *core.Font) core.Unit {
 	return 0
 }
-func (nullPaintBackend) DrawTextAligned(core.UnitRect, string, core.Alignment, core.Alignment, style.CellStyle, *core.Font) {
+func (nullPaintBackend) DrawTextAligned(core.UnitRect, string, core.HSide, core.VAlign, style.CellStyle, *core.Font) {
 }
 func (nullPaintBackend) FillRect(core.UnitRect, rune, style.CellStyle)                     {}
 func (nullPaintBackend) DrawRect(core.UnitRect, style.BorderStyle, style.CellStyle)        {}

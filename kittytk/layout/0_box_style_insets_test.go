@@ -51,7 +51,7 @@ func TestAShadowRowIsNotAlignedAgainst(t *testing.T) {
 
 	button := newShadowedTrinket(60, row, shadow)
 	field := newSizedTrinket(24, row)
-	field.align = core.AlignFill
+	field.align = core.DefaultAlignment()
 
 	// A row sized to what it holds, which is what a vertical box gives an
 	// inner row: two rows tall, because the button asked for its shadow.
@@ -103,7 +103,7 @@ func TestTheShadowColumnIsNotAlignedAgainstEither(t *testing.T) {
 
 	button := newShadowedTrinket(60, 16, shadow)
 	field := newSizedTrinket(24, 16)
-	field.align = core.AlignRight
+	field.align = core.Alignment{H: core.AlignOpticalRight, V: core.AlignMiddle}
 
 	got := boxWith(core.Vertical, button, field)
 
@@ -124,7 +124,7 @@ func TestTheShadowColumnIsNotAlignedAgainstEither(t *testing.T) {
 func TestCentringIgnoresTheDecoration(t *testing.T) {
 	const row = core.Unit(16)
 	button := newShadowedTrinket(60, row, core.UnitMargins{Right: 8, Bottom: row})
-	button.align, button.alignSet = core.AlignMiddle, true
+	button.align, button.alignSet = core.Alignment{H: core.AlignCenter, V: core.AlignMiddle}, true
 
 	l := NewBoxLayout(core.Horizontal)
 	l.SetSpacing(0)
@@ -151,7 +151,7 @@ func TestTrailingAlignmentLeavesTheDecorationRoomFree(t *testing.T) {
 	const row = core.Unit(16)
 	button := newShadowedTrinket(60, row, core.UnitMargins{Right: 8, Bottom: row})
 	field := newSizedTrinket(24, row)
-	field.align = core.AlignBottom
+	field.align = core.Alignment{H: core.AlignCenter, V: core.AlignBottom}
 
 	l := NewBoxLayout(core.Horizontal)
 	l.SetSpacing(0)

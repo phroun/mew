@@ -130,7 +130,7 @@ func (v *eventViewer) build() core.Trinket {
 	rootPanel.AddChild(v.tree)
 	rootPanel.AddChild(controls)
 	// The tree takes the slack; the control row keeps its natural height.
-	rootLayout.ItemAt(0).WithStretch(1).WithAlign(core.AlignFill)
+	rootLayout.ItemAt(0).WithStretch(1).WithAlign(core.DefaultAlignment())
 
 	return rootPanel
 }

@@ -33,8 +33,8 @@ func TestWindowDenominationLayoutInvariance(t *testing.T) {
 	outer.AddChild(lbl)
 	outer.AddChild(split)
 	outer.SetLayoutManager(ol)
-	ol.ItemAt(0).WithAlign(core.AlignFill)
-	ol.ItemAt(1).WithAlign(core.AlignFill)
+	ol.ItemAt(0).WithAlign(core.DefaultAlignment())
+	ol.ItemAt(1).WithAlign(core.DefaultAlignment())
 
 	tabs.AddTab("Sel", outer)
 	win.SetContent(tabs)
