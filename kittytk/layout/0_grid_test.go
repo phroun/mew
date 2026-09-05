@@ -109,33 +109,48 @@ func TestAGridSpanCoversItsCells(t *testing.T) {
 	}
 }
 
-// The stretch a child asks for is applied to the row and column it sits in, and
-// where two children in one column disagree the larger is what the column gets:
-// a column is one thing and cannot take two answers.
-func TestAGridColumnTakesTheLargestStretchAskedOfIt(t *testing.T) {
+// Stretch is the column's, and the weights are shares of what is left: a
+// column asking for three takes three times what one asking for one takes.
+func TestAGridColumnTakesTheStretchItAsksFor(t *testing.T) {
 	l := NewGridLayout()
 	l.SetSpacing(0)
+	l.SetColumnStretch(1, 1)
 
 	got := gridBounds(l, core.UnitRect{Width: 300, Height: 100},
 		placed(50, 20, core.GridPlacement{Row: 0, Column: 0}),
-		placed(50, 20, core.GridPlacement{Row: 0, Column: 1, ColumnStretch: 1}),
+		placed(50, 20, core.GridPlacement{Row: 0, Column: 1}),
 	)
 	if got[1].Width <= got[0].Width {
 		t.Errorf("the stretching column is %d wide against the fixed one's %d", got[1].Width, got[0].Width)
 	}
 
-	// The largest holds even when a LATER child in the same column asks for
-	// less, which is what tells "largest wins" apart from "last one wins".
+	// Three parts against one. What each column took is measured against the
+	// same grid with nobody stretching, where every column is its minimum.
+	room := core.UnitRect{Width: 300, Height: 100}
+	kids := func() []core.Trinket {
+		return []core.Trinket{
+			placed(50, 20, core.GridPlacement{Row: 0, Column: 0}),
+			placed(50, 20, core.GridPlacement{Row: 0, Column: 1}),
+		}
+	}
+	flat := NewGridLayout()
+	flat.SetSpacing(0)
+	base := gridBounds(flat, room, kids()...)
+
 	l = NewGridLayout()
 	l.SetSpacing(0)
-	got = gridBounds(l, core.UnitRect{Width: 300, Height: 100},
-		placed(50, 20, core.GridPlacement{Row: 0, Column: 0, ColumnStretch: 3}),
-		placed(50, 20, core.GridPlacement{Row: 0, Column: 1, ColumnStretch: 1}),
-		placed(50, 20, core.GridPlacement{Row: 1, Column: 0, ColumnStretch: 0}),
-	)
-	if got[0].Width <= got[1].Width {
-		t.Errorf("column 0 asked for 3 and then 0 against column 1's 1, and came out %d against %d",
-			got[0].Width, got[1].Width)
+	l.SetColumnStretch(0, 3)
+	l.SetColumnStretch(1, 1)
+	got = gridBounds(l, room, kids()...)
+
+	tookWide := got[0].Width - base[0].Width
+	tookNarrow := got[1].Width - base[1].Width
+	if tookNarrow <= 0 {
+		t.Fatalf("the column asking for 1 took %d of the leftover", tookNarrow)
+	}
+	if tookWide != 3*tookNarrow {
+		t.Errorf("the columns took %d and %d of the leftover, want three parts to one",
+			tookWide, tookNarrow)
 	}
 }
 

@@ -228,10 +228,18 @@ func TestGridTabSpansAreCentered(t *testing.T) {
 		}
 	}
 
+	// The four bands share the panel's width, so the buttons are spread
+	// across it rather than bunched at its start -- centered in tracks that
+	// took none of the leftover would put them all in the first quarter.
+	one, two, three := buttons["1"], buttons["2"], buttons["3"]
+	if interior := spans.Bounds().Width; buttons["tall"].X < 3*interior/4 {
+		t.Errorf(`"tall" starts at x=%d in a panel %d wide; the four bands should divide it`,
+			buttons["tall"].X, interior)
+	}
+
 	// A button in one column: the air on its left is the air on its right.
 	// The track runs from the end of the button to its left to the start of
 	// the one to its right, so "2" is measured between "1" and "3".
-	one, two, three := buttons["1"], buttons["2"], buttons["3"]
 	left := two.X - (one.X + one.Width)
 	right := three.X - (two.X + two.Width)
 	if left != right {

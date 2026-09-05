@@ -18,10 +18,6 @@ type GridItem struct {
 	// given its bands after its children.
 	RowID    string
 	ColumnID string
-	// RowStretch and ColumnStretch are what the child asked of the bands it
-	// sits in, folded into them once those bands are known.
-	RowStretch    int
-	ColumnStretch int
 }
 
 // GridLayout arranges trinkets in a grid of rows and columns.
@@ -81,17 +77,11 @@ func (l *GridLayout) AddTrinket(trinket core.Trinket) {
 	l.AddTrinketAtWithSpan(trinket, p.Row, p.Column, p.RowSpan, p.ColumnSpan)
 	item := l.items[len(l.items)-1]
 	item.RowID, item.ColumnID = p.RowID, p.ColumnID
-	item.RowStretch, item.ColumnStretch = p.RowStretch, p.ColumnStretch
 }
 
-// resolveBands settles where each item sits and what its bands were asked
-// for. A child that named a band is put in the band with that name, and the
-// stretch it asked of that band is folded in -- both here rather than when
+// resolveBands settles where each item sits: a child that named a band is put
+// in the band with that name. Names are settled on every pass rather than when
 // the child was added, because a grid may be given its bands afterwards.
-//
-// A band is one thing and cannot take two answers, so where two children in
-// it ask for different stretches the largest is what the band gets. Folding
-// the same answer in twice changes nothing, so every pass may run this.
 func (l *GridLayout) resolveBands() {
 	for _, item := range l.items {
 		if i := bandIndex(l.columns, item.ColumnID); i >= 0 {
@@ -99,12 +89,6 @@ func (l *GridLayout) resolveBands() {
 		}
 		if i := bandIndex(l.rows, item.RowID); i >= 0 {
 			item.Row = i
-		}
-		if item.RowStretch > 0 {
-			l.SetRowStretch(item.Row, maxInt(item.RowStretch, bandAt(l.rows, item.Row).Stretch))
-		}
-		if item.ColumnStretch > 0 {
-			l.SetColumnStretch(item.Column, maxInt(item.ColumnStretch, bandAt(l.columns, item.Column).Stretch))
 		}
 	}
 }
@@ -185,14 +169,6 @@ func (l *GridLayout) SetRowMinimumHeight(row int, height core.Unit) {
 func (l *GridLayout) SetColumnMinimumWidth(column int, width core.Unit) {
 	l.columns = growBands(l.columns, column)
 	l.columns[column].Minimum = width
-}
-
-// maxInt is the larger of two stretch factors.
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // RowCount returns the number of rows.

@@ -56,20 +56,36 @@ func typeName(v any) string {
 // places it there -- which is what makes a grid buildable from a script at all.
 func TestGridCellsFromAScript(t *testing.T) {
 	f, _ := buildUI(t, nil, `
-g=new panel layout=grid spacing=0 children={
+g=new panel layout=grid spacing=0 columns={
+	new band
+	new band stretch=1
+} children={
 	new label caption="Name" row=0 column=0
-	new textinput row=0 column=1 column_stretch=1
+	new textinput row=0 column=1
 	new label caption="Notes" row=1 column=0
-	new textinput row=1 column=1 column_stretch=1
+	new textinput row=1 column=1
 }
 `)
 	g := f.targets[0].(*Panel)
 	g.SetBounds(core.UnitRect{Width: 400, Height: 200})
 	g.Layout()
 
-	name := f.targets[1].(*Label).Bounds()
-	field := f.targets[2].(*TextInput).Bounds()
-	notes := f.targets[3].(*Label).Bounds()
+	// By type rather than by position: the bands are built before the
+	// children and are targets of their own.
+	var labels, fields []core.UnitRect
+	for _, target := range f.targets {
+		switch w := target.(type) {
+		case *Label:
+			labels = append(labels, w.Bounds())
+		case *TextInput:
+			fields = append(fields, w.Bounds())
+		}
+	}
+	if len(labels) != 2 || len(fields) != 2 {
+		t.Fatalf("the script built %d labels and %d fields, want 2 of each", len(labels), len(fields))
+	}
+	name, notes := labels[0], labels[1]
+	field := fields[0]
 
 	if name.Y != field.Y {
 		t.Errorf("the label and its field are on rows y=%d and y=%d", name.Y, field.Y)
@@ -162,7 +178,6 @@ func TestLayoutHintsCheckTheirValues(t *testing.T) {
 		{`new label caption="x" column=-1`, "below 0"},
 		{`new label caption="x" row_span=0`, "below 1"},
 		{`new label caption="x" column_span=0`, "below 1"},
-		{`new label caption="x" row_stretch=-1`, "below 0"},
 		{`new label caption="x" grow=-1`, "below 0"},
 		{`new label caption="x" shrink=-2`, "below 0"},
 		{`new label caption="x" basis=-4`, "below 0"},

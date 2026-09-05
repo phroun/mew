@@ -153,13 +153,6 @@ func registerLayoutProperties() {
 	protocol.RegisterCommonProperty("column_span", gridProp("column_span",
 		func(p *core.GridPlacement, n int) { p.ColumnSpan = n }, 1).
 		Def("1").Tip("How many grid columns this child covers."))
-	protocol.RegisterCommonProperty("row_stretch", gridProp("row_stretch",
-		func(p *core.GridPlacement, n int) { p.RowStretch = n }, 0).
-		Def("0").Tip("Weight with which this child's grid ROW takes leftover height."))
-	protocol.RegisterCommonProperty("column_stretch", gridProp("column_stretch",
-		func(p *core.GridPlacement, n int) { p.ColumnStretch = n }, 0).
-		Def("0").Tip("Weight with which this child's grid COLUMN takes leftover width."))
-
 	protocol.RegisterCommonProperty("grow", flexFloatProp("grow",
 		func(h *core.FlexHints, x float64) { h.Grow = x }).
 		Def("0").Tip("Share of a flex line's leftover space this child takes."))

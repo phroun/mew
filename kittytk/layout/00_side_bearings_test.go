@@ -70,13 +70,14 @@ func TestAGridChildAndABoxedChildLineUp(t *testing.T) {
 	grid.SetSpacing(0)
 
 	// Row 0: an inline child straight into the cell.
-	direct := placed(50, 20, core.GridPlacement{Row: 0, Column: 0, ColumnStretch: 1})
+	grid.SetColumnStretch(0, 1)
+	direct := placed(50, 20, core.GridPlacement{Row: 0, Column: 0})
 	c.AddChild(direct)
 	grid.AddTrinket(direct)
 
 	// Row 1: the same kind of child, inside a box, inside the cell.
 	panel := newBoxPanel(core.Horizontal)
-	panel.SetLayoutGridPlacement(core.GridPlacement{Row: 1, Column: 0, RowSpan: 1, ColumnSpan: 1, ColumnStretch: 1})
+	panel.SetLayoutGridPlacement(core.GridPlacement{Row: 1, Column: 0, RowSpan: 1, ColumnSpan: 1})
 	boxed := newFlexChild(50, 20)
 	panel.AddChild(boxed)
 	c.AddChild(panel)
@@ -252,9 +253,10 @@ func TestASpansBearingFallsAtTheEndOfItsSpan(t *testing.T) {
 func TestAGridFillsTheWidthItIsGiven(t *testing.T) {
 	grid := NewGridLayout()
 	grid.SetSpacing(8)
+	grid.SetColumnStretch(1, 1)
 	c := newDirContainer(core.DirLTR)
 	first := placed(64, 20, core.GridPlacement{Row: 0, Column: 0})
-	last := placed(64, 20, core.GridPlacement{Row: 0, Column: 1, ColumnStretch: 1})
+	last := placed(64, 20, core.GridPlacement{Row: 0, Column: 1})
 	c.AddChild(first)
 	c.AddChild(last)
 	grid.AddTrinket(first)

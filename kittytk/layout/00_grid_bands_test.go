@@ -133,15 +133,13 @@ func TestANamedBandSurvivesAnInsertionThatANumberDoesNot(t *testing.T) {
 	}
 }
 
-// A child may be given before the bands are: what it asks of the band it
-// names is folded in once the grid has that band, not when the child arrived.
-func TestAChildsStretchReachesABandGivenAfterIt(t *testing.T) {
+// A child may be written before the bands are, so the name it used is settled
+// against the grid's bands at layout time rather than when the child arrived.
+func TestAChildFindsABandGivenAfterIt(t *testing.T) {
 	l := NewGridLayout()
 	l.SetSpacing(0)
 
-	stretching := placedBlock(10, 20, core.GridPlacement{
-		Row: 0, ColumnID: "fields", ColumnStretch: 1,
-	})
+	stretching := placedBlock(10, 20, core.GridPlacement{Row: 0, ColumnID: "fields"})
 	fixed := placedBlock(10, 20, core.GridPlacement{Row: 0, ColumnID: "labels"})
 
 	c := newDirContainer(core.DirLTR)
@@ -152,7 +150,7 @@ func TestAChildsStretchReachesABandGivenAfterIt(t *testing.T) {
 	// The bands arrive after the children, which is the order a build script
 	// is free to write them in.
 	l.AddColumn(Band{ID: "labels", Minimum: 40})
-	l.AddColumn(Band{ID: "fields", Minimum: 60})
+	l.AddColumn(Band{ID: "fields", Minimum: 60, Stretch: 1})
 
 	l.Layout(c, core.UnitRect{Width: 400, Height: 100})
 

@@ -8,22 +8,21 @@ package core
 // Alignment (see align.go) is the hint every manager reads. The two below are
 // read by one manager each, and mean nothing to the others.
 
-// GridPlacement is where a grid puts a child, and which of the row and column
-// it occupies should take leftover space.
+// GridPlacement is which cells of a grid a child occupies.
 //
-// A span of zero is one cell. The stretches are weights, and where two children
-// in the same row or column ask for different ones the largest is what that row
-// or column gets -- a row is one thing, and cannot take two answers.
+// A span of zero is one cell.
 //
 // RowID and ColumnID name a band instead of counting to one. A child that
 // names a band the grid has is put in that band whatever Row or Column says,
 // which is what lets a track be inserted without renumbering the form.
+//
+// How a track divides the space is the track's own business and is written on
+// its band (see layout.Band), not here: a child sits in a column and has no
+// standing to say how wide that column should be.
 type GridPlacement struct {
 	Row, Column         int
 	RowID, ColumnID     string
 	RowSpan, ColumnSpan int
-	RowStretch          int
-	ColumnStretch       int
 }
 
 // FlexHints are what a flex layout reads off a child: its share of the leftover
