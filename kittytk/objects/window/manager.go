@@ -724,6 +724,40 @@ func (m *WindowManager) topWindowAt(x, y core.Unit) *Window {
 	return nil
 }
 
+// maximizedFillerOwner returns the maximized window whose leftover room
+// contains the point, or nil. Topmost first, and a point inside a window's own
+// bounds belongs to that window rather than to anything's filler.
+func (m *WindowManager) maximizedFillerOwner(x, y core.Unit) *Window {
+	clientArea := m.ClientArea()
+	pt := core.UnitPoint{X: x, Y: y}
+	if !clientArea.Contains(pt) {
+		return nil
+	}
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() {
+			continue
+		}
+		if win.Bounds().Contains(pt) {
+			return nil
+		}
+		if !win.IsMaximized() {
+			continue
+		}
+		for _, r := range MaximizedFillerRects(win, clientArea) {
+			if r.Contains(pt) {
+				return win
+			}
+		}
+	}
+	return nil
+}
+
 // ResizeCursorForEdge maps a set of resize edges to the cursor shape that
 // signals resizing them (H/V for a single edge, the two diagonals for
 // corners, default for none). Shared by the desktop WindowManager and the
@@ -1775,7 +1809,7 @@ func (m *WindowManager) MaximizeWindow(win *Window) {
 	}
 	clientArea := m.ClientArea()
 	win.Maximize()
-	win.SetBounds(clientArea)
+	win.SetBounds(MaximizedBounds(win, clientArea))
 }
 
 // MinimizeWindow minimizes a window.
@@ -2304,6 +2338,16 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				return desktop.HandleMousePress(event)
 			}
 		}
+	}
+
+	// A maximized window that says how far it grows did not fill the client
+	// area, and the room it left over is its own: a press there raises it and
+	// goes no further. The filler is not interactive -- it holds nothing to
+	// press -- but neither is it a hole through to whatever is behind, which
+	// is what it would be if the press fell past it.
+	if win := m.maximizedFillerOwner(event.X, event.Y); win != nil {
+		m.ActivateWindow(win)
+		return true
 	}
 
 	// Check windows from top to bottom
@@ -3198,6 +3242,14 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			visibleBounds := bounds.Intersection(windowArea)
 			if visibleBounds.IsEmpty() {
 				continue
+			}
+
+			// A maximized window that says how far it grows sits in the
+			// middle of the client area rather than filling it; what it
+			// left over is filled before it paints, so the desktop does
+			// not show through around a window the person maximized.
+			if win.IsMaximized() {
+				PaintMaximizedFiller(p, win, clientArea, win == m.ActiveWindow())
 			}
 
 			// Tear-off affordance: a black halo just larger than the

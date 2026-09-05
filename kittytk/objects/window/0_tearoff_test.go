@@ -564,3 +564,64 @@ func TestTearOffHostPixelAnchoredWhenZoomed(t *testing.T) {
 		t.Fatal("restoring the zoom returns to unit-size preservation")
 	}
 }
+
+// A torn-off window IS the OS window, so a maximum it carries is settled with
+// the OS: zooming takes what the window may of the work area and centers it,
+// and nothing is painted around it because nothing is there.
+//
+// Zooming filled the work area whatever the window said, so max_width and
+// max_height meant nothing once a window was torn off.
+func TestTearOffHostZoomStopsAtTheWindowsMaximum(t *testing.T) {
+	// The fake's work area is 1600x970 at 0,30.
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	win.SetMaximumSize(core.UnitSize{Width: 800, Height: core.Unbounded})
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	h.zoomToWorkArea()
+
+	if surf.size.Width != 800 {
+		t.Errorf("the OS window is %d wide, want the window's maximum of 800", surf.size.Width)
+	}
+	if surf.size.Height != 970 {
+		t.Errorf("the OS window is %d tall, want the whole work area's 970", surf.size.Height)
+	}
+	// Centered in the work area on the axis it was capped on, and flush on
+	// the axis it was not.
+	if surf.x != (1600-800)/2 {
+		t.Errorf("the OS window sits at x=%d, want it centered at %d", surf.x, (1600-800)/2)
+	}
+	if surf.y != 30 {
+		t.Errorf("the OS window sits at y=%d, want the work area's top at 30", surf.y)
+	}
+
+	// Capped on both axes, it is centered on both.
+	surf = &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win = NewWindow("torn")
+	win.SetMaximumSize(core.UnitSize{Width: 800, Height: 400})
+	h = NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+	h.zoomToWorkArea()
+
+	if surf.size.Width != 800 || surf.size.Height != 400 {
+		t.Errorf("the OS window is %dx%d, want its maximum of 800x400",
+			surf.size.Width, surf.size.Height)
+	}
+	if surf.x != (1600-800)/2 || surf.y != 30+(970-400)/2 {
+		t.Errorf("the OS window sits at %d,%d, want it centered at %d,%d",
+			surf.x, surf.y, (1600-800)/2, 30+(970-400)/2)
+	}
+}
+
+// And a minimum still beats a maximum here.
+func TestTearOffHostZoomsMinimumBeatsItsMaximum(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	win.SetMaximumSize(core.UnitSize{Width: 100, Height: core.Unbounded})
+	win.SetMinimumSize(core.UnitSize{Width: 640, Height: 0})
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	h.zoomToWorkArea()
+	if surf.size.Width != 640 {
+		t.Errorf("a minimum of 640 against a maximum of 100 gave %d, want the minimum", surf.size.Width)
+	}
+}

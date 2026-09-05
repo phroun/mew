@@ -505,6 +505,112 @@ func (w *Window) CanMaximize() bool {
 	return canMaximize(w.Flags())
 }
 
+// MaximizedBounds is where a maximized window sits in the room it was given.
+//
+// The whole of it, unless the window says how far it grows -- then it takes
+// what it may and sits in the middle of the rest. Which is what lets a window
+// be maximized at all when it has a maximum: the alternative is refusing the
+// gesture, and a window the person asked to maximize should do something.
+//
+// The maximum is capped first and the minimum raised after, so where the two
+// conflict the minimum wins, as it does wherever else they meet.
+func MaximizedBounds(win *Window, clientArea core.UnitRect) core.UnitRect {
+	if win == nil {
+		return clientArea
+	}
+	max, min := win.MaximumSize(), win.MinimumSize()
+	out := clientArea
+
+	width := clientArea.Width
+	if max.Width >= 0 && max.Width < width {
+		width = max.Width
+	}
+	if width < min.Width {
+		width = min.Width
+	}
+	if width < clientArea.Width {
+		out.X += (clientArea.Width - width) / 2
+		out.Width = width
+	}
+
+	height := clientArea.Height
+	if max.Height >= 0 && max.Height < height {
+		height = max.Height
+	}
+	if height < min.Height {
+		height = min.Height
+	}
+	if height < clientArea.Height {
+		out.Y += (clientArea.Height - height) / 2
+		out.Height = height
+	}
+	return out
+}
+
+// PaintMaximizedFiller fills the room a maximized window left over.
+//
+// A window that says how far it grows sits in the middle of the room it was
+// maximized into rather than filling it, and the desktop showing through
+// around it reads as the gesture having failed. So the leftover is painted
+// instead, in the window's own title-bar colour taken a quarter of the way to
+// black -- near enough the frame to belong to the window, dark enough to read
+// as room the window declined rather than as desktop.
+//
+// On a cell surface there is no alpha to take it down with, so the quarter is
+// spent as ink: the light-shade block, which is a quarter covered, in black
+// over the same frame colour. It is how the desktop draws its own background
+// where no window is showing.
+//
+// Nothing here is interactive. The filler answers no pointer of its own -- see
+// the manager's press handling, which gives the click to the window it
+// surrounds.
+func PaintMaximizedFiller(p *core.Painter, win *Window, clientArea core.UnitRect, active bool) {
+	rects := MaximizedFillerRects(win, clientArea)
+	if len(rects) == 0 {
+		return
+	}
+	frame := win.GetScheme().GetWindowTitle(active)
+
+	for _, r := range rects {
+		if p.Graphical() {
+			p.FillRect(r, ' ', frame)
+			p.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
+				p.UnitSpanPxX(r.X, r.X+r.Width),
+				p.UnitSpanPxY(r.Y, r.Y+r.Height),
+				0, 0, 0, modalDimAlpha)
+			continue
+		}
+		p.FillRect(r, shadedFillerChar, frame.WithFg(style.ColorBlack))
+	}
+}
+
+// shadedFillerChar is the light-shade block: a quarter of the cell covered,
+// which is the cell surface's way of spending the quarter of black the
+// graphical path lays over the frame colour.
+const shadedFillerChar = '\u2591'
+
+// MaximizedFillerRects is the room a maximized window left over: up to four
+// rectangles around it, in the client area's own coordinates. Empty where the
+// window fills its room, which is the ordinary case.
+func MaximizedFillerRects(win *Window, clientArea core.UnitRect) []core.UnitRect {
+	inner := MaximizedBounds(win, clientArea)
+	var out []core.UnitRect
+	add := func(r core.UnitRect) {
+		if r.Width > 0 && r.Height > 0 {
+			out = append(out, r)
+		}
+	}
+	add(core.UnitRect{X: clientArea.X, Y: clientArea.Y,
+		Width: clientArea.Width, Height: inner.Y - clientArea.Y})
+	add(core.UnitRect{X: clientArea.X, Y: inner.Y + inner.Height,
+		Width: clientArea.Width, Height: clientArea.Y + clientArea.Height - (inner.Y + inner.Height)})
+	add(core.UnitRect{X: clientArea.X, Y: inner.Y,
+		Width: inner.X - clientArea.X, Height: inner.Height})
+	add(core.UnitRect{X: inner.X + inner.Width, Y: inner.Y,
+		Width: clientArea.X + clientArea.Width - (inner.X + inner.Width), Height: inner.Height})
+	return out
+}
+
 // hasTitleBar reports whether the window shows a title bar in the given state,
 // and thus whether its title-bar hit regions are live: the caption buttons,
 // drag-to-move/detach, and double-click-to-restore. A NoTitle or Frameless

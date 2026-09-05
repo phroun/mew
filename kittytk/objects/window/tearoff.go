@@ -1455,12 +1455,60 @@ func (h *TearOffHost) zoomToWorkArea() {
 	h.zoomSaved = [4]int{x, y, h.paintablePxX(pw), h.paintablePxY(ph)}
 	h.zoomed = true
 	h.win.Maximize()
+
+	// A torn-off window IS the OS window, so a maximum it carries is settled
+	// with the OS rather than painted around: it takes what it may of the
+	// work area and sits in the middle of what is left. There is no filler to
+	// draw because there is no window there to fill around — which is the
+	// difference between here and the desktop, where the window cannot shrink
+	// the room it was given.
+	//
+	// The minimum is raised after the maximum is capped, so where the two
+	// conflict the minimum wins, as it does wherever else they meet.
+	wx, wy, ww, wh = h.zoomRectPx(wx, wy, ww, wh)
+
 	h.native.SetScreenPositionPx(wx, wy)
 	// The work-area size itself is NOT rounded: a maximized window draws no
 	// rounded frame (window.go's graphicalFrame excludes WindowStateMaximized,
 	// as hostFrameInset does for the desktop), so there is no outer stroke to
 	// protect here — and shrinking it would leave the screen edge uncovered.
 	h.native.SetScreenSizePx(ww, wh)
+}
+
+// zoomRectPx bounds a work area by the window's own maximum and minimum,
+// centering what is left in it. All in device pixels, on the hardened pitch
+// the frame is drawn against.
+func (h *TearOffHost) zoomRectPx(wx, wy, ww, wh int) (int, int, int, int) {
+	max, min := h.win.MaximumSize(), h.win.MinimumSize()
+
+	w := ww
+	if max.Width >= 0 {
+		if px := h.pxHardX(max.Width); px < w {
+			w = px
+		}
+	}
+	if px := h.pxHardX(min.Width); w < px {
+		w = px
+	}
+	if w < ww {
+		wx += (ww - w) / 2
+		ww = w
+	}
+
+	ht := wh
+	if max.Height >= 0 {
+		if px := h.pxHardY(max.Height); px < ht {
+			ht = px
+		}
+	}
+	if px := h.pxHardY(min.Height); ht < px {
+		ht = px
+	}
+	if ht < wh {
+		wy += (wh - ht) / 2
+		wh = ht
+	}
+	return wx, wy, ww, wh
 }
 
 // applyKeyboardBounds maps a title-focus keyboard geometry change

@@ -661,8 +661,41 @@ func (m *MDIPane) MaximizeWindow(win *window.Window) {
 	}
 	clientArea := m.ClientArea()
 	win.Maximize()
-	win.SetBounds(clientArea)
+	win.SetBounds(window.MaximizedBounds(win, clientArea))
 	m.Update()
+}
+
+// maximizedFillerOwner returns the maximized child whose leftover room
+// contains the point, or nil (see WindowManager.maximizedFillerOwner).
+func (m *MDIPane) maximizedFillerOwner(x, y core.Unit) *window.Window {
+	clientArea := m.ClientArea()
+	pt := core.UnitPoint{X: x, Y: y}
+	if !clientArea.Contains(pt) {
+		return nil
+	}
+	m.mu.RLock()
+	windows := make([]*window.Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() {
+			continue
+		}
+		if win.Bounds().Contains(pt) {
+			return nil
+		}
+		if !win.IsMaximized() {
+			continue
+		}
+		for _, r := range window.MaximizedFillerRects(win, clientArea) {
+			if r.Contains(pt) {
+				return win
+			}
+		}
+	}
+	return nil
 }
 
 // MinimizeWindow minimizes a window.
@@ -1384,6 +1417,14 @@ func (m *MDIPane) Paint(p *core.Painter) {
 				Height: visibleBounds.Height,
 			}
 
+			// A maximized child that says how far it grows sits in the
+			// middle of the pane rather than filling it; what it left
+			// over is filled first, so the pane's own content does not
+			// show through around a window the person maximized.
+			if win.IsMaximized() {
+				window.PaintMaximizedFiller(ip, win, clientArea, win == m.ActiveWindow())
+			}
+
 			// Drop shadow first, then the window over it. An MDI child
 			// paints into its ancestor surface — inside the compositor
 			// layer its parent window occupies — so it has no layer of
@@ -1523,6 +1564,13 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 	m.mu.RUnlock()
 
 	metrics := m.EffectiveCellMetrics()
+
+	// The room a maximized child left over is that child's, as it is on the
+	// desktop: a press there raises it and goes no further.
+	if win := m.maximizedFillerOwner(event.X, event.Y); win != nil {
+		m.ActivateWindow(win)
+		return true
+	}
 
 	// Check windows from top to bottom
 	for i := len(windows) - 1; i >= 0; i-- {
