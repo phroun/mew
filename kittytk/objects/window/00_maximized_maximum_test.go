@@ -172,3 +172,59 @@ func TestAWindowOverTheFillerTakesThePress(t *testing.T) {
 		t.Error("a press over a window covering the filler raised the window underneath")
 	}
 }
+
+// The cap survives a relayout. A desktop resize re-fits every maximized window
+// to the client area, and that happens at startup too -- so a cap applied only
+// by MaximizeWindow is wiped before anyone sees it.
+func TestAMaximizedWindowsCapSurvivesARelayout(t *testing.T) {
+	m := NewWindowManager()
+	m.SetScreenBounds(core.UnitRect{Width: 1200, Height: 800})
+
+	win := NewWindow("bounded")
+	win.SetMaximumSize(core.UnitSize{Width: 480, Height: 320})
+	m.AddWindow(win)
+	m.MaximizeWindow(win)
+
+	after := win.Bounds()
+	if after.Width != 480 || after.Height != 320 {
+		t.Fatalf("maximized it is %v, want its maximum of 480x320", after.Size())
+	}
+
+	// The same bounds again is still a relayout, which is what startup does.
+	m.SetScreenBounds(core.UnitRect{Width: 1200, Height: 800})
+	if got := win.Bounds(); got != after {
+		t.Errorf("a relayout moved it from %v to %v; the cap did not survive", after, got)
+	}
+
+	// And a resize re-fits it to the new room, still capped and still centered.
+	m.SetScreenBounds(core.UnitRect{Width: 900, Height: 700})
+	room := m.ClientArea()
+	got := win.Bounds()
+	if got.Width != 480 || got.Height != 320 {
+		t.Errorf("after a resize it is %v, want its maximum of 480x320", got.Size())
+	}
+	if got.X != room.X+(room.Width-480)/2 || got.Y != room.Y+(room.Height-320)/2 {
+		t.Errorf("after a resize it sits at %d,%d, want it centered in %v", got.X, got.Y, room)
+	}
+}
+
+// A window minimized while maximized comes back maximized, and comes back
+// capped: RestoreWindow re-fits it to the client area too.
+func TestARestoredMaximizedWindowKeepsItsCap(t *testing.T) {
+	m := NewWindowManager()
+	m.SetScreenBounds(core.UnitRect{Width: 1200, Height: 800})
+
+	win := NewWindow("bounded")
+	win.SetMaximumSize(core.UnitSize{Width: 480, Height: 320})
+	m.AddWindow(win)
+	m.MaximizeWindow(win)
+	m.MinimizeWindow(win)
+	m.RestoreWindow(win)
+
+	if !win.IsMaximized() {
+		t.Fatal("it came back un-maximized")
+	}
+	if got := win.Bounds(); got.Width != 480 || got.Height != 320 {
+		t.Errorf("it came back %v, want its maximum of 480x320", got.Size())
+	}
+}

@@ -1135,11 +1135,13 @@ func (m *MDIPane) SetBounds(bounds core.UnitRect) {
 	m.TrinketBase.SetBounds(bounds)
 	m.layoutContent()
 
-	// Adjust maximized windows
+	// Re-fit maximized windows (see WindowManager.SetScreenBounds): a window
+	// that says how far it grows does not take the whole pane, so this asks
+	// the same question MaximizeWindow does.
 	clientArea := m.ClientArea()
 	for _, win := range m.windows {
 		if win.IsMaximized() {
-			win.SetBounds(clientArea)
+			win.SetBounds(window.MaximizedBounds(win, clientArea))
 		}
 	}
 }

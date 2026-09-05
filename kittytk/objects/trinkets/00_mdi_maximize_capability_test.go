@@ -70,3 +70,27 @@ func TestAnMDIChildThatCannotMaximizeIsLeftAlone(t *testing.T) {
 		t.Error("a window with nothing against it was not maximized")
 	}
 }
+
+// The pane re-fits its maximized children when it is resized, and a child that
+// says how far it grows keeps its cap through that -- as it does on the
+// desktop, and for the same reason: the re-fit happens at layout time, so a cap
+// applied only by MaximizeWindow is wiped before anyone sees it.
+func TestAMaximizedMDIChildsCapSurvivesAPaneResize(t *testing.T) {
+	m, win := mdiChild(0)
+	win.SetMaximumSize(core.UnitSize{Width: 320, Height: 200})
+	m.MaximizeWindow(win)
+
+	if got := win.Bounds(); got.Width != 320 || got.Height != 200 {
+		t.Fatalf("maximized in the pane it is %v, want its maximum of 320x200", got.Size())
+	}
+
+	m.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 600, Height: 500})
+	pane := m.ClientArea()
+	got := win.Bounds()
+	if got.Width != 320 || got.Height != 200 {
+		t.Errorf("after a pane resize it is %v, want its maximum of 320x200", got.Size())
+	}
+	if got.X != pane.X+(pane.Width-320)/2 || got.Y != pane.Y+(pane.Height-200)/2 {
+		t.Errorf("after a pane resize it sits at %d,%d, want it centered in %v", got.X, got.Y, pane)
+	}
+}

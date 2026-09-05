@@ -857,11 +857,14 @@ func (m *WindowManager) SetScreenBounds(bounds core.UnitRect) {
 		desktop.SetBounds(bounds)
 	}
 
-	// Adjust maximized windows to client area
+	// Re-fit maximized windows to the client area -- which is not the whole
+	// of it for a window that says how far it grows, so this asks the same
+	// question MaximizeWindow does. Setting the raw area here undid the cap
+	// on every relayout, and a relayout happens at startup.
 	clientArea := m.ClientArea()
 	for _, win := range m.windows {
 		if win.IsMaximized() {
-			win.SetBounds(clientArea)
+			win.SetBounds(MaximizedBounds(win, clientArea))
 		}
 	}
 }
@@ -1837,7 +1840,7 @@ func (m *WindowManager) RestoreWindow(win *Window) {
 	// it keeps stale bounds and, for a NoTitleWhenMaximized window, its frame,
 	// until the next manual resize/maximize.
 	if win.IsMaximized() {
-		win.SetBounds(m.ClientArea())
+		win.SetBounds(MaximizedBounds(win, m.ClientArea()))
 	}
 	m.ActivateWindow(win)
 
