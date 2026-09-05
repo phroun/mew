@@ -165,6 +165,30 @@ func isInlineTrinket(w core.Trinket) bool {
 	return true
 }
 
+// spacingTotal is ALL the room Layout puts between and around the items along
+// the main axis, which is what SizeHint and MinimumSize have to promise: a box
+// handed less than Layout then consumes lays its children out past its own
+// edge, and a row of buttons put its last shadow through whatever was drawn to
+// the right of it.
+func (l *BoxLayout) spacingTotal(container core.Container) core.Unit {
+	if len(l.items) < 1 {
+		return 0
+	}
+	metrics := l.effectiveMetrics(container)
+	if l.orientation == core.Vertical {
+		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
+		return spacing * core.Unit(len(l.items)-1)
+	}
+	base := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
+	total := l.inlineSpacingForItems(metrics)
+	for i := 0; i < len(l.items)-1; i++ {
+		if !isInlineTrinket(l.items[i].Trinket) && !isInlineTrinket(l.items[i+1].Trinket) {
+			total += base
+		}
+	}
+	return total
+}
+
 // itemSize is the size a box gives one item: not below min_width and
 // min_height, and otherwise whatever the trinket answers for itself.
 //
@@ -210,24 +234,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
 	}
 
-	// For horizontal layout, calculate additional spacing for inline trinkets
-	var inlineSpacingTotal core.Unit
-	if l.orientation == core.Horizontal && len(l.items) > 0 {
-		// Space before first inline trinket
-		if isInlineTrinket(l.items[0].Trinket) {
-			inlineSpacingTotal += metrics.UnitsPerCellWidth
-		}
-		// Space between items where at least one is inline
-		for i := 0; i < len(l.items)-1; i++ {
-			if isInlineTrinket(l.items[i].Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
-				inlineSpacingTotal += metrics.UnitsPerCellWidth
-			}
-		}
-		// Space after last inline trinket
-		if isInlineTrinket(l.items[len(l.items)-1].Trinket) {
-			inlineSpacingTotal += metrics.UnitsPerCellWidth
-		}
-	}
+	inlineSpacingTotal := l.inlineSpacingForItems(metrics)
 
 	// Calculate sizes along the primary axis
 	var sizes []core.Unit
@@ -602,8 +609,14 @@ func itemHeightForWidth(w core.Trinket, width core.Unit) core.Unit {
 	return w.SizeHint().Height
 }
 
-// inlineSpacingForItems computes the extra horizontal spacing inline
-// trinkets receive in a horizontal layout (mirrors Layout).
+// inlineSpacingForItems is the breathing room a horizontal box opens around
+// INLINE trinkets -- the small controls that read as part of a sentence rather
+// than as blocks: a column before the first if it is inline, one between any
+// two where either is, and one after the last if it is.
+//
+// It is not the configured spacing and does not replace it; between two items
+// that are both blocks the configured spacing applies instead. Layout consumes
+// it, so spacingTotal has to promise it.
 func (l *BoxLayout) inlineSpacingForItems(metrics core.CellMetrics) core.Unit {
 	var total core.Unit
 	if len(l.items) == 0 {
@@ -690,14 +703,10 @@ func (l *BoxLayout) SizeHint(container core.Container) core.UnitSize {
 		}
 	}
 
-	// Add spacing
-	if len(l.items) > 1 {
-		spacing := l.spacing * core.Unit(len(l.items)-1)
-		if l.orientation == core.Horizontal {
-			width += spacing
-		} else {
-			height += spacing
-		}
+	if spacing := l.spacingTotal(container); l.orientation == core.Horizontal {
+		width += spacing
+	} else {
+		height += spacing
 	}
 
 	// Add margins
@@ -728,13 +737,10 @@ func (l *BoxLayout) MinimumSize(container core.Container) core.UnitSize {
 	}
 
 	// Add spacing
-	if len(l.items) > 1 {
-		spacing := l.spacing * core.Unit(len(l.items)-1)
-		if l.orientation == core.Horizontal {
-			width += spacing
-		} else {
-			height += spacing
-		}
+	if spacing := l.spacingTotal(container); l.orientation == core.Horizontal {
+		width += spacing
+	} else {
+		height += spacing
 	}
 
 	// Add margins

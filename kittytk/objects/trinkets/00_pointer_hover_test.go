@@ -13,7 +13,7 @@ func TestButtonPointerHover(t *testing.T) {
 	b := NewButton("ok")
 	b.SetBounds(core.UnitRect{Width: 200, Height: 40})
 
-	if b.HandleMouseMove(core.MouseMoveEvent{X: 50, Y: 0}) {
+	if b.HandleMouseMove(core.MouseMoveEvent{X: 8, Y: 0}) {
 		t.Error("hover move should not be consumed")
 	}
 	if !b.mouseOver {
@@ -33,12 +33,12 @@ func TestButtonHoverSuppressedWhileButtonHeld(t *testing.T) {
 	b.SetBounds(core.UnitRect{Width: 200, Height: 40})
 
 	// Hover set on a plain move.
-	b.HandleMouseMove(core.MouseMoveEvent{X: 50, Y: 0})
+	b.HandleMouseMove(core.MouseMoveEvent{X: 8, Y: 0})
 	if !b.mouseOver {
 		t.Fatal("plain move should set hover")
 	}
 	// A held-button move over the same spot clears it.
-	b.HandleMouseMove(core.MouseMoveEvent{X: 50, Y: 0, Buttons: core.LeftButton})
+	b.HandleMouseMove(core.MouseMoveEvent{X: 8, Y: 0, Buttons: core.LeftButton})
 	if b.mouseOver {
 		t.Error("held-button move should not keep hover")
 	}

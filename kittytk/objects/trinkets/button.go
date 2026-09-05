@@ -577,11 +577,17 @@ func (b *Button) vInset() core.Unit {
 	return (rows / 2) * metrics.UnitsPerCellHeight
 }
 
-// hitRect returns the button's local click/hover region. It follows the
-// intrinsic two-row footprint at its centered offset (the extra vertical space
-// a layout grants is inert). On graphical surfaces the drop shadow only reaches
-// partway into the second row, so the dead bottom half-row is trimmed; cell
-// surfaces use the full two rows.
+// hitRect returns the button's local click/hover region: its face and the
+// shadow beside and beneath it, and nothing else.
+//
+// A button's footprint is intrinsic -- two rows deep, and as wide as its
+// caption plus the shadow's column -- so room a layout grants beyond that is
+// inert on BOTH axes. A grid cell or a stretched row is often much larger than
+// the button drawn in it, and answering a click from a corner of the cell the
+// button never painted is answering for somewhere it does not appear to be.
+//
+// On graphical surfaces the drop shadow only reaches partway into the second
+// row, so the dead bottom half-row is trimmed; cell surfaces use the full two.
 func (b *Button) hitRect() core.UnitRect {
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
@@ -593,7 +599,13 @@ func (b *Button) hitRect() core.UnitRect {
 	if core.FindGraphicalFrames(b.Self()) {
 		h -= metrics.UnitsPerCellHeight / 2
 	}
-	return core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: h}
+	// The face plus the shadow's column, which is what SizeHint reports and
+	// what Paint lays down from the button's leading edge.
+	w := b.SizeHint().Width
+	if w > bounds.Width {
+		w = bounds.Width
+	}
+	return core.UnitRect{X: 0, Y: top, Width: w, Height: h}
 }
 
 // inHitBox reports whether a local point falls in the button's hit region.
