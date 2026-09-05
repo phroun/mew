@@ -333,12 +333,12 @@ new tab caption="Grid" children={
 		}
 		new label caption="A span: the button row above covers both columns and sits at the trailing edge."
 		new panel border layout=grid spacing=4 children={
-			new button caption="1" row=0 column=0 column_stretch=1
-			new button caption="2" row=0 column=1 column_stretch=1
-			new button caption="3" row=0 column=2 column_stretch=1
-			new button caption="tall" row=0 column=3 row_span=2 column_stretch=1 fill=both
-			new button caption="4" row=1 column=0 column_stretch=1
-			new button caption="wide" row=1 column=1 column_span=2 column_stretch=1
+			new button caption="1" row=0 column=0 column_stretch=1 fill=none
+			new button caption="2" row=0 column=1 column_stretch=1 fill=none
+			new button caption="3" row=0 column=2 column_stretch=1 fill=none
+			new button caption="tall" row=0 column=3 row_span=2 column_stretch=1 fill=none
+			new button caption="4" row=1 column=0 column_stretch=1 fill=none
+			new button caption="wide" row=1 column=1 column_span=2 column_stretch=1 fill=none
 		}
 		new spacer
 	}
