@@ -3,6 +3,7 @@ package protocol
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -247,6 +248,11 @@ func (c *BindContext) FireAction(trinketID uint64) {
 // performing D17-typed conversion (see AsString and friends).
 type PropertyApplier func(ctx *BindContext, target any, v *Value, flag FlagState) error
 
+// CollectionAppender adopts one built child into a parent target. It backs
+// a collection property (D13's {} block), and runs once per statement in
+// the block, in the order they were written.
+type CollectionAppender func(parent, child any) error
+
 // TypeSpec describes a registered builtin type.
 type TypeSpec struct {
 	// New constructs the target (a trinket, or a virtual item's record).
@@ -254,11 +260,13 @@ type TypeSpec struct {
 
 	// Props maps property names to their Property (applier + descriptor).
 	// Type-specific properties take precedence over common ones.
+	//
+	// A type that takes children registers a collection property for each
+	// block it accepts -- `children` for most, and a named one such as
+	// `columns` where the members play a particular part. A type that
+	// registers none takes no children, which is the same answer it gives
+	// for any other property it does not have.
 	Props map[string]Property
-
-	// Append attaches a constructed child target to a parent target
-	// (children blocks, D13). Nil means the type takes no children.
-	Append func(parent, child any) error
 
 	// Bind wires the target's event emission into the connection
 	// (called once, immediately after New). Trinket codebases own this
@@ -307,6 +315,11 @@ func RegisterType(name string, spec *TypeSpec) {
 	if !spec.Virtual && spec.ID == nil {
 		panic(fmt.Sprintf("protocol: type %q: spec.ID is required for non-virtual types", name))
 	}
+	for prop, p := range spec.Props {
+		if err := checkPropertyShape(p); err != nil {
+			panic(fmt.Sprintf("protocol: type %q: property %q: %v", name, prop, err))
+		}
+	}
 	regMu.Lock()
 	defer regMu.Unlock()
 	if _, dup := regTypes[name]; dup {
@@ -319,12 +332,37 @@ func RegisterType(name string, spec *TypeSpec) {
 // non-virtual type (enabled, visible, font, ...). The Property carries
 // both the applier and its introspection descriptor.
 func RegisterCommonProperty(name string, p Property) {
+	if err := checkPropertyShape(p); err != nil {
+		panic(fmt.Sprintf("protocol: common property %q: %v", name, err))
+	}
 	regMu.Lock()
 	defer regMu.Unlock()
 	if _, dup := regCommon[name]; dup {
 		panic(fmt.Sprintf("protocol: common property %q registered twice", name))
 	}
 	regCommon[name] = p
+}
+
+// checkPropertyShape rejects a registration that is neither a value
+// property nor a collection, or is somehow both. The two shapes are
+// applied by different paths -- a value reaches Set, a block reaches
+// Append -- so a property that answers to both, or to neither, is a
+// property the session cannot route.
+func checkPropertyShape(p Property) error {
+	collection := p.Desc.Kind == "collection"
+	switch {
+	case p.Apply != nil && p.Accept != nil:
+		return fmt.Errorf("has both an applier and a collection appender")
+	case p.Apply == nil && p.Accept == nil:
+		return fmt.Errorf("has neither an applier nor a collection appender")
+	case collection && p.Accept == nil:
+		return fmt.Errorf(`kind is "collection" but it takes a value`)
+	case !collection && p.Accept != nil:
+		return fmt.Errorf(`takes a block but its kind is %q, not "collection"`, p.Desc.Kind)
+	case len(p.Desc.Members) > 0 && !collection:
+		return fmt.Errorf("names members but is not a collection")
+	}
+	return nil
 }
 
 // UniversalEvent is the one event every type may be subscribed to
@@ -439,7 +477,7 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("unknown trinket type %q", typeName)
 	}
-	o := &registryObject{ctx: f.ctx, spec: spec, target: spec.New()}
+	o := &registryObject{ctx: f.ctx, spec: spec, typeName: typeName, target: spec.New()}
 	if spec.Virtual {
 		o.virtualID = virtualIDSource()
 		// Virtual targets that want to know their identity (e.g. tree
@@ -460,6 +498,7 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 type registryObject struct {
 	ctx       *BindContext
 	spec      *TypeSpec
+	typeName  string
 	target    any
 	virtualID uint64
 }
@@ -470,30 +509,62 @@ func (o *registryObject) Target() any { return o.target }
 
 // Set implements Object.
 func (o *registryObject) Set(name string, v *Value, flag FlagState) error {
-	if p, ok := o.spec.Props[name]; ok {
-		return p.Apply(o.ctx, o.target, v, flag)
+	p, ok := o.property(name)
+	if !ok {
+		return fmt.Errorf("property %q is not supported by this type", name)
 	}
-	if !o.spec.Virtual {
-		regMu.RLock()
-		p, ok := regCommon[name]
-		regMu.RUnlock()
-		if ok {
-			return p.Apply(o.ctx, o.target, v, flag)
-		}
+	if p.Accept != nil {
+		return fmt.Errorf("property %q takes a {} block, not a value", name)
 	}
-	return fmt.Errorf("property %q is not supported by this type", name)
+	return p.Apply(o.ctx, o.target, v, flag)
 }
 
-// Append implements Object.
-func (o *registryObject) Append(child Object) error {
-	if o.spec.Append == nil {
-		return fmt.Errorf("this type does not accept children")
+// Append implements Object: it adopts a built child into the named
+// collection property.
+func (o *registryObject) Append(slot string, child Object) error {
+	p, ok := o.property(slot)
+	if !ok {
+		return fmt.Errorf("property %q is not supported by this type", slot)
+	}
+	if p.Accept == nil {
+		return fmt.Errorf("property %q takes a value, not a {} block", slot)
 	}
 	c, ok := child.(*registryObject)
 	if !ok {
 		return fmt.Errorf("cannot append foreign object")
 	}
-	return o.spec.Append(o.target, c.target)
+	// The members a collection names are checked by the child's own type
+	// name, so an offer of the wrong thing is refused in the vocabulary the
+	// script is written in rather than in Go types the author never sees.
+	if members := p.Desc.Members; len(members) > 0 {
+		match := false
+		for _, m := range members {
+			if m == c.typeName {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return fmt.Errorf("%s: members must be one of %s; got %s",
+				slot, strings.Join(members, ", "), c.typeName)
+		}
+	}
+	return p.Accept(o.target, c.target)
+}
+
+// property resolves a name against this type's own table and, for a
+// non-virtual type, the common properties behind it.
+func (o *registryObject) property(name string) (Property, bool) {
+	if p, ok := o.spec.Props[name]; ok {
+		return p, true
+	}
+	if o.spec.Virtual {
+		return Property{}, false
+	}
+	regMu.RLock()
+	defer regMu.RUnlock()
+	p, ok := regCommon[name]
+	return p, ok
 }
 
 // ID implements Object.

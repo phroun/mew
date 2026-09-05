@@ -45,14 +45,14 @@ func init() {
 				target.(*fixedWidthBox).width = core.Unit(n)
 				return nil
 			}).Tip("Fixed box width in units"),
-		},
-		Append: func(parent, child any) error {
-			w, ok := child.(core.Trinket)
-			if !ok {
-				return fmt.Errorf("fixedbox: children must be trinkets, got %T", child)
-			}
-			parent.(*fixedWidthBox).AddChild(w)
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				w, ok := child.(core.Trinket)
+				if !ok {
+					return fmt.Errorf("fixedbox: children must be trinkets, got %T", child)
+				}
+				parent.(*fixedWidthBox).AddChild(w)
+				return nil
+			}).Tip("Trinkets this box contains."),
 		},
 	})
 }

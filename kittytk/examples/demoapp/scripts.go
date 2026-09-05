@@ -628,7 +628,7 @@ dkindc=w.t.det.dbox.dtree.dkindc
 dmodc=w.t.det.dbox.dtree.dmodc
 dtagsc=w.t.det.dbox.dtree.dtagsc
 drawc=w.t.det.dbox.dtree.drawc
-kinds=new collection of=options children={
+kinds=new collection children={
 	new option key=png value="PNG image"
 	new option key=folder value="Folder"
 	new option key=arj value="ARJ Archive"

@@ -39,14 +39,16 @@ func init() {
 	protocol.RegisterType("menubar", &protocol.TypeSpec{
 		Virtual: true,
 		New:     func() any { return &wireMenuBar{} },
-		Append: func(parent, child any) error {
-			b := parent.(*wireMenuBar)
-			m, ok := child.(*Menu)
-			if !ok {
-				return fmt.Errorf("menubar: children must be menus, got %T", child)
-			}
-			b.menus = append(b.menus, m)
-			return nil
+		Props: map[string]protocol.Property{
+			"children": protocol.NewCollection(func(parent, child any) error {
+				b := parent.(*wireMenuBar)
+				m, ok := child.(*Menu)
+				if !ok {
+					return fmt.Errorf("menubar: children must be menus, got %T", child)
+				}
+				b.menus = append(b.menus, m)
+				return nil
+			}).Members("menu").Tip("The menus on the bar; where each lands is its wellknown or after."),
 		},
 	})
 
@@ -85,15 +87,15 @@ func init() {
 				// Quoted in the example because the property is a string:
 				// after=file is rejected with "expected a quoted string".
 			})).Tip(`Place this untagged menu after a well-known slot (e.g. after="file")`),
-		},
-		Append: func(parent, child any) error {
-			m := parent.(*Menu)
-			it, ok := child.(*MenuItem)
-			if !ok {
-				return fmt.Errorf("menu: children must be menuitems, got %T", child)
-			}
-			m.AddItem(it)
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				m := parent.(*Menu)
+				it, ok := child.(*MenuItem)
+				if !ok {
+					return fmt.Errorf("menu: children must be menuitems, got %T", child)
+				}
+				m.AddItem(it)
+				return nil
+			}).Members("menuitem").Tip("The items on this menu, top to bottom."),
 		},
 	})
 
@@ -202,18 +204,18 @@ func init() {
 				m.SetWellKnownID(s)
 				return nil
 			})).Tip("System item role: cut/copy/paste/selectall - this item BECOMES the standard one"),
-		},
-		Append: func(parent, child any) error {
-			it := parent.(*MenuItem)
-			c, ok := child.(*MenuItem)
-			if !ok {
-				return fmt.Errorf("menuitem: submenu children must be menuitems, got %T", child)
-			}
-			if it.SubMenu == nil {
-				it.SetSubMenu(NewMenu(it.Text))
-			}
-			it.SubMenu.AddItem(c)
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				it := parent.(*MenuItem)
+				c, ok := child.(*MenuItem)
+				if !ok {
+					return fmt.Errorf("menuitem: submenu children must be menuitems, got %T", child)
+				}
+				if it.SubMenu == nil {
+					it.SetSubMenu(NewMenu(it.Text))
+				}
+				it.SubMenu.AddItem(c)
+				return nil
+			}).Members("menuitem").Tip("Items that grow a submenu under this one."),
 		},
 	})
 }

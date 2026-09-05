@@ -127,14 +127,22 @@ func regTrinket(name string, construct func() core.Trinket, props map[string]pro
 			return destroyTrinket(w)
 		},
 	}
+	// A type that adopts trinkets gets the `children` collection, unless it
+	// registered one of its own -- a type whose children are a particular
+	// kind names them, and says so in its own words.
 	if appendFn != nil {
-		spec.Append = func(p, c any) error {
-			pw, ok1 := p.(core.Trinket)
-			cw, ok2 := c.(core.Trinket)
-			if !ok1 || !ok2 {
-				return fmt.Errorf("%s: children must be trinkets", name)
+		if _, own := spec.Props["children"]; !own {
+			if spec.Props == nil {
+				spec.Props = map[string]protocol.Property{}
 			}
-			return appendFn(pw, cw)
+			spec.Props["children"] = protocol.NewCollection(func(p, c any) error {
+				pw, ok1 := p.(core.Trinket)
+				cw, ok2 := c.(core.Trinket)
+				if !ok1 || !ok2 {
+					return fmt.Errorf("%s: children must be trinkets", name)
+				}
+				return appendFn(pw, cw)
+			}).Tip("Trinkets this one contains.")
 		}
 	}
 	if bind != nil {

@@ -163,6 +163,22 @@ func init() {
 		}).Tip(doc).Def("false")
 	}
 
+	props["children"] = protocol.NewCollection(func(parent, child any) error {
+		w, ok := parent.(*Window)
+		if !ok {
+			return fmt.Errorf("window: wrong parent type %T", parent)
+		}
+		cw, ok := child.(core.Trinket)
+		if !ok {
+			return fmt.Errorf("window: content must be a trinket, got %T", child)
+		}
+		if w.Content() != nil {
+			return fmt.Errorf("window: only one content trinket (wrap several in a panel)")
+		}
+		w.SetContent(cw)
+		return nil
+	}).Tip("The one trinket this window shows.")
+
 	protocol.RegisterType("window", &protocol.TypeSpec{
 		Events: map[string]protocol.EventDesc{
 			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
@@ -181,21 +197,6 @@ func init() {
 			})
 		},
 		Props: props,
-		Append: func(parent, child any) error {
-			w, ok := parent.(*Window)
-			if !ok {
-				return fmt.Errorf("window: wrong parent type %T", parent)
-			}
-			cw, ok := child.(core.Trinket)
-			if !ok {
-				return fmt.Errorf("window: content must be a trinket, got %T", child)
-			}
-			if w.Content() != nil {
-				return fmt.Errorf("window: only one content trinket (wrap several in a panel)")
-			}
-			w.SetContent(cw)
-			return nil
-		},
 		Destroy: func(t any) error {
 			t.(*Window).Close()
 			return nil

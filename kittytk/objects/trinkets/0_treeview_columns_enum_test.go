@@ -542,7 +542,7 @@ func TestTreeEnumOverWire(t *testing.T) {
 	s := protocol.NewSession()
 
 	build := `
-kinds=new collection of=options children={
+kinds=new collection children={
 	new option key=png value="PNG image"
 	new option key=txt value="Text"
 }

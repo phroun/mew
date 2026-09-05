@@ -68,7 +68,7 @@ func TestTheWireRefusesADuplicateColumnID(t *testing.T) {
 func TestACollectionRefusesADuplicateColumnID(t *testing.T) {
 	script, err := protocol.Parse(`tv=new treeview caption="Name" children={
 	new column id=size caption="Size" width=10
-	new collection of=columns children={
+	new collection children={
 		new column id=kind caption="Kind" width=12
 		new column id=size caption="Also Size" width=8
 	}

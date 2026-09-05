@@ -41,21 +41,21 @@ func init() {
 			"editable":    boolProp("editable", (*ComboBox).SetEditable).Tip("Allow typing a custom value.").Def("false"),
 			"placeholder": stringProp("placeholder", (*ComboBox).SetPlaceholder).Tip("Empty-field hint text."),
 			"max_visible": intProp("max_visible", (*ComboBox).SetMaxVisibleItems).Tip("Max dropdown rows shown."),
-		},
-		Append: func(parent, child any) error {
-			c, ok := parent.(*ComboBox)
-			if !ok {
-				return fmt.Errorf("combobox: wrong parent type %T", parent)
-			}
-			it, ok := child.(*wireItem)
-			if !ok {
-				return fmt.Errorf("combobox: children must be items, got %T", child)
-			}
-			if len(it.children) != 0 {
-				return fmt.Errorf("combobox: items cannot nest")
-			}
-			c.AddItem(it.caption)
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				c, ok := parent.(*ComboBox)
+				if !ok {
+					return fmt.Errorf("combobox: wrong parent type %T", parent)
+				}
+				it, ok := child.(*wireItem)
+				if !ok {
+					return fmt.Errorf("combobox: children must be items, got %T", child)
+				}
+				if len(it.children) != 0 {
+					return fmt.Errorf("combobox: items cannot nest")
+				}
+				c.AddItem(it.caption)
+				return nil
+			}).Members("item").Tip("The choices in the dropdown."),
 		},
 	})
 }

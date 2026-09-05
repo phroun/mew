@@ -12,7 +12,7 @@ import (
 // are the binder's job.
 type Object interface {
 	Set(name string, value *Value, flag FlagState) error
-	Append(child Object) error
+	Append(slot string, child Object) error
 	ID() uint64
 }
 
@@ -472,11 +472,13 @@ func (s *Session) applyArgs(obj Object, args []*Arg, f Factory, st *execState, k
 			name = target
 		}
 
-		if name == "children" {
-			if a.Value == nil || a.Value.Kind != BlockValue {
-				return fmt.Errorf("children: expected a {} block")
-			}
-			if err := s.buildChildren(obj, a.Value.Block, f, st, keyPath); err != nil {
+		// A {} block is a value kind like any other, and the property it
+		// was written on says what to do with it: a collection adopts what
+		// the block builds. Nothing here knows the name `children` -- that
+		// is a property a type registers, alongside any other collection
+		// it accepts.
+		if a.Value != nil && a.Value.Kind == BlockValue {
+			if err := s.buildChildren(obj, name, a.Value.Block, f, st, keyPath); err != nil {
 				return err
 			}
 			continue
@@ -495,17 +497,17 @@ func (s *Session) applyArgs(obj Object, args []*Arg, f Factory, st *execState, k
 	return nil
 }
 
-// buildChildren executes a children block (D13): each statement must
-// be a (possibly keyed) `new`. Keys register hierarchically under the
-// enclosing key path (D15); with no enclosing key they remain
-// internal-only.
-func (s *Session) buildChildren(parent Object, block *Script, f Factory, st *execState, keyPath string) error {
+// buildChildren executes a collection block (D13) into the named property:
+// each statement must be a (possibly keyed) `new`. Keys register
+// hierarchically under the enclosing key path (D15); with no enclosing key
+// they remain internal-only.
+func (s *Session) buildChildren(parent Object, slot string, block *Script, f Factory, st *execState, keyPath string) error {
 	for _, stmt := range block.Statements {
 		if stmt.Verb != "new" {
 			if stmt.Verb == "" {
-				return fmt.Errorf("children: surfacing references are top-level statements")
+				return fmt.Errorf("%s: surfacing references are top-level statements", slot)
 			}
-			return fmt.Errorf("children: only new statements allowed, found %q", stmt.Verb)
+			return fmt.Errorf("%s: only new statements allowed, found %q", slot, stmt.Verb)
 		}
 
 		childPath := ""
@@ -520,7 +522,7 @@ func (s *Session) buildChildren(parent Object, block *Script, f Factory, st *exe
 		if childPath != "" {
 			s.keys[childPath] = child.ID()
 		}
-		if err := parent.Append(child); err != nil {
+		if err := parent.Append(slot, child); err != nil {
 			return err
 		}
 	}

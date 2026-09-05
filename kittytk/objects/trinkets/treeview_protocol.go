@@ -1,8 +1,6 @@
 package trinkets
 
 import (
-	"fmt"
-
 	"github.com/phroun/kittytk/protocol"
 )
 
@@ -114,33 +112,6 @@ func init() {
 			})
 		},
 		Props: treeViewProps(),
-		Append: func(parent, child any) error {
-			tv, ok := parent.(*TreeView)
-			if !ok {
-				return fmt.Errorf("treeview: wrong parent type %T", parent)
-			}
-			switch c := child.(type) {
-			case *wireItem:
-				tv.AddRootItem(c.bind(tv))
-				return nil
-			case *wireColumn:
-				return c.bind(tv)
-			case *wireCollection:
-				// A collection is packaging: adopt each member as if
-				// appended directly.
-				for _, m := range c.members {
-					col, ok := m.(*wireColumn)
-					if !ok {
-						return fmt.Errorf("treeview: collection members must be columns, got %T", m)
-					}
-					if err := col.bind(tv); err != nil {
-						return err
-					}
-				}
-				return nil
-			}
-			return fmt.Errorf("treeview: children must be items or columns, got %T", child)
-		},
 		Destroy: func(t any) error {
 			return destroyTrinket(t.(*TreeView))
 		},

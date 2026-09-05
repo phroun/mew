@@ -135,7 +135,7 @@ func TestTreeViewColumnsViaCollection(t *testing.T) {
 	s := protocol.NewSession()
 	script, err := protocol.Parse(`
 new treeview children={
-	new collection of=columns children={
+	new collection children={
 		new column id=a caption="A" width=5
 		new column id=b caption="B" width=6
 	}

@@ -69,10 +69,10 @@ func (app *Application) Set(name string, v *protocol.Value, flag protocol.FlagSt
 	return nil
 }
 
-// Append reports that an application takes no children over the wire: windows
+// Append reports that an application has no collection properties: windows
 // join it by being built top-level, not by being appended here.
-func (app *Application) Append(child protocol.Object) error {
-	return fmt.Errorf("application does not accept children")
+func (app *Application) Append(slot string, child protocol.Object) error {
+	return fmt.Errorf("application has no property %q", slot)
 }
 
 // ID returns the application's stable object identity (protocol.Object).

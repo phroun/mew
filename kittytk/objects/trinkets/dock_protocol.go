@@ -76,31 +76,31 @@ func init() {
 		},
 		Props: map[string]protocol.Property{
 			"entry_width": intProp("entry_width", (*DockRow).SetEntryWidth).Tip("Width of each dock entry in units"),
-		},
-		Append: func(parent, child any) error {
-			row, ok := parent.(*DockRow)
-			if !ok {
-				return fmt.Errorf("dockrow: wrong parent type %T", parent)
-			}
-			e, ok := child.(*wireDockEntry)
-			if !ok {
-				return fmt.Errorf("dockrow: children must be dockentry, got %T", child)
-			}
-			entry := &DockEntry{
-				Title:    e.caption,
-				WindowID: core.ObjectID(e.window),
-			}
-			ctx, entryID, winID := e.ctx, e.id, e.window
-			entry.OnClick = func() {
-				if ctx != nil {
-					ctx.EmitEvent(protocol.NewEvent("click").
-						WithUint("trinket", entryID).
-						WithUint("window", winID))
+			"children": protocol.NewCollection(func(parent, child any) error {
+				row, ok := parent.(*DockRow)
+				if !ok {
+					return fmt.Errorf("dockrow: wrong parent type %T", parent)
 				}
-			}
-			e.entry, e.row = entry, row
-			row.AddEntry(entry)
-			return nil
+				e, ok := child.(*wireDockEntry)
+				if !ok {
+					return fmt.Errorf("dockrow: children must be dockentry, got %T", child)
+				}
+				entry := &DockEntry{
+					Title:    e.caption,
+					WindowID: core.ObjectID(e.window),
+				}
+				ctx, entryID, winID := e.ctx, e.id, e.window
+				entry.OnClick = func() {
+					if ctx != nil {
+						ctx.EmitEvent(protocol.NewEvent("click").
+							WithUint("trinket", entryID).
+							WithUint("window", winID))
+					}
+				}
+				e.entry, e.row = entry, row
+				row.AddEntry(entry)
+				return nil
+			}).Members("dockentry").Tip("The entries on this row."),
 		},
 		Destroy: func(t any) error {
 			return destroyTrinket(t.(*DockRow))

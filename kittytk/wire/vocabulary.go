@@ -13,6 +13,9 @@ type PropInfo struct {
 	Default string
 	Doc     string
 	Enum    []string
+	// Members are the types a collection property accepts; empty on a
+	// collection means any trinket.
+	Members []string
 }
 
 // EventFieldDesc is one field an event record carries. It names itself,
@@ -124,6 +127,9 @@ func stmtToPropInfo(st *Statement) PropInfo {
 	}
 	if e := stmtStr(st, "enum"); e != "" {
 		p.Enum = strings.Split(e, ",")
+	}
+	if m := stmtStr(st, "members"); m != "" {
+		p.Members = strings.Split(m, ",")
 	}
 	return p
 }

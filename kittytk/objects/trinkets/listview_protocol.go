@@ -42,21 +42,21 @@ func init() {
 		Props: map[string]protocol.Property{
 			"selected": intProp("selected", (*ListView).SetCurrentIndex).Tip("Selected row index (-1 = none).").Def("-1"),
 			"ledger":   boolProp("ledger", (*ListView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
-		},
-		Append: func(parent, child any) error {
-			l, ok := parent.(*ListView)
-			if !ok {
-				return fmt.Errorf("listview: wrong parent type %T", parent)
-			}
-			it, ok := child.(*wireItem)
-			if !ok {
-				return fmt.Errorf("listview: children must be items, got %T", child)
-			}
-			if len(it.children) != 0 {
-				return fmt.Errorf("listview: items cannot nest (use a treeview)")
-			}
-			l.AddTextItem(it.caption)
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				l, ok := parent.(*ListView)
+				if !ok {
+					return fmt.Errorf("listview: wrong parent type %T", parent)
+				}
+				it, ok := child.(*wireItem)
+				if !ok {
+					return fmt.Errorf("listview: children must be items, got %T", child)
+				}
+				if len(it.children) != 0 {
+					return fmt.Errorf("listview: items cannot nest (use a treeview)")
+				}
+				l.AddTextItem(it.caption)
+				return nil
+			}).Members("item").Tip("The rows in the list."),
 		},
 		Destroy: func(t any) error {
 			return destroyTrinket(t.(*ListView))

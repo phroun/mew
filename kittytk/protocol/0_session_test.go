@@ -12,6 +12,7 @@ type mockObject struct {
 	typeName string
 	sets     []string // "name=value" / "name!" / "name?" / "name~" (false)
 	children []*mockObject
+	slots    []string // the collection property each child came through
 }
 
 func (m *mockObject) Set(name string, v *Value, flag FlagState) error {
@@ -37,7 +38,10 @@ func (m *mockObject) Set(name string, v *Value, flag FlagState) error {
 	return nil
 }
 
-func (m *mockObject) Append(child Object) error {
+// Append records the collection each child arrived through, so a test can
+// tell one named block from another.
+func (m *mockObject) Append(slot string, child Object) error {
+	m.slots = append(m.slots, slot)
 	m.children = append(m.children, child.(*mockObject))
 	return nil
 }

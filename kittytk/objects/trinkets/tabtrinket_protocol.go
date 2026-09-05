@@ -36,18 +36,18 @@ func init() {
 				t.caption = s
 				return nil
 			})).Tip("Tab label text."),
-		},
-		Append: func(parent, child any) error {
-			t := parent.(*wireTab)
-			w, ok := child.(core.Trinket)
-			if !ok {
-				return fmt.Errorf("tab: content must be a trinket, got %T", child)
-			}
-			if t.content != nil {
-				return fmt.Errorf("tab: only one content trinket (wrap several in a panel)")
-			}
-			t.content = w
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				t := parent.(*wireTab)
+				w, ok := child.(core.Trinket)
+				if !ok {
+					return fmt.Errorf("tab: content must be a trinket, got %T", child)
+				}
+				if t.content != nil {
+					return fmt.Errorf("tab: only one content trinket (wrap several in a panel)")
+				}
+				t.content = w
+				return nil
+			}).Tip("The one trinket this tab shows."),
 		},
 	})
 
@@ -107,21 +107,21 @@ func init() {
 				tw.SetTabPosition(pos)
 				return nil
 			})).OneOf("top", "bottom", "left", "right").Tip("Tab strip edge."),
-		},
-		Append: func(parent, child any) error {
-			tw, ok := parent.(*TabTrinket)
-			if !ok {
-				return fmt.Errorf("tabs: wrong parent type %T", parent)
-			}
-			t, ok := child.(*wireTab)
-			if !ok {
-				return fmt.Errorf("tabs: children must be tab, got %T", child)
-			}
-			if t.content == nil {
-				return fmt.Errorf("tabs: tab %q has no content", t.caption)
-			}
-			tw.AddTab(t.caption, t.content)
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				tw, ok := parent.(*TabTrinket)
+				if !ok {
+					return fmt.Errorf("tabs: wrong parent type %T", parent)
+				}
+				t, ok := child.(*wireTab)
+				if !ok {
+					return fmt.Errorf("tabs: children must be tab, got %T", child)
+				}
+				if t.content == nil {
+					return fmt.Errorf("tabs: tab %q has no content", t.caption)
+				}
+				tw.AddTab(t.caption, t.content)
+				return nil
+			}).Members("tab").Tip("The tabs on the strip, in order."),
 		},
 		Destroy: func(t any) error {
 			return destroyTrinket(t.(*TabTrinket))

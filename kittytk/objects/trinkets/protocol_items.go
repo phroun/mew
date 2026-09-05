@@ -75,21 +75,21 @@ func init() {
 				}
 				return nil
 			})).Tip("Node expanded (tree nodes).").Def("false"),
-		},
-		Append: func(parent, child any) error {
-			p := parent.(*wireItem)
-			c, ok := child.(*wireItem)
-			if !ok {
-				return fmt.Errorf("item: children must be items, got %T", child)
-			}
-			p.children = append(p.children, c)
-			if p.node != nil {
-				// Late append onto an already-live item (set k
-				// children={...}): grow the real tree too.
-				p.node.AddChild(c.bind(p.view))
-				p.refresh()
-			}
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				p := parent.(*wireItem)
+				c, ok := child.(*wireItem)
+				if !ok {
+					return fmt.Errorf("item: children must be items, got %T", child)
+				}
+				p.children = append(p.children, c)
+				if p.node != nil {
+					// Late append onto an already-live item (set k
+					// children={...}): grow the real tree too.
+					p.node.AddChild(c.bind(p.view))
+					p.refresh()
+				}
+				return nil
+			}).Members("item").Tip("Nested items, which make this one a tree node."),
 		},
 		Destroy: func(t any) error {
 			it := t.(*wireItem)
