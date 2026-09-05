@@ -278,6 +278,7 @@ func (a *app) wireMenus() {
 
 	// Demo menu.
 	c.OnCommand("demo.file.new", func() { a.openTerminalWindow() })
+	c.OnCommand("demo.file.bounded", func() { a.openBoundedWindow() })
 
 	// Edit menu: Cut/Copy/Paste/Select All are supplied by the host's
 	// system Edit menu and act on the focused trinket directly; the client
@@ -322,6 +323,7 @@ func (a *app) wireMDI() {
 	status := ui.Label("mdistatus")
 
 	c.OnCommand("demo.mdi.spawn", func() { a.spawnMDIChild() })
+	c.OnCommand("demo.mdi.spawnbounded", func() { a.spawnBoundedMDIChild() })
 	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Set("tile") })
 	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Set("cascade") })
 	c.OnCommand("demo.mdi.next", func() { _ = mdi.Set("next") })
@@ -391,6 +393,34 @@ func (a *app) spawnMDIChild() {
 	ui.Button("wclose").OnClick(func() {
 		_ = a.ui.Object("mdi").Set(fmt.Sprintf("remove=%d", winID))
 	})
+}
+
+// spawnBoundedMDIChild spawns a child that says how far it grows, so the
+// pane's filler has something to surround: maximize it and it centers in the
+// pane with the shaded room around it.
+func (a *app) spawnBoundedMDIChild() {
+	a.mdiCount++
+	ui, err := a.conn.Build(mdiBoundedChildScript(a.mdiCount))
+	if err != nil {
+		return
+	}
+	winID := ui.ID("bwwin")
+	ui.Button("bwclose").OnClick(func() {
+		_ = a.ui.Object("mdi").Set(fmt.Sprintf("remove=%d", winID))
+	})
+}
+
+// openBoundedWindow builds a desktop window that says how far it grows: the
+// same behaviour one level up, where the room it declines is the desktop's.
+func (a *app) openBoundedWindow() {
+	a.mdiCount++ // reuse the counter for a unique key and offset per window
+	n := a.mdiCount
+	ui, err := a.conn.Build(boundedWindowScript(n))
+	if err != nil {
+		return
+	}
+	win := ui.Window("bwin")
+	ui.Button("bwcloser").OnClick(func() { _ = win.Close() })
 }
 
 // openProtocolWindow builds the companion window whose content is all

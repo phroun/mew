@@ -566,6 +566,7 @@ mtab=new tab caption="MDI Demo" children={
 					new label caption="MDIPane Trinket Demo"
 					new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."
 					new button caption="Spawn Window in MDIPane" action=demo.mdi.spawn
+					new button caption="Spawn Bounded Window" action=demo.mdi.spawnbounded
 					new panel layout=hbox spacing=8 children={
 						new button caption="Tile" action=demo.mdi.tile
 						new button caption="Cascade" action=demo.mdi.cascade
@@ -766,6 +767,7 @@ func mainMenuScript() string {
 mb=new menubar children={
 	new menu caption="&Demo" wellknown="app" children={
 		new menuitem caption="&New" shortcut="^N" action=demo.file.new
+		new menuitem caption="New &Bounded Window" action=demo.file.bounded
 		new menuitem caption="&Open..." shortcut="^O"
 		new menuitem caption="&Save" shortcut="^S"
 	}
@@ -923,6 +925,29 @@ set dterm feed="\e[1;36mThis banner arrived as protocol text.\e[0m\r\n\r\n"
 `, n, 40+n*16, 40+n*16, n, n, n)
 }
 
+// boundedWindowScript is a window that says how far it grows: maximizing it
+// takes what it may of the desktop and centers it there, and the room it
+// declined is filled rather than left as desktop showing through.
+//
+// Its maximum is larger than the size it opens at, so maximizing visibly does
+// something -- and smaller than the desktop, so there is something left over
+// to see.
+func boundedWindowScript(n int) string {
+	return fmt.Sprintf(`
+bw%d=new window title="Bounded Window" x=%d y=%d width=280 height=160 tearable max_width=480 max_height=320 children={
+	bwp=new panel layout=vbox spacing=8 children={
+		new label caption="max_width=480  max_height=320"
+		new label caption="Maximize me: double-click the title, or press [^]. I take what I may of the desktop and sit in the middle of what is left, and the shaded room around me is what I declined." wrap
+		new label caption="Tear me off and zoom, and there is no shaded room: out there I am the OS window, so I am simply that size." wrap
+		new spacer
+		bwclose=new button caption="Close"
+	}
+}
+bwin=bw%d
+bwcloser=bw%d.bwp.bwclose
+`, n, 56+n*16, 40+n*16, n, n)
+}
+
 // aboutDialogScript is the About message box. The name and version come from
 // the core package's single source of truth.
 var aboutDialogScript = fmt.Sprintf(`
@@ -986,6 +1011,26 @@ wwin=mdi.d%d
 wnew=mdi.d%d.p.bp.nb
 wclose=mdi.d%d.p.bp.cl
 `, n, n, (offset*2+1)*8, (offset+1)*16, n, n, n, n)
+}
+
+// mdiBoundedChildScript spawns a document window that says how far it grows,
+// so the pane's own filler is visible: maximize it and it centers in the pane
+// with the shaded room around it, exactly as one does on the desktop.
+func mdiBoundedChildScript(n int) string {
+	offset := (n - 1) % 5
+	return fmt.Sprintf(`
+set mdi children={b%d=new window title="Bounded %d" x=%d y=%d width=200 height=112 max_width=320 max_height=200 children={
+	p=new panel layout=vbox spacing=8 children={
+		new label caption="max 320x200" 
+		new label caption="Double-click my title." wrap
+		bp=new panel layout=hbox spacing=8 children={
+			cl=new button caption="Close"
+		}
+	}
+}}
+bwwin=mdi.b%d
+bwclose=mdi.b%d.p.bp.cl
+`, n, n, (offset*2+3)*8, (offset+2)*16, n, n)
 }
 
 // detailsValuesScript fills the Details tab's cell values column-major
