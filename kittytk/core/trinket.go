@@ -405,7 +405,7 @@ func NewTrinketBase() *TrinketBase {
 		focusPolicy: NoFocus,
 		scheme:      style.SchemeInherit, // -1 = inherit from container
 		sizePolicy:  NewSizePolicy(SizePreferred, SizePreferred),
-		maxSize:     UnitSize{Width: 1<<30 - 1, Height: 1<<30 - 1},
+		maxSize:     UnitSize{Width: Unbounded, Height: Unbounded},
 	}
 }
 
@@ -937,10 +937,12 @@ func (p *scrollRectProxy) Pos() UnitPoint      { return UnitPoint{X: p.rect.X, Y
 func (p *scrollRectProxy) Size() UnitSize {
 	return UnitSize{Width: p.rect.Width, Height: p.rect.Height}
 }
-func (p *scrollRectProxy) SetPos(UnitPoint)                {}
-func (p *scrollRectProxy) SetSize(UnitSize)                {}
-func (p *scrollRectProxy) MinimumSize() UnitSize           { return UnitSize{} }
-func (p *scrollRectProxy) MaximumSize() UnitSize           { return UnitSize{} }
+func (p *scrollRectProxy) SetPos(UnitPoint)      {}
+func (p *scrollRectProxy) SetSize(UnitSize)      {}
+func (p *scrollRectProxy) MinimumSize() UnitSize { return UnitSize{} }
+func (p *scrollRectProxy) MaximumSize() UnitSize {
+	return UnitSize{Width: Unbounded, Height: Unbounded}
+}
 func (p *scrollRectProxy) SetMinimumSize(UnitSize)         {}
 func (p *scrollRectProxy) SetMaximumSize(UnitSize)         {}
 func (p *scrollRectProxy) SizeHint() UnitSize              { return p.Size() }

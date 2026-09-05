@@ -184,8 +184,8 @@ func TestFlexGrowSharesTheLeftover(t *testing.T) {
 
 	one := newFlexChild(50, 20)
 	two := newFlexChild(50, 20)
-	l.AddTrinketWithFlex(one, 1, 1, 0)
-	l.AddTrinketWithFlex(two, 3, 1, 0)
+	l.AddTrinketWithFlex(one, 1, 1, core.BasisAuto)
+	l.AddTrinketWithFlex(two, 3, 1, core.BasisAuto)
 
 	c := newDirContainer(core.DirLTR)
 	c.AddChild(one)
@@ -202,5 +202,60 @@ func TestFlexGrowSharesTheLeftover(t *testing.T) {
 	}
 	if right := two.Bounds().X + two.Bounds().Width; right > 300 {
 		t.Errorf("the run ends at %d, past the 300 it was given", right)
+	}
+}
+
+// A basis of zero is a real answer: size me by my grow factor alone, paying no
+// attention to what I hold. A basis nobody wrote is BasisAuto, and takes the
+// size from the child.
+//
+// Zero was the spelling for "nobody wrote one", so the useful answer could not
+// be given at all -- a child asking to be sized purely by its grow factor was
+// read as one that had said nothing.
+func TestAFlexBasisOfZeroIsAnAnswerAndNotAnAbsence(t *testing.T) {
+	// Two children of unequal size. With basis zero neither's own width
+	// counts, so an equal grow splits the room equally between them.
+	l := NewFlexLayout()
+	l.SetSpacing(0)
+	wide, narrow := newFlexChild(200, 20), newFlexChild(40, 20)
+	l.AddTrinketWithFlex(wide, 1, 1, 0)
+	l.AddTrinketWithFlex(narrow, 1, 1, 0)
+
+	c := newDirContainer(core.DirLTR)
+	c.AddChild(wide)
+	c.AddChild(narrow)
+	l.Layout(c, core.UnitRect{Width: 300, Height: 100})
+
+	if wide.Bounds().Width != narrow.Bounds().Width {
+		t.Errorf("at basis 0 the two children are %d and %d wide; neither's own size should count",
+			wide.Bounds().Width, narrow.Bounds().Width)
+	}
+
+	// With the basis taken from the child instead, the wider one stays wider.
+	l = NewFlexLayout()
+	l.SetSpacing(0)
+	wide, narrow = newFlexChild(200, 20), newFlexChild(40, 20)
+	l.AddTrinketWithFlex(wide, 1, 1, core.BasisAuto)
+	l.AddTrinketWithFlex(narrow, 1, 1, core.BasisAuto)
+	c = newDirContainer(core.DirLTR)
+	c.AddChild(wide)
+	c.AddChild(narrow)
+	l.Layout(c, core.UnitRect{Width: 300, Height: 100})
+
+	if wide.Bounds().Width <= narrow.Bounds().Width {
+		t.Errorf("at BasisAuto the children are %d and %d wide; the wider one should stay wider",
+			wide.Bounds().Width, narrow.Bounds().Width)
+	}
+
+	// And a stated basis is what the child starts from, whatever its own size.
+	l = NewFlexLayout()
+	l.SetSpacing(0)
+	stated := newFlexChild(200, 20)
+	l.AddTrinketWithFlex(stated, 0, 0, 64)
+	c = newDirContainer(core.DirLTR)
+	c.AddChild(stated)
+	l.Layout(c, core.UnitRect{Width: 300, Height: 100})
+	if got := stated.Bounds().Width; got != 64 {
+		t.Errorf("a child with basis 64 is %d wide", got)
 	}
 }

@@ -167,8 +167,10 @@ func init() {
 
 	protocol.RegisterCommonProperty("min_width", sizeProp("min_width", true, true).Tip("Minimum width, in units."))
 	protocol.RegisterCommonProperty("min_height", sizeProp("min_height", true, false).Tip("Minimum height, in units."))
-	protocol.RegisterCommonProperty("max_width", sizeProp("max_width", false, true).Tip("Maximum width, in units."))
-	protocol.RegisterCommonProperty("max_height", sizeProp("max_height", false, false).Tip("Maximum height, in units."))
+	protocol.RegisterCommonProperty("max_width", sizeProp("max_width", false, true).Def("-1").
+		Tip("Widest this trinket grows, in units. -1 is no limit; 0 collapses it while it keeps its place."))
+	protocol.RegisterCommonProperty("max_height", sizeProp("max_height", false, false).Def("-1").
+		Tip("Tallest this trinket grows, in units. -1 is no limit; 0 collapses it while it keeps its place."))
 
 	protocol.RegisterCommonProperty("column_units", unitsProp("column_units", true).Def("inherited").Tip("Units one grid column spans (denomination override)."))
 	protocol.RegisterCommonProperty("row_units", unitsProp("row_units", false).Def("inherited").Tip("Units one grid row spans (denomination override)."))
@@ -335,11 +337,23 @@ func colorProp(name string, isFg bool) protocol.Property {
 	}))
 }
 
+// sizeProp is one axis of a trinket's minimum or maximum, in units.
+//
+// A minimum is a size and nothing else. A maximum may also be absent, which is
+// core.Unbounded rather than zero -- a maximum of zero is a real answer, and
+// collapses the trinket while it keeps its place.
 func sizeProp(name string, min, isWidth bool) protocol.Property {
 	return protocol.NewProperty("units", wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt(name, v, f)
 		if err != nil {
 			return err
+		}
+		floor := core.Unit(0)
+		if !min {
+			floor = core.Unbounded
+		}
+		if core.Unit(n) < floor {
+			return fmt.Errorf("%s: %d is below %d", name, n, floor)
 		}
 		if min {
 			s := w.MinimumSize()

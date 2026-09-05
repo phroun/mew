@@ -232,7 +232,7 @@ func init() {
 		// columns silently lose the divider drag and the [=] chooser.
 		New: func() any {
 			return &wireColumn{col: TreeColumn{
-				Width: 8, MinWidth: 3, Align: "left",
+				Width: 8, MinWidth: 3, MaxWidth: -1, Align: "left",
 				Resizable: true, Optional: true, SortProxy: -1,
 			}}
 		},
@@ -249,7 +249,8 @@ func init() {
 			"caption":   colString("caption", func(c *TreeColumn, s string) { c.Caption = s }).Tip("Header caption."),
 			"width":     colInt("width", func(c *TreeColumn, n int) { c.Width = n }).Tip("Width in text cells.").Def("8"),
 			"min_width": colInt("min_width", func(c *TreeColumn, n int) { c.MinWidth = n }).Tip("Minimum width in text cells.").Def("3"),
-			"max_width": colInt("max_width", func(c *TreeColumn, n int) { c.MaxWidth = n }).Tip("Maximum width in text cells (0 = unbounded).").Def("0"),
+			"max_width": colInt("max_width", func(c *TreeColumn, n int) { c.MaxWidth = n }).
+				Tip("Widest the column may be dragged, in text cells. -1 is no limit; a maximum below min_width loses to it.").Def("-1"),
 			"align": protocol.NewProperty("enum", colProp("align", func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("align", v, f)
 				if err != nil {

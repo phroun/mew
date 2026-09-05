@@ -180,7 +180,9 @@ func TestLayoutHintsCheckTheirValues(t *testing.T) {
 		{`new label caption="x" column_span=0`, "below 1"},
 		{`new label caption="x" grow=-1`, "below 0"},
 		{`new label caption="x" shrink=-2`, "below 0"},
-		{`new label caption="x" basis=-4`, "below 0"},
+		{`new label caption="x" basis=-4`, "below -1"},
+		{`new label caption="x" max_width=-2`, "below -1"},
+		{`new label caption="x" min_width=-1`, "below 0"},
 	} {
 		script, err := protocol.Parse(c.src)
 		if err != nil {

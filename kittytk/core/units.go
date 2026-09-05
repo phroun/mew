@@ -6,6 +6,23 @@ package core
 // In graphics mode, units could map directly to pixels or be scaled.
 type Unit int
 
+// A size nobody gave a value carries -1, never zero.
+//
+// Zero is a real size: a maximum of zero collapses a trinket to nothing while
+// it keeps its place in the layout, which is a thing an author may want to
+// say. So the ABSENCE of a size needs a spelling of its own, and -1 is it
+// throughout the toolkit -- for a maximum that does not bound, and for a flex
+// basis taken from the child rather than stated.
+//
+// Indices and counts keep their own -1 for "none", which is the same idea
+// arrived at from the other side: there, zero is the first one.
+const (
+	// Unbounded is a maximum that does not bound.
+	Unbounded Unit = -1
+	// BasisAuto is a flex basis taken from the child rather than stated.
+	BasisAuto Unit = -1
+)
+
 // UnitPoint represents a 2D coordinate in abstract units.
 type UnitPoint struct {
 	X, Y Unit

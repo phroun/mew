@@ -27,7 +27,8 @@ type TreeColumn struct {
 	Caption string
 
 	// Width is the current width in text cells; Min/MaxWidth bound
-	// drag-resizing (MaxWidth 0 = unbounded).
+	// drag-resizing. MaxWidth -1 does not bound; a maximum below the
+	// minimum loses to it, a minimum being the stronger statement.
 	Width    int
 	MinWidth int
 	MaxWidth int
@@ -99,18 +100,19 @@ func NewTreeColumn(id, caption string, width int) *TreeColumn {
 	}
 	return &TreeColumn{
 		ID: id, Caption: caption, Width: width,
-		MinWidth: 3, Align: "left", Resizable: true, Optional: true,
+		MinWidth: 3, MaxWidth: -1, Align: "left", Resizable: true, Optional: true,
 		SortProxy: -1, EnumStore: "value",
 	}
 }
 
-// clampWidth bounds w to the column's Min/MaxWidth.
+// clampWidth bounds w to the column's Min/MaxWidth. The maximum applies
+// first and the minimum second, so where the two conflict the minimum wins.
 func (c *TreeColumn) clampWidth(w int) int {
+	if c.MaxWidth >= 0 && w > c.MaxWidth {
+		w = c.MaxWidth
+	}
 	if w < c.MinWidth {
 		w = c.MinWidth
-	}
-	if c.MaxWidth > 0 && w > c.MaxWidth {
-		w = c.MaxWidth
 	}
 	if w < 1 {
 		w = 1
@@ -2060,7 +2062,7 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			}
 			l := t.colDragL
 			transfer := l != nil && l.Resizable
-			if transfer && l.MaxWidth > 0 {
+			if transfer && l.MaxWidth >= 0 {
 				if lim := l.MaxWidth - t.colDragLW; c > lim {
 					c = lim
 				}
@@ -2089,7 +2091,7 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			if m > t.colDragPool+lFree {
 				m = t.colDragPool + lFree
 			}
-			if right.MaxWidth > 0 && m > right.MaxWidth-t.colDragRW {
+			if right.MaxWidth >= 0 && m > right.MaxWidth-t.colDragRW {
 				m = right.MaxWidth - t.colDragRW
 			}
 			if m < 0 {
@@ -2131,7 +2133,7 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			if m > t.colDragPool+rFree {
 				m = t.colDragPool + rFree
 			}
-			if left.MaxWidth > 0 && m > left.MaxWidth-t.colDragLW {
+			if left.MaxWidth >= 0 && m > left.MaxWidth-t.colDragLW {
 				m = left.MaxWidth - t.colDragLW
 			}
 			if m < 0 {

@@ -110,7 +110,7 @@ func flexHintsOf(w core.Trinket) core.FlexHints {
 			return f
 		}
 	}
-	return core.FlexHints{Shrink: 1}
+	return core.DefaultFlexHints()
 }
 
 func setFlexHints(name string, w core.Trinket, f core.FlexHints) error {
@@ -164,11 +164,11 @@ func registerLayoutProperties() {
 		if err != nil {
 			return err
 		}
-		if n < 0 {
-			return fmt.Errorf("basis: %d is below 0", n)
+		if core.Unit(n) < core.BasisAuto {
+			return fmt.Errorf("basis: %d is below %d", n, core.BasisAuto)
 		}
 		hints := flexHintsOf(w)
 		hints.Basis = core.Unit(n)
 		return setFlexHints("basis", w, hints)
-	})).Def("0").Tip("Size a flex child starts from, in units; 0 takes it from the child."))
+	})).Def("-1").Tip("Size a flex child starts from, in units. -1 takes it from the child; 0 sizes it by its grow factor alone."))
 }

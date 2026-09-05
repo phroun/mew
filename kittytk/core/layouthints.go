@@ -30,12 +30,24 @@ type GridPlacement struct {
 // enough, and the size to start from.
 //
 // ShrinkSet distinguishes a shrink of zero -- "never take anything off me" --
-// from one nobody wrote, which is the default of one.
+// from one nobody wrote, which is the default of one. Basis makes the same
+// distinction with a value rather than a flag: BasisAuto is one nobody wrote,
+// and a basis of zero is a real answer -- size me by my grow factor alone,
+// paying no attention to what I hold.
+//
+// Which is why a FlexHints is started from DefaultFlexHints and not from its
+// zero value: zero means something here.
 type FlexHints struct {
 	Grow      float64
 	Shrink    float64
 	ShrinkSet bool
 	Basis     Unit
+}
+
+// DefaultFlexHints is what a flex layout gives a child that says nothing: no
+// growing, ordinary shrinking, and a size taken from the child itself.
+func DefaultFlexHints() FlexHints {
+	return FlexHints{Shrink: 1, Basis: BasisAuto}
 }
 
 // LayoutGridPlacement returns the child's grid placement and whether one was

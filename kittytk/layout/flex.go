@@ -56,7 +56,7 @@ type FlexItem struct {
 	Trinket  core.Trinket
 	Grow     float64   // Flex grow factor
 	Shrink   float64   // Flex shrink factor
-	Basis    core.Unit // Base size (0 = auto)
+	Basis    core.Unit // Base size (core.BasisAuto = take it from the child)
 	Align    core.Alignment
 	AlignSet bool
 }
@@ -145,7 +145,7 @@ func (l *FlexLayout) SetAlignItems(align FlexAlign) {
 // AddTrinket adds a trinket, honoring the flex hints and the alignment that
 // travel with the child.
 func (l *FlexLayout) AddTrinket(trinket core.Trinket) {
-	item := &FlexItem{Trinket: trinket, Grow: 0, Shrink: 1, Basis: 0}
+	item := &FlexItem{Trinket: trinket, Grow: 0, Shrink: 1, Basis: core.BasisAuto}
 	if h, ok := trinket.(interface {
 		LayoutFlex() (core.FlexHints, bool)
 	}); ok {
@@ -222,7 +222,7 @@ func (l *FlexLayout) mainCross(w, h core.Unit) (main, cross core.Unit) {
 // baseSize is what an item starts at along the main axis: its basis when it
 // states one, else its size hint.
 func (l *FlexLayout) baseSize(item *FlexItem) core.Unit {
-	if item.Basis > 0 {
+	if item.Basis >= 0 {
 		return item.Basis
 	}
 	main, _ := l.mainCross(itemSize(item.Trinket).Width, itemSize(item.Trinket).Height)
@@ -645,7 +645,7 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 		hint := itemSize(item.Trinket)
 		main, cross := l.mainCross(hint.Width, hint.Height)
 
-		if item.Basis > 0 {
+		if item.Basis >= 0 {
 			main = item.Basis
 		}
 
