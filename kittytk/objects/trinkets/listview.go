@@ -628,7 +628,7 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := l.GetScheme()
 	metrics := l.EffectiveCellMetrics()
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumbState(l.scrollbarThumbHovered && p.Graphical())
+	thumbStyle := scheme.GetScrollbarThumbState(false, l.scrollbarThumbHovered && p.Graphical())
 
 	// Pixel surfaces: a single hairline stripe blended at 50%
 	// opacity behind, and one solid full-opacity rectangle for the

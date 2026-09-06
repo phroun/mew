@@ -2398,7 +2398,7 @@ func (t *TreeView) paintHScrollbar(p *core.Painter, lay treeColLayout) {
 	// Hover/drag lighting is graphical-only, like every other thumb:
 	// TUI gets no free mouse-move events, so a lit state could never
 	// clear there.
-	thumbStyle := scheme.GetScrollbarThumbState((t.hbarThumbHovered || t.hbarDragging) && p.Graphical())
+	thumbStyle := scheme.GetScrollbarThumbState(false, (t.hbarThumbHovered || t.hbarDragging) && p.Graphical())
 
 	if p.Graphical() {
 		// The slim band: bare thumb only, inset a unit on each side.

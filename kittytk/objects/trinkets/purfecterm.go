@@ -1278,7 +1278,7 @@ func (t *PurfecTerm) paintScrollbarsCell(p *core.Painter, bounds core.UnitRect) 
 	// the hover state never paints (see ScrollBar.paintHorizontal).
 	scheme := t.GetScheme()
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumbState(false)
+	thumbStyle := scheme.GetScrollbarThumbState(false, false)
 
 	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
 		// Geometry is in render px, which on a cell surface is units

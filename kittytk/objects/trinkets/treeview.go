@@ -855,7 +855,7 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := t.GetScheme()
 	metrics := t.EffectiveCellMetrics()
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumbState(t.scrollbarThumbHovered && p.Graphical())
+	thumbStyle := scheme.GetScrollbarThumbState(false, t.scrollbarThumbHovered && p.Graphical())
 
 	// Pixel surfaces: a single hairline stripe blended at 50%
 	// opacity behind, and one solid full-opacity rectangle for the

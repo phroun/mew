@@ -239,6 +239,8 @@ type Scheme struct {
 	Scrollbar             *CellStyle // dark gray on black
 	ScrollbarThumb        *CellStyle // regular white on black
 	HoveredScrollbarThumb *CellStyle // nil = HoverBG + HoverFG
+	FocusedScrollbar      *CellStyle // nil = FocusBG + FocusFG
+	FocusedScrollbarThumb *CellStyle // nil = FocusedScrollbar
 
 	// =========================================================================
 	// ProgressBar Colors
@@ -1351,10 +1353,40 @@ func (s *Scheme) GetHoveredScrollbarThumb() CellStyle {
 	return s.hover()
 }
 
-// GetScrollbarThumbState resolves the scrollbar thumb style; the thumb has
-// no focus state, so hover is the only elevated state.
-func (s *Scheme) GetScrollbarThumbState(hovered bool) CellStyle {
-	if hovered {
+func (s *Scheme) GetFocusedScrollbar() CellStyle {
+	if s.FocusedScrollbar != nil {
+		return *s.FocusedScrollbar
+	}
+	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+func (s *Scheme) GetFocusedScrollbarThumb() CellStyle {
+	if s.FocusedScrollbarThumb != nil {
+		return *s.FocusedScrollbarThumb
+	}
+	return s.GetFocusedScrollbar()
+}
+
+// GetScrollbarState resolves the scrollbar TRACK style, and
+// GetScrollbarThumbState the thumb, both with the precedence focus > hover >
+// normal that the splitter's handle uses.
+//
+// Focus is asked of the trinket the bar belongs to, and only a trinket with
+// nothing else to show it with answers yes: a scroll area is a container whose
+// chrome IS its bars, so a keyboard user has no other sign of where they are.
+// A list or a tree says it with its selection, and passes false.
+func (s *Scheme) GetScrollbarState(focused bool) CellStyle {
+	if focused {
+		return s.GetFocusedScrollbar()
+	}
+	return s.GetScrollbar()
+}
+
+func (s *Scheme) GetScrollbarThumbState(focused, hovered bool) CellStyle {
+	switch {
+	case focused:
+		return s.GetFocusedScrollbarThumb()
+	case hovered:
 		return s.GetHoveredScrollbarThumb()
 	}
 	return s.GetScrollbarThumb()
