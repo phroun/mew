@@ -3351,6 +3351,20 @@ func termMenuScreenMetrics(pc core.PopupController) core.CellMetrics {
 	return core.DefaultCellMetrics()
 }
 
+// gridPopupRect puts a popup's screen rect where a cell surface can render
+// it: the origin FLOORS onto the cell grid and the extent CEILS.
+//
+// Drawing divides units by the cell size and hit-testing does not, so a popup
+// standing between cells paints its rows one cell from where it answers the
+// pointer. A popup's rect is one rect -- what it paints into and what it maps
+// the pointer against -- so putting it on the grid here settles both.
+func gridPopupRect(w core.Trinket, m core.CellMetrics, r core.UnitRect) core.UnitRect {
+	if w != nil && core.FindSmoothPositioning(w) {
+		return r
+	}
+	return m.GridRect(r)
+}
+
 // termMenuWidth is a popup context menu's width: the widest label as the FONT
 // draws it, with the indent it is drawn at kept on the far side too.
 //
@@ -3483,7 +3497,8 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 	if at.Y+height > screen.Y+screen.Height {
 		at.Y = screen.Y + screen.Height - height
 	}
-	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height}
+	menuBounds := gridPopupRect(t.Self(), termMenuScreenMetrics(pc),
+		core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height})
 	t.gfx.menuHover = -1
 
 	itemAt := func(y core.Unit) int {

@@ -1982,7 +1982,8 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 	if at.Y+height > screen.Y+screen.Height {
 		at.Y = screen.Y + screen.Height - height
 	}
-	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height}
+	menuBounds := gridPopupRect(t.Self(), termMenuScreenMetrics(pc),
+		core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height})
 	t.menuHover = -1
 
 	itemAt := func(y core.Unit) int {

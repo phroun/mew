@@ -693,14 +693,14 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		}
 	}
 
-	popupBounds := core.UnitRect{
+	popupBounds := gridPopupRect(c.Self(), screen, core.UnitRect{
 		X: trinketBottomPos.X,
 		Y: popupY,
 		// The trinket's width is in its own denomination; the popup
 		// lives on the screen surface.
 		Width:  core.ExchangeX(bounds.Width, metrics, screen),
 		Height: popupHeightUnits,
-	}
+	})
 
 	// Create popup request. Anchor is the box's own screen rect so the
 	// compositor casts one shadow over control + list together.

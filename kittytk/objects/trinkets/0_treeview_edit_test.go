@@ -496,12 +496,17 @@ func TestTreeEditContextMenu(t *testing.T) {
 	if host.popup == nil {
 		t.Fatal("no context menu popup registered")
 	}
-	// The recording controller's MapToScreen is identity, so the menu
-	// opens exactly at the click point - proving the editor's local
-	// coordinates were mapped through the tree with the cell origin.
-	if host.popup.Bounds.X != press.X || host.popup.Bounds.Y != press.Y {
+	// The recording controller's MapToScreen is identity, so the menu opens
+	// at the click point - proving the editor's local coordinates were mapped
+	// through the tree with the cell origin. At the CELL the click is in: a
+	// popup on a cell surface stands on the grid, since that is where it can
+	// be drawn and where the pointer will be read against it.
+	m := core.FindEffectiveCellMetrics(tv.Self())
+	wantX := press.X - press.X%m.UnitsPerCellWidth
+	wantY := press.Y - press.Y%m.UnitsPerCellHeight
+	if host.popup.Bounds.X != wantX || host.popup.Bounds.Y != wantY {
 		t.Errorf("context menu at %d,%d want %d,%d",
-			host.popup.Bounds.X, host.popup.Bounds.Y, press.X, press.Y)
+			host.popup.Bounds.X, host.popup.Bounds.Y, wantX, wantY)
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 }
