@@ -1615,10 +1615,17 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 		// Was dragging (in either mode) and released outside - cancel
 		c.SetCurrentIndex(c.originalIndex)
 		c.HidePopup()
-	} else if wasClickMode {
-		// In click mode, released outside without drag - dismiss
+	} else if wasClickMode && wasMouseDown {
+		// In click mode, released outside without drag - dismiss.
+		//
+		// A press of its own is what makes a release this popup's to answer.
+		// Every release the host routes here reaches this handler whether the
+		// pointer is over the drop-down or not, so without that a release with
+		// nothing behind it -- one the terminal reports twice, one left over
+		// from the gesture before the drop-down existed -- shuts a drop-down
+		// the user has not clicked outside of.
 		c.HidePopup()
-	} else {
+	} else if !wasClickMode {
 		// Not in click mode, released outside without drag - enter click mode
 		// This is the "click to open" case - popup should stay open
 		c.enterClickMode()
