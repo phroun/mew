@@ -386,6 +386,14 @@ func (l *ListView) ensureVisible(index int) {
 	metrics := l.EffectiveCellMetrics()
 	visibleCount := int(bounds.Height / metrics.UnitsPerCellHeight)
 
+	// A list with no room yet shows nothing, so there is nothing to bring into
+	// view. Scrolling by the arithmetic below instead puts the list one row
+	// down before it has been laid out -- which is where a list built by a
+	// script starts, since the first item added makes itself current.
+	if visibleCount <= 0 {
+		return
+	}
+
 	if index < l.scrollOffset {
 		l.scrollOffset = index
 	} else if index >= l.scrollOffset+visibleCount {
@@ -460,10 +468,18 @@ func (l *ListView) Paint(p *core.Painter) {
 			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 
+		// The row's chrome reads from the LIST's leading edge: the current
+		// item's arrow, then the icon, then the text. The arrow points into
+		// the row, so it turns over with the row.
+		arrow := '▸'
+		if core.ChromeMirrored(l) {
+			arrow = '◂'
+		}
+
 		// Draw current indicator
 		x := core.Unit(0)
 		if itemIndex == l.currentIndex && focused {
-			p.DrawCell(x, itemY, '▸', s)
+			p.DrawCell(core.LeadingX(l, bounds.Width, x, metrics.UnitsPerCellWidth), itemY, arrow, s)
 		}
 		x += metrics.UnitsPerCellWidth
 
@@ -472,17 +488,32 @@ func (l *ListView) Paint(p *core.Painter) {
 			// Draw icon (simplified - just first char for now)
 			if len(item.Icon.Cells) > 0 {
 				cell := item.Icon.Cells[0]
-				p.DrawCell(x, itemY, cell.Char, cell.Style)
+				p.DrawCell(core.LeadingX(l, bounds.Width, x, metrics.UnitsPerCellWidth*2), itemY, cell.Char, cell.Style)
 			}
 			x += metrics.UnitsPerCellWidth * 2
 		}
 
-		// Draw text, ellipsized to the room left beside the indicator and
-		// the icon -- through the same function the tree cuts its cells
-		// with, rather than a second way of doing it here.
+		// Draw text, ellipsized to the room left beside the indicator, the
+		// icon and the scrollbar's own column -- through the same function the
+		// tree cuts its cells with, rather than a second way of doing it here.
 		font := l.EffectiveFont()
 		availableWidth := bounds.Width - x
-		p.DrawText(x, itemY, ellipsizeText(font, metrics, item.Text, availableWidth), s, font)
+		if l.showsScrollbar() {
+			availableWidth -= metrics.UnitsPerCellWidth
+		}
+		if availableWidth < 0 {
+			availableWidth = 0
+		}
+		shown := ellipsizeText(font, metrics, item.Text, availableWidth)
+
+		// The room is the list's; where the text sits IN it is the item's own
+		// (see itemTextSide), so a Hebrew name and an English one in the same
+		// list each start on the side its script begins on.
+		textX := core.LeadingX(l, bounds.Width, x, availableWidth)
+		if l.itemTextSide(item) == core.SideRight {
+			textX += availableWidth - l.MeasureText(shown)
+		}
+		p.DrawText(textX, itemY, shown, s, font)
 	}
 
 	// Vertical edge fades over the content (under the scrollbar).
@@ -544,14 +575,46 @@ func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyl
 	}
 }
 
+// laneX is where the scrollbar's column sits: the TRAILING edge of the list,
+// which is the right of one that reads left to right and the left of one that
+// reads the other way.
+func (l *ListView) laneX() core.Unit {
+	w := l.Bounds().Width
+	lane := l.EffectiveCellMetrics().UnitsPerCellWidth
+	return core.LeadingX(l, w, w-lane, lane)
+}
+
+// onLane reports whether a list-local x is in that column. The lane is one
+// column wherever it sits, so what puts a press on it is being IN the column
+// rather than past its near edge.
+func (l *ListView) onLane(x core.Unit) bool {
+	at := l.laneX()
+	return x >= at && x < at+l.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
+// showsScrollbar reports whether there is a bar to hit at all.
+func (l *ListView) showsScrollbar() bool {
+	return len(l.items) > l.visibleCount()
+}
+
+// itemTextSide is where one item's text begins inside the room it is given.
+//
+// An item's text follows its OWN language, not the list's: a list of names may
+// hold Hebrew and English together, and each reads from the side its own script
+// begins on. A string with nothing strongly directional in it -- a number, a
+// file size, a date -- has no opinion and takes the list's direction, so a
+// column of figures still lines up with everything around it.
+func (l *ListView) itemTextSide(item *ListItem) core.HSide {
+	dir, _ := textDirectionOf(core.DirInherit, item.Text)
+	return core.ResolveHAlign(core.AlignTextBegin, dir, core.FindEffectiveDirection(l))
+}
+
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
-	bounds := l.Bounds()
-	metrics := l.EffectiveCellMetrics()
 	totalItems := len(l.items)
 
-	scrollbarX = bounds.Width - metrics.UnitsPerCellWidth
+	scrollbarX = l.laneX()
 	trackHeight = visibleCount
 
 	if totalItems <= visibleCount {
@@ -636,7 +699,7 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	// popup lane.
 	if p.Graphical() {
 		trackU, thumbU, posU := l.scrollbarUnits(visibleCount)
-		laneX := l.Bounds().Width - metrics.UnitsPerCellWidth
+		laneX := l.laneX()
 		stripeX := laneX + metrics.UnitsPerCellWidth/2
 		p.FillRect(core.UnitRect{
 			X:      stripeX,
@@ -836,8 +899,8 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	metrics := l.EffectiveCellMetrics()
 
 	// Check if click is on scrollbar
-	scrollbarX, thumbStart, thumbHeight, _ := l.scrollbarGeometry(l.visibleCount())
-	if event.X >= scrollbarX && len(l.items) > l.visibleCount() {
+	_, thumbStart, thumbHeight, _ := l.scrollbarGeometry(l.visibleCount())
+	if l.showsScrollbar() && l.onLane(event.X) {
 		clickedRow := int(event.Y / metrics.UnitsPerCellHeight)
 
 		// Pixel surfaces anchor the drag to the grab point within
@@ -892,18 +955,15 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	// Click on list content (before scrollbar)
-	if event.X >= scrollbarX {
-		return false // Click is past the content area
-	}
+	// Everything that is not the bar's own column is content. Where there is
+	// no bar that is the whole row, including the column one would have taken.
 
 	// Calculate which item was clicked
 	clickedRow := int(event.Y / metrics.UnitsPerCellHeight)
 	clickedIndex := l.scrollOffset + clickedRow
 
 	// Only start content drag if click is on a valid item
-	contentWidth := bounds.Width - metrics.UnitsPerCellWidth
-	if event.X >= 0 && event.X < contentWidth && clickedIndex >= 0 && clickedIndex < len(l.items) {
+	if clickedIndex >= 0 && clickedIndex < len(l.items) {
 		// Start content drag - clear scrollbar drag flag
 		l.isDragging = true
 		l.scrollbarDragging = false
@@ -926,8 +986,8 @@ func (l *ListView) overScrollbarThumb(x, y core.Unit) bool {
 	if x < 0 || y < 0 || x >= bounds.Width || y >= bounds.Height {
 		return false
 	}
-	scrollbarX, thumbStart, thumbHeight, _ := l.scrollbarGeometry(visibleCount)
-	if x < scrollbarX {
+	_, thumbStart, thumbHeight, _ := l.scrollbarGeometry(visibleCount)
+	if !l.onLane(x) {
 		return false
 	}
 	if core.FindSmoothPositioning(l.Self()) {

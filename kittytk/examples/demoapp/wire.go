@@ -152,6 +152,9 @@ func (a *app) wireDirection() {
 	ui.Checkbox("ssrtl").OnToggle(turn(ui.Object("ssc")))  // a scroll area's bars
 	ui.Checkbox("slrtl").OnToggle(turn(ui.Object("slc")))  // a splitter's panes
 	ui.Checkbox("pgrtl").OnToggle(turn(ui.Object("pgc")))  // which end a bar fills from
+	// The LIST rather than the pane it sits in: the tree beside it is a later
+	// project, and turning the pane over would turn that too.
+	ui.Checkbox("lirtl").OnToggle(turn(ui.Object("lilv")))
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and

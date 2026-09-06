@@ -160,12 +160,21 @@ s=new tab caption="Selection" children={
 	}
 }
 
-new tab caption="Lists" children={
-	new splitter orientation=horizontal position=0.5 children={
-		new panel layout=vbox children={
+li=new tab caption="Lists" children={
+	liv=new panel layout=vbox spacing=8 children={
+	lirtl=new checkbox caption="direction=rtl on the LIST -- its bar takes the left, and each item still reads its own language" halign=textbegin fill=none
+	lisp=new splitter orientation=horizontal position=0.5 stretch=1 children={
+		lilp=new panel layout=vbox children={
 			new label caption="ListView:"
-			new listview min_width=160 min_height=160 items={`)
+			lilv=new listview min_width=160 min_height=160 items={`)
+	// A few Hebrew captions among the English ones: an item's text follows
+	// its own language, so the two sit on opposite sides of the same column.
+	hebrew := map[int]string{4: "שלום עולם", 9: "תיקייה", 14: "מסמכים"}
 	for i := 1; i <= 20; i++ {
+		if h, ok := hebrew[i]; ok {
+			fmt.Fprintf(&b, "\n\t\t\t\tnew item caption=%q", h)
+			continue
+		}
 		fmt.Fprintf(&b, "\n\t\t\t\tnew item caption=\"Item %d\"", i)
 	}
 	b.WriteString(`
@@ -175,6 +184,7 @@ new tab caption="Lists" children={
 			new label caption="TreeView:"
 			new treeview min_width=160 min_height=160 items={` + indent(treeItemsScript, "\t\t\t\t") + `}
 		}
+	}
 	}
 }
 
@@ -780,6 +790,8 @@ slrtl=w.t.sl.slv.slrtl
 slc=w.t.sl.slv.slc
 pgrtl=w.t.pg.pgv.pgrtl
 pgc=w.t.pg.pgv.pgc
+lirtl=w.t.li.liv.lirtl
+lilv=w.t.li.liv.lisp.lilp.lilv
 `)
 
 	// The menu bar and status bar are adopted as this application's
