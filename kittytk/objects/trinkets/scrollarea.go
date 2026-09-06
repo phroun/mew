@@ -1410,7 +1410,14 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 			}
 		}
 
+		// The content stands where the viewport does, which is a column in
+		// when the vertical bar has taken the leading edge. Its BOUNDS say so
+		// as well as its painter: MapToScreen walks bounds to place a popup,
+		// and a drop-down opened from a control in here would otherwise land a
+		// column off the control it belongs to. The scroll offset stays out of
+		// them -- MapToScreen asks for that separately.
 		s.content.SetBounds(core.UnitRect{
+			X:      viewport.X,
 			Width:  contentBounds.Width,
 			Height: contentBounds.Height,
 		})

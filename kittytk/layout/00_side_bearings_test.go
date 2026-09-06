@@ -290,3 +290,64 @@ func TestAFlexRunKeepsSideBearings(t *testing.T) {
 		t.Errorf("the gap between two inline children is %d, want the one column they collapse to", gap)
 	}
 }
+
+// A column asks for the air it opens beside an inline child.
+//
+// Down a column that air is across the run, so it is part of the width the box
+// needs rather than spacing between children. A box that asks for exactly its
+// widest child and then insets that child by a column on each side hands it two
+// columns less than it asked for, and what will not fit runs out past the
+// child's own edge -- off its trailing side, which is under a scroll bar's lane
+// as often as it is into open air.
+func TestAColumnAsksForTheAirItGivesInlineChildren(t *testing.T) {
+	m := core.DefaultCellMetrics()
+	c := newCellContainer()
+
+	inline := newInlineSized(160, 16)
+	c.AddChild(inline)
+	l := NewBoxLayout(core.Vertical)
+	l.SetSpacing(0)
+	l.AddTrinket(inline)
+
+	want := core.Unit(160) + 2*m.UnitsPerCellWidth
+	if got := l.SizeHint(c).Width; got != want {
+		t.Errorf("the column asks for %d, want %d -- its child's width and the columns beside it", got, want)
+	}
+
+	// Given exactly that, the child gets the whole of what it asked for.
+	l.Layout(c, core.UnitRect{Width: want, Height: 100})
+	if got := inline.Bounds().Width; got != 160 {
+		t.Errorf("the child was laid out %d wide against the %d it asked for", got, 160)
+	}
+	if got := inline.Bounds().X; got != m.UnitsPerCellWidth {
+		t.Errorf("the child starts at x=%d, want a column in (%d)", got, m.UnitsPerCellWidth)
+	}
+}
+
+// A block brings no air with it, so a column of blocks asks for its widest and
+// nothing more.
+func TestAColumnOfBlocksAsksForNoAir(t *testing.T) {
+	c := newCellContainer()
+	b := newBlock(160, 16)
+	c.AddChild(b)
+	l := NewBoxLayout(core.Vertical)
+	l.SetSpacing(0)
+	l.AddTrinket(b)
+
+	if got := l.SizeHint(c).Width; got != 160 {
+		t.Errorf("the column asks for %d, want its child's own %d", got, 160)
+	}
+}
+
+// inlineSized is a child that says outright that it reads as inline, which is
+// what a column asks before it opens air beside one.
+type inlineSized struct{ sized }
+
+func newInlineSized(w, h core.Unit) *inlineSized {
+	s := &inlineSized{sized{own: core.UnitSize{Width: w, Height: h}}}
+	s.TrinketBase = *core.NewTrinketBase()
+	s.Init(s)
+	return s
+}
+
+func (s *inlineSized) IsInlineTrinket() bool { return true }

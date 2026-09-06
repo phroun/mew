@@ -360,3 +360,54 @@ func TestAHorizontalSplitterPutsItsFirstPaneOnTheLeadingSide(t *testing.T) {
 		t.Errorf("right to left: the first pane ends at %d, want the far edge 320", got)
 	}
 }
+
+// The content stands where the viewport does, and says so in its BOUNDS.
+//
+// A popup is placed by walking bounds up to the screen (MapToScreen), so a
+// content pane that paints a column in but reports x=0 opens every drop-down
+// inside it a column off the control it belongs to.
+func TestScrolledContentReportsWhereItPaints(t *testing.T) {
+	for _, c := range []struct {
+		dir  core.Direction
+		name string
+	}{{core.DirLTR, "left to right"}, {core.DirRTL, "right to left"}} {
+		s := scrolledArea(t, c.dir)
+		s.Paint(core.NewPainter(newInk(t)))
+
+		viewport := s.viewportBounds()
+		if got := s.content.Bounds().X; got != viewport.X {
+			t.Errorf("%s: the content reports x=%d but the viewport starts at %d",
+				c.name, got, viewport.X)
+		}
+	}
+}
+
+// A control in a right-to-left scroll area is not squeezed by the bar beside
+// it: what it draws stays clear of the lane.
+func TestAControlInAScrolledColumnClearsTheLane(t *testing.T) {
+	ink := newInk(t)
+	s := NewScrollArea()
+	s.SetDirection(core.DirRTL)
+	s.SetBounds(core.UnitRect{Width: 240, Height: 120})
+	content := NewPanel()
+	content.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
+	const caption = "Radio option with longer text"
+	for i := 0; i < 30; i++ {
+		content.AddChild(NewRadioButton(caption))
+	}
+	s.SetContent(content)
+	s.Layout()
+	s.Paint(core.NewPainter(ink))
+
+	lane := core.DefaultCellMetrics().UnitsPerCellWidth
+	if s.vLaneX() != 0 {
+		t.Fatalf("the lane is at x=%d; this test is about the case where it takes the left", s.vLaneX())
+	}
+	at, ok := ink.textAt(caption)
+	if !ok {
+		t.Fatal("no caption was drawn")
+	}
+	if at < lane {
+		t.Errorf("a caption is drawn at x=%d, inside the lane that ends at %d", at, lane)
+	}
+}
