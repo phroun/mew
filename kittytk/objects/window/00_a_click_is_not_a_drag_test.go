@@ -8,12 +8,10 @@ import (
 
 // A click on a maximized window's title bar leaves it maximized.
 //
-// A terminal reports where the pointer is before every button action, so one
-// click arrives as move, press, move, release -- and the move between the
-// press and the release is at the point the press was, which is no motion at
-// all. Taken as a drag it asks the window to move out of the menu bar, and a
-// maximized window answers that by restoring: one click on the title bar and
-// the window came down.
+// A click carries a position report of its own, so a stationary one arrives as
+// move, press, move, release with both moves at the point the press was. A
+// drag begins where the pointer leaves that point, so none of those moves is
+// one, and a maximized window comes down only for a drag that pulls it down.
 func TestAClickOnAMaximizedTitleBarIsNotADrag(t *testing.T) {
 	m := NewWindowManager()
 	m.SetScreenBounds(core.UnitRect{Width: 800, Height: 600})
@@ -29,9 +27,10 @@ func TestAClickOnAMaximizedTitleBarIsNotADrag(t *testing.T) {
 	frame := win.FrameRect()
 	at := core.UnitPoint{X: frame.X + frame.Width/2, Y: frame.Y + 8}
 
+	// The position report carries no button; only a drag names one.
 	m.HandleMouseMove(core.MouseMoveEvent{X: at.X, Y: at.Y})
 	m.HandleMousePress(core.MousePressEvent{X: at.X, Y: at.Y, Button: core.LeftButton})
-	m.HandleMouseMove(core.MouseMoveEvent{X: at.X, Y: at.Y, Buttons: core.LeftButton})
+	m.HandleMouseMove(core.MouseMoveEvent{X: at.X, Y: at.Y})
 	m.HandleMouseRelease(core.MouseReleaseEvent{X: at.X, Y: at.Y, Button: core.LeftButton})
 
 	if !win.IsMaximized() {

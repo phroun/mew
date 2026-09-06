@@ -174,6 +174,10 @@ type TUIBackend struct {
 	pendingMouseX int
 	pendingMouseY int
 
+	// havePendingMouse says a position has been reported at all, so the very
+	// first report is a move even when it names the origin.
+	havePendingMouse bool
+
 	// Outer-terminal pixel mouse (SGR-Pixels, ?1016). When the real terminal
 	// answers the startup probe — DECRQM says ?1016 is recognized AND CSI 16 t
 	// reports a cell pixel size — the backend enables ?1016 on it and reads
@@ -1695,24 +1699,29 @@ func (t *TUIBackend) handleKey(key string) {
 		return
 	}
 
-	// Check for mouse events from direct-key-handler
-	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
+	// Mouse events come as two keys: "Mouse@x,y" (position) followed by the
+	// action it belongs to, so every click carries a position report of its
+	// own and a stationary click reports the position it already had.
 	if strings.HasPrefix(key, "Mouse@") {
 		// Parse position: Mouse@x,y. Store the RAW 1-based coordinate — a cell
 		// column normally, an outer pixel under ?1016 — and let outerToUnits*
 		// resolve it to units at action time (it knows the current mode).
 		var x, y int
+		moved := true
 		if _, err := fmt.Sscanf(key, "Mouse@%d,%d", &x, &y); err == nil {
 			t.mu.Lock()
+			moved = !t.havePendingMouse || x != t.pendingMouseX || y != t.pendingMouseY
 			t.pendingMouseX = x
 			t.pendingMouseY = y
+			t.havePendingMouse = true
 			t.mu.Unlock()
 		}
-		// The pointer is somewhere it was not, which is a move — the only kind
-		// there is with no button held. An action arriving right behind this
-		// one resolves against the same position, so a click reads as a move to
-		// the spot and then the press, which is what the pointer did.
-		t.handleMouseAction("MouseMove")
+		// A move is the pointer somewhere it was not — the only kind of move
+		// there is with no button held. Where it is where it was, the report
+		// is the coordinate its action resolves against and nothing more.
+		if moved {
+			t.handleMouseAction("MouseMove")
+		}
 		return
 	}
 

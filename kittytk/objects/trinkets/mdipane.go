@@ -64,8 +64,7 @@ type MDIPane struct {
 	modalStack []*window.Window
 
 	// Drag state. dragMoved says the pointer has LEFT the point the window
-	// was grabbed at, which is what makes the gesture a drag; until it does,
-	// the press is still a click and nothing follows the pointer.
+	// was grabbed at, which is what makes the gesture a drag.
 	dragging    *window.Window
 	dragMoved   bool
 	dragStartX  core.Unit
@@ -1719,14 +1718,10 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle drag
 	if dragging != nil {
-		// A drag has not begun until the pointer LEAVES the point it was
-		// grabbed at, and until it does there is nothing here to do.
-		//
-		// A terminal reports where the pointer is before every button action,
-		// so a press and a release in one spot arrive with a motion between
-		// them that is no motion at all. Acted on, it drags: one click on a
-		// maximized child's title bar restored it, because a drag of nowhere
-		// still asks to be moved out of the pane's top edge.
+		// A drag begins when the pointer LEAVES the point it was grabbed at.
+		// Until it does the gesture is still a click, and a click moves
+		// nothing -- neither the child's position nor, for a maximized one,
+		// its state.
 		m.mu.Lock()
 		if m.dragging == dragging && (event.X != m.dragStartX || event.Y != m.dragStartY) {
 			m.dragMoved = true

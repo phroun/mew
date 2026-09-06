@@ -2673,14 +2673,10 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// A drag has not begun until the pointer LEAVES the point it was
-		// grabbed at, and until it does there is nothing here to do.
-		//
-		// A terminal reports where the pointer is before every button action,
-		// so a press and a release in one spot arrive with a motion between
-		// them that is no motion at all. Acted on, it drags: one click on a
-		// maximized window's title bar restored it, because a drag of nowhere
-		// still asks to be moved out of the menu bar.
+		// A drag begins when the pointer LEAVES the point it was grabbed at.
+		// Until it does the gesture is still a click, and a click moves
+		// nothing -- neither the window's position nor, for a maximized one,
+		// its state.
 		m.mu.Lock()
 		if m.dragging == dragging && (event.X != m.dragStartX || event.Y != m.dragStartY) {
 			m.dragMoved = true
