@@ -99,3 +99,31 @@ func FindTextDirection(w Trinket) Direction {
 	}
 	return FindEffectiveDirection(w)
 }
+
+// ChromeMirrored reports whether a trinket lays out its OWN chrome right to
+// left: a checkbox's indicator, a combobox's arrow, a scroll area's bars.
+//
+// The direction in force around the trinket, not the direction of any text it
+// carries. A Hebrew caption in an English form is still a control in an English
+// form and keeps its box on the left; what turns chrome over is the room.
+func ChromeMirrored(w Trinket) bool {
+	return FindEffectiveDirection(w) == DirRTL
+}
+
+// LeadingX is where a piece of a trinket's chrome goes.
+//
+// A trinket measures what it paints from its LEADING edge -- the side the
+// direction reads from -- and this turns that measurement into the x a painter
+// wants: itself where the direction reads left to right, and reflected in the
+// box where it reads right to left. `box` is the width being placed in, `at`
+// how far in from the leading edge the piece begins, and `width` its own.
+//
+// It is the same reflection the layout managers apply to a run, spelled for one
+// trinket placing something inside itself. Applying it to each piece in turn
+// reverses their order without any of them being written twice.
+func LeadingX(w Trinket, box, at, width Unit) Unit {
+	if !ChromeMirrored(w) {
+		return at
+	}
+	return box - at - width
+}

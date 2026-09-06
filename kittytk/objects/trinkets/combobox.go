@@ -845,16 +845,25 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	// Get font for text measurement and rendering
 	font := c.EffectiveFont()
 
+	// The arrow sits on the TRAILING edge and the value runs back from the
+	// leading one, so a combobox in a right-to-left form reads value then
+	// arrow from the right. The gap between the two travels with the arrow,
+	// which is why the run is turned around rather than just moved.
+	arrow := " ▼"
+	if core.ChromeMirrored(c) {
+		arrow = "▼ "
+	}
+
 	// Calculate text area width (leave space for arrow)
-	arrowWidth := c.MeasureText(" ▼")
+	arrowWidth := c.MeasureText(arrow)
 	textAreaWidth := bounds.Width - arrowWidth
 
 	// Draw text
-	p.DrawText(0, 0, c.displayText(text, textAreaWidth), s, font)
+	shown := c.displayText(text, textAreaWidth)
+	p.DrawText(core.LeadingX(c, bounds.Width, 0, c.MeasureText(shown)), 0, shown, s, font)
 
-	// Draw dropdown arrow at the right
-	arrowX := bounds.Width - arrowWidth
-	p.DrawText(arrowX, 0, " ▼", s, font)
+	// Draw dropdown arrow at the trailing edge
+	p.DrawText(core.LeadingX(c, bounds.Width, textAreaWidth, arrowWidth), 0, arrow, s, font)
 
 	// While the drop-down is open, frame the box with the same 1-pixel
 	// separator-color stroke as the popup. Painted by the trinket itself
@@ -936,16 +945,19 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			Width:  bounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		rowPainter.DrawText(metrics.UnitsPerCellWidth, itemY, item, s, font)
+		rowPainter.DrawText(core.LeadingX(c, bounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(item)),
+			itemY, item, s, font)
 	}
 
 	// Draw scroll indicators if needed
 	if c.scrollOffset > 0 {
-		p.DrawCell(bounds.Width-metrics.UnitsPerCellWidth*2, popupY, '▲', itemStyle)
+		p.DrawCell(core.LeadingX(c, bounds.Width, bounds.Width-metrics.UnitsPerCellWidth*2, metrics.UnitsPerCellWidth),
+			popupY, '▲', itemStyle)
 	}
 	if c.scrollOffset+popupHeight < len(c.items) {
 		endY := popupY + core.Unit(popupHeight-1)*metrics.UnitsPerCellHeight
-		p.DrawCell(bounds.Width-metrics.UnitsPerCellWidth*2, endY, '▼', itemStyle)
+		p.DrawCell(core.LeadingX(c, bounds.Width, bounds.Width-metrics.UnitsPerCellWidth*2, metrics.UnitsPerCellWidth),
+			endY, '▼', itemStyle)
 	}
 }
 
@@ -1050,7 +1062,8 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			Width:  popupBounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		rowPainter.DrawText(metrics.UnitsPerCellWidth, itemY, item, s, font)
+		rowPainter.DrawText(core.LeadingX(c, popupBounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(item)),
+			itemY, item, s, font)
 	}
 
 	// Draw scroll down indicator or scrollbar
@@ -1083,7 +1096,9 @@ func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (sc
 	metrics := c.screenMetrics()
 	totalItems := len(c.items)
 
-	scrollbarX = popupWidth - metrics.UnitsPerCellWidth
+	// The lane is on the TRAILING edge -- the right of a left-to-right list
+	// and the left of a right-to-left one.
+	scrollbarX = core.LeadingX(c, popupWidth, popupWidth-metrics.UnitsPerCellWidth, metrics.UnitsPerCellWidth)
 	trackHeight = visibleCount
 
 	if totalItems <= visibleCount {
@@ -1174,7 +1189,7 @@ func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visible
 	// rectangle for the thumb, both at unit granularity.
 	if p.Graphical() {
 		trackU, thumbU, posU := c.popupScrollbarUnits(visibleCount)
-		laneX := popupWidth - metrics.UnitsPerCellWidth
+		laneX := core.LeadingX(c, popupWidth, popupWidth-metrics.UnitsPerCellWidth, metrics.UnitsPerCellWidth)
 		stripeX := laneX + metrics.UnitsPerCellWidth/2
 		p.FillRect(core.UnitRect{
 			X:      stripeX,
@@ -1257,7 +1272,10 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 			}
 
 			scrollbarX, thumbStart, thumbHeight, _ := c.scrollbarGeometry(popupBounds.Width, popupHeight)
-			if event.X >= popupBounds.X+scrollbarX {
+			// The lane is one column wherever it sits, so the hit area is
+			// that column rather than everything past its near edge.
+			laneAt := popupBounds.X + scrollbarX
+			if event.X >= laneAt && event.X < laneAt+metrics.UnitsPerCellWidth {
 				// Click on scrollbar area
 				relY := event.Y - popupBounds.Y
 				clickedRow := int(relY / metrics.UnitsPerCellHeight)

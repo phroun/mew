@@ -230,13 +230,21 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 	completedStyle := scheme.GetProgressFull()
 	incompleteStyle := scheme.GetProgressEmpty()
 
-	// Draw incomplete background first
-	for i := 0; i < metrics.CharsForWidth(bounds.Width); i++ {
-		x := core.Unit(i) * metrics.UnitsPerCellWidth
-		painter.DrawCell(x, 0, '░', incompleteStyle)
+	totalCells := metrics.CharsForWidth(bounds.Width)
+
+	// A bar fills from the LEADING edge, so it grows the way its direction
+	// reads. Cells are counted from there and turned into an x here; the box
+	// is the whole cells the bar covers rather than its bounds, so the part
+	// too narrow for a cell stays at the far end in both directions.
+	span := core.Unit(totalCells) * metrics.UnitsPerCellWidth
+	cellX := func(i int) core.Unit {
+		return core.LeadingX(p, span, core.Unit(i)*metrics.UnitsPerCellWidth, metrics.UnitsPerCellWidth)
 	}
 
-	totalCells := metrics.CharsForWidth(bounds.Width)
+	// Draw incomplete background first
+	for i := 0; i < totalCells; i++ {
+		painter.DrawCell(cellX(i), 0, '░', incompleteStyle)
+	}
 
 	if p.indeterminate {
 		// The moving block's position comes from wall time, not the
@@ -245,8 +253,7 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 		blockSize := 5
 		pos := indeterminateSweepPos(totalCells, blockSize)
 		for i := 0; i < blockSize && pos+i < totalCells; i++ {
-			x := core.Unit(pos+i) * metrics.UnitsPerCellWidth
-			painter.DrawCell(x, 0, '▓', completedStyle)
+			painter.DrawCell(cellX(pos+i), 0, '▓', completedStyle)
 		}
 	} else {
 		// Calculate filled portion
@@ -254,8 +261,7 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 
 		// Draw filled portion
 		for i := 0; i < filledCells; i++ {
-			x := core.Unit(i) * metrics.UnitsPerCellWidth
-			painter.DrawCell(x, 0, '▓', completedStyle)
+			painter.DrawCell(cellX(i), 0, '▓', completedStyle)
 		}
 	}
 
@@ -272,17 +278,25 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 		activeTextStyle := scheme.GetProgressFullText()
 		inactiveTextStyle := scheme.GetProgressEmptyText()
 
+		// The caption reads the same either way and is centred, so it is drawn
+		// where it always was. Which cell of the BAR each character stands on
+		// is what turns over, and that is what says whether it is on the filled
+		// part.
 		filledCells := totalCells * p.Percentage() / 100
+		mirrored := core.ChromeMirrored(p)
 		for i, ch := range text {
-			x := core.Unit(startX+i) * metrics.UnitsPerCellWidth
+			at := startX + i
+			if mirrored {
+				at = startX + textLen - 1 - i
+			}
 			// Use appropriate style based on position
 			var s style.CellStyle
-			if startX+i < filledCells {
+			if at < filledCells {
 				s = activeTextStyle
 			} else {
 				s = inactiveTextStyle
 			}
-			painter.DrawCell(x, 0, ch, s)
+			painter.DrawCell(core.Unit(startX+i)*metrics.UnitsPerCellWidth, 0, ch, s)
 		}
 	}
 }
