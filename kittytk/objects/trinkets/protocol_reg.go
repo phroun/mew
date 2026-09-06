@@ -254,7 +254,7 @@ func init() {
 		}
 		return fmt.Errorf("direction: not supported by this type")
 	})).OneOf("inherit", "ltr", "rtl").Def("inherit").
-		Tip("Side text begins on, here and below; inherit takes it from the container."))
+		Tip("Side text begins on and a row runs from, here and below; inherit takes it from the container."))
 
 	// Colors (vocabulary decision 2026-07-05): named colors as bare
 	// words, RGB as quoted "#rrggbb". fg/bg build on the trinket's
