@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
 )
 
@@ -13,8 +14,8 @@ import (
 // column-related properties. Columns nest like everything else (D13):
 //
 //	new treeview caption="Name" showheader columns={
-//	    new column id=size caption="Size" width=10 align=right sortable
-//	    new column id=kind caption="Kind" width=12
+//	    new column id=size caption="Size" width=80 align=right sortable
+//	    new column id=kind caption="Kind" width=96
 //	} items={
 //	    new item caption="Report.txt"
 //	}
@@ -196,6 +197,20 @@ func colInt(name string, set func(col *TreeColumn, n int)) protocol.Property {
 	}))
 }
 
+// colUnits is a column property counted in UNITS, as every other measurement
+// in this toolkit is: how far a unit goes is the denomination's answer, so the
+// same number is a different number of columns in a re-denominated subtree.
+func colUnits(name string, set func(col *TreeColumn, w core.Unit)) protocol.Property {
+	return protocol.NewProperty("units", colProp(name, func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
+		n, err := protocol.AsInt(name, v, f)
+		if err != nil {
+			return err
+		}
+		set(c.target(), core.Unit(n))
+		return nil
+	}))
+}
+
 func colFlag(name string, set func(col *TreeColumn, b bool)) protocol.Property {
 	return protocol.NewProperty("flag", colProp(name, func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
 		b, err := protocol.AsBool(name, v, f)
@@ -248,10 +263,10 @@ func init() {
 			})).Tip("Stable key cell values are stored under. Must differ from " +
 				"every other column's on the same treeview, blank included."),
 			"caption":   colString("caption", func(c *TreeColumn, s string) { c.Caption = s }).Tip("Header caption."),
-			"width":     colInt("width", func(c *TreeColumn, n int) { c.Width = n }).Tip("Width in text cells.").Def("8"),
-			"min_width": colInt("min_width", func(c *TreeColumn, n int) { c.MinWidth = n }).Tip("Minimum width in text cells.").Def("3"),
-			"max_width": colInt("max_width", func(c *TreeColumn, n int) { c.MaxWidth = n }).
-				Tip("Widest the column may be dragged, in text cells. -1 is no limit; a maximum below min_width loses to it.").Def("-1"),
+			"width":     colUnits("width", func(c *TreeColumn, w core.Unit) { c.Width = w }).Tip("Width, in units.").Def("64"),
+			"min_width": colUnits("min_width", func(c *TreeColumn, w core.Unit) { c.MinWidth = w }).Tip("Minimum width, in units.").Def("24"),
+			"max_width": colUnits("max_width", func(c *TreeColumn, w core.Unit) { c.MaxWidth = w }).
+				Tip("Widest the column may be dragged, in units. -1 is no limit; a maximum below min_width loses to it.").Def("-1"),
 			"align": protocol.NewProperty("enum", colProp("align", func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("align", v, f)
 				if err != nil {
@@ -386,7 +401,18 @@ func treeViewProps() map[string]protocol.Property {
 		"treelines":  boolProp("treelines", (*TreeView).SetTreeLines).Tip("Connector lines in the indent space; leaf items get a glyph too.").Def("false"),
 		"showkey":    boolProp("showkey", (*TreeView).SetShowKey).Tip("Show the key (tree) column first.").Def("true"),
 		"fit_width":  boolProp("fit_width", (*TreeView).SetFitWidth).Tip("Squeeze columns to the width (no horizontal scrolling).").Def("true"),
-		"key_width":  intProp("key_width", (*TreeView).SetKeyWidth).Tip("Key column width in text cells (scroll mode).").Def("20"),
+		"key_width": protocol.NewProperty("units", wprop("key_width", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+			n, err := protocol.AsInt("key_width", v, f)
+			if err != nil {
+				return err
+			}
+			t, ok := w.(*TreeView)
+			if !ok {
+				return fmt.Errorf("key_width: not supported by this type")
+			}
+			t.SetKeyWidth(core.Unit(n))
+			return nil
+		})).Tip("Key column width in units (scroll mode).").Def("160"),
 		"fixed_left": intProp("fixed_left", func(t *TreeView, n int) {
 			t.SetFixedColumns(n, t.fixedRight)
 		}).Tip("Visible columns pinned outside horizontal scrolling, from the left.").Def("0"),

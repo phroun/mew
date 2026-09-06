@@ -16,9 +16,9 @@ import (
 func newColumnsTree(widthCells, heightRows int) *TreeView {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Align = "right"
-	kind := NewTreeColumn("kind", "Kind", 12)
+	kind := NewTreeColumn("kind", "Kind", 12*cell)
 	tv.AddColumn(size)
 	tv.AddColumn(kind)
 
@@ -102,7 +102,7 @@ func TestTreeColumnLayoutFitShrinks(t *testing.T) {
 func TestTreeColumnFitReclaimsMeasuredSlack(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
-	wide := NewTreeColumn("pad", "Pad", 30) // declared 30 cells of mostly padding
+	wide := NewTreeColumn("pad", "Pad", 30*cell) // declared 30 cells of mostly padding
 	tv.AddColumn(wide)
 	it := NewTreeItem("a-rather-long-file-name.png")
 	it.SetValue("pad", "x") // content needs ~1 cell
@@ -173,7 +173,7 @@ func TestTreeColumnHostWhenKeyHidden(t *testing.T) {
 func TestTreeColumnLayoutScrollMode(t *testing.T) {
 	tv := newColumnsTree(30, 10)
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(20)
+	tv.SetKeyWidth(20 * cell)
 
 	if tv.footerHeight() != 16 {
 		t.Fatalf("scroll mode must reserve the footer row")
@@ -184,19 +184,19 @@ func TestTreeColumnLayoutScrollMode(t *testing.T) {
 
 	lay := tv.columnLayout()
 	// Natural: 20 + 1 + 10 + 1 + 12 = 44 cells in 29 content cells.
-	if lay.maxHScroll != 44-29 {
-		t.Errorf("maxHScroll=%d, want %d", lay.maxHScroll, 44-29)
+	if want := (44 - 29) * cell; lay.maxHScroll != want {
+		t.Errorf("maxHScroll=%d, want %d", lay.maxHScroll, want)
 	}
 
-	if !tv.scrollHorizontally(5) {
-		t.Fatal("scrollHorizontally(5) did nothing")
+	if !tv.scrollHorizontally(5 * cell) {
+		t.Fatal("scrollHorizontally(5 cells) did nothing")
 	}
 	lay = tv.columnLayout()
 	if lay.spans[0].x != -5*8 {
 		t.Errorf("panned key span x=%d, want %d", lay.spans[0].x, -5*8)
 	}
 	// Clamp at the end.
-	tv.scrollHorizontally(1000)
+	tv.scrollHorizontally(1000 * cell)
 	lay = tv.columnLayout()
 	if tv.hScroll != lay.maxHScroll {
 		t.Errorf("hScroll=%d, want clamp at %d", tv.hScroll, lay.maxHScroll)
@@ -207,9 +207,9 @@ func TestTreeColumnLayoutScrollMode(t *testing.T) {
 func TestTreeColumnFixedLeft(t *testing.T) {
 	tv := newColumnsTree(30, 10)
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(15)
+	tv.SetKeyWidth(15 * cell)
 	tv.SetFixedColumns(1, 0)
-	tv.scrollHorizontally(4)
+	tv.scrollHorizontally(4 * cell)
 
 	lay := tv.columnLayout()
 	if !lay.spans[0].fixed || lay.spans[0].x != 0 {
@@ -234,7 +234,7 @@ func TestTreeColumnFixedLeft(t *testing.T) {
 func TestTreeColumnPinnedRightDividerSizesPinned(t *testing.T) {
 	tv := newColumnsTree(30, 10)
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(10)
+	tv.SetKeyWidth(10 * cell)
 	tv.SetFixedColumns(0, 1) // pin the last column (Kind)
 
 	lay := tv.columnLayout()
@@ -247,8 +247,8 @@ func TestTreeColumnPinnedRightDividerSizesPinned(t *testing.T) {
 	if !ok || col != tv.ColumnByID("kind") || !invert {
 		t.Fatalf("pinned boundary: col=%v invert=%v ok=%v, want kind/inverted", col, invert, ok)
 	}
-	if startW != 12 {
-		t.Errorf("startW=%d, want 12", startW)
+	if startW != 12*cell {
+		t.Errorf("startW=%d, want %d", startW, 12*cell)
 	}
 
 	// The cursor over that divider is the horizontal resizer.
@@ -347,11 +347,11 @@ func TestTreeColumnDividerDrag(t *testing.T) {
 	// same 4, so the key's width - and every line but the grabbed one,
 	// including Kind's right edge - stays put by construction.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 4*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("kind").Width; got != 8 {
-		t.Errorf("right drag: kind width=%d, want 8", got)
+	if got := tv.ColumnByID("kind").Width; got != 8*cell {
+		t.Errorf("right drag: kind width=%d, want %d", got, 8*cell)
 	}
-	if got := tv.ColumnByID("size").Width; got != 14 {
-		t.Errorf("right drag: size=%d, want 14 (compensates kind's give)", got)
+	if got := tv.ColumnByID("size").Width; got != 14*cell {
+		t.Errorf("right drag: size=%d, want %d (compensates kind's give)", got, 14*cell)
 	}
 	if lr := tv.columnLayout(); lr.spans[0].divX != lay.spans[0].divX ||
 		lr.spans[1].divX != divX+4*8 || lr.spans[2].divX != lay.spans[2].divX {
@@ -361,40 +361,40 @@ func TestTreeColumnDividerDrag(t *testing.T) {
 	}
 	// Far right: stops at Kind's minimum (3); Size holds the transfer.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 100*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("kind").Width; got != 3 {
-		t.Errorf("right drag clamp: kind width=%d, want 3", got)
+	if got := tv.ColumnByID("kind").Width; got != 3*cell {
+		t.Errorf("right drag clamp: kind width=%d, want %d", got, 3*cell)
 	}
-	if got := tv.ColumnByID("size").Width; got != 19 {
-		t.Errorf("right drag clamp: size=%d, want 19", got)
+	if got := tv.ColumnByID("size").Width; got != 19*cell {
+		t.Errorf("right drag clamp: size=%d, want %d", got, 19*cell)
 	}
 	// LEFT 10 cells (from the press point): all funded by the key's
 	// slack pool - Kind widens, Size untouched.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 10*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("kind").Width; got != 22 {
-		t.Errorf("left drag (slack): kind width=%d, want 22", got)
+	if got := tv.ColumnByID("kind").Width; got != 22*cell {
+		t.Errorf("left drag (slack): kind width=%d, want %d", got, 22*cell)
 	}
-	if got := tv.ColumnByID("size").Width; got != 10 {
-		t.Errorf("left drag (slack) touched the left column: size=%d, want 10", got)
+	if got := tv.ColumnByID("size").Width; got != 10*cell {
+		t.Errorf("left drag (slack) touched the left column: size=%d, want %d", got, 10*cell)
 	}
 	// LEFT 20: the 15-cell pool is spent; the remaining 5 comes from
 	// narrowing Size.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 20*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("kind").Width; got != 32 {
-		t.Errorf("left drag (pool+left): kind width=%d, want 32", got)
+	if got := tv.ColumnByID("kind").Width; got != 32*cell {
+		t.Errorf("left drag (pool+left): kind width=%d, want %d", got, 32*cell)
 	}
-	if got := tv.ColumnByID("size").Width; got != 5 {
-		t.Errorf("left drag (pool+left): size=%d, want 5", got)
+	if got := tv.ColumnByID("size").Width; got != 5*cell {
+		t.Errorf("left drag (pool+left): size=%d, want %d", got, 5*cell)
 	}
 	// Far left: capped at pool(15) + Size's room(7) = 22 - the key
 	// stays at its defended floor, so the layout never starts
 	// reclaiming from other columns (which would move their lines
 	// AGAINST the drag).
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 60*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("kind").Width; got != 34 {
-		t.Errorf("left drag cap: kind width=%d, want 34", got)
+	if got := tv.ColumnByID("kind").Width; got != 34*cell {
+		t.Errorf("left drag cap: kind width=%d, want %d", got, 34*cell)
 	}
-	if got := tv.ColumnByID("size").Width; got != 3 {
-		t.Errorf("left drag cap: size=%d, want 3", got)
+	if got := tv.ColumnByID("size").Width; got != 3*cell {
+		t.Errorf("left drag cap: size=%d, want %d", got, 3*cell)
 	}
 	// The grabbed line resolved exactly 22 cells left of where it
 	// started, and the key|Size line moved only WITH the drag.
@@ -409,13 +409,13 @@ func TestTreeColumnDividerDrag(t *testing.T) {
 	if tv.colDragging {
 		t.Error("release did not end the drag")
 	}
-	tv.ColumnByID("size").Width = 10 // restore for the scroll-mode leg
-	tv.ColumnByID("kind").Width = 12
+	tv.ColumnByID("size").Width = 10 * cell // restore for the scroll-mode leg
+	tv.ColumnByID("kind").Width = 12 * cell
 
 	// Scroll mode (no slack column): the divider sizes the column to
 	// its LEFT, classic semantics.
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(15)
+	tv.SetKeyWidth(15 * cell)
 	lay = tv.columnLayout()
 	divX = lay.spans[1].divX
 	tv.HandleMousePress(core.MousePressEvent{X: divX + 2, Y: 4, Button: core.LeftButton})
@@ -423,8 +423,8 @@ func TestTreeColumnDividerDrag(t *testing.T) {
 		t.Fatalf("scroll-mode drag: dragging=%v invert=%v, want true/false", tv.colDragging, tv.colDragInvert)
 	}
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 4*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("size").Width; got != 14 {
-		t.Errorf("scroll-mode drag: size width=%d, want 14", got)
+	if got := tv.ColumnByID("size").Width; got != 14*cell {
+		t.Errorf("scroll-mode drag: size width=%d, want %d", got, 14*cell)
 	}
 	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
 
@@ -460,35 +460,35 @@ func TestTreeFitDragKeyHiddenBlankPool(t *testing.T) {
 	// Rightward 10: Size widens into the blank; Kind untouched (its
 	// lines move right WITH the drag).
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 10*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("size").Width; got != 20 {
-		t.Errorf("right drag (blank): size=%d, want 20", got)
+	if got := tv.ColumnByID("size").Width; got != 20*cell {
+		t.Errorf("right drag (blank): size=%d, want %d", got, 20*cell)
 	}
-	if got := tv.ColumnByID("kind").Width; got != 12 {
-		t.Errorf("right drag (blank) touched kind: %d, want 12", got)
+	if got := tv.ColumnByID("kind").Width; got != 12*cell {
+		t.Errorf("right drag (blank) touched kind: %d, want %d", got, 12*cell)
 	}
 	// Rightward 40: the 36-cell blank is spent; Kind gives the rest.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 40*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("size").Width; got != 50 {
-		t.Errorf("right drag (blank+kind): size=%d, want 50", got)
+	if got := tv.ColumnByID("size").Width; got != 50*cell {
+		t.Errorf("right drag (blank+kind): size=%d, want %d", got, 50*cell)
 	}
-	if got := tv.ColumnByID("kind").Width; got != 8 {
-		t.Errorf("right drag (blank+kind): kind=%d, want 8", got)
+	if got := tv.ColumnByID("kind").Width; got != 8*cell {
+		t.Errorf("right drag (blank+kind): kind=%d, want %d", got, 8*cell)
 	}
 	// Far right: capped at blank(36) + Kind's room(9) = 45.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 100*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("size").Width; got != 55 {
-		t.Errorf("right drag cap: size=%d, want 55", got)
+	if got := tv.ColumnByID("size").Width; got != 55*cell {
+		t.Errorf("right drag cap: size=%d, want %d", got, 55*cell)
 	}
-	if got := tv.ColumnByID("kind").Width; got != 3 {
-		t.Errorf("right drag cap: kind=%d, want 3", got)
+	if got := tv.ColumnByID("kind").Width; got != 3*cell {
+		t.Errorf("right drag cap: kind=%d, want %d", got, 3*cell)
 	}
 	// Back LEFT past the origin: Size narrows, Kind restored.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 6*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("size").Width; got != 4 {
-		t.Errorf("left drag: size=%d, want 4", got)
+	if got := tv.ColumnByID("size").Width; got != 4*cell {
+		t.Errorf("left drag: size=%d, want %d", got, 4*cell)
 	}
-	if got := tv.ColumnByID("kind").Width; got != 12 {
-		t.Errorf("left drag did not restore kind: %d, want 12", got)
+	if got := tv.ColumnByID("kind").Width; got != 12*cell {
+		t.Errorf("left drag did not restore kind: %d, want %d", got, 12*cell)
 	}
 	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
 }
@@ -626,18 +626,18 @@ func TestTreeColumnPaintSmoke(t *testing.T) {
 func TestTreeLastColumnStretchesOverBlank(t *testing.T) {
 	tv := newColumnsTree(80, 10) // content 79 cells, natural 44
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(20)
+	tv.SetKeyWidth(20 * cell)
 	lay := tv.columnLayout()
 	last := lay.spans[len(lay.spans)-1]
 	if last.x+last.w != lay.scrollR {
 		t.Errorf("last span ends at %d, want scrollR %d", last.x+last.w, lay.scrollR)
 	}
-	if lay.blankCells != 79-44 {
-		t.Errorf("blankCells = %d, want %d", lay.blankCells, 79-44)
+	if want := (79 - 44) * cell; lay.blankW != want {
+		t.Errorf("blankW = %d, want %d", lay.blankW, want)
 	}
 	// The natural column width is untouched (only the SPAN stretched).
-	if got := tv.ColumnByID("kind").Width; got != 12 {
-		t.Errorf("kind natural width = %d, want 12", got)
+	if got := tv.ColumnByID("kind").Width; got != 12*cell {
+		t.Errorf("kind natural width = %d, want %d", got, 12*cell)
 	}
 
 	// With a pinned-right column, the last SCROLLING span claims the
@@ -657,7 +657,7 @@ func TestTreeLastColumnStretchesOverBlank(t *testing.T) {
 func TestTreeHBarThumbHover(t *testing.T) {
 	tv := newColumnsTree(30, 10)
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(20)
+	tv.SetKeyWidth(20 * cell)
 	lay := tv.columnLayout()
 	_, _, x0, x1, ok := tv.hScrollbarGeometry(lay)
 	if !ok {

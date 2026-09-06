@@ -70,15 +70,20 @@ func (v *eventViewer) build() core.Trinket {
 	// Repeat are the whole question for a keyboard problem and pure clutter
 	// for a mouse one. Hiding every one of them does not leave a blank tree:
 	// with no visible data column the key column comes back, hidden or not.
+	//
+	// The widths are units, as every measurement in this toolkit is, and are
+	// written as cells of the default denomination -- what they were when a
+	// column counted them.
+	const cell = core.Unit(8)
 	for _, c := range []*TreeColumn{
-		{ID: "seq", Caption: "#", Width: 7, Align: "right", Optional: true,
+		{ID: "seq", Caption: "#", Width: 7 * cell, Align: "right", Optional: true,
 			Sortable: true, Numeric: true},
-		{ID: "event", Caption: "Event", Width: 14, Resizable: true, Optional: true},
-		{ID: "key", Caption: "Key", Width: 16, Resizable: true, Optional: true},
-		{ID: "mods", Caption: "Modifiers", Width: 22, Resizable: true, Optional: true},
-		{ID: "repeat", Caption: "Repeat", Width: 7, Align: "center", Optional: true},
-		{ID: "text", Caption: "Text", Width: 8, Resizable: true, Optional: true},
-		{ID: "detail", Caption: "Detail", Width: 40, Resizable: true, Optional: true},
+		{ID: "event", Caption: "Event", Width: 14 * cell, Resizable: true, Optional: true},
+		{ID: "key", Caption: "Key", Width: 16 * cell, Resizable: true, Optional: true},
+		{ID: "mods", Caption: "Modifiers", Width: 22 * cell, Resizable: true, Optional: true},
+		{ID: "repeat", Caption: "Repeat", Width: 7 * cell, Align: "center", Optional: true},
+		{ID: "text", Caption: "Text", Width: 8 * cell, Resizable: true, Optional: true},
+		{ID: "detail", Caption: "Detail", Width: 40 * cell, Resizable: true, Optional: true},
 	} {
 		// The ids are the literal above and all differ, so the only error
 		// AddColumn returns cannot arise here.

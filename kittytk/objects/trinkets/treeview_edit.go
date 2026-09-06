@@ -337,7 +337,6 @@ func (t *TreeView) ensureColVisible(col *TreeColumn) {
 		return
 	}
 	lay := t.columnLayout()
-	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	for _, sp := range lay.spans {
 		if !spanMatchesCol(sp, col) {
 			continue
@@ -345,17 +344,16 @@ func (t *TreeView) ensureColVisible(col *TreeColumn) {
 		if sp.fixed {
 			return // pinned columns are always in view
 		}
-		// The span's NATURAL cell offset within the scrolling region
-		// (its painted x has the current scroll already applied).
-		leftCells := int(lay.scrollL / cw)
-		viewCells := int((lay.scrollR - lay.scrollL) / cw)
-		start := int(sp.x/cw) - leftCells + t.hScroll
-		end := start + int(sp.w/cw)
+		// The span's NATURAL offset within the scrolling region (its
+		// painted x has the current scroll already applied).
+		view := lay.scrollR - lay.scrollL
+		start := sp.x - lay.scrollL + t.hScroll
+		end := start + sp.w
 		hs := t.hScroll
 		if start < hs {
 			hs = start
-		} else if end > hs+viewCells {
-			hs = end - viewCells
+		} else if end > hs+view {
+			hs = end - view
 			if hs > start {
 				hs = start // never hide the left edge
 			}

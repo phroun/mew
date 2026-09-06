@@ -12,11 +12,11 @@ import (
 func newEditableTree() *TreeView {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Editable = true
-	kind := NewTreeColumn("kind", "Kind", 12)
+	kind := NewTreeColumn("kind", "Kind", 12*cell)
 	kind.Editable = true
-	date := NewTreeColumn("date", "Date", 12)
+	date := NewTreeColumn("date", "Date", 12*cell)
 	tv.AddColumn(size)
 	tv.AddColumn(kind)
 	tv.AddColumn(date)
@@ -329,7 +329,7 @@ func TestTreeMouseSelectsTargetColumn(t *testing.T) {
 func TestTreeArrowRotationEnsuresVisible(t *testing.T) {
 	tv := newColumnsTree(30, 10) // content 29 cells
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(20) // natural: key 20 |1| size 10 |1| kind 12 = 44
+	tv.SetKeyWidth(20 * cell) // natural: key 20 |1| size 10 |1| kind 12 = 44
 	tv.ColumnByID("size").Editable = true
 	tv.ColumnByID("kind").Editable = true
 	tv.SetCurrentIndex(0)
@@ -337,14 +337,16 @@ func TestTreeArrowRotationEnsuresVisible(t *testing.T) {
 	// The target starts on size (first editable); Right rotates to
 	// kind (cells 32..44), revealed at the max scroll of 15.
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Right"})
-	if tv.enterTargetColumn() != tv.ColumnByID("kind") || tv.hScroll != 15 {
-		t.Fatalf("after Right: target=%v hScroll=%d, want kind/15", tv.enterTargetColumn(), tv.hScroll)
+	if tv.enterTargetColumn() != tv.ColumnByID("kind") || tv.hScroll != 15*cell {
+		t.Fatalf("after Right: target=%v hScroll=%d, want kind/%d",
+			tv.enterTargetColumn(), tv.hScroll, 15*cell)
 	}
 	// Left back to size (cells 21..31): already inside the view at
 	// scroll 15 - conservative, no movement.
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Left"})
-	if tv.enterTargetColumn() != tv.ColumnByID("size") || tv.hScroll != 15 {
-		t.Fatalf("after Left: target=%v hScroll=%d, want size/15 (no movement)", tv.enterTargetColumn(), tv.hScroll)
+	if tv.enterTargetColumn() != tv.ColumnByID("size") || tv.hScroll != 15*cell {
+		t.Fatalf("after Left: target=%v hScroll=%d, want size/%d (no movement)",
+			tv.enterTargetColumn(), tv.hScroll, 15*cell)
 	}
 }
 
@@ -389,7 +391,7 @@ func TestTreeEditCommitScrollsIntoView(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
 	tv.SetEditable(true)
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for i := 0; i < 40; i++ {
 		tv.AddRootItem(NewTreeItem(fmtItem(i)))
 	}
@@ -517,7 +519,7 @@ func TestTreeEditContextMenu(t *testing.T) {
 func TestTreeEditEnsuresColumnVisible(t *testing.T) {
 	tv := newColumnsTree(30, 10) // TUI: content 29 cells
 	tv.SetFitWidth(false)
-	tv.SetKeyWidth(20) // natural: key 20 |1| size 10 |1| kind 12 = 44
+	tv.SetKeyWidth(20 * cell) // natural: key 20 |1| size 10 |1| kind 12 = 44
 	tv.ColumnByID("size").Editable = true
 	tv.ColumnByID("kind").Editable = true
 	tv.SetCurrentIndex(0)
@@ -528,14 +530,14 @@ func TestTreeEditEnsuresColumnVisible(t *testing.T) {
 	if !tv.rowEditing || tv.editCol != tv.ColumnByID("size") {
 		t.Fatal("precondition: editing size")
 	}
-	if tv.hScroll != 2 {
-		t.Errorf("hScroll after edit start = %d, want 2", tv.hScroll)
+	if tv.hScroll != 2*cell {
+		t.Errorf("hScroll after edit start = %d, want %d", tv.hScroll, 2*cell)
 	}
 	// Tab to Kind (cells 32..44): right-align to it, clamped to the
 	// max scroll (15).
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab"})
-	if tv.hScroll != 15 {
-		t.Errorf("hScroll after Tab to kind = %d, want 15", tv.hScroll)
+	if tv.hScroll != 15*cell {
+		t.Errorf("hScroll after Tab to kind = %d, want %d", tv.hScroll, 15*cell)
 	}
 	// S-Tab back to Size: at hScroll 15 its cells 21..31 already sit
 	// inside the view (15..44) - conservative: NO movement.
@@ -543,8 +545,8 @@ func TestTreeEditEnsuresColumnVisible(t *testing.T) {
 	if tv.editCol != tv.ColumnByID("size") {
 		t.Fatal("S-Tab did not return to size")
 	}
-	if tv.hScroll != 15 {
-		t.Errorf("hScroll moved for an already-visible column: %d, want 15", tv.hScroll)
+	if tv.hScroll != 15*cell {
+		t.Errorf("hScroll moved for an already-visible column: %d, want %d", tv.hScroll, 15*cell)
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 
@@ -555,8 +557,8 @@ func TestTreeEditEnsuresColumnVisible(t *testing.T) {
 	if tv.editCol != tv.ColumnByID("kind") {
 		t.Fatal("Tab did not reach kind")
 	}
-	if tv.hScroll != 15 {
-		t.Errorf("editing a pinned column scrolled the region: %d, want 15", tv.hScroll)
+	if tv.hScroll != 15*cell {
+		t.Errorf("editing a pinned column scrolled the region: %d, want %d", tv.hScroll, 15*cell)
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 }

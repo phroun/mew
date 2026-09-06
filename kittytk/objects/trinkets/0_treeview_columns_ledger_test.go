@@ -131,7 +131,7 @@ func TestTreeChooserDimsSelection(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for _, name := range []string{"aaa", "bbb"} {
 		tv.AddRootItem(NewTreeItem(name))
 	}
@@ -210,7 +210,7 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Editable = true
 	tv.AddColumn(size)
 	for _, name := range []string{"aaa", "bbb"} {
@@ -285,7 +285,7 @@ func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
 	tv.SetEditable(true) // only the key column is editable: it IS the target
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for _, name := range []string{"aaa", "bbb"} {
 		tv.AddRootItem(NewTreeItem(name))
 	}
@@ -334,7 +334,7 @@ func TestTreeLedgerRows(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for _, name := range []string{"aaa", "bbb", "ccc"} {
 		tv.AddRootItem(NewTreeItem(name))
 	}

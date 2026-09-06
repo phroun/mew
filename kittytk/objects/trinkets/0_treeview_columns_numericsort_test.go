@@ -56,7 +56,7 @@ func TestNumericValueCachedOnSet(t *testing.T) {
 // which a string comparison gets backwards.
 func TestTreeNumericColumnSort(t *testing.T) {
 	tv := NewTreeView()
-	bytes := NewTreeColumn("bytes", "Bytes", 10)
+	bytes := NewTreeColumn("bytes", "Bytes", 10*cell)
 	bytes.Sortable = true
 	bytes.Numeric = true
 	tv.AddColumn(bytes)
@@ -89,11 +89,11 @@ func TestTreeNumericColumnSort(t *testing.T) {
 // column sorts by a hidden numeric raw-size column.
 func TestTreeSortProxyColumn(t *testing.T) {
 	tv := NewTreeView()
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Sortable = true
 	size.SortProxy = 1 // the rawsize column below
 	tv.AddColumn(size)
-	raw := NewTreeColumn("rawsize", "Raw Size", 10)
+	raw := NewTreeColumn("rawsize", "Raw Size", 10*cell)
 	raw.Numeric = true
 	raw.Hidden = true
 	tv.AddColumn(raw)

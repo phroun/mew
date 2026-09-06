@@ -14,7 +14,7 @@ import (
 func newEnumTree(kindValue string) (*TreeView, *recordingPopupController) {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
-	kind := NewTreeColumn("kind", "Kind", 14)
+	kind := NewTreeColumn("kind", "Kind", 14*cell)
 	kind.Editable = true
 	kind.Enum = []TreeEnumOption{
 		{Key: "png", Value: "PNG image"},
@@ -39,7 +39,7 @@ func newEnumTree(kindValue string) (*TreeView, *recordingPopupController) {
 // A key-storing enum column DISPLAYS the option value; unknown keys
 // fall back to the raw text; value-storing columns show raw text.
 func TestTreeColumnDisplayValue(t *testing.T) {
-	c := NewTreeColumn("kind", "Kind", 10)
+	c := NewTreeColumn("kind", "Kind", 10*cell)
 	c.Enum = []TreeEnumOption{{Key: "png", Value: "PNG image"}}
 	c.EnumStore = "key"
 	if got := c.displayValue("png"); got != "PNG image" {
@@ -314,7 +314,7 @@ func TestTreeRowFillUnderScrollbarLane(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for _, name := range []string{"aaa", "bbb", "ccc"} {
 		tv.AddRootItem(NewTreeItem(name))
 	}
@@ -349,9 +349,9 @@ func TestTreeDoubleClickEditableSuppressed(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
 	tv.SetEditable(true) // the key column itself is editable
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Editable = true
-	kind := NewTreeColumn("kind", "Kind", 12) // NOT editable
+	kind := NewTreeColumn("kind", "Kind", 12*cell) // NOT editable
 	tv.AddColumn(size)
 	tv.AddColumn(kind)
 	// A level-1 folder, so its key cell has an indent PAD region left
@@ -482,8 +482,8 @@ func TestTreeKeyBlankCaptionEditZone(t *testing.T) {
 // the combo editor's drop-down arrow, even while not editing.
 func TestTreeEnumColumnReservesArrowRoom(t *testing.T) {
 	tv := NewTreeView()
-	plain := NewTreeColumn("a", "Kind", 8)
-	choice := NewTreeColumn("b", "Kind", 8)
+	plain := NewTreeColumn("a", "Kind", 8*cell)
+	choice := NewTreeColumn("b", "Kind", 8*cell)
 	choice.Editable = true
 	choice.Enum = []TreeEnumOption{{Key: "x", Value: "X"}}
 	tv.AddColumn(plain)
@@ -494,8 +494,9 @@ func TestTreeEnumColumnReservesArrowRoom(t *testing.T) {
 	tv.AddRootItem(it)
 	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
 
-	if got, want := tv.neededCells(choice), tv.neededCells(plain)+1; got != want {
-		t.Errorf("choice column needs %d cells, want %d (plain+1 for the arrow)", got, want)
+	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
+	if got, want := tv.neededWidth(choice), tv.neededWidth(plain)+cw; got != want {
+		t.Errorf("choice column needs %d units, want %d (plain plus a column for the arrow)", got, want)
 	}
 }
 

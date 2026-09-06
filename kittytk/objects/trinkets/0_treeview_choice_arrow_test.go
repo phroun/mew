@@ -58,15 +58,15 @@ func TestSortArrowRoomMatchesWhatTheColumnWasSizedFor(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 
-	col := NewTreeColumn("kind", "Kind", 4)
+	col := NewTreeColumn("kind", "Kind", 4*cell)
 	col.Sortable = true
 	tv.AddColumn(col)
 	tv.SetSorted(true, 0, false)
 
-	// The width neededCells asks for, and the room the header paint leaves
+	// The width neededWidth asks for, and the room the header paint leaves
 	// the caption inside it: the reservation, then drawAligned's own pad.
 	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
-	span := core.Unit(tv.neededCells(col)) * cw
+	span := tv.neededWidth(col)
 	room := span - tv.arrowRoom("▲") - cw/2
 
 	if got := ellipsizeText(tv.EffectiveFont(), tv.EffectiveCellMetrics(),

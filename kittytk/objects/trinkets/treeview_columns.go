@@ -26,14 +26,15 @@ type TreeColumn struct {
 	ID      string
 	Caption string
 
-	// Width is the current width in text cells; Min/MaxWidth bound
-	// drag-resizing. MaxWidth -1 does not bound; a maximum below the
-	// minimum loses to it, a minimum being the stronger statement.
+	// Width is the current width in UNITS, as every other measurement in
+	// this toolkit is; Min/MaxWidth bound drag-resizing. MaxWidth -1 does
+	// not bound; a maximum below the minimum loses to it, a minimum being
+	// the stronger statement.
 	//
 	// Zero does not bound either -- see maxWidth.
-	Width    int
-	MinWidth int
-	MaxWidth int
+	Width    core.Unit
+	MinWidth core.Unit
+	MaxWidth core.Unit
 
 	// Align is "left" (default), "center", or "right".
 	Align string
@@ -96,38 +97,44 @@ func (c *TreeColumn) displayValue(raw string) string {
 
 // NewTreeColumn creates a column with sensible defaults (resizable,
 // optional, left-aligned, min width 3).
-func NewTreeColumn(id, caption string, width int) *TreeColumn {
+func NewTreeColumn(id, caption string, width core.Unit) *TreeColumn {
 	if width < 1 {
-		width = 8
+		width = treeColDefaultWidth
 	}
 	return &TreeColumn{
 		ID: id, Caption: caption, Width: width,
-		MinWidth: 3, MaxWidth: -1, Align: "left", Resizable: true, Optional: true,
+		MinWidth: treeColMinWidth, MaxWidth: core.Unbounded,
+		Align: "left", Resizable: true, Optional: true,
 		SortProxy: -1, EnumStore: "value",
 	}
 }
 
-// maxWidth is how wide this column may be dragged, or -1 for no limit.
+// The widths a column starts with when nothing says otherwise, in units of the
+// default denomination -- eight cells wide, three at its narrowest, which is
+// what they were when they were counted in cells.
+const (
+	treeColDefaultWidth = core.Unit(8 * 8)
+	treeColMinWidth     = core.Unit(3 * 8)
+)
+
+// maxWidth is how wide this column may be dragged, or core.Unbounded for no
+// limit.
 //
 // Zero is no limit either, which is the one place a size in this toolkit does
-// not read zero as a real answer. It can afford not to: a column is measured
-// in whole text cells and never renders narrower than one, so a maximum of
-// zero bounds it to exactly what a maximum of one does and says nothing new.
-//
-// What it costs to read zero as a cap is the whole type. A TreeColumn is
-// written as a struct literal, so a field left out is zero -- and every
-// column written the ordinary way was capped at nothing and collapsed to a
-// single cell.
-func (c *TreeColumn) maxWidth() int {
+// not read zero as a real answer -- elsewhere a maximum of zero collapses what
+// it bounds. What it costs to read zero as a cap here is the whole type: a
+// TreeColumn is written as a struct literal, so a field left out is zero, and
+// every column written the ordinary way would be capped at nothing.
+func (c *TreeColumn) maxWidth() core.Unit {
 	if c.MaxWidth <= 0 {
-		return -1
+		return core.Unbounded
 	}
 	return c.MaxWidth
 }
 
 // clampWidth bounds w to the column's Min/MaxWidth. The maximum applies
 // first and the minimum second, so where the two conflict the minimum wins.
-func (c *TreeColumn) clampWidth(w int) int {
+func (c *TreeColumn) clampWidth(w core.Unit) core.Unit {
 	if m := c.maxWidth(); m >= 0 && w > m {
 		w = m
 	}
@@ -720,14 +727,63 @@ func (t *TreeView) SetFixedColumns(left, right int) {
 	t.Update()
 }
 
-// SetKeyWidth sets the tree column's width in text cells for scroll
-// mode (fit mode sizes it to the leftover space automatically).
-func (t *TreeView) SetKeyWidth(cells int) {
-	if cells < treeKeyMinCells {
-		cells = treeKeyMinCells
+// SetKeyWidth sets the tree column's width in units for scroll mode (fit mode
+// sizes it to the leftover space automatically).
+func (t *TreeView) SetKeyWidth(w core.Unit) {
+	if floor := t.keyMinWidth(); w < floor {
+		w = floor
 	}
-	t.keyWidth = cells
+	t.keyWidth = w
 	t.Update()
+}
+
+// keyMinWidth and keyDefaultWidth are the narrowest useful tree column and the
+// one it takes in scroll mode when nothing says otherwise. Both are counted in
+// CHARACTERS rather than stated as sizes -- they are about how much of a name
+// is readable -- so they follow the denomination in force.
+func (t *TreeView) keyMinWidth() core.Unit {
+	return core.Unit(treeKeyMinCells) * t.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
+func (t *TreeView) keyDefaultWidth() core.Unit {
+	return core.Unit(treeKeyDefaultCells) * t.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
+// colQuantum is the size every column has to be a whole number of, or 0 where
+// a column may be any size at all.
+//
+// A cell surface draws by dividing units by the cell size and hit-tests in
+// units, so a column that is not a whole number of cells puts every column
+// after it between cells: it draws in one and answers the mouse in another. A
+// surface that can place between cells takes a drag exactly where it landed.
+func (t *TreeView) colQuantum() core.Unit {
+	if core.FindSmoothPositioning(t.Self()) {
+		return 0
+	}
+	return t.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
+// snapColWidth takes a width out to the whole cell it needs, where the surface
+// has them. An extent ceils: a column a fraction of a cell over still needs the
+// whole cell to draw its last column in.
+func snapColWidth(w, q core.Unit) core.Unit {
+	if q <= 1 {
+		return w
+	}
+	return ((w + q - 1) / q) * q
+}
+
+// snapColPos takes a position back to the cell that holds it. A position
+// floors: the cell a column starts in is the one holding its first column.
+func snapColPos(x, q core.Unit) core.Unit {
+	if q <= 1 {
+		return x
+	}
+	r := x % q
+	if r < 0 {
+		r += q
+	}
+	return x - r
 }
 
 const (
@@ -784,11 +840,11 @@ type colSpan struct {
 type treeColLayout struct {
 	spans      []colSpan
 	headerH    core.Unit
-	blankCells int       // trailing blank right of the last span (natural)
+	blankW     core.Unit // trailing blank right of the last span (natural)
 	contentW   core.Unit // width left of the scrollbar lane
 	scrollL    core.Unit // horizontal scroll region [scrollL, scrollR)
 	scrollR    core.Unit
-	maxHScroll int // in cells
+	maxHScroll core.Unit // in units
 }
 
 // visibleColumns returns the visible sequence: key column (nil entry)
@@ -816,42 +872,45 @@ func (t *TreeView) anyVisibleData() bool {
 	return false
 }
 
-// columnLayout computes the visible spans. Widths are cell-quantized
-// (the TUI's natural grid; the pixel path shares it so dividers land
-// identically on both). Dividers occupy one cell between spans. In
-// fit mode the key column absorbs slack and data columns shrink
-// toward MinWidth on overflow; in scroll mode natural widths stand
-// and the non-fixed spans pan by hScroll cells.
+// columnLayout computes the visible spans. Everything here is in UNITS; a
+// cell surface takes each width out to the whole cell it needs and each
+// position back to the cell that holds it (see colQuantum), so a column drawn
+// on the grid answers the mouse on the same grid, while a surface that can
+// place between cells keeps a drag exactly where it landed. Dividers occupy
+// one cell between spans. In fit mode the key column absorbs slack and data
+// columns shrink toward MinWidth on overflow; in scroll mode natural widths
+// stand and the non-fixed spans pan by hScroll.
 func (t *TreeView) columnLayout() treeColLayout {
 	metrics := t.EffectiveCellMetrics()
 	cw := metrics.UnitsPerCellWidth
+	q := t.colQuantum()
 	bounds := t.Bounds()
 	lay := treeColLayout{headerH: t.headerHeight()}
 	lay.contentW = bounds.Width - cw // scrollbar lane
 	if lay.contentW < cw {
 		lay.contentW = cw
 	}
-	contentCells := int(lay.contentW / cw)
+	content := snapColPos(lay.contentW, q)
 
 	seq := t.visibleColumns()
 	n := len(seq)
-	widths := make([]int, n) // cells
+	widths := make([]core.Unit, n)
 	keyIdx := -1
 	for i, c := range seq {
 		if c == nil {
 			keyIdx = i
 			continue
 		}
-		widths[i] = c.clampWidth(c.Width)
+		widths[i] = snapColWidth(c.clampWidth(c.Width), q)
 	}
 	// A divider consumes one cell only on cell surfaces (it renders as a
 	// full '│' character there); pixel surfaces draw a hairline ON the
 	// span boundary and reserve nothing.
-	divCells := 1
+	divW := cw
 	if core.FindGraphicalFrames(t.Self()) {
-		divCells = 0
+		divW = 0
 	}
-	dividers := (n - 1) * divCells
+	dividers := core.Unit(n-1) * divW
 	if dividers < 0 {
 		dividers = 0
 	}
@@ -864,7 +923,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 					used += w
 				}
 			}
-			keyW := contentCells - used
+			keyW := content - used
 			// Under pressure the key column reclaims data columns'
 			// slack in two passes: first down to each column's
 			// MEASURED content width (measured with the effective
@@ -874,24 +933,24 @@ func (t *TreeView) columnLayout() treeColLayout {
 			// truncates), then down to the hard MinWidth.
 			desired := t.keyWidth
 			if desired <= 0 {
-				desired = treeKeyDefaultCells
+				desired = t.keyDefaultWidth()
 			}
 			if keyW < desired {
 				keyW += t.reclaimWidths(seq, widths, keyIdx, desired-keyW, true)
 			}
-			if keyW < treeKeyMinCells {
-				keyW += t.reclaimWidths(seq, widths, keyIdx, treeKeyMinCells-keyW, false)
-				if keyW < treeKeyMinCells {
-					keyW = treeKeyMinCells // genuine overflow: clip
+			if floor := t.keyMinWidth(); keyW < floor {
+				keyW += t.reclaimWidths(seq, widths, keyIdx, floor-keyW, false)
+				if keyW < floor {
+					keyW = floor // genuine overflow: clip
 				}
 			}
-			widths[keyIdx] = keyW
+			widths[keyIdx] = snapColWidth(keyW, q)
 		} else {
 			kw := t.keyWidth
 			if kw <= 0 {
-				kw = treeKeyDefaultCells
+				kw = t.keyDefaultWidth()
 			}
-			widths[keyIdx] = kw
+			widths[keyIdx] = snapColWidth(kw, q)
 		}
 	} else if t.fitWidth {
 		// No key column: shrink data columns on overflow the same way
@@ -900,7 +959,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 		for _, w := range widths {
 			used += w
 		}
-		if over := used - contentCells; over > 0 {
+		if over := used - content; over > 0 {
 			over -= t.reclaimWidths(seq, widths, -1, over, true)
 			if over > 0 {
 				t.reclaimWidths(seq, widths, -1, over, false)
@@ -916,31 +975,31 @@ func (t *TreeView) columnLayout() treeColLayout {
 	}
 
 	// Widths of the pinned flanks (with their trailing/leading dividers).
-	leftCells := 0
+	leftW := core.Unit(0)
 	for i := 0; i < fl; i++ {
-		leftCells += widths[i] + divCells // span + divider
+		leftW += widths[i] + divW // span + divider
 	}
-	rightCells := 0
+	rightW := core.Unit(0)
 	for i := n - fr; i < n; i++ {
-		rightCells += divCells + widths[i] // divider + span
+		rightW += divW + widths[i] // divider + span
 	}
-	scrollCells := contentCells - leftCells - rightCells
-	if scrollCells < 0 {
-		scrollCells = 0
+	scrollW := content - leftW - rightW
+	if scrollW < 0 {
+		scrollW = 0
 	}
-	lay.scrollL = core.Unit(leftCells) * cw
-	lay.scrollR = lay.scrollL + core.Unit(scrollCells)*cw
+	lay.scrollL = leftW
+	lay.scrollR = lay.scrollL + scrollW
 
 	// Natural width of the scrolling region's spans.
-	midCells := 0
+	midW := core.Unit(0)
 	for i := fl; i < n-fr; i++ {
-		midCells += widths[i]
+		midW += widths[i]
 		if i < n-fr-1 {
-			midCells += divCells // divider between scrolling spans
+			midW += divW // divider between scrolling spans
 		}
 	}
-	if !t.fitWidth && midCells > scrollCells {
-		lay.maxHScroll = midCells - scrollCells
+	if !t.fitWidth && midW > scrollW {
+		lay.maxHScroll = midW - scrollW
 	}
 	hs := t.hScroll
 	if hs > lay.maxHScroll {
@@ -951,30 +1010,30 @@ func (t *TreeView) columnLayout() treeColLayout {
 	}
 
 	// Emit spans left to right.
-	xCells := 0
+	x := core.Unit(0)
 	for i := 0; i < n; i++ {
 		fixed := i < fl || i >= n-fr
 		if i == fl && !fixed || (i == fl && fl < n-fr) {
 			// entering the scrolling region
-			xCells = leftCells - hs
+			x = leftW - hs
 		}
 		if i == n-fr && fr > 0 {
 			// After the flank's leading divider: a reserved cell in the
 			// TUI, nothing on pixel surfaces (the hairline sits ON the
 			// boundary - a hardcoded +1 left a one-cell gap there).
-			xCells = contentCells - rightCells + divCells
+			x = content - rightW + divW
 		}
 		sp := colSpan{
 			col:   seq[i],
-			x:     core.Unit(xCells) * cw,
-			w:     core.Unit(widths[i]) * cw,
+			x:     snapColPos(x, q),
+			w:     widths[i],
 			fixed: fixed,
 			divX:  -1,
 		}
-		xCells += widths[i]
+		x += widths[i]
 		if i < n-1 {
-			sp.divX = core.Unit(xCells) * cw
-			xCells += divCells
+			sp.divX = snapColPos(x, q)
+			x += divW
 		}
 		lay.spans = append(lay.spans, sp)
 	}
@@ -991,21 +1050,21 @@ func (t *TreeView) columnLayout() treeColLayout {
 	if idx := n - 1 - fr; idx >= 0 {
 		last := &lay.spans[idx]
 		if end := last.x + last.w; end < lay.scrollR {
-			lay.blankCells = int((lay.scrollR - end) / cw)
+			lay.blankW = lay.scrollR - end
 			last.w = lay.scrollR - last.x
 		}
 	}
 	return lay
 }
 
-// neededCells is the narrowest width (in cells) that still shows this
-// column's content: the header caption (plus sort-indicator room) and
-// every current row's value, measured with the EFFECTIVE FONT - so on
-// pixel surfaces the proportional text is measured as drawn, not as a
-// rune count - rounded up to whole cells with half a cell of padding.
+// neededWidth is the narrowest width that still shows this column's content:
+// the header caption (plus sort-indicator room) and every current row's value,
+// measured with the EFFECTIVE FONT - so on pixel surfaces the proportional
+// text is measured as drawn, not as a rune count - plus half a cell of
+// padding, taken out to a whole cell where the surface has them.
 // (Measures every row per layout pass; fine at UI scale, cache if a
 // huge tree ever makes it hot.)
-func (t *TreeView) neededCells(col *TreeColumn) int {
+func (t *TreeView) neededWidth(col *TreeColumn) core.Unit {
 	font := t.EffectiveFont()
 	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	metrics := t.EffectiveCellMetrics()
@@ -1023,32 +1082,32 @@ func (t *TreeView) neededCells(col *TreeColumn) int {
 			maxW = w
 		}
 	}
-	cells := int((maxW + cw/2 + cw - 1) / cw) // half-cell pad, ceil
+	need := snapColWidth(maxW+cw/2, t.colQuantum()) // half-cell pad
 	if col.Editable && len(col.Enum) > 0 {
 		// A choice column's editor is a ComboBox: keep room for its
 		// drop-down arrow even while not editing, so entering edit
 		// mode never truncates the value.
-		cells++
+		need += cw
 	}
-	if cells < col.MinWidth {
-		cells = col.MinWidth
+	if need < col.MinWidth {
+		need = col.MinWidth
 	}
-	return cells
+	return need
 }
 
-// reclaimWidths takes up to need cells from the data columns
+// reclaimWidths takes up to need units of width from the data columns
 // (rightmost first), never below each column's floor: its MEASURED
-// content width when measured=true (see neededCells), else the hard
-// MinWidth. keyIdx is skipped (-1 = none). Returns the cells reclaimed.
-func (t *TreeView) reclaimWidths(seq []*TreeColumn, widths []int, keyIdx, need int, measured bool) int {
-	got := 0
+// content width when measured=true (see neededWidth), else the hard
+// MinWidth. keyIdx is skipped (-1 = none). Returns the width reclaimed.
+func (t *TreeView) reclaimWidths(seq []*TreeColumn, widths []core.Unit, keyIdx int, need core.Unit, measured bool) core.Unit {
+	got := core.Unit(0)
 	for i := len(seq) - 1; i >= 0 && need > 0; i-- {
 		if i == keyIdx || seq[i] == nil {
 			continue
 		}
 		floor := seq[i].MinWidth
 		if measured {
-			if f := t.neededCells(seq[i]); f > floor {
+			if f := t.neededWidth(seq[i]); f > floor {
 				floor = f
 			}
 			if floor > widths[i] {
@@ -1995,7 +2054,6 @@ func (t *TreeView) dividerGrabZone() (grab0, grab1 core.Unit) {
 // (into consumed slack), lines right of it stay put - none ever moves
 // contrary to the drag direction.
 func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
-	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	grab0, grab1 := t.dividerGrabZone()
 	for i, sp := range lay.spans {
 		if !lay.divVisible(sp) || x < sp.divX+grab0 || x >= sp.divX+grab1 {
@@ -2024,11 +2082,11 @@ func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
 		// Width snapshots come from the COLUMNS' natural widths (the
 		// last span may be stretched over the trailing blank); only
 		// the key span's auto width has no column to ask.
-		t.colDragLW = int(left.w / cw)
+		t.colDragLW = left.w
 		if left.col != nil {
 			t.colDragLW = left.col.clampWidth(left.col.Width)
 		}
-		t.colDragRW = int(right.w / cw)
+		t.colDragRW = right.w
 		if right.col != nil {
 			t.colDragRW = right.col.clampWidth(right.col.Width)
 		}
@@ -2038,16 +2096,16 @@ func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
 			// which would move unrelated lines).
 			floor := t.keyWidth
 			if floor <= 0 {
-				floor = treeKeyDefaultCells
+				floor = t.keyDefaultWidth()
 			}
-			if floor < treeKeyMinCells {
-				floor = treeKeyMinCells
+			if m := t.keyMinWidth(); floor < m {
+				floor = m
 			}
-			t.colDragPool = int(lay.spans[0].w/cw) - floor
+			t.colDragPool = lay.spans[0].w - floor
 		} else {
 			// Pool: the NATURAL trailing blank (recorded before the
 			// last span was stretched over it for display).
-			t.colDragPool = lay.blankCells
+			t.colDragPool = lay.blankW
 		}
 		if t.colDragPool < 0 {
 			t.colDragPool = 0
@@ -2060,8 +2118,14 @@ func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
 // applyFitDrag recomputes both neighbor widths from the press-time
 // snapshot for the pointer's current position (idempotent per move).
 func (t *TreeView) applyFitDrag(x core.Unit) {
-	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-	delta := int((x - t.colDragStartX) / cw) // + = rightward
+	// How far the drag has come. A cell surface takes it to whole cells --
+	// the columns it settles have to be whole cells to be drawn and hit in
+	// the same place -- while a surface that can place between them keeps
+	// the pointer's own distance, so a column follows the pointer exactly.
+	delta := x - t.colDragStartX // + = rightward
+	if q := t.colQuantum(); q > 1 {
+		delta = (delta / q) * q
+	}
 	if !t.colDragSlackRight {
 		// Slack pool (the auto key) LEFT of the line; the right
 		// column is the mechanism.
@@ -2102,7 +2166,7 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			// Leftward: widen the right column - the pool pays first,
 			// then the left column narrows toward its minimum.
 			m := -delta
-			lFree := 0
+			lFree := core.Unit(0)
 			if t.colDragL != nil && t.colDragL.Resizable {
 				if lFree = t.colDragLW - t.colDragL.MinWidth; lFree < 0 {
 					lFree = 0
@@ -2144,7 +2208,7 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			}
 		} else {
 			m := delta
-			rFree := 0
+			rFree := core.Unit(0)
 			if t.colDragR != nil && t.colDragR.Resizable {
 				if rFree = t.colDragRW - t.colDragR.MinWidth; rFree < 0 {
 					rFree = 0
@@ -2181,7 +2245,7 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 // at the pinned-right flank where the divider IS the pinned column's
 // left edge. Fit-mode PRESSES never use the returned sizing - they arm
 // the composite beginFitDrag/applyFitDrag path instead.
-func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, startW int, invert, ok bool) {
+func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, startW core.Unit, invert, ok bool) {
 	grab0, grab1 := t.dividerGrabZone()
 	slackLeft := t.fitWidth && len(lay.spans) > 0 && lay.spans[0].col == nil
 	for i, sp := range lay.spans {
@@ -2218,7 +2282,7 @@ func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, s
 			// The key column in scroll mode sizes by its own width.
 			kw := t.keyWidth
 			if kw <= 0 {
-				kw = treeKeyDefaultCells
+				kw = t.keyDefaultWidth()
 			}
 			return nil, kw, false, true
 		}
@@ -2299,20 +2363,24 @@ func (t *TreeView) handleMultiMove(event core.MouseMoveEvent) bool {
 		t.applyFitDrag(event.X)
 		return true
 	}
-	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-	deltaCells := int((event.X - t.colDragStartX) / cw)
-	if t.colDragInvert {
-		deltaCells = -deltaCells
+	// How far the drag has come, in whole cells where the surface draws in
+	// them and in the pointer's own units where it does not.
+	delta := event.X - t.colDragStartX
+	if q := t.colQuantum(); q > 1 {
+		delta = (delta / q) * q
 	}
-	w := t.colDragStartW + deltaCells
+	if t.colDragInvert {
+		delta = -delta
+	}
+	w := t.colDragStartW + delta
 	if t.colDragCol != nil {
 		if nw := t.colDragCol.clampWidth(w); nw != t.colDragCol.Width {
 			t.colDragCol.Width = nw
 			t.Update()
 		}
 	} else {
-		if w < treeKeyMinCells {
-			w = treeKeyMinCells
+		if floor := t.keyMinWidth(); w < floor {
+			w = floor
 		}
 		if w != t.keyWidth {
 			t.keyWidth = w
@@ -2355,31 +2423,34 @@ func (t *TreeView) hScrollbarGeometry(lay treeColLayout) (trackX0, trackX1, thum
 	}
 	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	trackX0, trackX1 = lay.scrollL, lay.scrollR
-	trackCells := int((trackX1 - trackX0) / cw)
-	if trackCells <= 0 {
+	track := trackX1 - trackX0
+	if track <= 0 {
 		return 0, 0, 0, 0, false
 	}
-	totalCells := trackCells + lay.maxHScroll
-	thumbCells := trackCells * trackCells / totalCells
-	if thumbCells < 1 {
-		thumbCells = 1
+	total := track + lay.maxHScroll
+	thumb := track * track / total
+	if thumb < cw {
+		thumb = cw
 	}
-	scrollable := trackCells - thumbCells
-	pos := 0
+	scrollable := track - thumb
+	pos := core.Unit(0)
 	if scrollable > 0 {
 		pos = t.hScroll * scrollable / lay.maxHScroll
+		// Never at an end unless the content is: a thumb resting against
+		// the edge says "nothing further this way", so it steps a cell in
+		// while there still is.
 		if t.hScroll > 0 && pos == 0 {
-			pos = 1
+			pos = cw
 		}
 		if t.hScroll < lay.maxHScroll && pos >= scrollable {
-			pos = scrollable - 1
+			pos = scrollable - cw
 		}
 		if pos < 0 {
 			pos = 0
 		}
 	}
-	thumbX0 = trackX0 + core.Unit(pos)*cw
-	thumbX1 = thumbX0 + core.Unit(thumbCells)*cw
+	thumbX0 = snapColPos(trackX0+pos, t.colQuantum())
+	thumbX1 = thumbX0 + thumb
 	return trackX0, trackX1, thumbX0, thumbX1, true
 }
 
@@ -2454,9 +2525,9 @@ func (t *TreeView) handleHBarPress(event core.MousePressEvent) bool {
 		t.hbarDragStartX = event.X
 		t.hbarDragStartHS = t.hScroll
 	case event.X >= trackX0 && event.X < thumbX0:
-		t.scrollHorizontally(-int((trackX1 - trackX0) / t.EffectiveCellMetrics().UnitsPerCellWidth))
+		t.scrollHorizontally(-(trackX1 - trackX0))
 	case event.X >= thumbX1 && event.X < trackX1:
-		t.scrollHorizontally(int((trackX1 - trackX0) / t.EffectiveCellMetrics().UnitsPerCellWidth))
+		t.scrollHorizontally(trackX1 - trackX0)
 	}
 	return true
 }
@@ -2472,15 +2543,15 @@ func (t *TreeView) handleHBarMove(event core.MouseMoveEvent) bool {
 		t.hbarDragging = false
 		return true
 	}
-	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-	trackCells := int((trackX1 - trackX0) / cw)
-	thumbCells := int((thumbX1 - thumbX0) / cw)
-	scrollable := trackCells - thumbCells
+	scrollable := (trackX1 - trackX0) - (thumbX1 - thumbX0)
 	if scrollable <= 0 {
 		return true
 	}
-	deltaCells := int((event.X - t.hbarDragStartX) / cw)
-	hs := t.hbarDragStartHS + deltaCells*lay.maxHScroll/scrollable
+	delta := event.X - t.hbarDragStartX
+	if q := t.colQuantum(); q > 1 {
+		delta = (delta / q) * q
+	}
+	hs := t.hbarDragStartHS + delta*lay.maxHScroll/scrollable
 	if hs < 0 {
 		hs = 0
 	}
@@ -2494,14 +2565,14 @@ func (t *TreeView) handleHBarMove(event core.MouseMoveEvent) bool {
 	return true
 }
 
-// scrollHorizontally pans the scroll region by delta cells (scroll
+// scrollHorizontally pans the scroll region by delta units (scroll
 // mode only), clamped to the content.
-func (t *TreeView) scrollHorizontally(deltaCells int) bool {
+func (t *TreeView) scrollHorizontally(delta core.Unit) bool {
 	if t.fitWidth || !t.multiColumn() {
 		return false
 	}
 	lay := t.columnLayout()
-	hs := t.hScroll + deltaCells
+	hs := t.hScroll + delta
 	if hs < 0 {
 		hs = 0
 	}

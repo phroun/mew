@@ -17,8 +17,8 @@ func TestTreeViewColumnsOverWire(t *testing.T) {
 
 	build := `
 tree=new treeview caption="Name" showheader sorted sortedby=-1 columns={
-	sizec=new column id=size caption="Size" width=10 align=right sortable
-	kindc=new column id=kind caption="Kind" width=12 optional
+	sizec=new column id=size caption="Size" width=80 align=right sortable
+	kindc=new column id=kind caption="Kind" width=96 optional
 } items={
 	a=new item caption="Report.txt"
 	b=new item caption="Folder" expanded items={
@@ -46,7 +46,7 @@ tree=new treeview caption="Name" showheader sorted sortedby=-1 columns={
 		t.Fatalf("columns = %d, want 2", len(tv.Columns()))
 	}
 	size := tv.ColumnByID("size")
-	if size == nil || size.Width != 10 || size.Align != "right" || !size.Sortable {
+	if size == nil || size.Width != 80 || size.Align != "right" || !size.Sortable {
 		t.Fatalf("size column misapplied: %+v", size)
 	}
 	// Wire-built columns get the documented defaults: resizable and
@@ -91,11 +91,11 @@ set tree.sizec children={
 	}
 
 	// Live column mutation routes to the adopted column.
-	script, _ = protocol.Parse(`set tree.sizec width=14 hidden`)
+	script, _ = protocol.Parse(`set tree.sizec width=112 hidden`)
 	if _, err := s.Execute(script, f); err != nil {
 		t.Fatalf("set column: %v", err)
 	}
-	if size.Width != 14 || !size.Hidden {
+	if size.Width != 112 || !size.Hidden {
 		t.Errorf("live column set missed: %+v", size)
 	}
 }
@@ -105,7 +105,7 @@ set tree.sizec children={
 func TestTreeViewSortEventOverWire(t *testing.T) {
 	f, events := buildWithEvents(t, nil, `
 new treeview showheader columns={
-	new column id=size caption="Size" width=10 sortable
+	new column id=size caption="Size" width=80 sortable
 } items={
 	new item caption="x"
 }
@@ -138,8 +138,8 @@ func TestTreeViewColumnsViaCollection(t *testing.T) {
 	script, err := protocol.Parse(`
 new treeview columns={
 	new collection children={
-		new column id=a caption="A" width=5
-		new column id=b caption="B" width=6
+		new column id=a caption="A" width=40
+		new column id=b caption="B" width=48
 	}
 } items={
 	new item caption="row"

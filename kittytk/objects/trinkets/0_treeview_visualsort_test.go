@@ -19,7 +19,7 @@ func visualCaptions(tv *TreeView) []string {
 func newSortableTree() *TreeView {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Sortable = true
 	tv.AddColumn(size)
 
@@ -143,7 +143,7 @@ func TestTreeHeaderClickResortsBuiltIn(t *testing.T) {
 func TestTreeResortFollowsVisibleSelection(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for i := 0; i < 40; i++ {
 		tv.AddRootItem(NewTreeItem(fmt.Sprintf("item%02d", i)))
 	}

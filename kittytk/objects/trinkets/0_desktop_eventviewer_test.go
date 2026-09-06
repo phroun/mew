@@ -136,12 +136,12 @@ func TestEventViewerColumnsPanAndAreChoosable(t *testing.T) {
 	}
 
 	// Natural widths have to exceed a plausible window, or panning is moot.
-	natural := 0
+	natural := core.Unit(0)
 	for _, c := range tree.Columns() {
 		natural += c.Width
 	}
-	if natural <= 80 {
-		t.Errorf("columns total %d cells; that fits, so nothing pans", natural)
+	if want := 80 * core.Unit(8); natural <= want {
+		t.Errorf("columns total %d units; that fits in %d, so nothing pans", natural, want)
 	}
 
 	// Every data column is in the chooser. The [=] button only appears when

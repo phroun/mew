@@ -120,8 +120,8 @@ type TreeView struct {
 	fitWidth   bool   // true: squeeze to width (no hscroll); false: pan
 	fixedLeft  int    // visible columns pinned outside the hscroll region
 	fixedRight int
-	keyWidth   int // key column cells in scroll mode (0 = default)
-	hScroll    int // horizontal scroll offset in cells
+	keyWidth   core.Unit // key column width in scroll mode (0 = default)
+	hScroll    core.Unit // horizontal scroll offset in units
 
 	// Divider drag-resize state (nil colDragCol = the key column).
 	// colDragInvert: the divider is sizing the column to its RIGHT
@@ -129,7 +129,7 @@ type TreeView struct {
 	colDragging   bool
 	colDragCol    *TreeColumn
 	colDragStartX core.Unit
-	colDragStartW int
+	colDragStartW core.Unit
 	colDragInvert bool
 
 	// Composite fit-mode drag: the grabbed line moves by resizing the
@@ -143,15 +143,15 @@ type TreeView struct {
 	colDragSlackRight bool        // pool right of the line (key hidden)
 	colDragL          *TreeColumn // nil = the key column (divider 0)
 	colDragR          *TreeColumn
-	colDragLW         int
-	colDragRW         int
-	colDragPool       int // slack cells consumable before reclaim would kick in
+	colDragLW         core.Unit
+	colDragRW         core.Unit
+	colDragPool       core.Unit // slack consumable before reclaim would kick in
 
 	// Horizontal scrollbar (footer row) drag state.
 	hbarDragging     bool
 	hbarThumbHovered bool // pointer over the footer thumb (hover color)
 	hbarDragStartX   core.Unit
-	hbarDragStartHS  int
+	hbarDragStartHS  core.Unit
 
 	// In-place row editing (see treeview_edit.go). The editor is a
 	// spun-into-existence TextInput floating over one cell; the tree
@@ -1548,7 +1548,7 @@ func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	}
 
 	// Horizontal wheel pans the column scroll region (scroll mode).
-	if event.DeltaX != 0 && t.scrollHorizontally(event.DeltaX*2) {
+	if event.DeltaX != 0 && t.scrollHorizontally(core.Unit(event.DeltaX*2)*t.EffectiveCellMetrics().UnitsPerCellWidth) {
 		core.ClaimWheelGesture(event, t.HandleMouseWheel)
 		return true
 	}

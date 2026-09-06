@@ -7,29 +7,33 @@ import (
 )
 
 // A column's maximum spells "no limit" as -1, the way the rest of the toolkit
-// does. Zero is no limit either: a column is measured in whole text cells and
-// never renders narrower than one, so a maximum of zero bounds it to exactly
-// what a maximum of one does -- while reading zero as a cap makes every
-// struct literal that leaves MaxWidth out collapse to a single cell, which is
-// how the event viewer lost every column but its widest.
+// does. Zero is no limit either -- the one place a size here does not read
+// zero as a real answer -- because reading it as a cap makes every struct
+// literal that leaves MaxWidth out collapse to nothing, which is how the event
+// viewer lost every column but its widest.
 func TestAColumnsMaximumIsMinusOneWhenThereIsNone(t *testing.T) {
-	c := NewTreeColumn("size", "Size", 10)
-	if c.MaxWidth != -1 {
-		t.Errorf("a new column's MaxWidth is %d, want -1", c.MaxWidth)
+	c := NewTreeColumn("size", "Size", 10*cell)
+	if c.MaxWidth != core.Unbounded {
+		t.Errorf("a new column's MaxWidth is %d, want %d", c.MaxWidth, core.Unbounded)
 	}
 	// Nothing bounds it from above, so a wide drag stands.
-	if got := c.clampWidth(400); got != 400 {
-		t.Errorf("with no maximum a drag to 400 gave %d", got)
+	if got := c.clampWidth(400 * cell); got != 400*cell {
+		t.Errorf("with no maximum a drag to %d gave %d", 400*cell, got)
 	}
 
-	c.MaxWidth = 12
-	if got := c.clampWidth(400); got != 12 {
-		t.Errorf("with a maximum of 12 a drag to 400 gave %d", got)
+	c.MaxWidth = 12 * cell
+	if got := c.clampWidth(400 * cell); got != 12*cell {
+		t.Errorf("with a maximum of %d a wide drag gave %d", 12*cell, got)
 	}
-	if got := c.clampWidth(6); got != 6 {
+	if got := c.clampWidth(6 * cell); got != 6*cell {
 		t.Errorf("a width inside the bounds came back as %d", got)
 	}
 }
+
+// cell is one column of the default denomination, which is what the widths in
+// these tests are written in: they were cell counts before a column's width
+// became a measurement like every other in the toolkit.
+const cell = core.Unit(8)
 
 // Where the two conflict the minimum wins, which is the rule everywhere a
 // minimum meets a maximum.
@@ -37,14 +41,15 @@ func TestAColumnsMaximumIsMinusOneWhenThereIsNone(t *testing.T) {
 // The maximum was applied last, so a maximum below the minimum overrode it and
 // a column could be clamped under the width its own content needs.
 func TestAColumnsMinimumBeatsItsMaximum(t *testing.T) {
-	c := NewTreeColumn("size", "Size", 10)
-	c.MinWidth, c.MaxWidth = 8, 3
+	c := NewTreeColumn("size", "Size", 10*cell)
+	c.MinWidth, c.MaxWidth = 8*cell, 3*cell
 
-	if got := c.clampWidth(20); got != 8 {
-		t.Errorf("min 8 against max 3 gave %d, want the minimum's 8", got)
+	if got := c.clampWidth(20 * cell); got != 8*cell {
+		t.Errorf("a minimum of %d against a maximum of %d gave %d, want the minimum",
+			8*cell, 3*cell, got)
 	}
-	if got := c.clampWidth(1); got != 8 {
-		t.Errorf("a drag below both gave %d, want the minimum's 8", got)
+	if got := c.clampWidth(cell); got != 8*cell {
+		t.Errorf("a drag below both gave %d, want the minimum's %d", got, 8*cell)
 	}
 }
 
@@ -53,12 +58,12 @@ func TestAColumnsMinimumBeatsItsMaximum(t *testing.T) {
 // depending on which one asked.
 func TestAColumnsMaximumBoundsTheDividerDrag(t *testing.T) {
 	for _, c := range []struct {
-		max  int
-		want int
+		max  core.Unit
+		want core.Unit
 	}{
-		{-1, 14}, // no limit: the drag's full four cells land
-		{12, 12}, // bounded above: it stops where it was told
-		{0, 14},  // zero is no maximum: the drag's full four cells land
+		{core.Unbounded, 14 * cell}, // no limit: the drag's full four cells land
+		{12 * cell, 12 * cell},      // bounded above: it stops where it was told
+		{0, 14 * cell},              // zero is no maximum: the drag's full four cells land
 	} {
 		tv := newColumnsTree(60, 10)
 		tv.ColumnByID("size").MaxWidth = c.max
@@ -79,12 +84,12 @@ func TestAColumnsMaximumBoundsTheDividerDrag(t *testing.T) {
 	// The other direction widens the column on the RIGHT of the divider, and
 	// its own maximum bounds it the same way.
 	for _, c := range []struct {
-		max  int
-		want int
+		max  core.Unit
+		want core.Unit
 	}{
-		{-1, 16},
-		{10, 10},
-		{0, 16}, // zero is no maximum
+		{core.Unbounded, 16 * cell},
+		{10 * cell, 10 * cell},
+		{0, 16 * cell}, // zero is no maximum
 	} {
 		tv := newColumnsTree(60, 10)
 		tv.ColumnByID("kind").MaxWidth = c.max
@@ -107,12 +112,12 @@ func TestAColumnsMaximumBoundsTheDividerDrag(t *testing.T) {
 // width right of the last column -- the maximum bounds the drag the same way.
 func TestAColumnsMaximumBoundsTheMirroredDrag(t *testing.T) {
 	for _, c := range []struct {
-		max  int
-		want int
+		max  core.Unit
+		want core.Unit
 	}{
-		{-1, 20},
-		{16, 16},
-		{0, 20}, // zero is no maximum
+		{core.Unbounded, 20 * cell},
+		{16 * cell, 16 * cell},
+		{0, 20 * cell}, // zero is no maximum
 	} {
 		tv := newColumnsTree(60, 10)
 		tv.SetShowKey(false)
@@ -139,12 +144,12 @@ func TestAColumnsMaximumBoundsTheMirroredDrag(t *testing.T) {
 // and only the widest still readable.
 func TestAColumnWrittenAsALiteralKeepsItsWidth(t *testing.T) {
 	for _, c := range []*TreeColumn{
-		{ID: "seq", Caption: "#", Width: 7},
-		{ID: "event", Caption: "Event", Width: 14, Resizable: true},
-		{ID: "detail", Caption: "Detail", Width: 40, Resizable: true},
+		{ID: "seq", Caption: "#", Width: 7 * cell},
+		{ID: "event", Caption: "Event", Width: 14 * cell, Resizable: true},
+		{ID: "detail", Caption: "Detail", Width: 40 * cell, Resizable: true},
 	} {
 		if got := c.clampWidth(c.Width); got != c.Width {
-			t.Errorf("column %q declared %d cells and clamped to %d", c.ID, c.Width, got)
+			t.Errorf("column %q declared %d units and clamped to %d", c.ID, c.Width, got)
 		}
 	}
 }
@@ -152,9 +157,9 @@ func TestAColumnWrittenAsALiteralKeepsItsWidth(t *testing.T) {
 // End to end: the desktop's own event viewer, whose columns are the reason
 // this was noticed.
 func TestTheEventViewersColumnsKeepTheirWidths(t *testing.T) {
-	want := map[string]int{
-		"seq": 7, "event": 14, "key": 16, "mods": 22,
-		"repeat": 7, "text": 8, "detail": 40,
+	want := map[string]core.Unit{
+		"seq": 7 * cell, "event": 14 * cell, "key": 16 * cell, "mods": 22 * cell,
+		"repeat": 7 * cell, "text": 8 * cell, "detail": 40 * cell,
 	}
 	v := &eventViewer{}
 	v.build()
@@ -165,7 +170,7 @@ func TestTheEventViewersColumnsKeepTheirWidths(t *testing.T) {
 			continue
 		}
 		if got := c.clampWidth(c.Width); got != w {
-			t.Errorf("the %q column is %d cells wide, want the %d it declared", id, got, w)
+			t.Errorf("the %q column is %d units wide, want the %d it declared", id, got, w)
 		}
 	}
 }

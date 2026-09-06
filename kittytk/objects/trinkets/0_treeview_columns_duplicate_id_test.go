@@ -13,11 +13,11 @@ import (
 // The second declaration is refused rather than merged.
 func TestASecondColumnCannotTakeATakenID(t *testing.T) {
 	tv := NewTreeView()
-	if err := tv.AddColumn(NewTreeColumn("size", "Size", 10)); err != nil {
+	if err := tv.AddColumn(NewTreeColumn("size", "Size", 10*cell)); err != nil {
 		t.Fatalf("first column: %v", err)
 	}
 
-	err := tv.AddColumn(NewTreeColumn("size", "Kind", 12))
+	err := tv.AddColumn(NewTreeColumn("size", "Kind", 12*cell))
 	if err == nil {
 		t.Fatal("a second column took the id 'size' without complaint")
 	}
@@ -47,8 +47,8 @@ func TestABlankColumnIDIsStillAnID(t *testing.T) {
 // than leaving it with a column whose cells belong to another.
 func TestTheWireRefusesADuplicateColumnID(t *testing.T) {
 	script, err := protocol.Parse(`tv=new treeview caption="Name" showheader columns={
-	new column id=size caption="Size" width=10
-	new column id=size caption="Kind" width=12
+	new column id=size caption="Size" width=80
+	new column id=size caption="Kind" width=96
 }`)
 	if err != nil {
 		t.Fatal(err)
@@ -67,10 +67,10 @@ func TestTheWireRefusesADuplicateColumnID(t *testing.T) {
 // one that collides with a column declared outside it.
 func TestACollectionRefusesADuplicateColumnID(t *testing.T) {
 	script, err := protocol.Parse(`tv=new treeview caption="Name" columns={
-	new column id=size caption="Size" width=10
+	new column id=size caption="Size" width=80
 	new collection children={
-		new column id=kind caption="Kind" width=12
-		new column id=size caption="Also Size" width=8
+		new column id=kind caption="Kind" width=96
+		new column id=size caption="Also Size" width=64
 	}
 }`)
 	if err != nil {
@@ -93,8 +93,8 @@ func TestDistinctColumnIDsAreAccepted(t *testing.T) {
 	raw := NewTreeColumn("rawsize", "", 0)
 	raw.Hidden, raw.Numeric = true, true
 	for _, c := range []*TreeColumn{
-		NewTreeColumn("size", "Size", 10),
-		NewTreeColumn("kind", "Kind", 12),
+		NewTreeColumn("size", "Size", 10*cell),
+		NewTreeColumn("kind", "Kind", 12*cell),
 		raw,
 	} {
 		if err := tv.AddColumn(c); err != nil {
