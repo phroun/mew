@@ -354,7 +354,7 @@ func (h *TearOffHost) blockedTitleDragStart(x, y core.Unit) bool {
 	if h.edgeAt(x, y) != 0 {
 		return false
 	}
-	if h.win.buttonAtPosition(x, y) != TitleButtonNone {
+	if h.win.buttonAtWindowPoint(x, y) != TitleButtonNone {
 		return false
 	}
 	return h.inTitleBar(x, y)
@@ -949,7 +949,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// The '#' handle is host-managed: a drag re-docks over the
 		// desktop, a click re-docks in place. Grab it before the window
 		// tracks it as a button.
-		if e.Button == core.LeftButton && h.win.buttonAtPosition(e.X, e.Y) == TitleButtonTear {
+		if e.Button == core.LeftButton && h.win.buttonAtWindowPoint(e.X, e.Y) == TitleButtonTear {
 			h.beginDragAt(e.X, e.Y)
 			h.dragIsHandle = true
 			handled = true
@@ -1501,15 +1501,17 @@ func (h *TearOffHost) zoomToWorkArea() {
 	h.zoomed = true
 	h.win.Maximize()
 
-	// A torn-off window IS the OS window, so a maximum it carries is settled
-	// with the OS rather than painted around: it takes what it may of the
-	// work area and sits in the middle of what is left. There is no filler to
-	// draw because there is no window there to fill around — which is the
-	// difference between here and the desktop, where the window cannot shrink
-	// the room it was given.
+	// The OS window takes the WHOLE work area, whatever maximum the window
+	// carries: maximizing means filling the room here as it does on the
+	// desktop, and a window that says how far it grows draws its frame in the
+	// middle of that room and shades the rest itself (Window.frameRect).
+	// Capping the OS window instead left the frame sitting on the display
+	// with nothing around it -- and a window that was not, in the end,
+	// maximized at all, since a surface below the work area reads as a window
+	// the OS resized out of it (healMaximizedDivergence).
 	//
-	// The minimum is raised after the maximum is capped, so where the two
-	// conflict the minimum wins, as it does wherever else they meet.
+	// A minimum still raises it: an OS window smaller than the window will
+	// draw is a window with its own edges off the surface.
 	wx, wy, ww, wh = h.zoomRectPx(wx, wy, ww, wh)
 
 	h.native.SetScreenPositionPx(wx, wy)
@@ -1520,38 +1522,18 @@ func (h *TearOffHost) zoomToWorkArea() {
 	h.native.SetScreenSizePx(ww, wh)
 }
 
-// zoomRectPx bounds a work area by the window's own maximum and minimum,
-// centering what is left in it. All in device pixels, on the hardened pitch
-// the frame is drawn against.
+// zoomRectPx is the work area an OS window zooms into: the whole of it,
+// raised by the window's own minimum. A maximum does not enter here -- the
+// window paints its frame at that size in the middle of the surface and
+// shades the rest. All in device pixels, on the hardened pitch the frame is
+// drawn against.
 func (h *TearOffHost) zoomRectPx(wx, wy, ww, wh int) (int, int, int, int) {
-	max, min := h.win.MaximumSize(), h.win.MinimumSize()
-
-	w := ww
-	if max.Width >= 0 {
-		if px := h.pxHardX(max.Width); px < w {
-			w = px
-		}
+	min := h.win.MinimumSize()
+	if px := h.pxHardX(min.Width); ww < px {
+		ww = px
 	}
-	if px := h.pxHardX(min.Width); w < px {
-		w = px
-	}
-	if w < ww {
-		wx += (ww - w) / 2
-		ww = w
-	}
-
-	ht := wh
-	if max.Height >= 0 {
-		if px := h.pxHardY(max.Height); px < ht {
-			ht = px
-		}
-	}
-	if px := h.pxHardY(min.Height); ht < px {
-		ht = px
-	}
-	if ht < wh {
-		wy += (wh - ht) / 2
-		wh = ht
+	if px := h.pxHardY(min.Height); wh < px {
+		wh = px
 	}
 	return wx, wy, ww, wh
 }
@@ -1590,14 +1572,19 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 // top cell row, excluding nothing else - button clicks were already
 // offered to the window and declined.
 func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
-	b := h.win.Bounds()
+	// Measured against the FRAME, which is the whole surface except on a
+	// zoomed window whose growth is capped: that one draws itself in the
+	// middle of the surface and shades the rest, and the shade is no more a
+	// title bar than the desktop is.
+	fr := h.win.FrameRect()
+	x, y = x-fr.X, y-fr.Y
 	// The title bar is painted BELOW the top frame border, so its zone runs to
 	// frameBorder + UnitsPerCellHeight — matching the WindowManager (titleTop +
 	// UnitsPerCellHeight). Without the border term a wide border_width left only a thin
 	// draggable/double-click strip. The top resize grip (checked before this)
 	// owns the overlap at the very top.
 	th := core.DefaultCellMetrics().UnitsPerCellHeight + h.frameBorderUnits()
-	return x >= 0 && x < b.Width && y >= 0 && y < th
+	return x >= 0 && x < fr.Width && y >= 0 && y < th
 }
 
 // Resized implements platform.SurfaceHandler: the window tracks the
