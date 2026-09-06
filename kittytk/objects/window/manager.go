@@ -2703,8 +2703,12 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 			// Only restore if dragging below the menu bar
 			if newY >= clientArea.Y {
-				// Get the normalized bounds before restore
-				oldBounds := dragging.Bounds()
+				// The FRAME being held, before the restore takes it away. It is
+				// the whole window except on a capped maximized one, which holds
+				// the room and draws itself in the middle of it -- and there the
+				// grab offset, measured from the room's corner, is nowhere near
+				// the title bar the person actually grabbed.
+				oldFrame := dragging.FrameRect()
 
 				// Restore the window
 				dragging.Restore()
@@ -2715,14 +2719,19 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 				// This ensures content bounds are recalculated for normal mode (with borders)
 				dragging.Layout()
 
-				// Recalculate offset so the cursor stays proportionally positioned
-				// on the titlebar (e.g., if you grabbed the middle, keep it middle)
-				proportion := float64(offsetX) / float64(oldBounds.Width)
-				offsetX = core.Unit(proportion * float64(newBounds.Width))
+				// Re-express the grab inside that frame, then scale it across:
+				// across the width so the cursor stays proportionally placed on
+				// the narrower title bar (grab the middle, keep the middle), and
+				// down the height unchanged, since a title bar is the same
+				// height whatever the window's size.
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newBounds.Width) / float64(oldFrame.Width))
+				}
 
 				// Update stored offset
 				m.mu.Lock()
-				m.dragOffsetX = offsetX
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
 				m.mu.Unlock()
 			} else {
 				// Still in menu bar area - keep maximized, don't process further

@@ -1103,8 +1103,14 @@ func (h *TearOffHost) dragMove() bool {
 		// proportionally placed on the narrower title bar.
 		_, gpy := h.grabPx()
 		if gy-gpy >= way {
-			if ww > 0 {
-				h.grabX = core.Unit(float64(h.grabX) * float64(h.zoomSaved[2]) / float64(ww))
+			// The grab was on the FRAME being held, which on a capped window
+			// sits in the middle of the surface it fills. Re-express it there
+			// before scaling: measured from the surface's corner it carries
+			// the frame's own inset, which is nowhere near the title bar.
+			fr := h.win.FrameRect()
+			h.grabX, h.grabY = h.grabX-fr.X, h.grabY-fr.Y
+			if fw := h.pxHardX(fr.Width); fw > 0 {
+				h.grabX = core.Unit(float64(h.grabX) * float64(h.zoomSaved[2]) / float64(fw))
 			}
 			h.zoomed = false
 			h.dragRestored = true
