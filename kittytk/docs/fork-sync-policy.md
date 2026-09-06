@@ -153,6 +153,49 @@ not this.
 
 ---
 
+## 2b. Check the wiki against the release
+
+The wiki is a repository of its own and has no CI, so the only thing that
+notices when the code moves out from under it is somebody running the tool.
+Once a sync is tagged, clone the wiki and point `kittytk-wikidoc` at it —
+see [wiki-generation.md](wiki-generation.md) for the clone and the flags:
+
+```sh
+go run ./cmd/kittytk-wikidoc -wiki ../kittytk.wiki -check      # stale generated tables
+go run ./cmd/kittytk-wikidoc -wiki ../kittytk.wiki -list       # types with no page, and back
+go run ./cmd/kittytk-wikidoc -wiki ../kittytk.wiki -examples   # execute every wire example
+```
+
+`-check` and `-list` cover the generated spans, which is the easy half: they
+are regenerated from the registry and go stale visibly. **`-examples` is the
+one worth the trouble.** It executes every fenced wire script on the wiki
+against the current vocabulary, which is the only thing that reads the
+*hand-written* prose the way a reader would.
+
+That prose is where a rename lands and nobody looks. Running it after v0.1.30
+found five stale spots, and the split between them is the argument for doing
+this every time:
+
+- **Three this sync had just caused.** `align` became `halign`/`valign`/`fill`,
+  which removed one property and gave another's name to a different meaning;
+  `of=` came off a collection. Each left prose describing a spelling that no
+  longer parsed — including four paragraphs about a `fill` that had been
+  renamed `background_char` in the same commit that took the name.
+- **Two nobody had caused recently.** Two pages taught that `sub` does not
+  check event names and that a typo silently delivers nothing. The wire had
+  validated them since before the *previous* release: those pages documented
+  the opposite of the toolkit through a whole release cycle, because nothing
+  read them against a running registry.
+
+A rename you make is one you can go looking for. The other two are the reason
+to run the tool rather than to remember.
+
+A fence containing `->` is treated as an example paired with its result and is
+not executed, which is how an error is demonstrated on a page without failing
+the run. Use that for the errors, not for the working examples.
+
+---
+
 ## 3. How to generate a sync diff that is safe to apply
 
 Until we set up shared history (section 4, the real fix), produce the diff
@@ -295,5 +338,7 @@ boundary, not upstream's.
 4. For deps, send a *sentence* ("bump X to vN"), not a `go.mod` diff — and
    never a mew require.
 5. Run the six self-audit checks before sending.
-6. Long-term: adopt `git subtree` so the boundary is structural, not a set of
+6. After the release is tagged, run `kittytk-wikidoc` against the wiki —
+   `-examples` above all, since nothing else reads the prose (§2b).
+7. Long-term: adopt `git subtree` so the boundary is structural, not a set of
    `--exclude` flags you have to remember every time.
