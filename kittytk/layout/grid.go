@@ -54,7 +54,7 @@ func (l *GridLayout) Columns() []Band { return l.columns }
 // Rows returns the row bands as given (see Columns).
 func (l *GridLayout) Rows() []Band { return l.rows }
 
-// effectiveMetrics resolves grid metrics from the given container if it is a
+// effectiveMetrics resolves cell metrics from the given container if it is a
 // trinket, else the defaults. Layouts are not trinkets, so they cannot walk the
 // inheritance chain themselves.
 func (l *GridLayout) effectiveMetrics(container core.Container) core.CellMetrics {

@@ -1137,7 +1137,7 @@ func (m *Menu) setGraphicalHint(graphical bool) {
 	m.graphicalKnown = true
 }
 
-// inheritDisplayContext copies the opener's effective grid metrics and
+// inheritDisplayContext copies the opener's effective cell metrics and
 // font onto this popup. Popup menus aren't parented into the trinket
 // tree (see the note on the Menu struct), so their EffectiveCellMetrics
 // and EffectiveFont would otherwise fall back to the built-in 8x16 / 12pt

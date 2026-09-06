@@ -929,7 +929,7 @@ func (m *MDIPane) ClientArea() core.UnitRect {
 	return area
 }
 
-// denominations returns the grid-metrics currency of the pane's own
+// denominations returns the cell-metrics currency of the pane's own
 // coordinate space (outer: the parent's, in which Bounds lives) and
 // of its interior, where child-window geometry lives (honoring a
 // per-pane override). Equal unless an override is set on this pane.

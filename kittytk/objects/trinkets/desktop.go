@@ -759,7 +759,7 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		})
 	}
 
-	// The desktop roots the grid-metrics inheritance chain: seed its
+	// The desktop roots the cell-metrics inheritance chain: seed its
 	// override from the backend so every trinket inherits the display
 	// service's default unless a container overrides it.
 	rootMetrics := backend.Metrics()

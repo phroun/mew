@@ -126,7 +126,7 @@ func (m UnitMargins) Vertical() Unit {
 // surfaces, while the pixel path draws a softer shadow half a cell out. The
 // reservation is the number layout wants: it is the same on both surfaces, so a
 // row of trinkets lands identically whichever one is drawing, and it is a whole
-// row so the things beside it stay on the grid.
+// row so the things beside it stay on whole cells.
 //
 // In UNITS, not in cells, so a subtler decoration than a whole cell can be
 // stated when one arrives.
@@ -148,16 +148,17 @@ func FindStyleInsets(w Trinket) UnitMargins {
 // column_units and row_units properties. 8x16 is only what a subtree gets when
 // nothing above it says otherwise.
 type CellMetrics struct {
-	// UnitsPerCellWidth is how many units span one character cell across --
-	// one grid column. The column_units property sets it.
+	// UnitsPerCellWidth is the horizontal unit divisions within one
+	// character cell. The column_units property sets it.
 	UnitsPerCellWidth Unit
 
-	// UnitsPerCellHeight is how many units span one character cell down --
-	// one grid row. The row_units property sets it.
+	// UnitsPerCellHeight is the vertical unit divisions within one
+	// character cell. The row_units property sets it.
 	UnitsPerCellHeight Unit
 }
 
-// DefaultCellMetrics returns standard 8x16 cell metrics (typical terminal font proportions).
+// DefaultCellMetrics returns standard 8x16 cell metrics (the proportions of a
+// character cell twice as tall as it is wide).
 func DefaultCellMetrics() CellMetrics {
 	return CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
@@ -283,7 +284,7 @@ func (m CellMetrics) RoundUpToCellY(h Unit) Unit {
 }
 
 // GridRect puts a rectangle where a cell surface can render it: the ORIGIN
-// floors onto the grid and the EXTENT ceils onto it.
+// floors onto a whole cell and the EXTENT ceils onto one.
 //
 // The two rules differ because the two quantities do. A position never ceils
 // -- rounding it up moves the thing away from where it was asked to be, past
@@ -317,8 +318,8 @@ func (m CellMetrics) AlignRect(r UnitRect) UnitRect {
 }
 
 // DragTravel is how far a drag has come, at the granularity the surface can
-// place things at: whole cells where it has a grid, exact units where it does
-// not.
+// place things at: whole cells on a cell surface, exact units where a surface
+// can address inside one.
 //
 // Under the kitty protocol the pointer reports where it is INSIDE a cell, so a
 // travel measured in units carries a fraction of a cell that a cell surface
@@ -350,10 +351,10 @@ func DragOrigin(at, offset UnitPoint, m CellMetrics, snap bool) UnitPoint {
 }
 
 // CellMetricsProvider is implemented by trinkets that can provide a
-// grid-metrics override. Grid metrics are a per-container layout
-// vocabulary: each container may define how many units a virtual
-// row/column occupies, inherited through the container chain like
-// fonts (see FontProvider), rooted at the display service's default.
+// cell-metrics override. Cell metrics are a per-container layout
+// vocabulary: each container may define how finely a unit divides its
+// character cell, inherited through the container chain like fonts
+// (see FontProvider), rooted at the display service's default.
 type CellMetricsProvider interface {
 	// CellMetricsOverride returns the metrics set on this provider,
 	// or nil to inherit from the parent chain.
@@ -361,7 +362,7 @@ type CellMetricsProvider interface {
 }
 
 // FindEffectiveCellMetrics walks up the trinket tree to find the
-// effective grid metrics, mirroring FindEffectiveFont. It checks the
+// effective cell metrics, mirroring FindEffectiveFont. It checks the
 // trinket, then its ancestors (window, MDI pane, desktop). Returns
 // DefaultCellMetrics() if no override is set anywhere in the chain.
 func FindEffectiveCellMetrics(w Trinket) CellMetrics {

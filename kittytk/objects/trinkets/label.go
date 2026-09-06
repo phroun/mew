@@ -126,7 +126,7 @@ func (l *Label) HeightForWidth(width core.Unit) core.Unit {
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	// A text line occupies one grid row, in the container's denomination.
+	// A text line occupies one cell down, in the container's denomination.
 	return core.Unit(lineCount) * metrics.UnitsPerCellHeight
 }
 

@@ -1863,7 +1863,7 @@ func (w *Window) ClientArea() core.UnitRect {
 	}
 }
 
-// denominations returns the grid-metrics currency of the window's own
+// denominations returns the cell-metrics currency of the window's own
 // coordinate space (outer: the parent's, in which bounds and chrome
 // live) and of its content area (interior: honoring a per-window
 // override). Equal unless an override is set on this window.

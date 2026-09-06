@@ -508,7 +508,7 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	font := captionFont75(base)
 	// The measured width is screen-space; convert into this painter's local
 	// units so centering holds inside re-denominated interiors. The line the
-	// caption occupies is three quarters of a grid row, already local.
+	// caption occupies is three quarters of a cell down, already local.
 	w := p.ScreenWidthToLocal(font.MeasureText(label))
 	h := core.LineUnits(font, base, sp.EffectiveCellMetrics())
 	pad := p.ScreenWidthToLocal(4)

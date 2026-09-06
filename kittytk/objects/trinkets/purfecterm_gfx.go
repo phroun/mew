@@ -3396,7 +3396,7 @@ func termMenuWidth(mm MenuMetrics, indent core.Unit, items []termMenuItem) core.
 // be drawn in. PurfecTerm's menu and TextInput's are the same menu, so they are
 // measured by the same function.
 //
-// A row is a row on either surface: one grid row, which is what
+// A row is a row on either surface: one cell down, which is what
 // UnitsPerCellHeight says. The graphical one differs in what it puts BETWEEN
 // the rows -- a thin separator band and a little padding, both fractions of a
 // cell rather than a full one -- and a cell is a fixed physical size, so

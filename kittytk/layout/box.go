@@ -11,17 +11,17 @@ type BoxLayout struct {
 	BaseLayout
 	orientation   core.Orientation
 	items         []*LayoutItem
-	metricsSource core.Trinket // container whose effective grid metrics apply
+	metricsSource core.Trinket // container whose effective cell metrics apply
 }
 
-// SetMetricsSource sets the trinket whose effective grid metrics this
+// SetMetricsSource sets the trinket whose effective cell metrics this
 // layout uses (normally the container; wired by Panel). Layouts are
 // not trinkets, so they cannot walk the inheritance chain themselves.
 func (l *BoxLayout) SetMetricsSource(w core.Trinket) {
 	l.metricsSource = w
 }
 
-// effectiveMetrics resolves grid metrics from the given container if
+// effectiveMetrics resolves cell metrics from the given container if
 // it is a trinket, else from the stored metrics source, else defaults.
 func (l *BoxLayout) effectiveMetrics(container core.Container) core.CellMetrics {
 	if w, ok := container.(core.Trinket); ok && w != nil {
@@ -475,11 +475,11 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 			}
 		default: // AlignMiddle and unspecified
 			if height < bounds.Height {
-				// Snap the centering offset to the cell grid. A sub-row offset
+				// Snap the centering offset to a whole cell. A sub-row offset
 				// (a 1-row item centered in a 2-row row is half a row down) is
 				// drawn snapped to a row on a cell surface but hit-tested at the
-				// raw half-row bounds, so clicks land a row off; grid-aligning
-				// keeps draw and hit together. Pixel surfaces are unaffected -
+				// raw half-row bounds, so clicks land a row off; snapping to a
+				// row keeps draw and hit together. Pixel surfaces are unaffected -
 				// the offset is already a whole number of rows there or rounds
 				// to the same row.
 				off := (bounds.Height - height) / 2

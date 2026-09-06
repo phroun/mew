@@ -172,8 +172,8 @@ func init() {
 	protocol.RegisterCommonProperty("max_height", sizeProp("max_height", false, false).Def("-1").
 		Tip("Tallest this trinket grows, in units. -1 is no limit; 0 collapses it while it keeps its place."))
 
-	protocol.RegisterCommonProperty("column_units", unitsProp("column_units", true).Def("inherited").Tip("Units one grid column spans (denomination override)."))
-	protocol.RegisterCommonProperty("row_units", unitsProp("row_units", false).Def("inherited").Tip("Units one grid row spans (denomination override)."))
+	protocol.RegisterCommonProperty("column_units", unitsProp("column_units", true).Def("inherited").Tip("Horizontal unit divisions within one character cell."))
+	protocol.RegisterCommonProperty("row_units", unitsProp("row_units", false).Def("inherited").Tip("Vertical unit divisions within one character cell."))
 
 	protocol.RegisterCommonProperty("font", protocol.NewProperty("enum", wprop("font", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		s, err := protocol.AsString("font", v, f)

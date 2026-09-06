@@ -575,7 +575,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 	focused := t.HasFocus()
 	font := t.EffectiveFont()
 
-	// A field is one line of text tall, and a line is one grid row. The
+	// A field is one line of text tall, and a line is one cell down. The
 	// device-pixel fills below (highlight, block caret, bar caret) span that
 	// row, measured end to end so they land on the same device grid the
 	// glyphs beside them paint on.

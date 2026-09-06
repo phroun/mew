@@ -898,7 +898,7 @@ func (p *Painter) WithTransform(t Transform) *Painter {
 // WithDenomination returns a Painter whose local coordinates are
 // denominated in `child` metrics, given the current space is
 // denominated in `parent` metrics. Used when descending into a
-// container that carries a grid-metrics override: the same number of
+// container that carries a cell-metrics override: the same number of
 // rows/columns, re-expressed, so re-denomination is visually invariant.
 // Identity when the denominations match.
 func (p *Painter) WithDenomination(parent, child CellMetrics) *Painter {

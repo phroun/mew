@@ -2078,7 +2078,7 @@ func MapTrinketToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoi
 	return result
 }
 
-// ScreenCellMetrics returns the grid metrics of the screen/desktop
+// ScreenCellMetrics returns the cell metrics of the screen/desktop
 // surface - the denomination popup overlays are composited in.
 func (m *WindowManager) ScreenCellMetrics() core.CellMetrics {
 	m.mu.RLock()

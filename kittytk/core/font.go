@@ -174,8 +174,8 @@ func DefaultFont() *Font {
 
 // LineUnits is how many units one line of text occupies.
 //
-// A line is a grid row, and a grid row is UnitsPerCellHeight units: that is
-// what the denomination says. Point size does not enter into it -- it sets
+// A line is one character cell tall, which is UnitsPerCellHeight units: that
+// is what the denomination says. Point size does not enter into it -- it sets
 // how big the cell is on the glass, not how finely a layout divides it.
 //
 // The exception is a face deliberately smaller or larger than the one the

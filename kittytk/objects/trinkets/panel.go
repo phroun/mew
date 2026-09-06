@@ -76,7 +76,7 @@ func (p *Panel) RemoveChild(child core.Trinket) {
 	p.Update()
 }
 
-// denominations returns the grid-metrics currency of this panel's own
+// denominations returns the cell-metrics currency of this panel's own
 // coordinate space (outer: the parent's, in which bounds live) and of
 // its interior (honoring a per-panel override). Equal unless an
 // override is set on this panel.
@@ -158,7 +158,7 @@ func (p *Panel) SetLayoutManager(layout core.LayoutManager) {
 			adder.AddTrinket(child)
 		}
 	}
-	// Let the layout resolve grid metrics through this container's
+	// Let the layout resolve cell metrics through this container's
 	// inheritance chain (layouts are not trinkets themselves).
 	if ms, ok := layout.(interface{ SetMetricsSource(core.Trinket) }); ok {
 		ms.SetMetricsSource(p.Self())

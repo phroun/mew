@@ -167,7 +167,7 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 	base := s.EffectiveFont()
 	font := captionFont75(base)
 	// Width comes back screen-space (see ScreenWidthToLocal). The line the
-	// caption occupies is three quarters of a grid row, already local.
+	// caption occupies is three quarters of a cell down, already local.
 	w := p.ScreenWidthToLocal(font.MeasureText(s.title))
 	h := core.LineUnits(font, base, s.EffectiveCellMetrics())
 	pad := p.ScreenWidthToLocal(6)

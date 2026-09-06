@@ -57,7 +57,7 @@ type TitleBarMetrics struct {
 // scale to 1.0.
 //
 // QUANTIZATION, by explicit ruling ("do (c) for now"): the scaled row is
-// ceiled on the frame denomination's integer unit grid — core.Unit is an
+// ceiled onto whole units of the frame's denomination — core.Unit is an
 // integer, and a fraction in this system is a finer denomination, not a
 // fractional value — so 0.7 of a 16-unit cell lands on 12/16. The scale
 // is therefore only as fine as the frame's denomination can say, and a

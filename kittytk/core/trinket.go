@@ -1129,7 +1129,7 @@ func (w *TrinketBase) EffectiveFont() *Font {
 	return FindEffectiveFont(w.Self())
 }
 
-// CellMetricsOverride returns the grid metrics explicitly set on this
+// CellMetricsOverride returns the cell metrics explicitly set on this
 // trinket, or nil if inheriting.
 func (w *TrinketBase) CellMetricsOverride() *CellMetrics {
 	w.mu.RLock()
@@ -1137,7 +1137,7 @@ func (w *TrinketBase) CellMetricsOverride() *CellMetrics {
 	return w.cellMetrics
 }
 
-// SetCellMetrics sets explicit grid metrics for this trinket/container.
+// SetCellMetrics sets explicit cell metrics for this trinket/container.
 // Set to nil to inherit from parent/window/desktop.
 func (w *TrinketBase) SetCellMetrics(m *CellMetrics) {
 	w.mu.Lock()
@@ -1169,7 +1169,7 @@ func (w *TrinketBase) MeasureText(text string) Unit {
 	return w.EffectiveFont().MeasureTextIn(text, w.EffectiveCellMetrics())
 }
 
-// EffectiveCellMetrics returns the grid metrics to use for this trinket.
+// EffectiveCellMetrics returns the cell metrics to use for this trinket.
 // It checks this trinket, then walks up the parent chain, falling back
 // to DefaultCellMetrics.
 func (w *TrinketBase) EffectiveCellMetrics() CellMetrics {

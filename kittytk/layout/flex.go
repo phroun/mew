@@ -70,7 +70,7 @@ type FlexLayout struct {
 	justify       FlexJustify
 	alignItems    FlexAlign
 	items         []*FlexItem
-	metricsSource core.Trinket // container whose effective grid metrics apply
+	metricsSource core.Trinket // container whose effective cell metrics apply
 
 	// gap is what a boundary costs along the run, crossGap what one costs
 	// between lines, and mainQ and crossQ the size a track on each axis has to
@@ -92,14 +92,14 @@ func NewFlexLayout() *FlexLayout {
 	}
 }
 
-// SetMetricsSource sets the trinket whose effective grid metrics this layout
+// SetMetricsSource sets the trinket whose effective cell metrics this layout
 // uses (normally the container; wired by Panel). Layouts are not trinkets, so
 // they cannot walk the inheritance chain themselves.
 func (l *FlexLayout) SetMetricsSource(w core.Trinket) {
 	l.metricsSource = w
 }
 
-// effectiveMetrics resolves grid metrics from the given container if it is a
+// effectiveMetrics resolves cell metrics from the given container if it is a
 // trinket, else from the stored metrics source, else the defaults.
 func (l *FlexLayout) effectiveMetrics(container core.Container) core.CellMetrics {
 	if w, ok := container.(core.Trinket); ok && w != nil {
@@ -166,7 +166,7 @@ func (l *FlexLayout) AddTrinket(trinket core.Trinket) {
 	l.items = append(l.items, item)
 }
 
-// resolveGap settles the grid this pass works on: the size a track has to be a
+// resolveGap settles the quantum this pass works on: the size a track has to be a
 // whole number of along the run and between lines, and what a boundary costs
 // on each. A gap of half a cell cannot be drawn and puts everything after it
 // between cells, so a gap rounds down to whole cells.

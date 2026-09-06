@@ -15,7 +15,7 @@ type Spacer struct {
 }
 
 // NewSpacer creates a new spacer with a default size of 1x1 cell,
-// resolved lazily against the effective grid metrics (a constructor
+// resolved lazily against the effective cell metrics (a constructor
 // has no parent chain to ask yet).
 func NewSpacer() *Spacer {
 	s := &Spacer{}
@@ -48,7 +48,7 @@ func (s *Spacer) Size() core.UnitSize {
 }
 
 // SizeHint returns the preferred size. When no explicit size is set,
-// it is one cell of the effective grid metrics, resolved at layout
+// it is one cell of the effective cell metrics, resolved at layout
 // time when the parent chain exists.
 func (s *Spacer) SizeHint() core.UnitSize {
 	if s.size.Width > 0 || s.size.Height > 0 {

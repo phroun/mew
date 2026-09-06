@@ -104,7 +104,7 @@ func init() {
 			return nil
 		}).Tip("Window font override (\"default\" clears)"),
 		// denomination overrides the window's row height in units (its
-		// content re-grids to it); 0 clears the override.
+		// content lays out against it); 0 clears the override.
 		"denomination": protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			n, err := protocol.AsInt("denomination", v, f)
 			if err != nil {
