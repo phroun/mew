@@ -937,7 +937,7 @@ func boundedWindowScript(n int) string {
 bw%d=new window title="Bounded Window" x=%d y=%d width=280 height=160 tearable max_width=480 max_height=320 children={
 	bwp=new panel layout=vbox spacing=8 children={
 		new label caption="max_width=480  max_height=320"
-		new label caption="Maximize me: double-click the title, or press [^]. I take what I may of the desktop and sit in the middle of what is left, and the shaded room around me is what I declined." wrap
+		new label caption="Maximize me: double-click the title, or press [^]. I take the whole desktop as my surface and draw myself in the middle of it at the size I allow; the shaded room around me is mine, and is what I declined." wrap
 		new label caption="Tear me off and zoom, and there is no shaded room: out there I am the OS window, so I am simply that size." wrap
 		new spacer
 		bwclose=new button caption="Close"

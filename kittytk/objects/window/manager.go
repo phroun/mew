@@ -762,40 +762,6 @@ func (m *WindowManager) topWindowAt(x, y core.Unit) *Window {
 	return nil
 }
 
-// maximizedFillerOwner returns the maximized window whose leftover room
-// contains the point, or nil. Topmost first, and a point inside a window's own
-// bounds belongs to that window rather than to anything's filler.
-func (m *WindowManager) maximizedFillerOwner(x, y core.Unit) *Window {
-	clientArea := m.ClientArea()
-	pt := core.UnitPoint{X: x, Y: y}
-	if !clientArea.Contains(pt) {
-		return nil
-	}
-	m.mu.RLock()
-	windows := make([]*Window, len(m.windows))
-	copy(windows, m.windows)
-	m.mu.RUnlock()
-
-	for i := len(windows) - 1; i >= 0; i-- {
-		win := windows[i]
-		if !win.IsVisible() || win.IsMinimized() {
-			continue
-		}
-		if win.Bounds().Contains(pt) {
-			return nil
-		}
-		if !win.IsMaximized() {
-			continue
-		}
-		for _, r := range MaximizedFillerRects(win, clientArea) {
-			if r.Contains(pt) {
-				return win
-			}
-		}
-	}
-	return nil
-}
-
 // ResizeCursorForEdge maps a set of resize edges to the cursor shape that
 // signals resizing them (H/V for a single edge, the two diagonals for
 // corners, default for none). Shared by the desktop WindowManager and the
@@ -1757,10 +1723,11 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	}
 	metrics := core.DefaultCellMetrics()
 	titleTop := core.FindFrameBorderUnits(win)
-	if event.Y >= bounds.Y+titleTop+metrics.UnitsPerCellHeight {
+	fr := win.FrameRect()
+	if event.Y >= bounds.Y+fr.Y+titleTop+metrics.UnitsPerCellHeight {
 		return // below the title row
 	}
-	if win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) != TitleButtonNone {
+	if win.buttonAtWindowPoint(event.X-bounds.X, event.Y-bounds.Y) != TitleButtonNone {
 		return // no titlebar buttons while blocked
 	}
 	m.mu.Lock()
@@ -2381,16 +2348,6 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 		}
 	}
 
-	// A maximized window that says how far it grows did not fill the client
-	// area, and the room it left over is its own: a press there raises it and
-	// goes no further. The filler is not interactive -- it holds nothing to
-	// press -- but neither is it a hole through to whatever is behind, which
-	// is what it would be if the press fell past it.
-	if win := m.maximizedFillerOwner(event.X, event.Y); win != nil {
-		m.ActivateWindow(win)
-		return true
-	}
-
 	// Check windows from top to bottom
 	for i := len(windows) - 1; i >= 0; i-- {
 		win := windows[i]
@@ -2452,9 +2409,16 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			// immediately. The titlebar sits below the top frame border, so
 			// the drag region covers the border AND the titlebar row (the
 			// kit's possibly-scaled RowH).
+			// A capped maximized window holds the whole room but draws
+			// its frame in the middle of it, so the band is measured from
+			// the frame rather than from the surface (FrameRect is the
+			// whole surface for every other window).
 			metrics := core.DefaultCellMetrics()
 			titleTop := core.FindFrameBorderUnits(win)
-			if event.Y < bounds.Y+titleTop+win.titleBarMetrics().RowH &&
+			fr := win.FrameRect()
+			titleBand := core.UnitRect{X: bounds.X + fr.X, Y: bounds.Y + fr.Y,
+				Width: fr.Width, Height: titleTop + win.titleBarMetrics().RowH}
+			if titleBand.Contains(core.UnitPoint{X: event.X, Y: event.Y}) &&
 				hasTitleBar(win.Flags(), win.State()) {
 
 				// Activate (focus + raise) for titlebar interaction
@@ -2464,7 +2428,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				// begin a tear-capable drag; a release in place is a click
 				// that toggles detach/dock.
 				if win.Flags()&WindowFlagTearable != 0 &&
-					win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) == TitleButtonTear {
+					win.buttonAtWindowPoint(event.X-bounds.X, event.Y-bounds.Y) == TitleButtonTear {
 					m.mu.Lock()
 					m.dragging = win
 					m.dragStartX = event.X

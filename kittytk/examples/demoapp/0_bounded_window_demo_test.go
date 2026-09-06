@@ -42,18 +42,15 @@ func TestTheBoundedWindowStopsWhereItSaysWhenMaximized(t *testing.T) {
 	m.MaximizeWindow(win)
 
 	room := m.ClientArea()
-	got := win.Bounds()
-	if got.Width != 480 || got.Height != 320 {
-		t.Errorf("maximized it is %v, want its maximum of 480x320", got.Size())
+	if got := win.Bounds(); got != room {
+		t.Errorf("maximized its surface is %v, want the whole room %v", got, room)
 	}
-	if got.X != room.X+(room.Width-480)/2 || got.Y != room.Y+(room.Height-320)/2 {
-		t.Errorf("maximized it sits at %d,%d, want it centered in %v", got.X, got.Y, room)
+	fr := window.MaximizedFrameRect(win, room.Size())
+	if fr.Width != 480 || fr.Height != 320 {
+		t.Errorf("maximized its frame is %v, want its maximum of 480x320", fr.Size())
 	}
-
-	// And there is room left over for the filler to occupy, which is the
-	// whole point of the demonstration.
-	if len(window.MaximizedFillerRects(win, room)) != 4 {
-		t.Error("maximized in a room larger than its maximum, it left no filler to see")
+	if fr.X != (room.Width-480)/2 || fr.Y != (room.Height-320)/2 {
+		t.Errorf("maximized its frame sits at %d,%d, want it centered in %v", fr.X, fr.Y, room)
 	}
 }
 
@@ -82,10 +79,14 @@ func TestTheBoundedMDIChildStopsWhereItSays(t *testing.T) {
 	// The pane it lives in is larger than that, so maximizing it there leaves
 	// room over.
 	pane := core.UnitRect{Width: 640, Height: 400}
-	if got := window.MaximizedBounds(win, pane); got.Width != 320 || got.Height != 200 {
-		t.Errorf("maximized in the pane it is %v, want its maximum of 320x200", got.Size())
+	if got := window.MaximizedBounds(win, pane); got != pane {
+		t.Errorf("maximized in the pane its surface is %v, want the whole %v", got, pane)
 	}
-	if len(window.MaximizedFillerRects(win, pane)) != 4 {
-		t.Error("maximized in the pane, it left no filler to see")
+	fr := window.MaximizedFrameRect(win, pane.Size())
+	if fr.Width != 320 || fr.Height != 200 {
+		t.Errorf("maximized in the pane its frame is %v, want its maximum of 320x200", fr.Size())
+	}
+	if fr.X != (640-320)/2 || fr.Y != (400-200)/2 {
+		t.Errorf("maximized in the pane its frame sits at %d,%d, want it centered", fr.X, fr.Y)
 	}
 }

@@ -3894,62 +3894,6 @@ func (d *Desktop) scheduleTick(p platform.Platform) {
 	})
 }
 
-// paintMaximizedFillers fills the room maximized windows left over: a window
-// that says how far it grows takes what it may of the client area and sits in
-// the middle, and the rest is shaded rather than left as desktop showing
-// through.
-//
-// It paints on the DESKTOP's layer rather than inside the window loop, because
-// a GPU compositor takes each window as a layer of its own and never runs that
-// loop -- a filler painted there was invisible wherever compositing was on,
-// which is everywhere the demo actually runs.
-func (d *Desktop) paintMaximizedFillers(p *core.Painter) {
-	if d.windowManager == nil {
-		return
-	}
-	clientArea := d.ClientArea()
-	active := d.windowManager.ActiveWindow()
-	for _, w := range d.windowManager.Windows() {
-		if !w.IsVisible() || w.IsMinimized() || !w.IsMaximized() {
-			continue
-		}
-		window.PaintMaximizedFiller(p, w, clientArea, w == active)
-	}
-}
-
-// maximizedFillerRevision is everything paintMaximizedFillers will draw,
-// reduced to a number: which windows are maximized, where they sit, and which
-// of them is active (the shade takes its colour from the active window's own
-// title bar). Any change to what gets painted changes the number; only
-// equality between two readings is ever asked of it.
-func (d *Desktop) maximizedFillerRevision() uint64 {
-	if d.windowManager == nil {
-		return 0
-	}
-	clientArea := d.ClientArea()
-	active := d.windowManager.ActiveWindow()
-
-	var sig uint64
-	fold := func(v uint64) { sig = sig*1099511628211 ^ v }
-	for _, w := range d.windowManager.Windows() {
-		if !w.IsVisible() || w.IsMinimized() || !w.IsMaximized() {
-			continue
-		}
-		for _, r := range window.MaximizedFillerRects(w, clientArea) {
-			fold(uint64(uint32(r.X)))
-			fold(uint64(uint32(r.Y)))
-			fold(uint64(uint32(r.Width)))
-			fold(uint64(uint32(r.Height)))
-		}
-		if w == active {
-			fold(1)
-		} else {
-			fold(2)
-		}
-	}
-	return sig
-}
-
 // desktopSurfaceHandler adapts the Desktop to platform.SurfaceHandler.
 type desktopSurfaceHandler struct {
 	d *Desktop
@@ -5548,8 +5492,6 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.content.Paint(contentPainter)
 	}
 
-	d.paintMaximizedFillers(p)
-
 	// The desktop's own themed title bar, above the menu bar (paints
 	// nothing in the other frame modes). The themed frame's reserved
 	// border insets ALL the chrome, like a window's interior; bx/by are
@@ -5775,12 +5717,6 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	for _, w := range result {
 		baseRevision -= w.(*window.Window).SubtreeRepaintRevision()
 	}
-	// One thing on this layer IS drawn out of a window's geometry: the room
-	// a maximized window leaves around itself (paintMaximizedFillers). The
-	// subtraction above cancels exactly the bumps maximizing that window
-	// makes, so the shape of that room has to be folded back in or the base
-	// never repaints to show it.
-	baseRevision += d.maximizedFillerRevision()
 
 	popups := d.windowManager.GetPopups()
 

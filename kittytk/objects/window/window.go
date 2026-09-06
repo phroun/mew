@@ -505,83 +505,148 @@ func (w *Window) CanMaximize() bool {
 	return canMaximize(w.Flags())
 }
 
-// MaximizedBounds is where a maximized window sits in the room it was given.
+// MaximizedBounds is where a maximized window sits in the room it was given:
+// the whole of it. A window that says how far it grows is maximized just the
+// same -- it takes the whole room as its surface and draws its frame in the
+// middle of it, at the size it allows, shading the room it declined (see
+// frameRect). Handing it smaller bounds instead would leave the room around
+// it to whoever painted the layer underneath, which is nobody's job.
+func MaximizedBounds(win *Window, clientArea core.UnitRect) core.UnitRect {
+	return clientArea
+}
+
+// MaximizedFrameRect is where a maximized window's frame sits inside the
+// surface it was given, in that surface's own coordinates.
 //
 // The whole of it, unless the window says how far it grows -- then it takes
-// what it may and sits in the middle of the rest. Which is what lets a window
-// be maximized at all when it has a maximum: the alternative is refusing the
-// gesture, and a window the person asked to maximize should do something.
+// what it may and sits in the middle. Which is what lets a window with a
+// maximum be maximized at all: the alternative is refusing the gesture, and a
+// window the person asked to maximize should do something.
 //
 // The maximum is capped first and the minimum raised after, so where the two
 // conflict the minimum wins, as it does wherever else they meet.
-func MaximizedBounds(win *Window, clientArea core.UnitRect) core.UnitRect {
+func MaximizedFrameRect(win *Window, surface core.UnitSize) core.UnitRect {
+	out := core.UnitRect{Width: surface.Width, Height: surface.Height}
 	if win == nil {
-		return clientArea
+		return out
 	}
 	max, min := win.MaximumSize(), win.MinimumSize()
-	out := clientArea
 
-	width := clientArea.Width
+	width := surface.Width
 	if max.Width >= 0 && max.Width < width {
 		width = max.Width
 	}
 	if width < min.Width {
 		width = min.Width
 	}
-	if width < clientArea.Width {
-		out.X += (clientArea.Width - width) / 2
+	if width < surface.Width {
+		out.X = (surface.Width - width) / 2
 		out.Width = width
 	}
 
-	height := clientArea.Height
+	height := surface.Height
 	if max.Height >= 0 && max.Height < height {
 		height = max.Height
 	}
 	if height < min.Height {
 		height = min.Height
 	}
-	if height < clientArea.Height {
-		out.Y += (clientArea.Height - height) / 2
+	if height < surface.Height {
+		out.Y = (surface.Height - height) / 2
 		out.Height = height
 	}
 	return out
 }
 
-// PaintMaximizedFiller fills the room a maximized window left over.
+// frameRect is where this window's frame sits inside its own bounds, in
+// window-local coordinates. The whole of them for every window but one: a
+// MAXIMIZED window that says how far it grows takes the whole room as its
+// surface -- it is really maximized -- and paints its frame in the middle of
+// it, shading the room it declined.
 //
-// A window that says how far it grows sits in the middle of the room it was
-// maximized into rather than filling it, and the desktop showing through
-// around it reads as the gesture having failed. So the leftover is painted
-// instead, in the window's own title-bar colour taken a quarter of the way to
-// black -- near enough the frame to belong to the window, dark enough to read
-// as room the window declined rather than as desktop.
+// Everything inside a window is measured from this rect, not from the bounds:
+// Paint offsets onto it once, and the mouse handlers subtract it once on the
+// way in, so nothing between the two has to know about it.
+func (w *Window) frameRect() core.UnitRect {
+	b := w.Bounds()
+	if !w.IsMaximized() {
+		return core.UnitRect{Width: b.Width, Height: b.Height}
+	}
+	return MaximizedFrameRect(w, b.Size())
+}
+
+// FrameRect is where this window's frame sits inside its own bounds, in
+// window-local coordinates -- the whole of them, unless a maximized window's
+// growth is capped and it is holding room it shaded instead (see frameRect).
+// A host placing or hit-testing the window's chrome measures from this.
+func (w *Window) FrameRect() core.UnitRect { return w.frameRect() }
+
+// buttonAtWindowPoint is buttonAtPosition for a caller holding a point in the
+// window's own coordinates rather than its frame's.
+func (w *Window) buttonAtWindowPoint(x, y core.Unit) TitleButton {
+	lx, ly, on := w.frameLocal(x, y)
+	if !on {
+		return TitleButtonNone
+	}
+	return w.buttonAtPosition(lx, ly)
+}
+
+// frameLocal converts a window-local point into the frame's own coordinates,
+// reporting false where it lands on the shade around a capped maximized
+// window instead of on the frame. The two are the same point for every other
+// window, where the frame is the whole surface.
+func (w *Window) frameLocal(x, y core.Unit) (core.Unit, core.Unit, bool) {
+	fr := w.frameRect()
+	if fr.X == 0 && fr.Y == 0 {
+		return x, y, true
+	}
+	x, y = x-fr.X, y-fr.Y
+	return x, y, x >= 0 && y >= 0 && x < fr.Width && y < fr.Height
+}
+
+// frameLocalOrOut is frameLocal for the handlers that take an out-of-bounds
+// point as "the pointer is not over me" -- a move or a release on the shade
+// is over nothing, and says so in the one spelling they already understand.
+func (w *Window) frameLocalOrOut(x, y core.Unit) (core.Unit, core.Unit) {
+	if x < 0 || y < 0 {
+		return x, y
+	}
+	lx, ly, on := w.frameLocal(x, y)
+	if !on {
+		return -1, -1
+	}
+	return lx, ly
+}
+
+// paintShade fills the room a maximized window declined, in window-local
+// coordinates, and reports whether there was any.
+//
+// The room is painted in the window's own title-bar colour taken a quarter of
+// the way to black -- near enough the frame to belong to the window, dark
+// enough to read as room the window declined rather than as desktop showing
+// through, which is what makes the gesture look like it worked.
 //
 // On a cell surface there is no alpha to take it down with, so the quarter is
 // spent as ink: the light-shade block, which is a quarter covered, in black
-// over the same frame colour. It is how the desktop draws its own background
-// where no window is showing.
-//
-// Nothing here is interactive. The filler answers no pointer of its own -- see
-// the manager's press handling, which gives the click to the window it
-// surrounds.
-func PaintMaximizedFiller(p *core.Painter, win *Window, clientArea core.UnitRect, active bool) {
-	rects := MaximizedFillerRects(win, clientArea)
+// over the same frame colour.
+func (w *Window) paintShade(p *core.Painter, bounds core.UnitRect, frame core.UnitRect, active bool) bool {
+	rects := shadeRects(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, frame)
 	if len(rects) == 0 {
-		return
+		return false
 	}
-	frame := win.GetScheme().GetWindowTitle(active)
-
+	st := w.GetScheme().GetWindowTitle(active)
 	for _, r := range rects {
 		if p.Graphical() {
-			p.FillRect(r, ' ', frame)
+			p.FillRect(r, ' ', st)
 			p.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
 				p.UnitSpanPxX(r.X, r.X+r.Width),
 				p.UnitSpanPxY(r.Y, r.Y+r.Height),
 				0, 0, 0, modalDimAlpha)
 			continue
 		}
-		p.FillRect(r, shadedFillerChar, frame.WithFg(style.ColorBlack))
+		p.FillRect(r, shadedFillerChar, st.WithFg(style.ColorBlack))
 	}
+	return true
 }
 
 // shadedFillerChar is the light-shade block: a quarter of the cell covered,
@@ -589,26 +654,46 @@ func PaintMaximizedFiller(p *core.Painter, win *Window, clientArea core.UnitRect
 // graphical path lays over the frame colour.
 const shadedFillerChar = '\u2591'
 
-// MaximizedFillerRects is the room a maximized window left over: up to four
-// rectangles around it, in the client area's own coordinates. Empty where the
-// window fills its room, which is the ordinary case.
-func MaximizedFillerRects(win *Window, clientArea core.UnitRect) []core.UnitRect {
-	inner := MaximizedBounds(win, clientArea)
+// shadeRects is the part of surface that inner does not cover: up to four
+// rectangles around it, in surface's own coordinates. Empty where inner fills
+// it, which is the ordinary case.
+func shadeRects(surface, inner core.UnitRect) []core.UnitRect {
 	var out []core.UnitRect
 	add := func(r core.UnitRect) {
 		if r.Width > 0 && r.Height > 0 {
 			out = append(out, r)
 		}
 	}
-	add(core.UnitRect{X: clientArea.X, Y: clientArea.Y,
-		Width: clientArea.Width, Height: inner.Y - clientArea.Y})
-	add(core.UnitRect{X: clientArea.X, Y: inner.Y + inner.Height,
-		Width: clientArea.Width, Height: clientArea.Y + clientArea.Height - (inner.Y + inner.Height)})
-	add(core.UnitRect{X: clientArea.X, Y: inner.Y,
-		Width: inner.X - clientArea.X, Height: inner.Height})
+	add(core.UnitRect{X: surface.X, Y: surface.Y,
+		Width: surface.Width, Height: inner.Y - surface.Y})
+	add(core.UnitRect{X: surface.X, Y: inner.Y + inner.Height,
+		Width: surface.Width, Height: surface.Y + surface.Height - (inner.Y + inner.Height)})
+	add(core.UnitRect{X: surface.X, Y: inner.Y,
+		Width: inner.X - surface.X, Height: inner.Height})
 	add(core.UnitRect{X: inner.X + inner.Width, Y: inner.Y,
-		Width: clientArea.X + clientArea.Width - (inner.X + inner.Width), Height: inner.Height})
+		Width: surface.X + surface.Width - (inner.X + inner.Width), Height: inner.Height})
 	return out
+}
+
+// paintState is the state the window's chrome is drawn and measured in.
+//
+// The real state, except for a maximized window whose growth is capped: that
+// one holds the whole room but draws its frame in the middle of it, so the
+// frame is an ordinary window's -- borders on every side, a title bar a
+// NoTitleWhenMaximized window keeps -- around a rect that is not the surface.
+// The zoom button still reads the real state and shows the restore glyph.
+func (w *Window) paintState() WindowState {
+	w.mu.RLock()
+	state := w.state
+	w.mu.RUnlock()
+	if state != WindowStateMaximized {
+		return state
+	}
+	b := w.Bounds()
+	if fr := MaximizedFrameRect(w, b.Size()); fr.Width < b.Width || fr.Height < b.Height {
+		return WindowStateNormal
+	}
+	return state
 }
 
 // hasTitleBar reports whether the window shows a title bar in the given state,
@@ -1648,11 +1733,11 @@ func (w *Window) frameBorder() (x, y core.Unit) {
 // is detached and carries its own chrome, the menu bar (top) and status
 // bar (bottom) rows are reserved out of it (see reserveChrome).
 func (w *Window) contentBounds() core.UnitRect {
-	bounds := w.Bounds()
+	bounds := w.frameRect()
 	metrics := w.frameCellMetrics()
 
+	state := w.paintState()
 	w.mu.RLock()
-	state := w.state
 	flags := w.flags
 	w.mu.RUnlock()
 
@@ -1730,10 +1815,12 @@ func (w *Window) ClientAreaOffset() core.UnitPoint {
 	return core.UnitPoint{X: cb.X, Y: cb.Y}
 }
 
-// ContentBounds returns the window-local rectangle available to the content
-// trinket, inside the title bar and frame (and any detached chrome). Callers
+// ContentBounds returns the rectangle available to the content trinket,
+// inside the title bar and frame (and any detached chrome), in the frame's
+// own coordinates -- which are the window's own except for a capped maximized
+// window, whose frame is inset in the room it holds (see FrameRect). Callers
 // that size a window to fit its content use it to learn how much room the
-// chrome takes: chrome = window bounds minus ContentBounds.
+// chrome takes: chrome = frame size minus ContentBounds.
 func (w *Window) ContentBounds() core.UnitRect {
 	return w.contentBounds()
 }
@@ -1746,7 +1833,7 @@ func (w *Window) ContentBounds() core.UnitRect {
 // instead of overflowing. Mirrors the desktop's ClientArea contract so
 // the same menu-bar height logic works on a torn window.
 func (w *Window) ClientArea() core.UnitRect {
-	b := w.Bounds()
+	b := w.frameRect()
 	mbr := w.menuBarRect()
 	top := w.frameCellMetrics().UnitsPerCellHeight
 	// Bottom edge of the surface in menu-bar-local coordinates.
@@ -1882,7 +1969,6 @@ func (w *Window) Layout() {
 func (w *Window) Paint(p *core.Painter) {
 	w.mu.RLock()
 	flags := w.flags
-	state := w.state
 	title := w.title
 	border := w.borderStyle
 	content := w.content
@@ -1890,6 +1976,7 @@ func (w *Window) Paint(p *core.Painter) {
 	quasiActive := w.quasiActive
 	w.mu.RUnlock()
 
+	state := w.paintState()
 	bounds := w.Bounds()
 	metrics := p.Metrics()
 	scheme := w.GetScheme()
@@ -1938,6 +2025,19 @@ func (w *Window) Paint(p *core.Painter) {
 	if aw := w.nearestAncestorWindow(); aw != nil && !aw.isLit() {
 		focused = false
 		isPassive = false
+	}
+
+	// A maximized window that says how far it grows holds the whole room and
+	// paints its frame in the middle: the shade goes down over the surface
+	// first, and everything after this draws in the frame's own coordinates.
+	// The shade belongs to the window, and so does the layer it lands on -- a
+	// compositing host gives each window a layer of its own and repaints it
+	// when the window changes, which is exactly when the room around it does.
+	if fr := w.frameRect(); fr.Width < bounds.Width || fr.Height < bounds.Height {
+		w.paintShade(p, bounds, fr, focused || isPassive)
+		p = p.WithOffset(fr.X, fr.Y)
+		bounds = core.UnitRect{X: bounds.X + fr.X, Y: bounds.Y + fr.Y,
+			Width: fr.Width, Height: fr.Height}
 	}
 
 	// Get styles from scheme based on focus state
@@ -3964,11 +4064,20 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleMousePress handles mouse clicks.
 func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
+	x, y, onFrame := w.frameLocal(event.X, event.Y)
+	if !onFrame {
+		// The shade around a capped maximized window's frame is the window's
+		// own surface: the press belongs to it (the host has already raised
+		// it) and must not fall through to whatever is underneath.
+		return true
+	}
+	event.X, event.Y = x, y
+
 	w.mu.RLock()
 	content := w.content
 	flags := w.flags
-	state := w.state
 	w.mu.RUnlock()
+	state := w.paintState()
 
 	// The titlebar chrome sits inside the frame border (offset down by the
 	// border), so the titlebar band runs [0, border+RowH) in window-local
@@ -4040,6 +4149,8 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement.
 func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
+	event.X, event.Y = w.frameLocalOrOut(event.X, event.Y)
+
 	w.mu.RLock()
 	content := w.content
 	pressedButton := w.pressedButton
@@ -4159,6 +4270,8 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse button release.
 func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	event.X, event.Y = w.frameLocalOrOut(event.X, event.Y)
+
 	w.mu.RLock()
 	content := w.content
 	pressedButton := w.pressedButton
@@ -4346,6 +4459,12 @@ var _ core.Container = (*Window)(nil)
 // HandleMouseWheel forwards a wheel event to the content (in the
 // window's interior denomination).
 func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	x, y, onFrame := w.frameLocal(event.X, event.Y)
+	if !onFrame {
+		return true // the shade scrolls nothing, and nothing below it either
+	}
+	event.X, event.Y = x, y
+
 	w.mu.RLock()
 	content := w.content
 	mb := w.menuBar

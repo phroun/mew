@@ -80,17 +80,20 @@ func TestAMaximizedMDIChildsCapSurvivesAPaneResize(t *testing.T) {
 	win.SetMaximumSize(core.UnitSize{Width: 320, Height: 200})
 	m.MaximizeWindow(win)
 
-	if got := win.Bounds(); got.Width != 320 || got.Height != 200 {
-		t.Fatalf("maximized in the pane it is %v, want its maximum of 320x200", got.Size())
+	if got := win.Bounds(); got != m.ClientArea() {
+		t.Fatalf("maximized in the pane its surface is %v, want the whole %v", got, m.ClientArea())
 	}
 
 	m.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 600, Height: 500})
 	pane := m.ClientArea()
-	got := win.Bounds()
-	if got.Width != 320 || got.Height != 200 {
-		t.Errorf("after a pane resize it is %v, want its maximum of 320x200", got.Size())
+	if got := win.Bounds(); got != pane {
+		t.Errorf("after a pane resize its surface is %v, want the whole %v", got, pane)
 	}
-	if got.X != pane.X+(pane.Width-320)/2 || got.Y != pane.Y+(pane.Height-200)/2 {
-		t.Errorf("after a pane resize it sits at %d,%d, want it centered in %v", got.X, got.Y, pane)
+	fr := window.MaximizedFrameRect(win, pane.Size())
+	if fr.Width != 320 || fr.Height != 200 {
+		t.Errorf("after a pane resize its frame is %v, want its maximum of 320x200", fr.Size())
+	}
+	if fr.X != (pane.Width-320)/2 || fr.Y != (pane.Height-200)/2 {
+		t.Errorf("after a pane resize its frame sits at %d,%d, want it centered in %v", fr.X, fr.Y, pane)
 	}
 }
