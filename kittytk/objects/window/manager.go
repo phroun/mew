@@ -3247,14 +3247,6 @@ func (m *WindowManager) Paint(p *core.Painter) {
 				continue
 			}
 
-			// A maximized window that says how far it grows sits in the
-			// middle of the client area rather than filling it; what it
-			// left over is filled before it paints, so the desktop does
-			// not show through around a window the person maximized.
-			if win.IsMaximized() {
-				PaintMaximizedFiller(p, win, clientArea, win == m.ActiveWindow())
-			}
-
 			// Tear-off affordance: a black halo just larger than the
 			// window, drawn in desktop space (not clipped to the client
 			// area) so a maximized window bleeds it over the menu and

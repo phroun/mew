@@ -3894,6 +3894,29 @@ func (d *Desktop) scheduleTick(p platform.Platform) {
 	})
 }
 
+// paintMaximizedFillers fills the room maximized windows left over: a window
+// that says how far it grows takes what it may of the client area and sits in
+// the middle, and the rest is shaded rather than left as desktop showing
+// through.
+//
+// It paints on the DESKTOP's layer rather than inside the window loop, because
+// a GPU compositor takes each window as a layer of its own and never runs that
+// loop -- a filler painted there was invisible wherever compositing was on,
+// which is everywhere the demo actually runs.
+func (d *Desktop) paintMaximizedFillers(p *core.Painter) {
+	if d.windowManager == nil {
+		return
+	}
+	clientArea := d.ClientArea()
+	active := d.windowManager.ActiveWindow()
+	for _, w := range d.windowManager.Windows() {
+		if !w.IsVisible() || w.IsMinimized() || !w.IsMaximized() {
+			continue
+		}
+		window.PaintMaximizedFiller(p, w, clientArea, w == active)
+	}
+}
+
 // desktopSurfaceHandler adapts the Desktop to platform.SurfaceHandler.
 type desktopSurfaceHandler struct {
 	d *Desktop
@@ -5491,6 +5514,8 @@ func (d *Desktop) Paint(p *core.Painter) {
 			WithClip(core.UnitRect{Width: clientArea.Width, Height: clientArea.Height})
 		d.content.Paint(contentPainter)
 	}
+
+	d.paintMaximizedFillers(p)
 
 	// The desktop's own themed title bar, above the menu bar (paints
 	// nothing in the other frame modes). The themed frame's reserved
