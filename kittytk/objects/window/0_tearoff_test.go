@@ -294,18 +294,19 @@ func TestTearOffHostZoomDragRestoreAndSnap(t *testing.T) {
 
 	h.ToggleZoom() // 0,30 1600x970
 
-	// Grab the zoomed title at its center and drag down: restore,
-	// with the grab re-proportioned onto the restored width.
+	// Grab the zoomed title at its center and pull the POINTER down a row:
+	// restore, with the grab re-proportioned onto the restored width.
 	gx, gy = 800, 200
 	h.Event(core.MousePressEvent{X: 800, Y: 8, Button: core.LeftButton})
+	gy = 216
 	h.Event(core.MouseMoveEvent{X: 800, Y: 170, Buttons: core.LeftButton})
 	if win.IsMaximized() || surf.size.Width != 200 {
 		t.Fatalf("drag did not restore the zoomed window: maximized=%v width=%d",
 			win.IsMaximized(), surf.size.Width)
 	}
 	// Grab was at the title's center: it stays centered (800/1600*200 = 100).
-	if surf.x != 800-100 || surf.y != 200-8 {
-		t.Errorf("restored window at %d,%d; want %d,%d", surf.x, surf.y, 800-100, 200-8)
+	if surf.x != 800-100 || surf.y != 216-8 {
+		t.Errorf("restored window at %d,%d; want %d,%d", surf.x, surf.y, 800-100, 216-8)
 	}
 
 	// Motion below the top strip re-arms the snap latch...

@@ -65,8 +65,13 @@ type MDIPane struct {
 
 	// Drag state. dragMoved says the pointer has LEFT the point the window
 	// was grabbed at, which is what makes the gesture a drag.
-	dragging    *window.Window
-	dragMoved   bool
+	dragging  *window.Window
+	dragMoved bool
+
+	// dragSnapped says this drag is what maximized the child, so bringing the
+	// pointer back below the pane's top undoes it -- no pull needed, since the
+	// gesture is already a drag rather than a click.
+	dragSnapped bool
 	dragStartX  core.Unit
 	dragStartY  core.Unit
 	dragOffsetX core.Unit
@@ -1645,6 +1650,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 					m.mu.Lock()
 					m.dragging = win
 					m.dragMoved = false
+					m.dragSnapped = false
 					m.dragStartX = event.X
 					m.dragStartY = event.Y
 					m.dragOffsetX = event.X - bounds.X
@@ -1747,10 +1753,11 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// into a click answers that.
 		if dragging.IsMaximized() {
 			m.mu.RLock()
-			startY := m.dragStartY
+			startY, snapped := m.dragStartY, m.dragSnapped
 			m.mu.RUnlock()
 
-			if event.Y-startY >= metrics.UnitsPerCellHeight {
+			if event.Y-startY >= metrics.UnitsPerCellHeight ||
+				(snapped && event.Y >= clientArea.Y) {
 				// The FRAME being held, before the restore takes it away.
 				// It is the whole child except on a capped maximized one,
 				// which holds the pane and draws itself in the middle of it
@@ -1774,6 +1781,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 				m.mu.Lock()
 				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = false
 				m.mu.Unlock()
 			} else {
 				// Not pulled down yet: a maximized child does not slide.
@@ -1795,7 +1803,26 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// is lifted there by the grab offset - which fired too eagerly.
 		if event.Y < clientArea.Y && dragging.CanMaximize() && !justRestored {
 			if !dragging.IsMaximized() {
+				// The frame being held, before maximizing replaces it. The
+				// grab is measured from the child's corner and has to be
+				// re-expressed in the frame it will be holding, or the
+				// gesture goes on pointing into geometry that is gone -- and
+				// the restore that unwinds it inherits the error.
+				oldFrame := dragging.FrameRect()
 				m.MaximizeWindow(dragging)
+				dragging.Layout()
+				newFrame := dragging.FrameRect()
+
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newFrame.Width) / float64(oldFrame.Width))
+				}
+				offsetX, offsetY = offsetX+newFrame.X, offsetY+newFrame.Y
+
+				m.mu.Lock()
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = true
+				m.mu.Unlock()
 			}
 			return true
 		}

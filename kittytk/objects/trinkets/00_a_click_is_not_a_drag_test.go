@@ -60,3 +60,46 @@ func TestDraggingAMaximizedMDITitleBarDownRestoresIt(t *testing.T) {
 		t.Error("dragging the title bar down left the child maximized")
 	}
 }
+
+// A drag that maximizes an MDI child undoes it as soon as the pointer comes
+// back into the pane, and the child comes back under the pointer.
+//
+// The grab is the point of the child the pointer is holding, and the child is
+// placed to keep that point under it. Maximizing changes the child's geometry
+// under the pointer, so the grab has to be re-expressed in the frame it is now
+// holding; the restore that unwinds it works from that number.
+func TestComingBackIntoThePaneUndoesTheSnap(t *testing.T) {
+	pane := NewMDIPane()
+	pane.SetBounds(core.UnitRect{X: 0, Y: 32, Width: 800, Height: 600})
+
+	win := window.NewWindow("child")
+	pane.AddWindow(win)
+	win.SetBounds(core.UnitRect{X: 40, Y: 64, Width: 320, Height: 240})
+
+	client := pane.ClientArea()
+	fr := win.FrameRect()
+	b := win.Bounds()
+	// A quarter of the way along the title bar.
+	at := core.UnitPoint{X: b.X + fr.X + fr.Width/4, Y: b.Y + fr.Y + 8}
+	want := float64(at.X-b.X-fr.X) / float64(fr.Width)
+
+	pane.HandleMousePress(core.MousePressEvent{X: at.X, Y: at.Y, Button: core.LeftButton})
+	up := core.UnitPoint{X: 400, Y: client.Y - 8}
+	pane.HandleMouseMove(core.MouseMoveEvent{X: up.X, Y: up.Y, Buttons: core.LeftButton})
+	if !win.IsMaximized() {
+		t.Fatal("dragging above the pane's top did not maximize the child")
+	}
+
+	down := core.UnitPoint{X: 400, Y: client.Y + 4}
+	pane.HandleMouseMove(core.MouseMoveEvent{X: down.X, Y: down.Y, Buttons: core.LeftButton})
+	if win.IsMaximized() {
+		t.Fatal("coming back into the pane left the child maximized")
+	}
+
+	b, fr = win.Bounds(), win.FrameRect()
+	got := float64(down.X-b.X-fr.X) / float64(fr.Width)
+	if got < want-0.03 || got > want+0.03 {
+		t.Errorf("the pointer is %.3f along the title bar; it grabbed at %.3f", got, want)
+	}
+	pane.HandleMouseRelease(core.MouseReleaseEvent{X: down.X, Y: down.Y, Button: core.LeftButton})
+}

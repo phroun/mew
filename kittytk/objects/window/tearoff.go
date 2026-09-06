@@ -74,6 +74,11 @@ type TearOffHost struct {
 	dragIsHandle bool
 	dragMoved    bool
 
+	// dragGY is where the pointer was, in global pixels, when the drag began.
+	// A zoomed window comes down for travel FROM there.
+	dragGY      int
+	dragGYValid bool
+
 	// Edge-resize drag: the OS window resizes with the pointer.
 	resizing    bool
 	resizeEdges int // resizeLeft | resizeRight | resizeBottom
@@ -276,6 +281,11 @@ func (h *TearOffHost) BeginDrag(grabX, grabY core.Unit) {
 	h.dragMoved = false
 	h.grabX, h.grabY = grabX, grabY
 	h.grabPxValid = false
+	h.dragGYValid = false
+	if h.global != nil {
+		_, h.dragGY = h.global()
+		h.dragGYValid = true
+	}
 }
 
 // beginDragAt is DESCRIPTIVE: the pointer is already at (x, y) — a real
@@ -1104,11 +1114,17 @@ func (h *TearOffHost) dragMove() bool {
 	}
 	_, way, ww, wh := h.native.WorkAreaPx()
 	if h.zoomed {
-		// A zoomed window doesn't slide; dragging its title below the
-		// work area's top restores it, with the grab point staying
-		// proportionally placed on the narrower title bar.
+		// A zoomed window doesn't slide; it comes down when it is PULLED
+		// down, and the grab point stays proportionally placed on the
+		// narrower title bar.
+		//
+		// Its top edge is the work area's top already, so where the window
+		// would sit is at or below that from the moment it is grabbed. The
+		// travel from the grab is what says the window is being pulled rather
+		// than clicked on.
 		_, gpy := h.grabPx()
-		if gy-gpy >= way {
+		pull := h.pxHardY(core.FindEffectiveCellMetrics(h.win).UnitsPerCellHeight)
+		if gy-gpy >= way && (!h.dragGYValid || gy-h.dragGY >= pull) {
 			// The grab was on the FRAME being held, which on a capped window
 			// sits in the middle of the surface it fills. Re-express it there
 			// before scaling: measured from the surface's corner it carries

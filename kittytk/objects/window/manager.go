@@ -106,6 +106,11 @@ type WindowManager struct {
 	dragIsTearHandle bool
 	dragMoved        bool
 
+	// dragSnapped says this drag is what maximized the window, so bringing the
+	// pointer back below the menu bar undoes it -- no pull needed, since the
+	// gesture is already a drag rather than a click.
+	dragSnapped bool
+
 	// Resize state
 	resizing       *Window
 	resizeEdge     int
@@ -1784,6 +1789,7 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	m.dragNeedsButton = false
 	m.dragIsTearHandle = false
 	m.dragMoved = false
+	m.dragSnapped = false
 	m.pressedWindow = nil
 	m.mu.Unlock()
 }
@@ -2531,6 +2537,8 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragOffsetY = event.Y - bounds.Y
 					m.dragIsTearHandle = true
 					m.dragMoved = false
+					m.dragSnapped = false
+					m.dragSnapped = false
 					m.dragNeedsButton = false
 					m.pressedWindow = nil
 					m.mu.Unlock()
@@ -2593,6 +2601,8 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragNeedsButton = false
 					m.dragIsTearHandle = false
 					m.dragMoved = false
+					m.dragSnapped = false
+					m.dragSnapped = false
 					m.pressedWindow = nil // Clear pressed window for drag
 					m.mu.Unlock()
 				}
@@ -2761,11 +2771,12 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// a hand puts into a click answers that.
 		if dragging.IsMaximized() {
 			m.mu.RLock()
-			startY := m.dragStartY
+			startY, snapped := m.dragStartY, m.dragSnapped
 			m.mu.RUnlock()
 			pulled := event.Y - startY
 
-			if pulled >= core.FindEffectiveCellMetrics(dragging).UnitsPerCellHeight {
+			if pulled >= core.FindEffectiveCellMetrics(dragging).UnitsPerCellHeight ||
+				(snapped && event.Y >= clientArea.Y) {
 				// The FRAME being held, before the restore takes it away. It is
 				// the whole window except on a capped maximized one, which holds
 				// the room and draws itself in the middle of it -- and there the
@@ -2795,6 +2806,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 				// Update stored offset
 				m.mu.Lock()
 				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = false
 				m.mu.Unlock()
 			} else {
 				// Not pulled down yet: a maximized window does not slide.
@@ -2821,7 +2833,29 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// normal clamped move.
 		if !isTearHandle && event.Y < clientArea.Y && canMaximize(dragging.Flags()) && !justRestored {
 			if !dragging.IsMaximized() {
+				// The frame being held, before maximizing replaces it. The
+				// grab is measured from the window's corner and has to be
+				// re-expressed in the frame it will be holding, or the
+				// gesture goes on pointing into geometry that is gone -- and
+				// the restore that unwinds it inherits the error.
+				oldFrame := dragging.FrameRect()
 				m.MaximizeWindow(dragging)
+				dragging.Layout()
+				newFrame := dragging.FrameRect()
+
+				// Across the width, so the cursor stays proportionally placed
+				// on the wider title bar; down the height unchanged, a title
+				// bar being the same height whatever the window's size.
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newFrame.Width) / float64(oldFrame.Width))
+				}
+				offsetX, offsetY = offsetX+newFrame.X, offsetY+newFrame.Y
+
+				m.mu.Lock()
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = true
+				m.mu.Unlock()
 				m.RequestRepaint()
 			}
 			return true
@@ -2962,6 +2996,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.pressedWindow = nil
 	m.dragIsTearHandle = false
 	m.dragMoved = false
+	m.dragSnapped = false
 	m.mu.Unlock()
 
 	if dragging != nil || resizing != nil {
