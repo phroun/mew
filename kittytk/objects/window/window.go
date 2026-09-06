@@ -662,9 +662,20 @@ func (w *Window) paintShade(p *core.Painter, bounds core.UnitRect, frame core.Un
 				0, 0, 0, modalDimAlpha)
 			continue
 		}
-		p.FillRect(r, shadedFillerChar, st.WithFg(style.ColorBlack))
+		p.FillRect(r, shadedFillerChar, shadeInk(st))
 	}
 	return true
+}
+
+// shadeInk is the cell surface's shade: the light-shade block in black over
+// the frame's own colour.
+//
+// The frame's attributes go with it. A title bar is BOLD, and a terminal
+// renders bold black as BRIGHT black -- so the shade came out grey on blue
+// instead of black on blue. Nothing here is text, so it carries no attribute
+// at all.
+func shadeInk(frame style.CellStyle) style.CellStyle {
+	return frame.WithFg(style.ColorBlack).WithAttrs(style.StyleNormal)
 }
 
 // shadedFillerChar is the light-shade block: a quarter of the cell covered,

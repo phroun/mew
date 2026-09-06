@@ -426,6 +426,10 @@ func (t *DoubleClickTracker) Press(x, y core.Unit, metrics core.CellMetrics) boo
 	return false
 }
 
+// Armed reports whether a press is pending -- whether the next one could
+// complete a double-click.
+func (t *DoubleClickTracker) Armed() bool { return !t.at.IsZero() }
+
 // Reset forgets the pending click (the next press starts a fresh count).
 func (t *DoubleClickTracker) Reset() {
 	t.at = time.Time{}

@@ -78,9 +78,10 @@ type MDIPane struct {
 	resizeOriginal core.UnitRect
 
 	// Double-click detection
-	lastClickTime   time.Time
-	lastClickX      core.Unit
-	lastClickY      core.Unit
+	// The title bar's double-click, on the kit every title bar shares. The
+	// window is tracked alongside it so clicks on two different children
+	// never pair up.
+	titleClicks     window.DoubleClickTracker
 	lastClickWindow *window.Window
 
 	// Focus-without-raise: track pressed window for conditional raise on release
@@ -1601,27 +1602,26 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				localEvent.X -= bounds.X
 				localEvent.Y -= bounds.Y
 				if win.HandleMousePress(localEvent) {
-					// Update click tracking
+					// The window took it -- a caption button. That is not
+					// half of a double-click, so the tracker is disarmed
+					// rather than fed: recording it lets the NEXT plain
+					// title click pair with a button press and toggle
+					// maximize a second time.
 					m.mu.Lock()
-					m.lastClickTime = time.Now()
-					m.lastClickX = event.X
-					m.lastClickY = event.Y
+					m.titleClicks.Reset()
 					m.lastClickWindow = win
 					m.pressedWindow = nil
 					m.mu.Unlock()
 					return true
 				}
 
-				// Check for double-click
-				now := time.Now()
+				// Check for double-click, reset when the target window
+				// changes so clicks on two children never pair up.
 				m.mu.Lock()
-				isDoubleClick := m.lastClickWindow == win &&
-					now.Sub(m.lastClickTime) < 400*time.Millisecond &&
-					abs(int(event.X-m.lastClickX)) < int(metrics.UnitsPerCellWidth) &&
-					abs(int(event.Y-m.lastClickY)) < int(metrics.UnitsPerCellHeight)
-				m.lastClickTime = now
-				m.lastClickX = event.X
-				m.lastClickY = event.Y
+				if m.lastClickWindow != win {
+					m.titleClicks.Reset()
+				}
+				isDoubleClick := m.titleClicks.Press(event.X, event.Y, metrics)
 				m.lastClickWindow = win
 				m.mu.Unlock()
 
@@ -1723,17 +1723,29 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if dragging.IsMaximized() {
 			newY := event.Y - offsetY
 			if newY >= clientArea.Y {
-				oldBounds := dragging.Bounds()
+				// The FRAME being held, before the restore takes it away.
+				// It is the whole child except on a capped maximized one,
+				// which holds the pane and draws itself in the middle of it
+				// -- and there the grab offset, measured from the pane's
+				// corner, is nowhere near the title bar that was grabbed.
+				oldFrame := dragging.FrameRect()
 				dragging.Restore()
 				justRestored = true
 				newBounds := dragging.Bounds()
 				dragging.Layout()
 
-				proportion := float64(offsetX) / float64(oldBounds.Width)
-				offsetX = core.Unit(proportion * float64(newBounds.Width))
+				// Re-express the grab inside that frame, then scale it
+				// across the width so the cursor stays proportionally
+				// placed on the narrower title bar, and down the height
+				// unchanged -- a title bar is the same height whatever the
+				// window's size.
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newBounds.Width) / float64(oldFrame.Width))
+				}
 
 				m.mu.Lock()
-				m.dragOffsetX = offsetX
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
 				m.mu.Unlock()
 			} else {
 				return true
