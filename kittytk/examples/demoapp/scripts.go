@@ -313,67 +313,73 @@ dn=new tab caption="Denomination" children={
 	}
 }
 
-new tab caption="Grid" children={
-	new panel layout=vbox spacing=8 children={
-		new label caption="A form: labels in a column that sizes to them, fields in one that takes the rest."
-		new panel border layout=grid spacing=8 columns={
-			new band id=labels
-			new band id=fields stretch=1
-		} children={
-			new label caption="Name:" row=0 column=labels halign=textend fill=none
-			new textinput row=0 column=fields placeholder="Ada Lovelace"
-			new label caption="Address:" row=1 column=labels halign=textend fill=none
-			new textinput row=1 column=fields placeholder="12 Marylebone Road"
-			new label caption="Notes:" row=2 column=labels halign=textend valign=top fill=none
-			new textinput row=2 column=fields placeholder="anything at all"
-			new panel layout=hbox spacing=8 row=3 column=labels column_span=2 halign=textend fill=none children={
-				new button caption="Save" action=demo.grid.save
-				new button caption="Cancel" action=demo.grid.cancel
+gr=new tab caption="Grid" children={
+	grv=new panel layout=vbox spacing=8 children={
+		grtl=new checkbox caption="direction=rtl -- column 0 becomes the rightmost, and every halign below turns over with it" halign=textbegin fill=none
+		grc=new panel layout=vbox spacing=8 stretch=1 children={
+			new label caption="A form: labels in a column that sizes to them, fields in one that takes the rest."
+			new panel border layout=grid spacing=8 columns={
+				new band id=labels
+				new band id=fields stretch=1
+			} children={
+				new label caption="Name:" row=0 column=labels halign=textend fill=none
+				new textinput row=0 column=fields placeholder="Ada Lovelace"
+				new label caption="Address:" row=1 column=labels halign=textend fill=none
+				new textinput row=1 column=fields placeholder="12 Marylebone Road"
+				new label caption="Notes:" row=2 column=labels halign=textend valign=top fill=none
+				new textinput row=2 column=fields placeholder="anything at all"
+				new panel layout=hbox spacing=8 row=3 column=labels column_span=2 halign=textend fill=none children={
+					new button caption="Save" action=demo.grid.save
+					new button caption="Cancel" action=demo.grid.cancel
+				}
 			}
+			new label caption="A span: the button row above covers both columns and sits at the trailing edge."
+			new panel border layout=grid spacing=4 columns={
+				new band stretch=1
+				new band stretch=1
+				new band stretch=1
+				new band stretch=1
+			} children={
+				new button caption="1" row=0 column=0 fill=none
+				new button caption="2" row=0 column=1 fill=none
+				new button caption="3" row=0 column=2 fill=none
+				new button caption="tall" row=0 column=3 row_span=2 fill=none
+				new button caption="4" row=1 column=0 fill=none
+				new button caption="wide" row=1 column=1 column_span=2 fill=none
+			}
+			new spacer
 		}
-		new label caption="A span: the button row above covers both columns and sits at the trailing edge."
-		new panel border layout=grid spacing=4 columns={
-			new band stretch=1
-			new band stretch=1
-			new band stretch=1
-			new band stretch=1
-		} children={
-			new button caption="1" row=0 column=0 fill=none
-			new button caption="2" row=0 column=1 fill=none
-			new button caption="3" row=0 column=2 fill=none
-			new button caption="tall" row=0 column=3 row_span=2 fill=none
-			new button caption="4" row=1 column=0 fill=none
-			new button caption="wide" row=1 column=1 column_span=2 fill=none
-		}
-		new spacer
 	}
 }
 
-new tab caption="Flex" children={
-	new panel layout=vbox spacing=8 children={
-		new label caption="Wrapping: eight cards in a run that breaks when it runs out of room."
-		new panel border layout=flex flex_wrap=wrap spacing=4 align_items=begin children={
-			new button caption="Alpha"
-			new button caption="Bravo"
-			new button caption="Charlie"
-			new button caption="Delta"
-			new button caption="Echo"
-			new button caption="Foxtrot"
-			new button caption="Golf"
-			new button caption="Hotel"
+fx=new tab caption="Flex" children={
+	fxv=new panel layout=vbox spacing=8 children={
+		fxrtl=new checkbox caption="direction=rtl -- each run begins at the right, and a wrapping run stacks its lines from there" halign=textbegin fill=none
+		fxc=new panel layout=vbox spacing=8 stretch=1 children={
+			new label caption="Wrapping: eight cards in a run that breaks when it runs out of room."
+			new panel border layout=flex flex_wrap=wrap spacing=4 align_items=begin children={
+				new button caption="Alpha"
+				new button caption="Bravo"
+				new button caption="Charlie"
+				new button caption="Delta"
+				new button caption="Echo"
+				new button caption="Foxtrot"
+				new button caption="Golf"
+				new button caption="Hotel"
+			}
+			new label caption="Justify: leftover space spread between the buttons, which no box can do."
+			new panel border layout=flex justify=space_between spacing=0 align_items=center children={
+				new button caption="Left"
+				new button caption="Middle"
+				new button caption="Right"
+			}
+			new label caption="Grow: one part to three, so the second field takes three times the leftover."
+			new panel border layout=flex spacing=8 align_items=center children={
+				new textinput grow=1 placeholder="one part"
+				new textinput grow=3 placeholder="three parts"
+			}
+			new spacer
 		}
-		new label caption="Justify: leftover space spread between the buttons, which no box can do."
-		new panel border layout=flex justify=space_between spacing=0 align_items=center children={
-			new button caption="Left"
-			new button caption="Middle"
-			new button caption="Right"
-		}
-		new label caption="Grow: one part to three, so the second field takes three times the leftover."
-		new panel border layout=flex spacing=8 align_items=center children={
-			new textinput grow=1 placeholder="one part"
-			new textinput grow=3 placeholder="three parts"
-		}
-		new spacer
 	}
 }
 
@@ -750,6 +756,10 @@ lhbegin=w.t.lim.limv.limalignrow.lhbegin
 lhcenter=w.t.lim.limv.limalignrow.lhcenter
 lhend=w.t.lim.limv.limalignrow.lhend
 lhfill=w.t.lim.limv.limalignrow.lhfill
+grtl=w.t.gr.grv.grtl
+grc=w.t.gr.grv.grc
+fxrtl=w.t.fx.fxv.fxrtl
+fxc=w.t.fx.fxv.fxc
 `)
 
 	// The menu bar and status bar are adopted as this application's

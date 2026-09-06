@@ -121,7 +121,30 @@ func (a *app) wireMainWindow() {
 
 	a.wireDenomination(win)
 	a.wireLimits()
+	a.wireDirection()
 	a.wireTerminalTab(tabs)
+}
+
+// wireDirection turns the Grid and Flex tabs over.
+//
+// direction is inherited, so it goes on the panel holding the demonstrations
+// and reaches everything under it -- the bands of a grid, the run of a flex,
+// and every halign a child in them carries. The checkbox itself sits OUTSIDE
+// that panel, so the control stays where the reader left it while what it
+// controls turns over.
+func (a *app) wireDirection() {
+	ui := a.ui
+	turn := func(target client.Handle) func(protocol.FlagState) {
+		return func(s protocol.FlagState) {
+			if s == protocol.FlagTrue {
+				_ = target.Set("direction=rtl")
+				return
+			}
+			_ = target.Set("direction=ltr")
+		}
+	}
+	ui.Checkbox("grtl").OnToggle(turn(ui.Object("grc")))
+	ui.Checkbox("fxrtl").OnToggle(turn(ui.Object("fxc")))
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and

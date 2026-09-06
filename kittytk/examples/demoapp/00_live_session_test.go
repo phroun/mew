@@ -197,7 +197,7 @@ func TestDemoBuildsOverService(t *testing.T) {
 	// Every function the main window's wiring reaches, not just the entry
 	// point: a helper split out of it addresses the same script and its
 	// names go unchecked otherwise.
-	for _, fn := range []string{"wireMainWindow", "wireDenomination", "wireLimits", "wireTerminalTab"} {
+	for _, fn := range []string{"wireMainWindow", "wireDenomination", "wireLimits", "wireDirection", "wireTerminalTab"} {
 		for _, name := range wiredNames(t, fn) {
 			if ui.ID(name) == 0 {
 				t.Errorf("%s addresses %q but the script never surfaces it: "+
