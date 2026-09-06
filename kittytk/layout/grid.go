@@ -245,6 +245,9 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		metrics = core.FindEffectiveCellMetrics(w)
 	}
 
+	colQ := cellQuantum(container, metrics.UnitsPerCellWidth)
+	rowQ := cellQuantum(container, metrics.UnitsPerCellHeight)
+
 	rect := l.effectiveBounds(bounds)
 	rows := l.RowCount()
 	cols := l.ColumnCount()
@@ -255,12 +258,12 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 	// What the boundaries take -- or give back, where two bearings close up --
 	// is not the columns' to divide.
-	gaps := l.columnGaps(cols, metrics)
-	colWidths := l.calculateColumnWidths(rect.Width-sumGaps(gaps), cols, gaps, metrics)
+	gaps := l.columnGaps(cols, metrics, colQ)
+	colWidths := l.calculateColumnWidths(rect.Width-sumGaps(gaps), cols, gaps, metrics, colQ)
 
 	// Calculate row heights
-	rowGaps := l.rowGaps(rows)
-	rowHeights := l.calculateRowHeights(rect.Height, rows, rowGaps)
+	rowGaps := l.rowGaps(rows, rowQ)
+	rowHeights := l.calculateRowHeights(rect.Height, rows, rowGaps, rowQ)
 
 	// Calculate column positions.
 	colX := make([]core.Unit, cols+1)
@@ -272,11 +275,17 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		}
 	}
 
-	// Calculate row positions
+	// Calculate row positions. The boundary between two rows is the same one
+	// rowGaps charged against the room, so the positions and the sizing agree
+	// about where a row starts.
 	rowY := make([]core.Unit, rows+1)
 	rowY[0] = rect.Y
 	for i := 0; i < rows; i++ {
-		rowY[i+1] = rowY[i] + rowHeights[i] + l.spacing
+		gap := core.Unit(0)
+		if i < len(rowGaps) {
+			gap = rowGaps[i]
+		}
+		rowY[i+1] = rowY[i] + rowHeights[i] + gap
 	}
 
 	// Position each item
@@ -297,8 +306,8 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 		height := core.Unit(0)
 		for r := item.Row; r < item.Row+item.RowSpan && r < rows; r++ {
 			height += rowHeights[r]
-			if r > item.Row {
-				height += l.spacing
+			if r > item.Row && r-1 < len(rowGaps) {
+				height += rowGaps[r-1]
 			}
 		}
 
@@ -306,7 +315,7 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 		// Apply alignment
 		itemBounds = l.alignItem(item, itemBounds, layoutDir, metrics)
-		item.Trinket.SetBounds(itemBounds)
+		placeChild(container, item.Trinket, itemBounds, metrics)
 	}
 }
 
@@ -333,7 +342,7 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 // any row that puts an inline child on a side settles that side, as the largest
 // stretch asked of a column settles its stretch. A child that SPANS the
 // boundary straddles it and brings no bearing to it.
-func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics) []core.Unit {
+func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics, q core.Unit) []core.Unit {
 	if cols < 2 {
 		return nil
 	}
@@ -360,7 +369,7 @@ func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics) []core.Unit 
 		case left || right:
 			gaps[c] = 0
 		default:
-			gaps[c] = l.spacing
+			gaps[c] = l.cellSpacing(q)
 		}
 	}
 	return gaps
@@ -425,7 +434,7 @@ func laidOutWidth(metrics core.CellMetrics) func(core.Trinket) core.Unit {
 }
 
 // calculateColumnWidths calculates the width of each column.
-func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, gaps []core.Unit, metrics core.CellMetrics) []core.Unit {
+func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, gaps []core.Unit, metrics core.CellMetrics, q core.Unit) []core.Unit {
 	floors := l.columnFloors(cols, gaps, laidOutWidth(metrics))
 	items := make([]stretchItem, cols)
 	for c := 0; c < cols; c++ {
@@ -433,18 +442,18 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int, gaps [
 		items[c] = stretchItem{minimum: floors[c], maximum: band.Ceiling(), stretch: band.Stretch}
 	}
 	// The boundaries were taken out by the caller (see columnGaps).
-	return calculateStretch(available, items)
+	return calculateStretch(available, items, q)
 }
 
 // calculateRowHeights calculates the height of each row.
-func (l *GridLayout) calculateRowHeights(available core.Unit, rows int, gaps []core.Unit) []core.Unit {
+func (l *GridLayout) calculateRowHeights(available core.Unit, rows int, gaps []core.Unit, q core.Unit) []core.Unit {
 	floors := l.rowFloors(rows, gaps, func(w core.Trinket) core.Unit { return itemSize(w).Height })
 	items := make([]stretchItem, rows)
 	for r := 0; r < rows; r++ {
 		band := bandAt(l.rows, r)
 		items[r] = stretchItem{minimum: floors[r], maximum: band.Ceiling(), stretch: band.Stretch}
 	}
-	return calculateStretch(available-sumGaps(gaps), items)
+	return calculateStretch(available-sumGaps(gaps), items, q)
 }
 
 // alignItem adjusts item bounds based on alignment. Each axis is placed on
@@ -521,6 +530,7 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 
 	metrics := l.effectiveMetrics(container)
 	return l.measure(cols, rows, metrics,
+		cellQuantum(container, metrics.UnitsPerCellWidth), cellQuantum(container, metrics.UnitsPerCellHeight),
 		func(w core.Trinket) core.Unit {
 			return w.SizeHint().Width + 2*sideBearing(w, metrics)
 		},
@@ -536,16 +546,21 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 // consume. A grid that counted them differently reported a size it would not
 // then lay out: two inline children whose bearings close the boundary up by a
 // column had it charged as a column of spacing instead.
-func (l *GridLayout) measure(cols, rows int, metrics core.CellMetrics, width, height func(core.Trinket) core.Unit) core.UnitSize {
-	colGaps := l.columnGaps(cols, metrics)
-	rowGaps := l.rowGaps(rows)
+func (l *GridLayout) measure(cols, rows int, metrics core.CellMetrics, colQ, rowQ core.Unit,
+	width, height func(core.Trinket) core.Unit) core.UnitSize {
+	colGaps := l.columnGaps(cols, metrics, colQ)
+	rowGaps := l.rowGaps(rows, rowQ)
 
+	// Each track is charged what it will actually take: a whole number of
+	// cells where the surface has a grid, which is what Layout gives it. A
+	// grid that measured the raw floors asked for less than it lays out, and
+	// a bordered panel at its own hint drew its frame through its children.
 	var w, h core.Unit
 	for _, size := range l.columnFloors(cols, colGaps, width) {
-		w += size
+		w += ceilToQuantum(size, colQ)
 	}
 	for _, size := range l.rowFloors(rows, rowGaps, height) {
-		h += size
+		h += ceilToQuantum(size, rowQ)
 	}
 
 	w += sumGaps(colGaps) + l.margins.Horizontal()
@@ -564,6 +579,7 @@ func (l *GridLayout) MinimumSize(container core.Container) core.UnitSize {
 
 	metrics := l.effectiveMetrics(container)
 	return l.measure(cols, rows, metrics,
+		cellQuantum(container, metrics.UnitsPerCellWidth), cellQuantum(container, metrics.UnitsPerCellHeight),
 		func(w core.Trinket) core.Unit {
 			return w.MinimumSize().Width + 2*sideBearing(w, metrics)
 		},

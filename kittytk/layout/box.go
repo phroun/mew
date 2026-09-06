@@ -232,7 +232,8 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// Calculate sizes along the primary axis
 	var sizes []core.Unit
 	if l.orientation == core.Horizontal {
-		sizes = l.horizontalItemWidths(rect.Width, metrics, spacing, inlineSpacingTotal)
+		sizes = l.horizontalItemWidths(rect.Width, metrics, spacing, inlineSpacingTotal,
+			cellQuantum(container, metrics.UnitsPerCellWidth))
 	} else {
 		totalSpacing := spacing * core.Unit(len(l.items)-1)
 		stretchItems := make([]stretchItem, len(l.items))
@@ -267,7 +268,8 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			}
 		}
 
-		sizes = calculateStretch(rect.Height-totalSpacing, stretchItems)
+		sizes = calculateStretch(rect.Height-totalSpacing, stretchItems,
+			cellQuantum(container, metrics.UnitsPerCellHeight))
 	}
 
 	// The line's decoration room, set aside before anything is aligned in it.
@@ -331,7 +333,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 		// Apply alignment within the item bounds
 		itemBounds = l.alignItem(item, itemBounds, allowance, layoutDir)
-		item.Trinket.SetBounds(itemBounds)
+		placeChild(container, item.Trinket, itemBounds, metrics)
 	}
 }
 
@@ -549,7 +551,7 @@ func hasHeightForWidth(w core.Trinket) bool {
 // horizontalItemWidths computes item widths for the horizontal
 // orientation given the content width (margins already removed),
 // mirroring Layout's spacing rules.
-func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.CellMetrics, baseSpacing, inlineSpacingTotal core.Unit) []core.Unit {
+func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.CellMetrics, baseSpacing, inlineSpacingTotal, q core.Unit) []core.Unit {
 	// For inline gaps, use inline spacing; for container gaps, use base spacing
 	totalSpacing := inlineSpacingTotal
 	for i := 0; i < len(l.items)-1; i++ {
@@ -579,7 +581,7 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 		}
 	}
 
-	return calculateStretch(contentWidth-totalSpacing, stretchItems)
+	return calculateStretch(contentWidth-totalSpacing, stretchItems, q)
 }
 
 // verticalItemWidth returns the width an item will receive in a
@@ -669,7 +671,12 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 		}
 	} else {
 		spacing := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
-		widths := l.horizontalItemWidths(contentWidth, metrics, spacing, l.inlineSpacingForItems(metrics))
+		// Measured at the widths Layout will give, which on a cell surface are
+		// whole cells: a child asked how tall it is at a width it will never
+		// have answers for a line it will never wrap at.
+		container, _ := l.metricsSource.(core.Container)
+		widths := l.horizontalItemWidths(contentWidth, metrics, spacing, l.inlineSpacingForItems(metrics),
+			cellQuantum(container, metrics.UnitsPerCellWidth))
 		for i, item := range l.items {
 			if h := itemHeightForWidth(item.Trinket, widths[i]); h > height {
 				height = h

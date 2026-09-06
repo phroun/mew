@@ -92,6 +92,20 @@ func (l *BaseLayout) SetContentsMargins(margins core.UnitMargins) {
 	l.margins = margins
 }
 
+// cellSpacing is the gap between tracks, rounded DOWN to whole cells.
+//
+// A gap of half a cell cannot be drawn, and a gap of two and a half lands as
+// two cells at one boundary and three at the next, because where a track
+// starts is rounded and the gap it was given is not. Rounding the gap down
+// gives every boundary the same width. The box rounds its own spacing the same
+// way, so a script asking two managers for the same spacing gets it.
+func (l *BaseLayout) cellSpacing(q core.Unit) core.Unit {
+	if q <= 1 {
+		return l.spacing
+	}
+	return (l.spacing / q) * q
+}
+
 // effectiveBounds returns bounds adjusted for margins.
 func (l *BaseLayout) effectiveBounds(bounds core.UnitRect) core.UnitRect {
 	return core.UnitRect{
@@ -180,8 +194,106 @@ func statedAlignment(w core.Trinket) (core.Alignment, bool) {
 	return core.Alignment{}, false
 }
 
-// calculateStretch distributes available space among stretching items.
-func calculateStretch(available core.Unit, items []stretchItem) []core.Unit {
+// cellQuantum is the size every track a container lays out must be a whole
+// number of, or 0 where a track may be any size at all.
+//
+// A cell surface draws by dividing units by the cell size and hit-tests in
+// units, so a track that is not a whole number of cells puts everything after
+// it between cells: it draws in one and answers the mouse in another. A
+// smooth surface has no such grid.
+//
+// What is quantized is the distribution, so the tracks themselves land on the
+// grid. Rounding a child's origin afterwards without that would move it out of
+// the space the layout gave it and into its neighbour's; with it, the only
+// fraction of a cell left to round away is the one an alignment put inside a
+// child's own track (see placeChild).
+func cellQuantum(container core.Container, size core.Unit) core.Unit {
+	w, ok := container.(core.Trinket)
+	if !ok || w == nil || core.FindSmoothPositioning(w) {
+		return 0
+	}
+	return size
+}
+
+// ceilToQuantum rounds a size up to a whole number of q. An extent ceils: a
+// track a fraction of a cell wide still needs the whole cell to draw in.
+func ceilToQuantum(v, q core.Unit) core.Unit {
+	if q <= 1 {
+		return v
+	}
+	return floorToQuantum(v+q-1, q)
+}
+
+// floorToQuantum rounds a position down to a whole number of q. A position
+// floors: the cell a child starts in is the one that holds its first column,
+// however far into that cell the arithmetic put it.
+func floorToQuantum(v, q core.Unit) core.Unit {
+	if q <= 1 {
+		return v
+	}
+	r := v % q
+	if r < 0 {
+		r += q
+	}
+	return v - r
+}
+
+// placeChild hands a child its bounds with its origin on the cell grid.
+//
+// Drawing divides units by the cell size and hit-testing does not, so a child
+// standing a fraction of a cell in draws in one cell and answers the mouse in
+// another -- a button whose clicks are a column out. The tracks a layout
+// divides its room into are already whole cells (see quantizeSizes), so the
+// fraction taken off here is the one an alignment put there: centring a child
+// in a track wider than it is. Taking it off can only move the child back
+// towards the start of the track it was given.
+func placeChild(container core.Container, w core.Trinket, bounds core.UnitRect, metrics core.CellMetrics) {
+	bounds.X = floorToQuantum(bounds.X, cellQuantum(container, metrics.UnitsPerCellWidth))
+	bounds.Y = floorToQuantum(bounds.Y, cellQuantum(container, metrics.UnitsPerCellHeight))
+	w.SetBounds(bounds)
+}
+
+// quantizeSizes rounds each size to a whole number of q and keeps the total
+// within available.
+//
+// An extent CEILS, so a track a fraction of a cell over still gets the whole
+// cell it needs to draw in. Rounding up can overrun the room, and what is
+// taken back is only ever the fraction of a cell that rounding up added: a
+// room too small for the sizes it was handed stays too small, because
+// quantizing settles where the cell boundaries fall and not who gets clipped.
+func quantizeSizes(sizes []core.Unit, available, q core.Unit) {
+	if q <= 1 || len(sizes) == 0 {
+		return
+	}
+	total, floor := core.Unit(0), make([]core.Unit, len(sizes))
+	for i := range sizes {
+		floor[i] = (sizes[i] / q) * q
+		sizes[i] = ceilToQuantum(sizes[i], q)
+		total += sizes[i]
+	}
+
+	// Given back from the end of the run, so what was asked for first is what
+	// keeps the cell it was rounded up to.
+	for total > available {
+		took := false
+		for i := len(sizes) - 1; i >= 0 && total > available; i-- {
+			if sizes[i] <= floor[i] {
+				continue
+			}
+			sizes[i] -= q
+			total -= q
+			took = true
+		}
+		if !took {
+			break
+		}
+	}
+}
+
+// calculateStretch distributes available space among stretching items. Every
+// size it returns is a whole number of q where the surface has a cell grid
+// (see cellQuantum); q of 0 leaves them exactly as the arithmetic fell.
+func calculateStretch(available core.Unit, items []stretchItem, q core.Unit) []core.Unit {
 	if len(items) == 0 {
 		return nil
 	}
@@ -201,6 +313,7 @@ func calculateStretch(available core.Unit, items []stretchItem) []core.Unit {
 		for i, item := range items {
 			sizes[i] = item.minimum
 		}
+		quantizeSizes(sizes, available, q)
 		return sizes
 	}
 
@@ -238,6 +351,7 @@ func calculateStretch(available core.Unit, items []stretchItem) []core.Unit {
 				taken++
 			}
 		}
+		quantizeSizes(sizes, available, q)
 		return sizes
 	}
 
@@ -246,6 +360,7 @@ func calculateStretch(available core.Unit, items []stretchItem) []core.Unit {
 		sizes[i] = item.minimum
 	}
 	growByStretch(sizes, items, extra)
+	quantizeSizes(sizes, available, q)
 	return sizes
 }
 

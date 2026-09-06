@@ -71,6 +71,15 @@ type FlexLayout struct {
 	alignItems    FlexAlign
 	items         []*FlexItem
 	metricsSource core.Trinket // container whose effective grid metrics apply
+
+	// gap is what a boundary costs along the run, crossGap what one costs
+	// between lines, and mainQ and crossQ the size a track on each axis has to
+	// be a whole number of -- see resolveGap. All four are set at the top of
+	// every entry point and read by everything below.
+	gap      core.Unit
+	crossGap core.Unit
+	mainQ    core.Unit
+	crossQ   core.Unit
 }
 
 // NewFlexLayout creates a new flex layout.
@@ -155,6 +164,32 @@ func (l *FlexLayout) AddTrinket(trinket core.Trinket) {
 		item.Align, item.AlignSet = h.LayoutAlignment()
 	}
 	l.items = append(l.items, item)
+}
+
+// resolveGap settles the grid this pass works on: the size a track has to be a
+// whole number of along the run and between lines, and what a boundary costs
+// on each. A gap of half a cell cannot be drawn and puts everything after it
+// between cells, so a gap rounds down to whole cells.
+//
+// The two axes are asked separately because a cell is taller than it is wide,
+// so the same spacing is a whole number of one and a fraction of the other.
+//
+// All four are settled once at the top of a pass and held on the layout,
+// rather than threaded through every function that measures, breaks or places.
+func (l *FlexLayout) resolveGap(container core.Container, metrics core.CellMetrics) {
+	if container == nil {
+		// Measuring without one: the metrics source is the container this
+		// layout belongs to, and it answers the same question.
+		container, _ = l.metricsSource.(core.Container)
+	}
+	main, cross := metrics.UnitsPerCellHeight, metrics.UnitsPerCellWidth
+	if l.isMainHorizontal() {
+		main, cross = cross, main
+	}
+	l.mainQ = cellQuantum(container, main)
+	l.crossQ = cellQuantum(container, cross)
+	l.gap = l.cellSpacing(l.mainQ)
+	l.crossGap = l.cellSpacing(l.crossQ)
 }
 
 // refreshHints re-reads the flex hints off every child, so a grow, shrink or
@@ -270,7 +305,7 @@ func (l *FlexLayout) breakIntoLines(base []core.Unit, mainSize core.Unit, metric
 			}
 		}
 		if i > first {
-			next += l.spacing
+			next += l.gap
 		}
 		if i > first && used+next > mainSize {
 			lines = append(lines, flexLine{first: first, last: i})
@@ -312,7 +347,7 @@ func (l *FlexLayout) lineBearings(line flexLine, metrics core.CellMetrics) core.
 // resolveMain divides the line's main axis: grow shares out what is left over,
 // shrink shares out what is missing, and neither takes an item below its own
 // minimum.
-func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core.Unit, metrics core.CellMetrics) {
+func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core.Unit, metrics core.CellMetrics, q core.Unit) {
 	n := line.last - line.first
 	line.sizes = make([]core.Unit, n)
 	copy(line.sizes, base[line.first:line.last])
@@ -325,7 +360,7 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 		totalShrink += l.items[i].Shrink
 	}
 	if n > 1 {
-		total += l.spacing * core.Unit(n-1)
+		total += l.gap * core.Unit(n-1)
 	}
 	total += l.lineBearings(*line, metrics)
 
@@ -351,6 +386,16 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 			line.sizes[i-line.first] -= take
 		}
 	}
+
+	// Whole cells where the surface has a grid: a line laid out in fractions
+	// of a cell puts every item after the first between cells (see
+	// quantizeSizes). The room the sizes have to fit is the line's, less what
+	// the boundaries and the bearings take.
+	room := mainSize - l.lineBearings(*line, metrics)
+	if n > 1 {
+		room -= l.gap * core.Unit(n-1)
+	}
+	quantizeSizes(line.sizes, room, q)
 }
 
 // growLine hands out a line's spare room among the items that grow, in
@@ -423,7 +468,9 @@ func (l *FlexLayout) minCross(item *FlexItem) core.Unit {
 	return cross
 }
 
-// lineCross is how deep a line is: the deepest thing in it.
+// lineCross is how deep a line is: the deepest thing in it, taken out to the
+// whole cell it needs where the surface has a grid, so the line below it
+// starts on one.
 func (l *FlexLayout) lineCross(line flexLine) core.Unit {
 	deepest := core.Unit(0)
 	for i := line.first; i < line.last; i++ {
@@ -433,7 +480,7 @@ func (l *FlexLayout) lineCross(line flexLine) core.Unit {
 			deepest = cross
 		}
 	}
-	return deepest
+	return ceilToQuantum(deepest, l.crossQ)
 }
 
 // Layout arranges children within the given bounds.
@@ -442,6 +489,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 		return
 	}
 	l.refreshHints()
+	l.resolveGap(container, l.effectiveMetrics(container))
 
 	rect := l.effectiveBounds(bounds)
 	mainSize, crossSize := l.mainCross(rect.Width, rect.Height)
@@ -459,7 +507,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 	lines := l.breakIntoLines(base, mainSize, metrics)
 	for i := range lines {
-		l.resolveMain(&lines[i], base, mainSize, metrics)
+		l.resolveMain(&lines[i], base, mainSize, metrics, l.mainQ)
 		lines[i].cross = l.lineCross(lines[i])
 	}
 
@@ -471,7 +519,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 	}
 	crossPos := core.Unit(0)
 	if l.wrap == FlexWrapReverse && len(lines) > 1 {
-		used := l.spacing * core.Unit(len(lines)-1)
+		used := l.crossGap * core.Unit(len(lines)-1)
 		for _, line := range lines {
 			used += line.cross
 		}
@@ -481,14 +529,14 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 	}
 	for i := range lines {
 		lines[i].crossPos = crossPos
-		crossPos += lines[i].cross + l.spacing
+		crossPos += lines[i].cross + l.crossGap
 	}
 
 	for _, line := range lines {
 		n := line.last - line.first
 		spacing := core.Unit(0)
 		if n > 1 {
-			spacing = l.spacing * core.Unit(n-1)
+			spacing = l.gap * core.Unit(n-1)
 		}
 		spacing += l.lineBearings(line, metrics)
 		positions := l.calculatePositions(mainSize, line.sizes, spacing)
@@ -533,7 +581,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 			if !l.isMainHorizontal() {
 				placed = insetForBearing(item.Trinket, metrics, placed)
 			}
-			item.Trinket.SetBounds(placed)
+			placeChild(container, item.Trinket, placed, metrics)
 		}
 	}
 }
@@ -556,21 +604,21 @@ func (l *FlexLayout) calculatePositions(mainSize core.Unit, sizes []core.Unit, s
 		pos := core.Unit(0)
 		for i := range sizes {
 			positions[i] = pos
-			pos += sizes[i] + l.spacing
+			pos += sizes[i] + l.gap
 		}
 
 	case FlexJustifyEnd:
 		pos := freeSpace
 		for i := range sizes {
 			positions[i] = pos
-			pos += sizes[i] + l.spacing
+			pos += sizes[i] + l.gap
 		}
 
 	case FlexJustifyCenter:
 		pos := freeSpace / 2
 		for i := range sizes {
 			positions[i] = pos
-			pos += sizes[i] + l.spacing
+			pos += sizes[i] + l.gap
 		}
 
 	case FlexJustifySpaceBetween:
@@ -718,6 +766,7 @@ func (l *FlexLayout) HasHeightForWidth() bool {
 // lines it breaks into, stacked.
 func (l *FlexLayout) HeightForWidth(width core.Unit) core.Unit {
 	l.refreshHints()
+	l.resolveGap(nil, l.effectiveMetrics(nil))
 	if !l.HasHeightForWidth() {
 		return l.SizeHint(nil).Height
 	}
@@ -728,7 +777,7 @@ func (l *FlexLayout) HeightForWidth(width core.Unit) core.Unit {
 	}
 
 	lines := l.breakIntoLines(base, mainSize, l.effectiveMetrics(nil))
-	total := l.spacing * core.Unit(len(lines)-1)
+	total := l.crossGap * core.Unit(len(lines)-1)
 	for _, line := range lines {
 		total += l.lineCross(line)
 	}
@@ -738,6 +787,7 @@ func (l *FlexLayout) HeightForWidth(width core.Unit) core.Unit {
 // SizeHint returns the preferred size for the container.
 func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 	l.refreshHints()
+	l.resolveGap(container, l.effectiveMetrics(container))
 	var mainTotal, crossMax core.Unit
 
 	for _, item := range l.items {
@@ -756,7 +806,7 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 
 	// Add spacing
 	if len(l.items) > 1 {
-		mainTotal += l.spacing * core.Unit(len(l.items)-1)
+		mainTotal += l.gap * core.Unit(len(l.items)-1)
 	}
 
 	// Add margins
@@ -778,6 +828,7 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 // one that does not is as wide as all of them together.
 func (l *FlexLayout) MinimumSize(container core.Container) core.UnitSize {
 	l.refreshHints()
+	l.resolveGap(container, l.effectiveMetrics(container))
 	var mainTotal, crossMax core.Unit
 
 	for _, item := range l.items {
@@ -798,7 +849,7 @@ func (l *FlexLayout) MinimumSize(container core.Container) core.UnitSize {
 
 	// Add spacing
 	if len(l.items) > 1 {
-		mainTotal += l.spacing * core.Unit(len(l.items)-1)
+		mainTotal += l.gap * core.Unit(len(l.items)-1)
 	}
 
 	// Add margins

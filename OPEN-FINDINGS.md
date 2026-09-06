@@ -133,61 +133,6 @@ worth filing.
 
 ## KittyTK — layout and the cell grid
 
-### Layout hints other than alignment are snapshotted when a child is added
-*Found 2026-09-05 while building the demo's Limits tab.*
-
-A layout reads a child's hints in its `AddTrinket` and keeps the answer, so a
-hint set on a child that is ALREADY in a layout never reaches it. Over the
-wire that is `set k grow=3` on a trinket an earlier build placed -- accepted,
-stored on the trinket, and then read by nobody until the child is added to
-something again.
-
-Alignment is now read when the layout runs (`alignmentFor`), and a grid's band
-names and its bands' stretch already were (`resolveBands`). Still snapshotted:
-
-- `BoxLayout.AddTrinket` -> `item.Stretch`
-- `FlexLayout.AddTrinket` -> `item.Grow`, `item.Shrink`, `item.Basis`
-- `GridLayout.AddTrinket` -> `item.Row`, `item.Column`, and the two spans
-
-The same treatment fits all of them -- read the hint where it is used, keeping
-the stored value as the fallback for a Go caller that wrote the field
-directly. It is worth doing as one change rather than one manager at a time.
-
-### Alignment cannot say which axis it was asked about
-*Found 2026-09-05 while giving grid bands their properties.*
-
-`core.Alignment` carries `H`, `V`, `FillH` and `FillV` behind a single "was one
-set" flag. A child that writes only `halign=textend` gets the whole default
-struct with `H` replaced, and nothing downstream can tell that from a child
-that stated both axes.
-
-This is why a band carries no alignment of its own. A column band saying "my
-labels end at the trailing edge" would be the obvious way to write the Grid
-demo's form -- `halign=textend fill=none` appears on three labels that all mean
-the same thing -- but under one flag a child that then wrote `valign=top` would
-silently lose the band's horizontal answer as well.
-
-Per-axis "stated" flags on `Alignment` would settle it, and a band could then
-supply the horizontal from the column it is and the vertical from the row.
-That is a change to a struct box, flex and grid all read, so it wants doing on
-its own rather than inside a band change.
-
-### Nothing keeps a trinket's bounds on the cell grid
-On a cell surface, drawing rounds and hit-testing does not: `UnitsToCellX`
-integer-divides (`backend/tui/tui.go:993`) while `UnitRect.Contains` works in
-units. So a trinket placed off the grid draws in one cell and answers the mouse
-in another.
-
-This was hit for real: I set a window to `area.Width*3/4`, which has no relation
-to `CellWidth`, and got sizes like 640×400 → 480×276 (`h % 16 == 4`). Fixed at
-that one call site with `metrics.AlignSize`. Nothing enforces it generally.
-
-The gate for whether snapping applies is `WindowManager.SmoothPositioning()`, set
-only when the backend reports `core.SmoothPositioner`. The open question is
-whether alignment belongs in `SetBounds` for every trinket under a cell surface,
-rather than at each call site.
-*Live detail from a session where it was reproduced.*
-
 ### BoxLayout: `SizeHint` counts spacing raw while `Layout` rounds it
 The measurement and the placement disagree about the same gap, so a box asks for
 one size and lays out at another. Anchors: `layout/layout.go:75-76`
@@ -260,41 +205,3 @@ was launched on. **Title only** beyond that.
 A design note rather than a defect. **Title only.**
 Repo is ambiguous — the editor placeholder lives in the toolkit
 (`objects/trinkets/editor_mew*`) but the behaviour is mew's.
-
----
-
-## Added 2026-09-06
-
-### A layout places children off the cell grid, so their clicks are a cell out
-*Reproduced 2026-09-06 in the demo's Grid tab, span panel.*
-
-On a cell surface a trinket must stand on the cell grid: drawing rounds and
-hit-testing does not, so a trinket placed between cells draws in one and
-answers the mouse in another. Windows are held to this in `Window.SetBounds`.
-Nothing holds a trinket in a layout to it.
-
-Measured, in the demo's span panel (a bordered grid, four stretch bands, 640
-units wide): the three buttons land at x=16, **222** and **427**. A cell is 8
-units, so two of the three are three-quarters of a cell out, and a click on
-the painted button lands in the neighbouring column.
-
-Two sources, and both have to go:
-
-- **Stretch remainders.** Dividing what is left among tracks lands their
-  boundaries wherever the arithmetic falls (624 units over four bands).
-- **Sub-cell spacing.** The demo panel asks for `spacing=4`, half a cell,
-  which no cell surface can render.
-
-The fix belongs in the DISTRIBUTION, not after it: each track takes a whole
-number of cells with the remainder handed out a cell at a time, and spacing
-rounds to whole cells, so children are born on the grid.
-
-Snapping each child's origin afterwards was measured and is NOT the fix: it
-pulls a child up into the one above it, and `0_bordered_panels_test.go`
-catches the overlap. Six other layout tests also assert sub-cell coordinates
-and would need rewriting either way.
-
-Scope note: `calculateStretch` is shared by the box and the grid, so doing it
-there fixes both at once. Flex distributes its own. This is the open question
-already recorded above ("Nothing keeps a trinket's bounds on the cell grid")
-with the measurement attached.

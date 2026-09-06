@@ -126,13 +126,13 @@ func (l *GridLayout) rowSpans(size func(core.Trinket) core.Unit) []span {
 // rowGaps is what each boundary between rows costs. Side-bearings are
 // horizontal, so nothing collapses down the page and every boundary is the
 // configured spacing -- which is what Layout puts between rows.
-func (l *GridLayout) rowGaps(rows int) []core.Unit {
+func (l *GridLayout) rowGaps(rows int, q core.Unit) []core.Unit {
 	if rows < 2 {
 		return nil
 	}
 	gaps := make([]core.Unit, rows-1)
 	for i := range gaps {
-		gaps[i] = l.spacing
+		gaps[i] = l.cellSpacing(q)
 	}
 	return gaps
 }
