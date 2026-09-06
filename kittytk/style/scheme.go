@@ -528,6 +528,7 @@ func DefaultScheme() *Scheme {
 		Scrollbar:             ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
 		ScrollbarThumb:        ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack)),
 		HoveredScrollbarThumb: ptr(DefaultStyle().WithFg(ColorMagenta).WithBg(ColorBlack)), // dark magenta thumb
+		FocusedScrollbarThumb: ptr(DefaultStyle().WithFg(ColorCyan).WithBg(ColorBlack)),    // the focus accent, as a thumb
 
 		// ProgressBar
 		ProgressFull:      ptr(DefaultStyle().WithFg(ColorBrightGreen).WithBg(ColorGreen)),
@@ -1352,11 +1353,20 @@ func (s *Scheme) GetHoveredScrollbarThumb() CellStyle {
 	return s.hover()
 }
 
+// GetFocusedScrollbarThumb is the thumb of a focused owner's scrollbar.
+//
+// A thumb is drawn in its FOREGROUND -- filled with it on a pixel surface, and
+// on a character one it is the ink of the block glyph -- so the accent belongs
+// there, over the ground the resting thumb already sits on. Handed the general
+// focus style instead (dark text ON the accent) a thumb comes out the colour
+// of the text: black, on a black track, at the moment it is most wanted.
+//
+// The hovered thumb is built the same way, magenta where this is cyan.
 func (s *Scheme) GetFocusedScrollbarThumb() CellStyle {
 	if s.FocusedScrollbarThumb != nil {
 		return *s.FocusedScrollbarThumb
 	}
-	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+	return s.GetScrollbarThumb().WithFg(s.GetFocusBG())
 }
 
 // GetScrollbarThumbState resolves the scrollbar THUMB style, with the

@@ -52,32 +52,50 @@ func TestAFocusedScrollAreaColoursItsScrollbars(t *testing.T) {
 	thumb := core.UnitPoint{X: x, Y: 4}
 	track := core.UnitPoint{X: x, Y: viewport.Height - 8}
 
-	rgb := func(at core.UnitPoint) (int, int, int) {
+	rgb := func(at core.UnitPoint) [3]int {
 		s.Paint(core.NewPainter(px))
 		r, g, bl, _ := px.Image().At(int(at.X), int(at.Y)).RGBA()
-		return int(r >> 8), int(g >> 8), int(bl >> 8)
+		return [3]int{int(r >> 8), int(g >> 8), int(bl >> 8)}
 	}
 
-	tr0, tg0, tb0 := rgb(thumb)
-	kr0, kg0, kb0 := rgb(track)
-	if tr0 == kr0 && tg0 == kg0 && tb0 == kb0 {
-		t.Fatal("the sample points cannot tell the thumb from the track")
+	// How far apart two samples are on their furthest channel. A thumb has to
+	// stand off its track by a wide margin to be a thumb at all; "it changed"
+	// is not the property -- a thumb that goes black on a black track has
+	// changed, and has vanished at the moment it is most wanted.
+	apart := func(a, b [3]int) int {
+		d := 0
+		for i := 0; i < 3; i++ {
+			if v := a[i] - b[i]; v > d {
+				d = v
+			} else if -v > d {
+				d = -v
+			}
+		}
+		return d
+	}
+	const visible = 60
+
+	thumb0, track0 := rgb(thumb), rgb(track)
+	if got := apart(thumb0, track0); got < visible {
+		t.Fatalf("unfocused, the thumb %v and the track %v are %d apart; the samples are not on what they say",
+			thumb0, track0, got)
 	}
 
 	s.SetFocus()
 	if !s.HasFocus() {
 		t.Fatal("the scroll area did not take focus")
 	}
-	tr1, tg1, tb1 := rgb(thumb)
-	kr1, kg1, kb1 := rgb(track)
+	thumb1, track1 := rgb(thumb), rgb(track)
 
-	if tr0 == tr1 && tg0 == tg1 && tb0 == tb1 {
-		t.Errorf("the thumb is rgb(%d,%d,%d) either way; focus does not show",
-			tr0, tg0, tb0)
+	if thumb1 == thumb0 {
+		t.Errorf("the thumb is %v either way; focus does not show", thumb0)
 	}
-	if kr0 != kr1 || kg0 != kg1 || kb0 != kb1 {
-		t.Errorf("the track moved from rgb(%d,%d,%d) to rgb(%d,%d,%d); only the thumb should",
-			kr0, kg0, kb0, kr1, kg1, kb1)
+	if got := apart(thumb1, track1); got < visible {
+		t.Errorf("focused, the thumb %v is only %d from the track %v; it has gone invisible",
+			thumb1, got, track1)
+	}
+	if track1 != track0 {
+		t.Errorf("the track moved from %v to %v; only the thumb should", track0, track1)
 	}
 }
 
