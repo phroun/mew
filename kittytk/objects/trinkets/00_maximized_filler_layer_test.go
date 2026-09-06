@@ -78,3 +78,46 @@ func renderedBg(t *testing.T, s style.CellStyle) (int, int, int) {
 	r, g, b, _ := probe.Image().At(32, 32).RGBA()
 	return int(r >> 8), int(g >> 8), int(b >> 8)
 }
+
+// A compositing host clears the base layer to TRANSPARENT and draws the
+// wallpaper as a quad underneath it, so the shade has to land as opaque
+// pixels of its own. Left translucent it would let the wallpaper through and
+// read as the bare desktop the filler exists to cover.
+func TestTheFillerIsOpaqueOnATransparentBaseLayer(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(1200, 800)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.SetBounds(core.UnitRect{Width: 1200, Height: 800})
+	wm := d.WindowManager()
+
+	win := window.NewWindow("Bounded")
+	win.SetMaximumSize(core.UnitSize{Width: 480, Height: 320})
+	win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 280, Height: 160})
+	wm.AddWindow(win)
+	wm.MaximizeWindow(win)
+
+	p := core.NewPainter(px)
+	if !p.ClearTransparent() {
+		t.Skip("this backend cannot clear to transparent")
+	}
+	d.Paint(p)
+
+	_, _, _, a := px.Image().At(100, 400).RGBA()
+	if a>>8 != 0xff {
+		t.Errorf("the shade is %d/255 opaque, want it fully covering the wallpaper below", a>>8)
+	}
+	wr, wg, wb := renderedBg(t, win.GetScheme().GetWindowTitle(true))
+	r, g, b, _ := px.Image().At(100, 400).RGBA()
+	for _, c := range []struct {
+		name       string
+		got, whole int
+	}{{"red", int(r >> 8), wr}, {"green", int(g >> 8), wg}, {"blue", int(b >> 8), wb}} {
+		if want := c.whole * 3 / 4; c.got < want-2 || c.got > want+2 {
+			t.Errorf("%s is %d over transparency, want about %d", c.name, c.got, want)
+		}
+	}
+}
