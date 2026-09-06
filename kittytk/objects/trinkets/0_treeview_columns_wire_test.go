@@ -16,11 +16,12 @@ func TestTreeViewColumnsOverWire(t *testing.T) {
 	s := protocol.NewSession()
 
 	build := `
-tree=new treeview caption="Name" showheader sorted sortedby=-1 children={
+tree=new treeview caption="Name" showheader sorted sortedby=-1 columns={
 	sizec=new column id=size caption="Size" width=10 align=right sortable
 	kindc=new column id=kind caption="Kind" width=12 optional
+} items={
 	a=new item caption="Report.txt"
-	b=new item caption="Folder" expanded children={
+	b=new item caption="Folder" expanded items={
 		c=new item caption="inner.txt"
 	}
 }
@@ -103,8 +104,9 @@ set tree.sizec children={
 // the requested column/direction.
 func TestTreeViewSortEventOverWire(t *testing.T) {
 	f, events := buildWithEvents(t, nil, `
-new treeview showheader children={
+new treeview showheader columns={
 	new column id=size caption="Size" width=10 sortable
+} items={
 	new item caption="x"
 }
 `)
@@ -134,11 +136,12 @@ func TestTreeViewColumnsViaCollection(t *testing.T) {
 	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
 	s := protocol.NewSession()
 	script, err := protocol.Parse(`
-new treeview children={
+new treeview columns={
 	new collection children={
 		new column id=a caption="A" width=5
 		new column id=b caption="B" width=6
 	}
+} items={
 	new item caption="row"
 }
 `)

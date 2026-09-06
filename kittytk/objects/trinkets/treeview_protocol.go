@@ -8,8 +8,8 @@ import (
 // (items_protocol.go), nested with children={} blocks and expanded
 // flags:
 //
-//	new treeview children={
-//	    new item caption="Fruit" expanded children={
+//	new treeview items={
+//	    new item caption="Fruit" expanded items={
 //	        new item caption="Apple"
 //	        new item caption="Pear"
 //	    }

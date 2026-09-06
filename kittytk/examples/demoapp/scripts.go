@@ -15,53 +15,53 @@ import (
 // treeItemsScript is the demo tree, shared by the Lists and Scroll
 // Lists tabs (nested children blocks ARE the tree).
 const treeItemsScript = `
-new item caption="Documents" expanded children={
-	new item caption="Work" expanded children={
+new item caption="Documents" expanded items={
+	new item caption="Work" expanded items={
 		new item caption="Report.txt"
 		new item caption="Presentation.pptx"
 		new item caption="Budget.xlsx"
 		new item caption="Meeting Notes.md"
 	}
-	new item caption="Personal" children={
+	new item caption="Personal" items={
 		new item caption="Notes.txt"
 		new item caption="Journal.md"
 		new item caption="Ideas.txt"
 	}
-	new item caption="Projects" children={
+	new item caption="Projects" items={
 		new item caption="Alpha"
 		new item caption="Beta"
 		new item caption="Gamma"
 	}
 }
-new item caption="Pictures" children={
+new item caption="Pictures" items={
 	new item caption="Vacation"
 	new item caption="Family"
 	new item caption="Pets"
 	new item caption="Events"
 	new item caption="Screenshots"
 }
-new item caption="Downloads" children={
+new item caption="Downloads" items={
 	new item caption="Software"
 	new item caption="Documents"
 	new item caption="Music"
 }
-new item caption="Music" children={
+new item caption="Music" items={
 	new item caption="Rock"
 	new item caption="Jazz"
 	new item caption="Classical"
 	new item caption="Electronic"
 }
-new item caption="Videos" children={
+new item caption="Videos" items={
 	new item caption="Movies"
 	new item caption="TV Shows"
 	new item caption="Tutorials"
 }
-new item caption="Code" children={
-	new item caption="Go" children={
+new item caption="Code" items={
+	new item caption="Go" items={
 		new item caption="main.go"
 		new item caption="utils.go"
 	}
-	new item caption="Python" children={
+	new item caption="Python" items={
 		new item caption="script.py"
 	}
 }
@@ -138,14 +138,14 @@ s=new tab caption="Selection" children={
 				bggreen=new radiobutton caption="Dark Green" group=selbg
 				bggray=new radiobutton caption="TrueColor #333" group=selbg
 				new label caption="ComboBox:"
-				new combobox children={
+				new combobox items={
 					new item caption="First item"
 					new item caption="Second item"
 					new item caption="Third item"
 					new item caption="Fourth item"
 				}
 				new label caption="Alphabet ComboBox:"
-				new combobox children={`)
+				new combobox items={`)
 	for i := 0; i < 26; i++ {
 		letter := string(rune('A' + i))
 		fmt.Fprintf(&b, "\n\t\t\t\t\tnew item caption=%q", letter+" - Letter "+letter)
@@ -161,7 +161,7 @@ new tab caption="Lists" children={
 	new splitter orientation=horizontal position=0.5 children={
 		new panel layout=vbox children={
 			new label caption="ListView:"
-			new listview min_width=160 min_height=160 children={`)
+			new listview min_width=160 min_height=160 items={`)
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&b, "\n\t\t\t\tnew item caption=\"Item %d\"", i)
 	}
@@ -170,7 +170,7 @@ new tab caption="Lists" children={
 		}
 		new panel layout=vbox children={
 			new label caption="TreeView:"
-			new treeview min_width=160 min_height=160 children={` + indent(treeItemsScript, "\t\t\t\t") + `}
+			new treeview min_width=160 min_height=160 items={` + indent(treeItemsScript, "\t\t\t\t") + `}
 		}
 	}
 }
@@ -202,7 +202,7 @@ ss=new tab caption="Scroll Selection" children={
 				sbggreen=new radiobutton caption="Dark Green" group=scrollbg
 				sbggray=new radiobutton caption="TrueColor #333" group=scrollbg
 				new label caption="ComboBox:"
-				new combobox children={
+				new combobox items={
 					new item caption="First item"
 					new item caption="Second item"
 					new item caption="Third item"
@@ -218,7 +218,7 @@ new tab caption="Scroll Lists" children={
 		new scrollarea children={
 			new panel layout=vbox children={
 				new label caption="ListView (scrollable container):"
-				new listview min_width=160 min_height=160 children={`)
+				new listview min_width=160 min_height=160 items={`)
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&b, "\n\t\t\t\t\tnew item caption=\"Item %d\"", i)
 	}
@@ -234,7 +234,7 @@ new tab caption="Scroll Lists" children={
 		new scrollarea children={
 			new panel layout=vbox children={
 				new label caption="TreeView (scrollable container):"
-				new treeview min_width=160 min_height=160 children={` + indent(treeItemsScript, "\t\t\t\t\t") + `}
+				new treeview min_width=160 min_height=160 items={` + indent(treeItemsScript, "\t\t\t\t\t") + `}
 				new label caption="Extra content below TreeView:"
 				new textinput min_width=160 placeholder="Type something..."
 			}
@@ -520,17 +520,18 @@ new tab caption="Vertical Tabs" children={
 
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
-		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 children={
+		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 columns={
 			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=14 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
 			dtagsc=new column id=tags caption="Tags" width=8 editable
 			drawc=new column id=rawsize caption="Raw Size" width=10 align=right numeric hidden !optional
+		} items={
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
 			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
-			dpc=new item caption="PC12" expanded children={
-				dpcin=new item caption="pc12" expanded children={
-					dsrc=new item caption="src" expanded children={
+			dpc=new item caption="PC12" expanded items={
+				dpcin=new item caption="pc12" expanded items={
+					dsrc=new item caption="src" expanded items={
 						dmain=new item caption="main.go"
 						dutil=new item caption="util.go"
 					}
@@ -538,9 +539,9 @@ det=new tab caption="Details" children={
 				}
 				dread=new item caption="readme.txt"
 			}
-			ddocs=new item caption="Documents" expanded children={
+			ddocs=new item caption="Documents" expanded items={
 				dnotes=new item caption="notes.txt"
-				darch=new item caption="archive" expanded children={
+				darch=new item caption="archive" expanded items={
 					dfin=new item caption="final-report.txt"
 					dold=new item caption="old-report.txt"
 				}
@@ -616,7 +617,7 @@ df=new tab caption="Defaults" children={
 			new label halign=textbegin fill=none caption="--- textinput"
 			new textinput halign=textbegin fill=none placeholder="Text input"
 			new label halign=textbegin fill=none caption="--- combobox"
-			new combobox halign=textbegin fill=none children={
+			new combobox halign=textbegin fill=none items={
 				new item caption="Combo item one"
 				new item caption="Combo item two"
 			}
@@ -627,14 +628,14 @@ df=new tab caption="Defaults" children={
 			new label halign=textbegin fill=none caption="--- spacer"
 			new spacer halign=textbegin fill=none
 			new label halign=textbegin fill=none caption="--- listview"
-			new listview halign=textbegin fill=none children={
+			new listview halign=textbegin fill=none items={
 				new item caption="List item one"
 				new item caption="List item two"
 				new item caption="List item three"
 			}
 			new label halign=textbegin fill=none caption="--- treeview"
-			new treeview halign=textbegin fill=none children={
-				new item caption="Tree item" children={
+			new treeview halign=textbegin fill=none items={
+				new item caption="Tree item" items={
 					new item caption="Tree child"
 				}
 			}
@@ -893,7 +894,7 @@ pw=new window title="Protocol Demo" x=64 y=64 width=448 height=256 children={
 		new separator
 		cb=new checkbox C="Tri-state checkbox (watch the label above)" tristate
 		inp=new textinput min_width=160 placeholder="Type here..."
-		combo=new combobox children={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
+		combo=new combobox items={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
 		btn=new button C="Dispatch demo.hello" action=demo.hello
 	}
 }

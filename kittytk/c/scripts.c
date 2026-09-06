@@ -48,32 +48,32 @@ static void sb_addf(sbuf *b, const char *fmt, ...) {
 
 /* The demo tree, shared by the Lists and Scroll Lists tabs. */
 static const char *TREE_ITEMS =
-    "new item caption=\"Documents\" expanded children={\n"
-    "  new item caption=\"Work\" expanded children={\n"
+    "new item caption=\"Documents\" expanded items={\n"
+    "  new item caption=\"Work\" expanded items={\n"
     "    new item caption=\"Report.txt\"\n"
     "    new item caption=\"Presentation.pptx\"\n"
     "    new item caption=\"Budget.xlsx\"\n"
     "    new item caption=\"Meeting Notes.md\"\n"
     "  }\n"
-    "  new item caption=\"Personal\" children={\n"
+    "  new item caption=\"Personal\" items={\n"
     "    new item caption=\"Notes.txt\"\n"
     "    new item caption=\"Journal.md\"\n"
     "    new item caption=\"Ideas.txt\"\n"
     "  }\n"
-    "  new item caption=\"Projects\" children={\n"
+    "  new item caption=\"Projects\" items={\n"
     "    new item caption=\"Alpha\"\n"
     "    new item caption=\"Beta\"\n"
     "    new item caption=\"Gamma\"\n"
     "  }\n"
     "}\n"
-    "new item caption=\"Pictures\" children={\n"
+    "new item caption=\"Pictures\" items={\n"
     "  new item caption=\"Vacation\"\n"
     "  new item caption=\"Family\"\n"
     "  new item caption=\"Pets\"\n"
     "}\n"
-    "new item caption=\"Code\" children={\n"
-    "  new item caption=\"Go\" children={ new item caption=\"main.go\"; new item caption=\"utils.go\" }\n"
-    "  new item caption=\"Python\" children={ new item caption=\"script.py\" }\n"
+    "new item caption=\"Code\" items={\n"
+    "  new item caption=\"Go\" items={ new item caption=\"main.go\"; new item caption=\"utils.go\" }\n"
+    "  new item caption=\"Python\" items={ new item caption=\"script.py\" }\n"
     "}\n";
 
 char *main_build_script(void) {
@@ -135,7 +135,7 @@ char *main_build_script(void) {
         "        bggreen=new radiobutton caption=\"Dark Green\" group=selbg\n"
         "        bggray=new radiobutton caption=\"TrueColor #333\" group=selbg\n"
         "        new label caption=\"Alphabet ComboBox:\"\n"
-        "        new combobox children={");
+        "        new combobox items={");
     for (int i = 0; i < 26; i++)
         sb_addf(&b, "\n          new item caption=\"%c - Letter %c\"", 'A' + i, 'A' + i);
     sb_add(&b,
@@ -149,7 +149,7 @@ char *main_build_script(void) {
         "  new splitter orientation=horizontal position=0.5 children={\n"
         "    new panel layout=vbox children={\n"
         "      new label caption=\"ListView:\"\n"
-        "      new listview children={");
+        "      new listview items={");
     for (int i = 1; i <= 20; i++)
         sb_addf(&b, "\n        new item caption=\"Item %d\"", i);
     sb_add(&b,
@@ -157,7 +157,7 @@ char *main_build_script(void) {
         "    }\n"
         "    new panel layout=vbox children={\n"
         "      new label caption=\"TreeView:\"\n"
-        "      new treeview children={\n");
+        "      new treeview items={\n");
     sb_add(&b, TREE_ITEMS);
     sb_add(&b,
         "}\n"
@@ -325,7 +325,7 @@ char *protocol_window_script(void) {
         "    new separator\n"
         "    cb=new checkbox C=\"Tri-state checkbox (watch the label above)\" tristate\n"
         "    inp=new textinput placeholder=\"Type here...\"\n"
-        "    combo=new combobox children={new item C=\"Alpha\"; new item C=\"Beta\"; new item C=\"Gamma\"} selected=0\n"
+        "    combo=new combobox items={new item C=\"Alpha\"; new item C=\"Beta\"; new item C=\"Gamma\"} selected=0\n"
         "    btn=new button C=\"Dispatch demo.hello\" action=demo.hello\n"
         "  }\n"
         "}\n"

@@ -546,8 +546,9 @@ kinds=new collection children={
 	new option key=png value="PNG image"
 	new option key=txt value="Text"
 }
-tree=new treeview editable children={
+tree=new treeview editable columns={
 	kindc=new column id=kind caption="Kind" editable
+} items={
 	a=new item caption="file"
 }
 `
@@ -595,7 +596,7 @@ func TestTreeWireCaptionResorts(t *testing.T) {
 	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
 	s := protocol.NewSession()
 	script, err := protocol.Parse(`
-tree=new treeview sorted sortedby=-1 children={
+tree=new treeview sorted sortedby=-1 items={
 	b=new item caption="bbb"
 	a=new item caption="aaa"
 	c=new item caption="ccc"

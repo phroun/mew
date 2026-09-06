@@ -60,53 +60,53 @@ func init() {
 // treeItemsScript is the demo tree, shared by the Lists and Scroll
 // Lists tabs (D13: nested children blocks ARE the tree).
 const treeItemsScript = `
-new item caption="Documents" expanded children={
-	new item caption="Work" expanded children={
+new item caption="Documents" expanded items={
+	new item caption="Work" expanded items={
 		new item caption="Report.txt"
 		new item caption="Presentation.pptx"
 		new item caption="Budget.xlsx"
 		new item caption="Meeting Notes.md"
 	}
-	new item caption="Personal" children={
+	new item caption="Personal" items={
 		new item caption="Notes.txt"
 		new item caption="Journal.md"
 		new item caption="Ideas.txt"
 	}
-	new item caption="Projects" children={
+	new item caption="Projects" items={
 		new item caption="Alpha"
 		new item caption="Beta"
 		new item caption="Gamma"
 	}
 }
-new item caption="Pictures" children={
+new item caption="Pictures" items={
 	new item caption="Vacation"
 	new item caption="Family"
 	new item caption="Pets"
 	new item caption="Events"
 	new item caption="Screenshots"
 }
-new item caption="Downloads" children={
+new item caption="Downloads" items={
 	new item caption="Software"
 	new item caption="Documents"
 	new item caption="Music"
 }
-new item caption="Music" children={
+new item caption="Music" items={
 	new item caption="Rock"
 	new item caption="Jazz"
 	new item caption="Classical"
 	new item caption="Electronic"
 }
-new item caption="Videos" children={
+new item caption="Videos" items={
 	new item caption="Movies"
 	new item caption="TV Shows"
 	new item caption="Tutorials"
 }
-new item caption="Code" children={
-	new item caption="Go" children={
+new item caption="Code" items={
+	new item caption="Go" items={
 		new item caption="main.go"
 		new item caption="utils.go"
 	}
-	new item caption="Python" children={
+	new item caption="Python" items={
 		new item caption="script.py"
 	}
 }
@@ -176,14 +176,14 @@ s=new tab caption="Selection" children={
 				bggreen=new radiobutton caption="Dark Green" group=selbg
 				bggray=new radiobutton caption="TrueColor #333" group=selbg
 				new label caption="ComboBox:"
-				new combobox children={
+				new combobox items={
 					new item caption="First item"
 					new item caption="Second item"
 					new item caption="Third item"
 					new item caption="Fourth item"
 				}
 				new label caption="Alphabet ComboBox:"
-				new combobox children={`)
+				new combobox items={`)
 	for i := 0; i < 26; i++ {
 		letter := string(rune('A' + i))
 		fmt.Fprintf(&b, "\n\t\t\t\t\tnew item caption=%q", letter+" - Letter "+letter)
@@ -199,7 +199,7 @@ new tab caption="Lists" children={
 	new splitter orientation=horizontal position=0.5 children={
 		new panel layout=vbox children={
 			new label caption="ListView:"
-			new listview children={`)
+			new listview items={`)
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&b, "\n\t\t\t\tnew item caption=\"Item %d\"", i)
 	}
@@ -208,7 +208,7 @@ new tab caption="Lists" children={
 		}
 		new panel layout=vbox children={
 			new label caption="TreeView:"
-			new treeview children={` + indent(treeItemsScript, "\t\t\t\t") + `}
+			new treeview items={` + indent(treeItemsScript, "\t\t\t\t") + `}
 		}
 	}
 }
@@ -240,7 +240,7 @@ ss=new tab caption="Scroll Selection" children={
 				sbggreen=new radiobutton caption="Dark Green" group=scrollbg
 				sbggray=new radiobutton caption="TrueColor #333" group=scrollbg
 				new label caption="ComboBox:"
-				new combobox children={
+				new combobox items={
 					new item caption="First item"
 					new item caption="Second item"
 					new item caption="Third item"
@@ -256,7 +256,7 @@ new tab caption="Scroll Lists" children={
 		new scrollarea children={
 			new panel layout=vbox children={
 				new label caption="ListView (scrollable container):"
-				new listview children={`)
+				new listview items={`)
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&b, "\n\t\t\t\t\tnew item caption=\"Item %d\"", i)
 	}
@@ -272,7 +272,7 @@ new tab caption="Scroll Lists" children={
 		new scrollarea children={
 			new panel layout=vbox children={
 				new label caption="TreeView (scrollable container):"
-				new treeview children={` + indent(treeItemsScript, "\t\t\t\t\t") + `}
+				new treeview items={` + indent(treeItemsScript, "\t\t\t\t\t") + `}
 				new label caption="Extra content below TreeView:"
 				new textinput placeholder="Type something..."
 			}

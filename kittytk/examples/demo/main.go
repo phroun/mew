@@ -109,7 +109,7 @@ root=new panel layout=vbox children={
 	new separator
 	cb=new checkbox C="Tri-state checkbox (watch the label above)" tristate
 	inp=new textinput placeholder="Type here..."
-	combo=new combobox children={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
+	combo=new combobox items={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
 	btn=new button C="Dispatch demo.hello" action=demo.hello
 }
 watch=root.status

@@ -11,8 +11,8 @@ import (
 // entries, listview rows, and treeview nodes are all items; trees nest
 // them with children={} blocks:
 //
-//	new treeview children={
-//	    fruit=new item caption="Fruit" expanded children={
+//	new treeview items={
+//	    fruit=new item caption="Fruit" expanded items={
 //	        new item caption="Apple"
 //	        new item caption="Pear"
 //	    }
@@ -75,11 +75,11 @@ func init() {
 				}
 				return nil
 			})).Tip("Node expanded (tree nodes).").Def("false"),
-			"children": protocol.NewCollection(func(parent, child any) error {
+			"items": protocol.NewCollection(func(parent, child any) error {
 				p := parent.(*wireItem)
 				c, ok := child.(*wireItem)
 				if !ok {
-					return fmt.Errorf("item: children must be items, got %T", child)
+					return fmt.Errorf("item: items must be items, got %T", child)
 				}
 				p.children = append(p.children, c)
 				if p.node != nil {

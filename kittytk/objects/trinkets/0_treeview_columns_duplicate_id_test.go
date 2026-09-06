@@ -46,7 +46,7 @@ func TestABlankColumnIDIsStillAnID(t *testing.T) {
 // The refusal reaches a wire client as the error on its statement, rather
 // than leaving it with a column whose cells belong to another.
 func TestTheWireRefusesADuplicateColumnID(t *testing.T) {
-	script, err := protocol.Parse(`tv=new treeview caption="Name" showheader children={
+	script, err := protocol.Parse(`tv=new treeview caption="Name" showheader columns={
 	new column id=size caption="Size" width=10
 	new column id=size caption="Kind" width=12
 }`)
@@ -66,7 +66,7 @@ func TestTheWireRefusesADuplicateColumnID(t *testing.T) {
 // were appended directly -- so it has to refuse a duplicate too, including
 // one that collides with a column declared outside it.
 func TestACollectionRefusesADuplicateColumnID(t *testing.T) {
-	script, err := protocol.Parse(`tv=new treeview caption="Name" children={
+	script, err := protocol.Parse(`tv=new treeview caption="Name" columns={
 	new column id=size caption="Size" width=10
 	new collection children={
 		new column id=kind caption="Kind" width=12

@@ -12,9 +12,10 @@ import (
 // descriptor with its per-item `cell` values, and the treeview's
 // column-related properties. Columns nest like everything else (D13):
 //
-//	new treeview caption="Name" showheader children={
+//	new treeview caption="Name" showheader columns={
 //	    new column id=size caption="Size" width=10 align=right sortable
 //	    new column id=kind caption="Kind" width=12
+//	} items={
 //	    new item caption="Report.txt"
 //	}
 //
@@ -402,20 +403,17 @@ func treeViewProps() map[string]protocol.Property {
 			t.SetSorted(t.sorted, t.sortedBy, b)
 		}).Tip("Sort direction indicator points down.").Def("false"),
 
-		"children": protocol.NewCollection(func(parent, child any) error {
+		"columns": protocol.NewCollection(func(parent, child any) error {
 			tv, ok := parent.(*TreeView)
 			if !ok {
 				return fmt.Errorf("treeview: wrong parent type %T", parent)
 			}
 			switch c := child.(type) {
-			case *wireItem:
-				tv.AddRootItem(c.bind(tv))
-				return nil
 			case *wireColumn:
 				return c.bind(tv)
 			case *wireCollection:
 				// A collection is packaging: adopt each member as if
-				// appended directly.
+				// written here directly.
 				for _, m := range c.members {
 					col, ok := m.(*wireColumn)
 					if !ok {
@@ -427,8 +425,22 @@ func treeViewProps() map[string]protocol.Property {
 				}
 				return nil
 			}
-			return fmt.Errorf("treeview: children must be items or columns, got %T", child)
-		}).Members("item", "column", "collection").
-			Tip("The rows and the columns they are read across."),
+			return fmt.Errorf("treeview: columns must be columns, got %T", child)
+		}).Members("column", "collection").
+			Tip("The columns the rows are read across, left to right."),
+
+		"items": protocol.NewCollection(func(parent, child any) error {
+			tv, ok := parent.(*TreeView)
+			if !ok {
+				return fmt.Errorf("treeview: wrong parent type %T", parent)
+			}
+			it, ok := child.(*wireItem)
+			if !ok {
+				return fmt.Errorf("treeview: items must be items, got %T", child)
+			}
+			tv.AddRootItem(it.bind(tv))
+			return nil
+		}).Members("item").
+			Tip("The rows, top to bottom. A row nests its own under items."),
 	}
 }

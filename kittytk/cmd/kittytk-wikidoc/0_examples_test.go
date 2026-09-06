@@ -119,7 +119,7 @@ func TestIsWireExample(t *testing.T) {
 		{"new", `new label caption="a"`, true},
 		{"set", `set tv selected=1`, true},
 		{"destroy", `destroy tv.a`, true},
-		{"correlation key", `tv=new treeview children={}`, true},
+		{"correlation key", `tv=new treeview items={}`, true},
 		{"reference statement", `aid=tv.a`, true},
 		{"template", `template Danger=button fg=bright_red`, true},
 		{"alias", `alias Caption="caption"`, true},

@@ -37,7 +37,7 @@ w=new window title="Graphical KittyTK" width=608 height=352 children={
 		new radiobutton caption="Radio option one" group=g checked
 		new radiobutton caption="Radio option two" group=g
 		new textinput text="Text input content"
-		new combobox children={new item caption="First item"; new item caption="Second"} selected=0
+		new combobox items={new item caption="First item"; new item caption="Second"} selected=0
 		new progress value=65
 		new panel border border_style=double layout=vbox children={
 			new label caption="A double border drawn with real lines"

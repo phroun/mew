@@ -32,7 +32,7 @@ tw=new tabs position=bottom children={
 
 func TestListViewBuildAndEvents(t *testing.T) {
 	f, events := buildWithEvents(t, nil, `
-lv=new listview children={
+lv=new listview items={
 	new item caption="Alpha"
 	new item caption="Beta"
 	new item caption="Gamma"
@@ -56,10 +56,10 @@ lv=new listview children={
 
 func TestTreeViewBuildsNestedItems(t *testing.T) {
 	f, _ := buildUI(t, nil, `
-tv=new treeview children={
-	new item caption="Fruit" expanded children={
+tv=new treeview items={
+	new item caption="Fruit" expanded items={
 		new item caption="Apple"
-		new item caption="Pear" children={new item caption="Bosc"}
+		new item caption="Pear" items={new item caption="Bosc"}
 	}
 	new item caption="Roots"
 }
@@ -91,8 +91,8 @@ func TestTreeItemIdentity(t *testing.T) {
 	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
 
 	script, err := protocol.Parse(`
-tree=new treeview children={
-	fruit=new item caption="Fruit" expanded children={
+tree=new treeview items={
+	fruit=new item caption="Fruit" expanded items={
 		apple=new item caption="Apple"
 	}
 	roots=new item caption="Roots"
@@ -123,8 +123,8 @@ wfruit=tree.fruit
 		t.Errorf("after set: text=%q expanded=%v", fruit.Text, fruit.Expanded)
 	}
 
-	// set children={} appends to the live subtree.
-	grow, _ := protocol.Parse(`set tree.fruit children={new item caption="Pear"}`)
+	// set items={} appends to the live subtree.
+	grow, _ := protocol.Parse(`set tree.fruit items={new item caption="Pear"}`)
 	if _, err := session.Execute(grow, f); err != nil {
 		t.Fatalf("set children: %v", err)
 	}

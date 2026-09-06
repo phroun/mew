@@ -122,7 +122,7 @@ press=root.btn
 
 func TestProtocolComboBoxItems(t *testing.T) {
 	f, _ := buildUI(t, nil, `
-new combobox children={new item caption="Alpha"; new item caption="Beta"} selected=1
+new combobox items={new item caption="Alpha"; new item caption="Beta"} selected=1
 `)
 	combo := f.targets[0].(*ComboBox)
 	if combo.Count() != 2 || combo.ItemText(1) != "Beta" {
