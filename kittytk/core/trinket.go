@@ -366,9 +366,10 @@ type TrinketBase struct {
 	sizePolicy SizePolicyPair
 	margins    UnitMargins
 
-	layoutStretch  int
-	layoutAlign    Alignment
-	layoutAlignSet bool
+	layoutStretch    int
+	layoutStretchSet bool
+	layoutAlign      Alignment
+	layoutAlignSet   bool
 
 	// Hints one layout manager each reads; see layouthints.go.
 	gridPlacement    GridPlacement
@@ -613,11 +614,24 @@ func (w *TrinketBase) LayoutStretch() int {
 	return w.layoutStretch
 }
 
+// LayoutStretchHint returns the stretch factor and whether one was stated.
+//
+// The flag is what tells a stretch of zero -- "take none of the leftover" --
+// from one nobody wrote, which is the same distinction FlexHints.ShrinkSet
+// makes and for the same reason: without it a child could be given a stretch
+// but never have it taken away again.
+func (w *TrinketBase) LayoutStretchHint() (int, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.layoutStretch, w.layoutStretchSet
+}
+
 // SetLayoutStretch sets the stretch factor hint.
 func (w *TrinketBase) SetLayoutStretch(stretch int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.layoutStretch = stretch
+	w.layoutStretchSet = true
 }
 
 // LayoutAlignment returns the trinket's alignment hint and whether one

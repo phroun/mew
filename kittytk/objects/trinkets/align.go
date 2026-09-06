@@ -81,9 +81,7 @@ func registerAlignmentProperties() {
 		if err != nil {
 			return err
 		}
-		a := alignmentOf(w)
-		a.H = x
-		return setAlignment("halign", w, a)
+		return setAlignment("halign", w, alignmentOf(w).WithH(x))
 	})).OneOf(hAlignWordList()...).Def("center").
 		Tip("Where this item sits horizontally when it does not fill."))
 
@@ -96,9 +94,7 @@ func registerAlignmentProperties() {
 		if !ok {
 			return fmt.Errorf("valign: unknown value %q", word)
 		}
-		a := alignmentOf(w)
-		a.V = y
-		return setAlignment("valign", w, a)
+		return setAlignment("valign", w, alignmentOf(w).WithV(y))
 	})).OneOf("top", "middle", "bottom").Def("middle").
 		Tip("Where this item sits vertically when it does not fill."))
 
@@ -111,9 +107,7 @@ func registerAlignmentProperties() {
 		if !ok {
 			return fmt.Errorf("fill: unknown value %q", word)
 		}
-		a := alignmentOf(w)
-		a.FillH, a.FillV = axes[0], axes[1]
-		return setAlignment("fill", w, a)
+		return setAlignment("fill", w, alignmentOf(w).WithFill(axes[0], axes[1]))
 	})).OneOf("none", "h", "v", "both").Def("both").
 		Tip("Which axes this item grows to fill the space it is given."))
 }

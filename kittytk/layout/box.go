@@ -251,9 +251,10 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 				minSize = m
 			}
 
+			want := stretchFor(item.Trinket, item.Stretch)
 			stretch := 0
-			if policy.Vertical == core.SizeExpanding || item.Stretch > 0 {
-				stretch = item.Stretch
+			if policy.Vertical == core.SizeExpanding || want > 0 {
+				stretch = want
 				if stretch == 0 {
 					stretch = 1
 				}
@@ -562,9 +563,10 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 		hint := itemSize(item.Trinket)
 		policy := item.Trinket.SizePolicy()
 
+		want := stretchFor(item.Trinket, item.Stretch)
 		stretch := 0
-		if policy.Horizontal == core.SizeExpanding || item.Stretch > 0 {
-			stretch = item.Stretch
+		if policy.Horizontal == core.SizeExpanding || want > 0 {
+			stretch = want
 			if stretch == 0 {
 				stretch = 1
 			}

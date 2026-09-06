@@ -66,12 +66,79 @@ type Alignment struct {
 	V     VAlign
 	FillH bool
 	FillV bool
+
+	// HSet, VSet, FillHSet and FillVSet say which of the four above were
+	// asked for, one field at a time.
+	//
+	// A child that writes only halign has said nothing about where it sits
+	// vertically or what it fills, and under a single "was one set" flag
+	// there was no way to tell that from a child that stated everything. It
+	// is what stops a container supplying an answer for the axis nobody
+	// wrote: a column band saying "my labels end at the trailing edge" would
+	// be silently thrown away by a child that then wrote valign=top.
+	//
+	// Set by WithH, WithV and WithFill. A struct built by hand states
+	// nothing, and Over takes such a one entire -- code that never touches
+	// these keeps the meaning it always had.
+	HSet     bool
+	VSet     bool
+	FillHSet bool
+	FillVSet bool
 }
 
 // DefaultAlignment fills both axes and centres on either one that turns out to
-// have nothing to fill.
+// have nothing to fill. Nobody asked for it, so it states none of it.
 func DefaultAlignment() Alignment {
 	return Alignment{H: AlignCenter, V: AlignMiddle, FillH: true, FillV: true}
+}
+
+// WithH, WithV and WithFill are how one axis is asked for without saying
+// anything about the other.
+func (a Alignment) WithH(h HAlign) Alignment {
+	a.H, a.HSet = h, true
+	return a
+}
+
+func (a Alignment) WithV(v VAlign) Alignment {
+	a.V, a.VSet = v, true
+	return a
+}
+
+func (a Alignment) WithFill(h, v bool) Alignment {
+	a.FillH, a.FillV = h, v
+	a.FillHSet, a.FillVSet = true, true
+	return a
+}
+
+// Stated reports whether any single field was asked for.
+func (a Alignment) Stated() bool {
+	return a.HSet || a.VSet || a.FillHSet || a.FillVSet
+}
+
+// Over layers a over base: a field a states wins, and one it does not is taken
+// from base.
+//
+// An alignment that states nothing is a whole answer, written by a caller who
+// set the fields directly rather than asking for one axis, and is taken
+// entire.
+func (a Alignment) Over(base Alignment) Alignment {
+	if !a.Stated() {
+		return a
+	}
+	out := base
+	if a.HSet {
+		out.H, out.HSet = a.H, true
+	}
+	if a.VSet {
+		out.V, out.VSet = a.V, true
+	}
+	if a.FillHSet {
+		out.FillH, out.FillHSet = a.FillH, true
+	}
+	if a.FillVSet {
+		out.FillV, out.FillVSet = a.FillV, true
+	}
+	return out
 }
 
 // ResolveHAlign spends the directions and returns the side named.

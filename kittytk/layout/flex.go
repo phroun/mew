@@ -145,23 +145,27 @@ func (l *FlexLayout) SetAlignItems(align FlexAlign) {
 // AddTrinket adds a trinket, honoring the flex hints and the alignment that
 // travel with the child.
 func (l *FlexLayout) AddTrinket(trinket core.Trinket) {
-	item := &FlexItem{Trinket: trinket, Grow: 0, Shrink: 1, Basis: core.BasisAuto}
-	if h, ok := trinket.(interface {
-		LayoutFlex() (core.FlexHints, bool)
-	}); ok {
-		if f, set := h.LayoutFlex(); set {
-			item.Grow, item.Basis = f.Grow, f.Basis
-			if f.ShrinkSet {
-				item.Shrink = f.Shrink
-			}
-		}
-	}
+	item := &FlexItem{Trinket: trinket}
+	d := core.DefaultFlexHints()
+	f := flexFor(trinket, d)
+	item.Grow, item.Shrink, item.Basis = f.Grow, f.Shrink, f.Basis
 	if h, ok := trinket.(interface {
 		LayoutAlignment() (core.Alignment, bool)
 	}); ok {
 		item.Align, item.AlignSet = h.LayoutAlignment()
 	}
 	l.items = append(l.items, item)
+}
+
+// refreshHints re-reads the flex hints off every child, so a grow, shrink or
+// basis set on a child that is already in this layout reaches it. See flexFor.
+func (l *FlexLayout) refreshHints() {
+	for _, item := range l.items {
+		f := flexFor(item.Trinket, core.FlexHints{
+			Grow: item.Grow, Shrink: item.Shrink, Basis: item.Basis,
+		})
+		item.Grow, item.Shrink, item.Basis = f.Grow, f.Shrink, f.Basis
+	}
 }
 
 // AddTrinketWithFlex adds a trinket with flex properties given outright.
@@ -437,6 +441,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 	if len(l.items) == 0 {
 		return
 	}
+	l.refreshHints()
 
 	rect := l.effectiveBounds(bounds)
 	mainSize, crossSize := l.mainCross(rect.Width, rect.Height)
@@ -712,6 +717,7 @@ func (l *FlexLayout) HasHeightForWidth() bool {
 // HeightForWidth is the height the wrapped run needs at the given width: the
 // lines it breaks into, stacked.
 func (l *FlexLayout) HeightForWidth(width core.Unit) core.Unit {
+	l.refreshHints()
 	if !l.HasHeightForWidth() {
 		return l.SizeHint(nil).Height
 	}
@@ -731,6 +737,7 @@ func (l *FlexLayout) HeightForWidth(width core.Unit) core.Unit {
 
 // SizeHint returns the preferred size for the container.
 func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
+	l.refreshHints()
 	var mainTotal, crossMax core.Unit
 
 	for _, item := range l.items {
@@ -770,6 +777,7 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 // A run that wraps is as narrow as its widest item, since it can always break;
 // one that does not is as wide as all of them together.
 func (l *FlexLayout) MinimumSize(container core.Container) core.UnitSize {
+	l.refreshHints()
 	var mainTotal, crossMax core.Unit
 
 	for _, item := range l.items {

@@ -220,10 +220,10 @@ func init() {
 		return fmt.Errorf("acc_name: not supported by this type")
 	})).Tip("Accessibility name announced by screen readers."))
 
-	// Layout hints live on the child (vocabulary decision 2026-07-05):
-	// the parent's layout manager consults them at attach time, so in
-	// scripts they must precede the trinket's placement in children={}
-	// (property application order already guarantees that).
+	// Layout hints live on the child (vocabulary decision 2026-07-05), and
+	// the parent's layout manager reads them where it uses them rather than
+	// when the child was attached -- so one set on a trinket an earlier build
+	// already placed reaches the layout on its next pass.
 	protocol.RegisterCommonProperty("stretch", protocol.NewProperty("int", wprop("stretch", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt("stretch", v, f)
 		if err != nil {

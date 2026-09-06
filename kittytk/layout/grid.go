@@ -18,6 +18,12 @@ type GridItem struct {
 	// given its bands after its children.
 	RowID    string
 	ColumnID string
+
+	// autoRow is the row this item was given when it was added -- its
+	// position among its siblings, for a child that stated no placement of
+	// its own. It is what resolveBands falls back to, since Row by then
+	// holds whatever the last pass settled on.
+	autoRow int
 }
 
 // GridLayout arranges trinkets in a grid of rows and columns.
@@ -66,24 +72,34 @@ func (l *GridLayout) effectiveMetrics(container core.Container) core.CellMetrics
 // which is how a grid is reachable from a build script at all: everything the
 // grid needs to know travels on the child.
 func (l *GridLayout) AddTrinket(trinket core.Trinket) {
-	p := core.GridPlacement{Row: len(l.items), RowSpan: 1, ColumnSpan: 1}
-	if h, ok := trinket.(interface {
-		LayoutGridPlacement() (core.GridPlacement, bool)
-	}); ok {
-		if hint, set := h.LayoutGridPlacement(); set {
-			p = hint
-		}
-	}
+	// A child that states nothing lands in a row of its own. That autonumber
+	// is the item's own, not the child's, so it is what resolveBands falls
+	// back to on every later pass.
+	p := placementFor(trinket, core.GridPlacement{Row: len(l.items), RowSpan: 1, ColumnSpan: 1})
 	l.AddTrinketAtWithSpan(trinket, p.Row, p.Column, p.RowSpan, p.ColumnSpan)
 	item := l.items[len(l.items)-1]
 	item.RowID, item.ColumnID = p.RowID, p.ColumnID
+	item.autoRow = p.Row
 }
 
-// resolveBands settles where each item sits: a child that named a band is put
-// in the band with that name. Names are settled on every pass rather than when
-// the child was added, because a grid may be given its bands afterwards.
+// resolveBands settles where each item sits, on every pass rather than when
+// the child was added: a grid may be given its bands afterwards, and a child
+// may be told where to sit after it was placed (a `set k column=2` over the
+// wire on a trinket an earlier build put in the grid).
+//
+// A cell first, then a name over the top of it: a child that names a band the
+// grid has is put in that band whatever Row or Column says, which is what lets
+// a track be inserted without renumbering the form.
 func (l *GridLayout) resolveBands() {
 	for _, item := range l.items {
+		p := placementFor(item.Trinket, core.GridPlacement{
+			Row: item.autoRow, Column: item.Column,
+			RowSpan: item.RowSpan, ColumnSpan: item.ColumnSpan,
+		})
+		item.Row, item.Column = p.Row, p.Column
+		item.RowSpan, item.ColumnSpan = atLeastOne(p.RowSpan), atLeastOne(p.ColumnSpan)
+		item.RowID, item.ColumnID = p.RowID, p.ColumnID
+
 		if i := bandIndex(l.columns, item.ColumnID); i >= 0 {
 			item.Column = i
 		}
@@ -93,6 +109,15 @@ func (l *GridLayout) resolveBands() {
 	}
 }
 
+// atLeastOne is a span: zero cells is one cell, which is what a child that
+// says nothing about spanning means.
+func atLeastOne(span int) int {
+	if span < 1 {
+		return 1
+	}
+	return span
+}
+
 // AddTrinketAt adds a trinket at the given row and column.
 func (l *GridLayout) AddTrinketAt(trinket core.Trinket, row, column int) {
 	l.AddTrinketAtWithSpan(trinket, row, column, 1, 1)
@@ -100,19 +125,14 @@ func (l *GridLayout) AddTrinketAt(trinket core.Trinket, row, column int) {
 
 // AddTrinketAtWithSpan adds a trinket that spans several cells.
 func (l *GridLayout) AddTrinketAtWithSpan(trinket core.Trinket, row, column, rowSpan, columnSpan int) {
-	if rowSpan < 1 {
-		rowSpan = 1
-	}
-	if columnSpan < 1 {
-		columnSpan = 1
-	}
 	item := &GridItem{
 		Trinket:    trinket,
 		Row:        row,
 		Column:     column,
-		RowSpan:    rowSpan,
-		ColumnSpan: columnSpan,
+		RowSpan:    atLeastOne(rowSpan),
+		ColumnSpan: atLeastOne(columnSpan),
 		Align:      core.DefaultAlignment(),
+		autoRow:    row,
 	}
 	// Alignment travels with the child, as it does in a box, so halign,
 	// valign and fill mean the same thing wherever the child is put.

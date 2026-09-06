@@ -110,7 +110,62 @@ func (l *BaseLayout) effectiveBounds(bounds core.UnitRect) core.UnitRect {
 // over the wire, a `set` on a trinket the script built earlier.
 func alignmentFor(w core.Trinket, fallback core.Alignment) core.Alignment {
 	if a, set := statedAlignment(w); set {
-		return a
+		// Field by field: a child that asked about one axis has said nothing
+		// about the other, and what it did not ask about stays as it was.
+		return a.Over(fallback)
+	}
+	return fallback
+}
+
+// stretchFor, flexFor and placementFor are the same bargain as alignmentFor
+// for the hints one manager each reads: what the child says when it says
+// anything, else what the layout was given for it when it was added.
+//
+// Every one of them is read where it is used rather than where the child was
+// added, for the reason alignmentFor gives: over the wire a `set k grow=3`
+// lands on a trinket an earlier build already placed, and a hint that is only
+// read at add time is accepted, stored, and then read by nobody.
+//
+// The child's own statement wins over the stored value, which is what a Go
+// caller wrote directly through AddTrinketWithStretch, AddTrinketWithFlex or
+// AddTrinketAt. A child that states a hint AND is placed by one of those is
+// contradicting itself, and everything the toolkit says about layout hints is
+// that they travel on the child.
+func stretchFor(w core.Trinket, fallback int) int {
+	if h, ok := w.(interface{ LayoutStretchHint() (int, bool) }); ok {
+		if s, set := h.LayoutStretchHint(); set {
+			return s
+		}
+	}
+	return fallback
+}
+
+func flexFor(w core.Trinket, fallback core.FlexHints) core.FlexHints {
+	h, ok := w.(interface {
+		LayoutFlex() (core.FlexHints, bool)
+	})
+	if !ok {
+		return fallback
+	}
+	f, set := h.LayoutFlex()
+	if !set {
+		return fallback
+	}
+	// Shrink is the one field with a flag of its own: unstated, it keeps
+	// whatever the item already had rather than dropping to zero.
+	if !f.ShrinkSet {
+		f.Shrink = fallback.Shrink
+	}
+	return f
+}
+
+func placementFor(w core.Trinket, fallback core.GridPlacement) core.GridPlacement {
+	if h, ok := w.(interface {
+		LayoutGridPlacement() (core.GridPlacement, bool)
+	}); ok {
+		if p, set := h.LayoutGridPlacement(); set {
+			return p
+		}
 	}
 	return fallback
 }

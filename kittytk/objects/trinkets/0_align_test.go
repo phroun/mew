@@ -19,7 +19,13 @@ func TestAlignmentPropertiesDoNotResetEachOther(t *testing.T) {
 	} {
 		f, _ := buildUI(t, nil, src)
 		lbl := f.targets[0].(*Label)
-		want := core.Alignment{H: core.AlignOpticalRight, V: core.AlignTop, FillH: true}
+		// Each property states its own field, and says nothing about the
+		// others -- which is what lets a container answer for an axis the
+		// child never mentioned.
+		want := core.Alignment{}.
+			WithH(core.AlignOpticalRight).
+			WithV(core.AlignTop).
+			WithFill(true, false)
 		if a, set := lbl.LayoutAlignment(); !set || a != want {
 			t.Errorf("%s\n  gave %+v (set=%v), want %+v", src, a, set, want)
 		}
@@ -33,8 +39,7 @@ func TestAlignmentPropertiesStartFromTheDefault(t *testing.T) {
 	f, _ := buildUI(t, nil, `new label caption="x" halign=opticalleft`)
 	lbl := f.targets[0].(*Label)
 
-	want := core.DefaultAlignment()
-	want.H = core.AlignOpticalLeft
+	want := core.DefaultAlignment().WithH(core.AlignOpticalLeft)
 	if a, set := lbl.LayoutAlignment(); !set || a != want {
 		t.Errorf("halign alone gave %+v (set=%v), want %+v", a, set, want)
 	}

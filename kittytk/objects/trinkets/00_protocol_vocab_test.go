@@ -247,7 +247,7 @@ new panel layout=hbox children={
 	if spacer.LayoutStretch() != 1 {
 		t.Errorf("spacer stretch = %d, want 1", spacer.LayoutStretch())
 	}
-	want := core.Alignment{H: core.AlignOpticalRight, V: core.AlignMiddle, FillV: true}
+	want := core.DefaultAlignment().WithH(core.AlignOpticalRight).WithFill(false, true)
 	if a, set := btn.LayoutAlignment(); !set || a != want {
 		t.Errorf("button align = %+v/%v, want %+v", a, set, want)
 	}
