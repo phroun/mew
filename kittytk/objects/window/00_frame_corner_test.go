@@ -32,7 +32,7 @@ func TestWindowChromeDoesNotDamageTheRoundedCorner(t *testing.T) {
 	w.SetDetached(true) // a detached window carries its own status bar
 	w.SetWindowStatusBar(&fillBar{fill: style.RGB(255, 0, 255)})
 	m.AddWindow(w)
-	w.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 200, Height: 160})
+	w.SetBounds(core.UnitRect{X: 40, Y: 32, Width: 200, Height: 160})
 	w.Layout()
 	m.Paint(core.NewPainter(px))
 
@@ -45,7 +45,7 @@ func TestWindowChromeDoesNotDamageTheRoundedCorner(t *testing.T) {
 	// The outermost columns of the two rows closest to the bottom edge are
 	// the corner's curve. The status bar must not have reached them.
 	for _, dy := range []int{1, 2} {
-		y := 40 + 160 - dy
+		y := 32 + 160 - dy
 		for dx := 0; dx < 3; dx++ {
 			if isFill(40+dx, y) {
 				t.Errorf("status bar painted into the rounded corner at (+%d, bottom-%d)", dx, dy)
@@ -53,7 +53,7 @@ func TestWindowChromeDoesNotDamageTheRoundedCorner(t *testing.T) {
 		}
 	}
 	// ...and it IS painted where it belongs, well inside the frame.
-	if !isFill(40+20, 40+160-5) {
+	if !isFill(40+20, 32+160-5) {
 		t.Error("status bar did not paint inside the window at all — test is not measuring it")
 	}
 }

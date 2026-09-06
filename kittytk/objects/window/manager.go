@@ -904,9 +904,21 @@ func (m *WindowManager) ClientArea() core.UnitRect {
 
 	// If desktop has a ClientArea method, use it
 	if da, ok := desktop.(interface{ ClientArea() core.UnitRect }); ok {
-		return da.ClientArea()
+		screen = da.ClientArea()
 	}
 
+	// A cell surface can only offer whole cells. Half a row at the bottom is
+	// a row nothing can be drawn in, and a room that offers it hands every
+	// window fitted to it a size the grid cannot express -- which is how a
+	// maximized window ended up a row taller than the room it filled.
+	//
+	// The origin floors and the extent floors WITH it: unlike a window, a
+	// room may not round up, because the space it is rounding up into is not
+	// there.
+	if !m.SmoothPositioning() {
+		metrics := core.DefaultCellMetrics()
+		screen = snapRectToCells(metrics, screen)
+	}
 	return screen
 }
 

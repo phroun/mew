@@ -41,16 +41,16 @@ func TestCursorAtResolvesEdgeAndContent(t *testing.T) {
 	content := &ibeamContent{}
 	content.TrinketBase = *core.NewTrinketBase()
 	w.SetContent(content)
-	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120})
+	w.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 200, Height: 128})
 	m.AddWindow(w)
 	w.Layout()
 
 	// Over the right edge -> horizontal resize cursor.
-	if got := m.CursorAt(299, 160); got != core.CursorResizeH {
+	if got := m.CursorAt(295, 160); got != core.CursorResizeH {
 		t.Errorf("right edge cursor = %v, want CursorResizeH", got)
 	}
 	// Over the content interior -> the text I-beam from the content trinket.
-	if got := m.CursorAt(200, 160); got != core.CursorText {
+	if got := m.CursorAt(196, 160); got != core.CursorText {
 		t.Errorf("content cursor = %v, want CursorText", got)
 	}
 	// Off any window -> the default arrow.
@@ -69,12 +69,12 @@ func TestOverlaySuppressesCursorAndResizeHover(t *testing.T) {
 	content := &ibeamContent{}
 	content.TrinketBase = *core.NewTrinketBase()
 	w.SetContent(content)
-	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120})
+	w.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 200, Height: 128})
 	m.AddWindow(w)
 	w.Layout()
 
 	// Sanity: with no popup, the right edge and interior resolve as usual.
-	if got := m.CursorAt(299, 160); got != core.CursorResizeH {
+	if got := m.CursorAt(295, 160); got != core.CursorResizeH {
 		t.Fatalf("precondition: right edge cursor = %v, want CursorResizeH", got)
 	}
 
@@ -84,21 +84,21 @@ func TestOverlaySuppressesCursorAndResizeHover(t *testing.T) {
 		Bounds: core.UnitRect{X: 150, Y: 140, Width: 200, Height: 100},
 	})
 
-	if got := m.CursorAt(299, 160); got != core.CursorDefault {
+	if got := m.CursorAt(295, 160); got != core.CursorDefault {
 		t.Errorf("cursor over popup (edge) = %v, want CursorDefault", got)
 	}
-	if got := m.CursorAt(200, 160); got != core.CursorDefault {
+	if got := m.CursorAt(196, 160); got != core.CursorDefault {
 		t.Errorf("cursor over popup (content) = %v, want CursorDefault", got)
 	}
 
 	// The edge highlight must not appear under the popup either.
-	m.updateResizeBands(299, 160)
+	m.updateResizeBands(295, 160)
 	if len(w.ResizeBandRects()) != 0 {
 		t.Errorf("resize highlight showed under popup: %v", w.ResizeBandRects())
 	}
 
 	// Outside the popup, the edge highlight returns.
-	m.updateResizeBands(299, 110)
+	m.updateResizeBands(295, 110)
 	if len(w.ResizeBandRects()) == 0 {
 		t.Error("resize highlight should show on the edge outside the popup")
 	}

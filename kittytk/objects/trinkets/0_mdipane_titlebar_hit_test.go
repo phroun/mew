@@ -32,7 +32,7 @@ func TestMDITitleBarDragCoversBorderOffset(t *testing.T) {
 
 	win := window.NewWindow("child")
 	pane.AddWindow(win)
-	win.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 320, Height: 240})
+	win.SetBounds(core.UnitRect{X: 40, Y: 32, Width: 320, Height: 240})
 
 	metrics := pane.EffectiveCellMetrics()
 	border := core.FindFrameBorderUnits(win)
@@ -44,7 +44,7 @@ func TestMDITitleBarDragCoversBorderOffset(t *testing.T) {
 	// (bounds.Y + UnitsPerCellHeight) but within the real titlebar
 	// (bounds.Y + border + UnitsPerCellHeight). Mid-width so it is not a resize
 	// grip.
-	y := 40 + metrics.UnitsPerCellHeight + border - 1
+	y := 32 + metrics.UnitsPerCellHeight + border - 1
 	pane.HandleMousePress(core.MousePressEvent{X: 40 + 160, Y: y, Button: core.LeftButton})
 
 	if pane.dragging != win {
@@ -67,7 +67,7 @@ func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
 
 	win := window.NewWindow("child")
 	pane.AddWindow(win)
-	win.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 320, Height: 240})
+	win.SetBounds(core.UnitRect{X: 40, Y: 32, Width: 320, Height: 240})
 	pane.ActivateWindow(win)
 
 	metrics := pane.EffectiveCellMetrics()
@@ -78,7 +78,7 @@ func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
 	// sit inside the left border, offset by the frame border on graphical
 	// frames. Aim at its center.
 	bx := 40 + border + metrics.UnitsPerCellWidth + bw + bw/2
-	by := 40 + border + metrics.UnitsPerCellHeight/2
+	by := 32 + border + metrics.UnitsPerCellHeight/2
 
 	pane.HandleMousePress(core.MousePressEvent{X: bx, Y: by, Button: core.LeftButton})
 	pane.HandleMouseRelease(core.MouseReleaseEvent{X: bx, Y: by, Button: core.LeftButton})

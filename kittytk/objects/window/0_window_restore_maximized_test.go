@@ -16,7 +16,7 @@ func TestRestoreMinimizedWhileMaximizedStaysMaximized(t *testing.T) {
 
 	win := NewWindow("root")
 	m.AddWindow(win)
-	floating := core.UnitRect{X: 20, Y: 20, Width: 200, Height: 150}
+	floating := core.UnitRect{X: 16, Y: 16, Width: 200, Height: 160}
 	win.SetBounds(floating)
 
 	m.MaximizeWindow(win)

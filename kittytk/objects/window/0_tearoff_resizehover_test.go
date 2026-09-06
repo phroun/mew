@@ -58,6 +58,9 @@ func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
 // the pointer may have wandered off them, but the gesture still owns them.
 func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 	w := NewWindow("t")
+	// A torn window is an OS window, standing on no cell grid: its bounds are
+	// exactly what the OS gives it (see Window.gridded).
+	w.SetSmoothPositioning(true)
 	small := core.UnitRect{Width: 100, Height: 60}
 	w.SetBounds(small)
 	h := &TearOffHost{win: w, graphicalFrames: true}
@@ -83,6 +86,9 @@ func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 // stretching a window to the right leaves its band stranded mid-frame.
 func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 	w := NewWindow("t")
+	// A torn window is an OS window, standing on no cell grid: its bounds are
+	// exactly what the OS gives it (see Window.gridded).
+	w.SetSmoothPositioning(true)
 	w.SetBounds(core.UnitRect{Width: 100, Height: 60})
 	h := &TearOffHost{win: w, graphicalFrames: true}
 	h.resizing = true
@@ -122,6 +128,9 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 // so every handle stays reachable.
 func TestEdgeAtSplitsOverlappingGrips(t *testing.T) {
 	w := NewWindow("t")
+	// A torn window is an OS window, standing on no cell grid: its bounds are
+	// exactly what the OS gives it (see Window.gridded).
+	w.SetSmoothPositioning(true)
 	// A window small enough that the grab zones overlap. The hit grip is the
 	// rule's width (3 units here: 3 device pixels at ppu 1 beats a quarter of
 	// an 8-unit cell), NOT the configured resizeGrip, which now only says

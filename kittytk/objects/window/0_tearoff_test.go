@@ -266,6 +266,8 @@ func TestTornFrameLeavesCornersTransparent(t *testing.T) {
 	core.SetTextMeasurer(px)
 
 	win := NewWindow("torn")
+	// A torn window is an OS window, sized in device pixels on no cell grid.
+	win.SetSmoothPositioning(true)
 	win.SetBounds(core.UnitRect{Width: 400, Height: 200})
 	win.Layout()
 	win.Paint(core.NewPainter(px))
@@ -600,12 +602,12 @@ func TestTearOffHostZoomFillsTheWorkAreaAndFramesTheMaximumInside(t *testing.T) 
 	if fr.Width != 800 || fr.Height != 400 {
 		t.Errorf("the frame is %v, want the window's maximum of 800x400", fr.Size())
 	}
-	// Centred, then floored onto the cell grid this surface renders on.
-	cm := core.DefaultCellMetrics()
-	wantX, wantY := cm.RoundDownToCellX((1600-800)/2), cm.RoundDownToCellY((970-400)/2)
+	// Exactly centred: an OS window stands on no cell grid, so nothing here
+	// floors (see Window.gridded).
+	wantX, wantY := core.Unit((1600-800)/2), core.Unit((970-400)/2)
 	if fr.X != wantX || fr.Y != wantY {
-		t.Errorf("the frame sits at %d,%d, want %d,%d -- centered in the surface and "+
-			"floored onto the cell grid", fr.X, fr.Y, wantX, wantY)
+		t.Errorf("the frame sits at %d,%d, want %d,%d -- centered in the surface",
+			fr.X, fr.Y, wantX, wantY)
 	}
 }
 

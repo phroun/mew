@@ -11,7 +11,7 @@ import (
 func TestResizeEdgeRects(t *testing.T) {
 	m := NewWindowManager()
 	w := NewWindow("w")
-	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120})
+	w.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 200, Height: 128})
 	m.AddWindow(w)
 
 	metrics := core.DefaultCellMetrics()
@@ -19,7 +19,7 @@ func TestResizeEdgeRects(t *testing.T) {
 	// A single edge -> one band.
 	if got := m.resizeEdgeRects(w, ResizeEdgeRight); len(got) != 1 {
 		t.Fatalf("right edge: want 1 rect, got %d", len(got))
-	} else if want := (core.UnitRect{X: 200 - metrics.UnitsPerCellWidth, Width: metrics.UnitsPerCellWidth, Height: 120}); got[0] != want {
+	} else if want := (core.UnitRect{X: 200 - metrics.UnitsPerCellWidth, Width: metrics.UnitsPerCellWidth, Height: 128}); got[0] != want {
 		t.Errorf("right band = %v, want %v", got[0], want)
 	}
 
@@ -28,8 +28,8 @@ func TestResizeEdgeRects(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("corner: want 2 rects, got %d", len(got))
 	}
-	wantLeft := core.UnitRect{Width: metrics.UnitsPerCellWidth, Height: 120}
-	wantBottom := core.UnitRect{Y: 120 - metrics.UnitsPerCellHeight, Width: 200, Height: metrics.UnitsPerCellHeight}
+	wantLeft := core.UnitRect{Width: metrics.UnitsPerCellWidth, Height: 128}
+	wantBottom := core.UnitRect{Y: 128 - metrics.UnitsPerCellHeight, Width: 200, Height: metrics.UnitsPerCellHeight}
 	if got[0] != wantLeft {
 		t.Errorf("left band = %v, want %v", got[0], wantLeft)
 	}

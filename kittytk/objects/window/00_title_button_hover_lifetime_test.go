@@ -47,7 +47,7 @@ func buttonPoint(t *testing.T, w *Window, b TitleButton) (core.Unit, core.Unit) 
 // it, because the button that did the restoring is the one left lit.
 func TestTitleButtonHoverGoesOutWhenTheWindowMoves(t *testing.T) {
 	w := NewWindow("w")
-	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+	w.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 304, Height: 208})
 
 	x, y := buttonPoint(t, w, TitleButtonMinimize)
 	w.HandleMouseMove(core.MouseMoveEvent{X: x, Y: y})
@@ -55,7 +55,7 @@ func TestTitleButtonHoverGoesOutWhenTheWindowMoves(t *testing.T) {
 		t.Fatalf("hovering the minimize button left %v lit, want TitleButtonMinimize", got)
 	}
 
-	w.SetBounds(core.UnitRect{X: 400, Y: 300, Width: 300, Height: 200})
+	w.SetBounds(core.UnitRect{X: 400, Y: 304, Width: 304, Height: 208})
 	if got := w.hoveredButton; got != TitleButtonNone {
 		t.Errorf("after the window moved, %v is still lit under a pointer that never moved", got)
 	}
@@ -78,7 +78,7 @@ func TestRestoringLeavesNoButtonLit(t *testing.T) {
 	m := NewWindowManager()
 	m.SetScreenBounds(core.UnitRect{Width: 1200, Height: 800})
 	w := NewWindow("w")
-	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+	w.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 304, Height: 208})
 	m.AddWindow(w)
 
 	m.MaximizeWindow(w)
@@ -89,8 +89,8 @@ func TestRestoringLeavesNoButtonLit(t *testing.T) {
 	}
 
 	m.RestoreWindow(w)
-	if got := w.Bounds(); got.X != 100 || got.Y != 100 {
-		t.Fatalf("restore put the window at %v, want it back at 100,100", got)
+	if got := w.Bounds(); got.X != 96 || got.Y != 96 {
+		t.Fatalf("restore put the window at %v, want it back at 96,96", got)
 	}
 	if got := w.hoveredButton; got != TitleButtonNone {
 		t.Errorf("%v is still lit after the window restored out from under the pointer", got)

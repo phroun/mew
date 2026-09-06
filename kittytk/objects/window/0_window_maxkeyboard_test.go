@@ -51,7 +51,7 @@ func TestMaximizedKeyboardResizeShrinksInPlace(t *testing.T) {
 	m.SetScreenBounds(core.UnitRect{X: 0, Y: 0, Width: 800, Height: 600})
 	w := NewWindow("w")
 	m.AddWindow(w)
-	normal := core.UnitRect{X: 50, Y: 50, Width: 200, Height: 100}
+	normal := core.UnitRect{X: 48, Y: 48, Width: 200, Height: 112}
 	w.SetBounds(normal)
 	m.MaximizeWindow(w)
 	if !w.IsMaximized() {
@@ -84,7 +84,7 @@ func TestMaximizedKeyboardMoveRestores(t *testing.T) {
 	m.SetScreenBounds(core.UnitRect{X: 0, Y: 0, Width: 800, Height: 600})
 	w := NewWindow("w")
 	m.AddWindow(w)
-	normal := core.UnitRect{X: 50, Y: 50, Width: 200, Height: 100}
+	normal := core.UnitRect{X: 48, Y: 48, Width: 200, Height: 112}
 	w.SetBounds(normal)
 	m.MaximizeWindow(w)
 	w.SetTitleFocus(TitleFocusTitle)

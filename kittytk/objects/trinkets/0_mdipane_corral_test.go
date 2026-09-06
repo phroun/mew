@@ -14,28 +14,28 @@ func TestMDIProvisionalCorralRespread(t *testing.T) {
 	m := NewMDIPane()
 	m.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 400, Height: 300})
 	win := window.NewWindow("corral")
-	win.SetBounds(core.UnitRect{X: 300, Y: 50, Width: 120, Height: 100})
+	win.SetBounds(core.UnitRect{X: 304, Y: 48, Width: 120, Height: 96})
 	m.AddWindow(win)
 
 	// Fits: display == logical.
-	if got := m.displayBounds(win); got.X != 300 {
-		t.Fatalf("fits: display X = %d, want 300", got.X)
+	if got := m.displayBounds(win); got.X != 304 {
+		t.Fatalf("fits: display X = %d, want 304", got.X)
 	}
 
 	// Shrink the pane so the window overhangs the right edge.
 	m.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 200, Height: 300})
 	disp := m.displayBounds(win)
-	if disp.X >= 300 {
+	if disp.X >= 304 {
 		t.Errorf("shrunk: window not corralled (display X=%d)", disp.X)
 	}
 	// Provisional: logical bounds unchanged.
-	if win.Bounds().X != 300 {
-		t.Errorf("shrunk: logical X mutated to %d, want 300 (provisional)", win.Bounds().X)
+	if win.Bounds().X != 304 {
+		t.Errorf("shrunk: logical X mutated to %d, want 304 (provisional)", win.Bounds().X)
 	}
 
 	// Grow back: re-spread to the original spot.
 	m.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 400, Height: 300})
-	if got := m.displayBounds(win); got.X != 300 {
-		t.Errorf("regrown: display X = %d, want re-spread to 300", got.X)
+	if got := m.displayBounds(win); got.X != 304 {
+		t.Errorf("regrown: display X = %d, want re-spread to 304", got.X)
 	}
 }

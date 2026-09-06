@@ -180,6 +180,12 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, graphicalFrames: true}
 	h.native, _ = surf.(platform.NativeSurface)
+	// A torn window IS an OS window, addressed and sized in device pixels on
+	// the hardened cell pitch. It stands on no cell grid, so its bounds are
+	// left exactly where the OS puts them (see Window.gridded). The manager
+	// it came from stamped this the other way for a cell desktop, and the
+	// window carries that stamp out here unless it is corrected.
+	win.SetSmoothPositioning(true)
 	// The OS-side floor, matching what resizeMove clamps to: a resize we
 	// do not drive (the window manager's own keyboard resize or tiling)
 	// answers only to the OS.

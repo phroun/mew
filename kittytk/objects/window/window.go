@@ -106,6 +106,11 @@ type Window struct {
 	// Nested hosts (MDI panes) inherit it via FindSmoothPositioning.
 	smoothPositioning bool
 
+	// askedBounds is the last rectangle SetBounds was given, before it was
+	// put on the cell grid. The grid answer is re-derived from it whenever
+	// the surface's granularity changes.
+	askedBounds core.UnitRect
+
 	// Position before maximization (for restore)
 	normalBounds core.UnitRect
 
@@ -350,10 +355,20 @@ func (w *Window) NativeRequested() bool {
 
 // SetSmoothPositioning is stamped by the hosting manager from the
 // surface capability.
+//
+// It re-derives the window's geometry, because the answer depends on it: a
+// window placed before it joined its manager was put on the cell grid by the
+// safe default, and a pixel surface wants the rect that was actually asked
+// for (see Window.gridded).
 func (w *Window) SetSmoothPositioning(smooth bool) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	changed := w.smoothPositioning != smooth
 	w.smoothPositioning = smooth
+	asked := w.askedBounds
+	w.mu.Unlock()
+	if changed && (asked != core.UnitRect{}) {
+		w.SetBounds(asked)
+	}
 }
 
 // SmoothWindowPositioning implements core.SmoothPositioningProvider,
@@ -4359,8 +4374,35 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	return false
 }
 
+// gridded is where the surface can actually render a window.
+//
+// A cell surface draws by dividing units by the cell size and hit-tests in
+// units, so a window standing off the grid draws in one cell and answers the
+// mouse in another -- a title bar that looks dead to a click that lands on
+// it. Every route to a window's geometry passes through SetBounds, so this is
+// the one place the whole class is settled: a script naming any position it
+// likes, a Go caller, a drag, a re-fit.
+//
+// The origin floors and the extent ceils (CellMetrics.GridRect). A smooth
+// surface has no grid to stand off and is left exactly as asked.
+func (w *Window) gridded(bounds core.UnitRect) core.UnitRect {
+	if core.FindSmoothPositioning(w) {
+		return bounds
+	}
+	return w.frameCellMetrics().GridRect(bounds)
+}
+
 // SetBounds sets the window bounds and triggers layout.
 func (w *Window) SetBounds(bounds core.UnitRect) {
+	// What was asked for is kept as asked: the surface's granularity can
+	// change under a window (it is stamped when the window joins a manager,
+	// and again when it is torn onto an OS surface), and the rect is
+	// re-derived from the ask rather than from an answer already rounded.
+	w.mu.Lock()
+	w.askedBounds = bounds
+	w.mu.Unlock()
+
+	bounds = w.gridded(bounds)
 	old := w.Bounds()
 	w.TrinketBase.SetBounds(bounds)
 	if old != bounds {

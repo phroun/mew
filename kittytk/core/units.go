@@ -256,6 +256,48 @@ func (m CellMetrics) RoundDownToCellY(y Unit) Unit {
 	return m.RoundDownToCell(y, m.UnitsPerCellHeight)
 }
 
+// RoundUpToCell rounds a unit value up to the nearest cell boundary. It is
+// what an EXTENT does: a box a fraction of a cell wide still needs the whole
+// cell to draw in, and rounding down would clip its far edge.
+func (m CellMetrics) RoundUpToCell(units Unit, cellSize Unit) Unit {
+	if cellSize <= 0 {
+		return units
+	}
+	if r := units % cellSize; r != 0 {
+		if units < 0 {
+			return units - r
+		}
+		return units + (cellSize - r)
+	}
+	return units
+}
+
+// RoundUpToCellX rounds a width up to the nearest cell boundary.
+func (m CellMetrics) RoundUpToCellX(w Unit) Unit {
+	return m.RoundUpToCell(w, m.UnitsPerCellWidth)
+}
+
+// RoundUpToCellY rounds a height up to the nearest cell boundary.
+func (m CellMetrics) RoundUpToCellY(h Unit) Unit {
+	return m.RoundUpToCell(h, m.UnitsPerCellHeight)
+}
+
+// GridRect puts a rectangle where a cell surface can render it: the ORIGIN
+// floors onto the grid and the EXTENT ceils onto it.
+//
+// The two rules differ because the two quantities do. A position never ceils
+// -- rounding it up moves the thing away from where it was asked to be, past
+// whatever it was aligned against. An extent never floors -- rounding it down
+// clips the far edge of something that was asked to be that big.
+func (m CellMetrics) GridRect(r UnitRect) UnitRect {
+	return UnitRect{
+		X:      m.RoundDownToCellX(r.X),
+		Y:      m.RoundDownToCellY(r.Y),
+		Width:  m.RoundUpToCellX(r.Width),
+		Height: m.RoundUpToCellY(r.Height),
+	}
+}
+
 // AlignSize aligns width and height to cell boundaries (rounding down).
 func (m CellMetrics) AlignSize(size UnitSize) UnitSize {
 	return UnitSize{

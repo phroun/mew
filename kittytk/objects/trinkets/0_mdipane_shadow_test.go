@@ -47,27 +47,27 @@ func TestMDIChildCastsDropShadow(t *testing.T) {
 	m := newShadowPane(core.UnitRect{Width: 400, Height: 300})
 
 	child := window.NewWindow("Child")
-	child.SetBounds(core.UnitRect{X: 100, Y: 80, Width: 160, Height: 120})
+	child.SetBounds(core.UnitRect{X: 96, Y: 80, Width: 160, Height: 128})
 	m.AddWindow(child)
 
 	at := paintPane(t, m, 400, 300)
 
-	// Just past the child's right edge (260), mid-height: the strongest
+	// Just past the child's right edge (256), mid-height: the strongest
 	// part of the falloff, cast 2 units right.
-	near := at(263, 140)
-	open := at(370, 140)
+	near := at(259, 144)
+	open := at(370, 144)
 	if near >= open {
 		t.Errorf("pixel just off the child = %d, open background = %d; "+
 			"want the near one darker (no shadow is being cast)", near, open)
 	}
 
 	// And it fades: further out is lighter, and past the blur it stops.
-	mid := at(268, 140)
+	mid := at(264, 144)
 	if mid <= near || mid >= open {
 		t.Errorf("falloff broken: edge %d, 5px out %d, open %d — want edge < 5px out < open",
 			near, mid, open)
 	}
-	if far := at(285, 140); far != open {
+	if far := at(281, 144); far != open {
 		t.Errorf("well past the blur = %d, want the untouched background %d", far, open)
 	}
 }

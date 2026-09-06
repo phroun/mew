@@ -17,8 +17,8 @@ func soleAppDesktop(t *testing.T) (*Desktop, *window.Window) {
 	d.windowManager.SetDesktop(d)
 	d.SetSoleAppChromeSuppression(true)
 	d.SetHideMenuBarForSoleApp(true)
-	d.SetBounds(core.UnitRect{Width: 800, Height: 600})
-	d.windowManager.SetScreenBounds(core.UnitRect{Width: 800, Height: 600})
+	d.SetBounds(core.UnitRect{Width: 800, Height: 608})
+	d.windowManager.SetScreenBounds(core.UnitRect{Width: 800, Height: 608})
 
 	win := window.NewWindow("mew")
 	win.SetContent(NewTextInput())
@@ -109,8 +109,8 @@ func TestOrdinaryDesktopLendsNothing(t *testing.T) {
 	d := NewDesktop()
 	d.windowManager = window.NewWindowManager()
 	d.windowManager.SetDesktop(d)
-	d.SetBounds(core.UnitRect{Width: 800, Height: 600})
-	d.windowManager.SetScreenBounds(core.UnitRect{Width: 800, Height: 600})
+	d.SetBounds(core.UnitRect{Width: 800, Height: 608})
+	d.windowManager.SetScreenBounds(core.UnitRect{Width: 800, Height: 608})
 	win := window.NewWindow("Doc")
 	d.windowManager.AddWindow(win)
 	d.AddApplication(&mockApp{name: "Demo", windows: []*window.Window{win},

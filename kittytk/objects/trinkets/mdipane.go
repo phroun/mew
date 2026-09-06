@@ -905,12 +905,20 @@ func (m *MDIPane) displayBounds(win *window.Window) core.UnitRect {
 func (m *MDIPane) ClientArea() core.UnitRect {
 	bounds := m.Bounds()
 	outer, interior := m.denominations()
-	return core.UnitRect{
+	area := core.UnitRect{
 		X:      0,
 		Y:      0,
 		Width:  core.ExchangeX(bounds.Width, outer, interior),
 		Height: core.ExchangeY(bounds.Height, outer, interior),
 	}
+	// A cell surface can only offer whole cells, so the room a child is
+	// fitted to is floored onto the grid -- half a row at the bottom is a row
+	// nothing can be drawn in, and a child sized to it would be given a
+	// height the grid cannot express. The desktop's own room does the same.
+	if !core.FindSmoothPositioning(m.Self()) {
+		area = interior.AlignRect(area)
+	}
+	return area
 }
 
 // denominations returns the grid-metrics currency of the pane's own
