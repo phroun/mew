@@ -239,8 +239,7 @@ type Scheme struct {
 	Scrollbar             *CellStyle // dark gray on black
 	ScrollbarThumb        *CellStyle // regular white on black
 	HoveredScrollbarThumb *CellStyle // nil = HoverBG + HoverFG
-	FocusedScrollbar      *CellStyle // nil = FocusBG + FocusFG
-	FocusedScrollbarThumb *CellStyle // nil = FocusedScrollbar
+	FocusedScrollbarThumb *CellStyle // nil = FocusBG + FocusFG
 
 	// =========================================================================
 	// ProgressBar Colors
@@ -1353,35 +1352,23 @@ func (s *Scheme) GetHoveredScrollbarThumb() CellStyle {
 	return s.hover()
 }
 
-func (s *Scheme) GetFocusedScrollbar() CellStyle {
-	if s.FocusedScrollbar != nil {
-		return *s.FocusedScrollbar
-	}
-	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
-}
-
 func (s *Scheme) GetFocusedScrollbarThumb() CellStyle {
 	if s.FocusedScrollbarThumb != nil {
 		return *s.FocusedScrollbarThumb
 	}
-	return s.GetFocusedScrollbar()
+	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
 }
 
-// GetScrollbarState resolves the scrollbar TRACK style, and
-// GetScrollbarThumbState the thumb, both with the precedence focus > hover >
-// normal that the splitter's handle uses.
+// GetScrollbarThumbState resolves the scrollbar THUMB style, with the
+// precedence focus > hover > normal that the splitter's handle uses. The
+// track and the corner where two bars meet do not move: the thumb is the part
+// that reads as the control, and lighting the whole gutter would be a band of
+// focus colour down the side of every focused pane.
 //
 // Focus is asked of the trinket the bar belongs to, and only a trinket with
 // nothing else to show it with answers yes: a scroll area is a container whose
 // chrome IS its bars, so a keyboard user has no other sign of where they are.
 // A list or a tree says it with its selection, and passes false.
-func (s *Scheme) GetScrollbarState(focused bool) CellStyle {
-	if focused {
-		return s.GetFocusedScrollbar()
-	}
-	return s.GetScrollbar()
-}
-
 func (s *Scheme) GetScrollbarThumbState(focused, hovered bool) CellStyle {
 	switch {
 	case focused:

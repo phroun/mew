@@ -30,6 +30,7 @@ type ScrollBar struct {
 
 	// Whether the pointer is hovering over the thumb.
 	thumbHovered bool
+	showFocus    bool // the owner is focused; see SetShowFocus
 
 	// Smooth (pixel-surface) drag state: the thumb follows the
 	// pointer at unit granularity while the value still snaps to
@@ -290,6 +291,18 @@ func (s *ScrollBar) UpdateThumbHover(x, y core.Unit) bool {
 	return false
 }
 
+// SetShowFocus tells the bar to paint in the focused colours.
+//
+// A scrollbar takes no focus of its own, so the trinket it belongs to is what
+// knows: a scroll area passes its own focus in, because its bars are the whole
+// of its chrome and nothing else would show a keyboard user where they are.
+func (s *ScrollBar) SetShowFocus(on bool) {
+	if s.showFocus != on {
+		s.showFocus = on
+		s.Update()
+	}
+}
+
 // Paint renders the scrollbar.
 func (s *ScrollBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
@@ -305,14 +318,14 @@ func (s *ScrollBar) Paint(p *core.Painter) {
 
 func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	// Draw track
-	trackStyle := scheme.GetScrollbarState(s.HasFocus())
+	trackStyle := scheme.GetScrollbar()
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', trackStyle)
 
 	// Pixel surfaces paint the thumb at unit granularity so it can
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumbState(s.HasFocus(), s.thumbHovered && p.Graphical())
+			thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 			p.FillRect(core.UnitRect{
 				X:      core.Unit(posU + 0.5),
 				Width:  core.Unit(thumbU + 0.5),
@@ -349,7 +362,7 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumbState(s.HasFocus(), s.thumbHovered && p.Graphical())
+		thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 		for i := 0; i < thumbSize; i++ {
 			x := core.Unit(thumbPos+i) * metrics.UnitsPerCellWidth
 			p.DrawCell(x, 0, '█', thumbStyle)
@@ -359,14 +372,14 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 
 func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	// Draw track
-	trackStyle := scheme.GetScrollbarState(s.HasFocus())
+	trackStyle := scheme.GetScrollbar()
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', trackStyle)
 
 	// Pixel surfaces paint the thumb at unit granularity so it can
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumbState(s.HasFocus(), s.thumbHovered && p.Graphical())
+			thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 			p.FillRect(core.UnitRect{
 				Y:      core.Unit(posU + 0.5),
 				Width:  bounds.Width,
@@ -403,7 +416,7 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumbState(s.HasFocus(), s.thumbHovered && p.Graphical())
+		thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 		for i := 0; i < thumbSize; i++ {
 			y := core.Unit(thumbPos+i) * metrics.UnitsPerCellHeight
 			p.FillRect(core.UnitRect{Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight}, '█', thumbStyle)
@@ -1375,6 +1388,11 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 	s.paintEdgeFades(p, viewport)
 
 	// Draw vertical scrollbar (use offset painter since scrollbar paints at 0,0)
+	// The bars are this area's only chrome, so they carry its focus.
+	focused := s.HasFocus()
+	s.vScrollBar.SetShowFocus(focused)
+	s.hScrollBar.SetShowFocus(focused)
+
 	if s.needsVScrollBar() {
 		s.vScrollBar.SetBounds(core.UnitRect{
 			X:      0,
@@ -1404,7 +1422,7 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 			Y:      viewport.Height,
 			Width:  metrics.UnitsPerCellWidth,
 			Height: s.hScrollBarHeight(),
-		}, ' ', scheme.GetScrollbarState(s.HasFocus()))
+		}, ' ', scheme.GetScrollbar())
 	}
 }
 
