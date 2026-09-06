@@ -4260,12 +4260,31 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 // SetBounds sets the window bounds and triggers layout.
 func (w *Window) SetBounds(bounds core.UnitRect) {
-	oldSize := w.Bounds().Size()
+	old := w.Bounds()
 	w.TrinketBase.SetBounds(bounds)
-	newSize := bounds.Size()
+	if old != bounds {
+		w.clearTitleButtonHover()
+	}
 	// Manually call our HandleResize since embedded SetBounds won't do it
-	if oldSize != newSize {
-		w.HandleResize(oldSize, newSize)
+	if old.Size() != bounds.Size() {
+		w.HandleResize(old.Size(), bounds.Size())
+	}
+}
+
+// clearTitleButtonHover drops the highlight on a title-bar button.
+//
+// A highlight says the pointer is over that button, and only a move can say
+// so. A window that moves out from under a stationary pointer -- restoring
+// from maximized, being placed after it was created, tiled, cascaded -- takes
+// its buttons somewhere else without a move to notice, and the highlight
+// stays lit on a button nothing is pointing at until the pointer next stirs.
+func (w *Window) clearTitleButtonHover() {
+	w.mu.Lock()
+	lit := w.hoveredButton != TitleButtonNone
+	w.hoveredButton = TitleButtonNone
+	w.mu.Unlock()
+	if lit {
+		w.Update()
 	}
 }
 

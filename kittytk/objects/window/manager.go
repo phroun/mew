@@ -2600,6 +2600,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			popup := popups[i]
 			if popup.HandleMouseMove != nil {
 				if popup.HandleMouseMove(event) {
+					// The pointer is over the popup, so it is over
+					// nothing in the window below: a highlight left
+					// lit there would sit on a button the pointer
+					// walked off and never came back to.
+					m.clearWindowHover()
 					return true
 				}
 			}
@@ -2770,7 +2775,10 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		m.ClearResizeBands()
 	}
 
-	// Forward to desktop first (for menu bar drag navigation)
+	// Forward to desktop first (for menu bar drag navigation). An open
+	// dropdown swallows every move it is handed, so a window highlighted on
+	// the way to the menu bar has to be put out here -- otherwise it stays
+	// lit for as long as the menu is up, and past whatever the menu does.
 	m.mu.RLock()
 	desktop := m.desktop
 	active := m.activeWindow
@@ -2783,6 +2791,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
 			if handler.HandleMouseMove(event) {
+				m.clearWindowHover()
 				return true
 			}
 		}
