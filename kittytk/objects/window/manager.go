@@ -2673,14 +2673,24 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// Any motion during a drag marks it moved (a handle press that
-		// never moves is a click, not a drag).
+		// A drag has not begun until the pointer LEAVES the point it was
+		// grabbed at, and until it does there is nothing here to do.
+		//
+		// A terminal reports where the pointer is before every button action,
+		// so a press and a release in one spot arrive with a motion between
+		// them that is no motion at all. Acted on, it drags: one click on a
+		// maximized window's title bar restored it, because a drag of nowhere
+		// still asks to be moved out of the menu bar.
 		m.mu.Lock()
-		if m.dragging == dragging {
+		if m.dragging == dragging && (event.X != m.dragStartX || event.Y != m.dragStartY) {
 			m.dragMoved = true
 		}
+		started := m.dragMoved
 		isTearHandle := m.dragIsTearHandle
 		m.mu.Unlock()
+		if !started {
+			return true
+		}
 
 		// Tear-off: past the surface edge, the host may lift the window
 		// out into its own OS surface (G4 granting) - but ONLY when the

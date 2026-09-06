@@ -63,8 +63,11 @@ type MDIPane struct {
 	// Modal window stack
 	modalStack []*window.Window
 
-	// Drag state
+	// Drag state. dragMoved says the pointer has LEFT the point the window
+	// was grabbed at, which is what makes the gesture a drag; until it does,
+	// the press is still a click and nothing follows the pointer.
 	dragging    *window.Window
+	dragMoved   bool
 	dragStartX  core.Unit
 	dragStartY  core.Unit
 	dragOffsetX core.Unit
@@ -1642,6 +1645,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				if win.Flags()&window.WindowFlagNoMove == 0 {
 					m.mu.Lock()
 					m.dragging = win
+					m.dragMoved = false
 					m.dragStartX = event.X
 					m.dragStartY = event.Y
 					m.dragOffsetX = event.X - bounds.X
@@ -1715,6 +1719,24 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle drag
 	if dragging != nil {
+		// A drag has not begun until the pointer LEAVES the point it was
+		// grabbed at, and until it does there is nothing here to do.
+		//
+		// A terminal reports where the pointer is before every button action,
+		// so a press and a release in one spot arrive with a motion between
+		// them that is no motion at all. Acted on, it drags: one click on a
+		// maximized child's title bar restored it, because a drag of nowhere
+		// still asks to be moved out of the pane's top edge.
+		m.mu.Lock()
+		if m.dragging == dragging && (event.X != m.dragStartX || event.Y != m.dragStartY) {
+			m.dragMoved = true
+		}
+		started := m.dragMoved
+		m.mu.Unlock()
+		if !started {
+			return true
+		}
+
 		justRestored := false
 		clientArea := m.ClientArea()
 		metrics := m.EffectiveCellMetrics()
