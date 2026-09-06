@@ -626,33 +626,39 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if s.dragging {
 		bounds := s.Bounds()
+		metrics := s.EffectiveCellMetrics()
+		snap := !core.FindSmoothPositioning(s.Self())
+		dividerSize := s.dividerThickness()
 
-		if s.orientation == core.Horizontal {
-			dividerSize := s.dividerThickness()
-			totalWidth := bounds.Width - dividerSize
-			if totalWidth > 0 {
-				newPos := float64(event.X-s.dragOffset) / float64(totalWidth)
-				if newPos < 0.1 {
-					newPos = 0.1
-				} else if newPos > 0.9 {
-					newPos = 0.9
-				}
-				s.position = newPos
-				s.Update()
+		// Where the divider goes: the pointer, less the point of the divider
+		// it grabbed. On a cell surface both are taken to the cell they are
+		// in, so the divider keeps step with the pointer's column instead of
+		// trailing it by whatever the sub-cell part of either happened to be.
+		at := core.UnitPoint{X: event.X, Y: event.Y}
+		off := core.UnitPoint{X: s.dragOffset, Y: s.dragOffset}
+		origin := core.DragOrigin(at, off, metrics, snap)
+
+		total, along, cell := bounds.Width-dividerSize, origin.X, metrics.UnitsPerCellWidth
+		if s.orientation != core.Horizontal {
+			total, along, cell = bounds.Height-dividerSize, origin.Y, metrics.UnitsPerCellHeight
+		}
+		if total > 0 {
+			// dividerBounds turns the ratio back into a position and takes it
+			// to the cell it is in, so aim at the MIDDLE of the cell this
+			// drag chose: the ratio then lands back on that cell rather than
+			// on whichever side of the boundary the arithmetic fell.
+			aim := along
+			if snap {
+				aim += cell / 2
 			}
-		} else {
-			dividerSize := s.dividerThickness()
-			totalHeight := bounds.Height - dividerSize
-			if totalHeight > 0 {
-				newPos := float64(event.Y-s.dragOffset) / float64(totalHeight)
-				if newPos < 0.1 {
-					newPos = 0.1
-				} else if newPos > 0.9 {
-					newPos = 0.9
-				}
-				s.position = newPos
-				s.Update()
+			newPos := float64(aim) / float64(total)
+			if newPos < 0.1 {
+				newPos = 0.1
+			} else if newPos > 0.9 {
+				newPos = 0.9
 			}
+			s.position = newPos
+			s.Update()
 		}
 
 		return true

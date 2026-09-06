@@ -316,6 +316,39 @@ func (m CellMetrics) AlignRect(r UnitRect) UnitRect {
 	}
 }
 
+// DragTravel is how far a drag has come, at the granularity the surface can
+// place things at: whole cells where it has a grid, exact units where it does
+// not.
+//
+// Under the kitty protocol the pointer reports where it is INSIDE a cell, so a
+// travel measured in units carries a fraction of a cell that a cell surface
+// can never place. Rounded away when the window lands, that fraction is the
+// gap between where the pointer is and where the edge it is dragging got to.
+func DragTravel(from, to UnitPoint, m CellMetrics, snap bool) (Unit, Unit) {
+	if !snap {
+		return to.X - from.X, to.Y - from.Y
+	}
+	return m.RoundDownToCellX(to.X) - m.RoundDownToCellX(from.X),
+		m.RoundDownToCellY(to.Y) - m.RoundDownToCellY(from.Y)
+}
+
+// DragOrigin is where a dragged window's top-left goes for a pointer at `at`,
+// grabbed `offset` in from that corner.
+//
+// On a cell surface the pointer and the offset are both taken to the cell they
+// are in, so the cell under the pointer is the same cell of the window for the
+// whole gesture. Carrying the sub-cell part of either is what let the pointer
+// run ahead of the window it was dragging.
+func DragOrigin(at, offset UnitPoint, m CellMetrics, snap bool) UnitPoint {
+	if !snap {
+		return UnitPoint{X: at.X - offset.X, Y: at.Y - offset.Y}
+	}
+	return UnitPoint{
+		X: m.RoundDownToCellX(at.X) - m.RoundDownToCellX(offset.X),
+		Y: m.RoundDownToCellY(at.Y) - m.RoundDownToCellY(offset.Y),
+	}
+}
+
 // CellMetricsProvider is implemented by trinkets that can provide a
 // grid-metrics override. Grid metrics are a per-container layout
 // vocabulary: each container may define how many units a virtual

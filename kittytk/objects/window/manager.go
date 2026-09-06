@@ -515,39 +515,6 @@ func WindowResizeLimits(win *Window) ResizeLimits {
 	return ResizeLimits{Minimum: win.MinimumSize(), Maximum: win.MaximumSize()}
 }
 
-// DragTravel is how far a drag has come, at the granularity the surface can
-// place things at: whole cells where it has a grid, exact units where it does
-// not.
-//
-// Under the kitty protocol the pointer reports where it is INSIDE a cell, so a
-// travel measured in units carries a fraction of a cell that a cell surface
-// can never place. Rounded away when the window lands, that fraction is the
-// gap between where the pointer is and where the edge it is dragging got to.
-func DragTravel(from, to core.UnitPoint, m core.CellMetrics, snap bool) (core.Unit, core.Unit) {
-	if !snap {
-		return to.X - from.X, to.Y - from.Y
-	}
-	return m.RoundDownToCellX(to.X) - m.RoundDownToCellX(from.X),
-		m.RoundDownToCellY(to.Y) - m.RoundDownToCellY(from.Y)
-}
-
-// DragOrigin is where a dragged window's top-left goes for a pointer at `at`,
-// grabbed `offset` in from that corner.
-//
-// On a cell surface the pointer and the offset are both taken to the cell they
-// are in, so the cell under the pointer is the same cell of the window for the
-// whole gesture. Carrying the sub-cell part of either is what let the pointer
-// run ahead of the window it was dragging.
-func DragOrigin(at, offset core.UnitPoint, m core.CellMetrics, snap bool) core.UnitPoint {
-	if !snap {
-		return core.UnitPoint{X: at.X - offset.X, Y: at.Y - offset.Y}
-	}
-	return core.UnitPoint{
-		X: m.RoundDownToCellX(at.X) - m.RoundDownToCellX(offset.X),
-		Y: m.RoundDownToCellY(at.Y) - m.RoundDownToCellY(offset.Y),
-	}
-}
-
 // ApplyResize computes the new bounds for a window resized from `original`
 // by dragging edge bits `edge` a delta of (deltaX, deltaY). It holds the
 // window between `limits` and a floor of 3x2 cells, optionally snaps to cell
@@ -2687,7 +2654,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if resizing != nil {
 		snap := !m.SmoothPositioning()
 		metrics := core.DefaultCellMetrics()
-		dx, dy := DragTravel(
+		dx, dy := core.DragTravel(
 			core.UnitPoint{X: resizeStartX, Y: resizeStartY},
 			core.UnitPoint{X: event.X, Y: event.Y}, metrics, snap)
 		newBounds := ApplyResize(resizeOriginal, resizeEdge, dx, dy,
@@ -2815,7 +2782,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 
 		// Move window
-		origin := DragOrigin(
+		origin := core.DragOrigin(
 			core.UnitPoint{X: event.X, Y: event.Y},
 			core.UnitPoint{X: offsetX, Y: offsetY},
 			metrics, !m.SmoothPositioning())

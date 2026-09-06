@@ -1713,7 +1713,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if resizing != nil {
 		snap := !core.FindSmoothPositioning(m.Self())
 		cells := m.EffectiveCellMetrics()
-		dx, dy := window.DragTravel(
+		dx, dy := core.DragTravel(
 			core.UnitPoint{X: resizeStartX, Y: resizeStartY},
 			core.UnitPoint{X: event.X, Y: event.Y}, cells, snap)
 		newBounds := window.ApplyResize(resizeOriginal, resizeEdge, dx, dy,
@@ -1789,7 +1789,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 			}
 		}
 
-		origin := window.DragOrigin(
+		origin := core.DragOrigin(
 			core.UnitPoint{X: event.X, Y: event.Y},
 			core.UnitPoint{X: offsetX, Y: offsetY},
 			metrics, !core.FindSmoothPositioning(m.Self()))
