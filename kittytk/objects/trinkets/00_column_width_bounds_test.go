@@ -174,3 +174,36 @@ func TestTheEventViewersColumnsKeepTheirWidths(t *testing.T) {
 		}
 	}
 }
+
+// The key column has no TreeColumn behind it, so at the FIRST divider the
+// left neighbour is nil -- and asking a column that is not there for its
+// maximum took the whole display down.
+//
+// Go evaluates an if-statement's initializer before its condition, so the
+// `l != nil` standing in the condition never guarded the `l.maxWidth()`
+// standing in the initializer.
+func TestDraggingTheFirstDividerWithNoColumnLeftOfIt(t *testing.T) {
+	tv := newColumnsTree(60, 10) // fit mode: span 0 is the auto key column
+	lay := tv.columnLayout()
+	if lay.spans[0].col != nil {
+		t.Fatal("precondition: the first span is the key column, with no column behind it")
+	}
+	divX := lay.spans[0].divX
+	if !tv.HandleMousePress(core.MousePressEvent{X: divX + 2, Y: 4, Button: core.LeftButton}) {
+		t.Fatal("divider press not handled")
+	}
+
+	// Rightward is the direction that asks the left neighbour's maximum.
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 4*cell, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("size").Width; got != 6*cell {
+		t.Errorf("a four-cell drag right left size %d wide, want %d", got, 6*cell)
+	}
+
+	// And with a maximum on the neighbour, which is the branch that reads it.
+	tv.ColumnByID("size").MaxWidth = 12 * cell
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 4*cell, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("size").Width; got != 12*cell {
+		t.Errorf("a four-cell drag left against a maximum of %d left size %d wide, want the maximum",
+			12*cell, got)
+	}
+}

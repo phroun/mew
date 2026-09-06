@@ -2144,11 +2144,16 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			if room := t.colDragRW - right.MinWidth; c > room {
 				c = room
 			}
+			// The left neighbour is the KEY column at the first divider,
+			// and the key column has no TreeColumn behind it -- so its
+			// maximum is asked for only once there is one to ask.
 			l := t.colDragL
 			transfer := l != nil && l.Resizable
-			if lm := l.maxWidth(); transfer && lm >= 0 {
-				if lim := lm - t.colDragLW; c > lim {
-					c = lim
+			if transfer {
+				if lm := l.maxWidth(); lm >= 0 {
+					if lim := lm - t.colDragLW; c > lim {
+						c = lim
+					}
 				}
 			}
 			if c < 0 {
