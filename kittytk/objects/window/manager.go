@@ -494,15 +494,34 @@ func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, border
 	return grip
 }
 
+// ResizeLimits are the floor and ceiling a drag-resize holds a window
+// between. A ceiling of core.Unbounded on an axis leaves that axis free.
+type ResizeLimits struct {
+	Minimum core.UnitSize
+	Maximum core.UnitSize
+}
+
+// WindowResizeLimits reads the limits off a window. A nil window is
+// unlimited, which is what the geometry rule does with a zero value anyway.
+func WindowResizeLimits(win *Window) ResizeLimits {
+	if win == nil {
+		return ResizeLimits{Maximum: core.UnitSize{Width: core.Unbounded, Height: core.Unbounded}}
+	}
+	return ResizeLimits{Minimum: win.MinimumSize(), Maximum: win.MaximumSize()}
+}
+
 // ApplyResize computes the new bounds for a window resized from `original`
-// by dragging edge bits `edge` a delta of (deltaX, deltaY). It enforces a
-// minimum size (3x2 cells), optionally snaps to cell boundaries
-// (snapToCells - false on smooth/pixel surfaces), keeps the window's
-// top/left within `clientArea` (the far edge absorbs the clamp when
+// by dragging edge bits `edge` a delta of (deltaX, deltaY). It holds the
+// window between `limits` and a floor of 3x2 cells, optionally snaps to cell
+// boundaries (snapToCells - false on smooth/pixel surfaces), keeps the
+// window's top/left within `clientArea` (the far edge absorbs the clamp when
 // resizing from that side), and limits the height to the client area. It
 // is the single resize-geometry rule shared by the desktop WindowManager
 // drag-resize and the embedded MDIPane.
-func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, metrics core.CellMetrics, snapToCells bool, clientArea core.UnitRect) core.UnitRect {
+//
+// The edge under the pointer is the one that stops when a limit is reached:
+// the opposite edge is anchored and stays where the gesture found it.
+func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, metrics core.CellMetrics, snapToCells bool, clientArea core.UnitRect, limits ResizeLimits) core.UnitRect {
 	nb := original
 	if edge&ResizeEdgeLeft != 0 {
 		nb.X = original.X + deltaX
@@ -523,8 +542,27 @@ func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, met
 		nb = metrics.AlignRect(nb)
 	}
 
+	if limits.Maximum.Width >= 0 && nb.Width > limits.Maximum.Width {
+		if edge&ResizeEdgeLeft != 0 {
+			nb.X = original.X + original.Width - limits.Maximum.Width
+		}
+		nb.Width = limits.Maximum.Width
+	}
+	if limits.Maximum.Height >= 0 && nb.Height > limits.Maximum.Height {
+		if edge&ResizeEdgeTop != 0 {
+			nb.Y = original.Y + original.Height - limits.Maximum.Height
+		}
+		nb.Height = limits.Maximum.Height
+	}
+
 	minWidth := metrics.UnitsPerCellWidth * 3
 	minHeight := metrics.UnitsPerCellHeight * 2
+	if limits.Minimum.Width > minWidth {
+		minWidth = limits.Minimum.Width
+	}
+	if limits.Minimum.Height > minHeight {
+		minHeight = limits.Minimum.Height
+	}
 	if nb.Width < minWidth {
 		if edge&ResizeEdgeLeft != 0 {
 			nb.X = original.X + original.Width - minWidth
@@ -2572,7 +2610,8 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if resizing != nil {
 		newBounds := ApplyResize(resizeOriginal, resizeEdge,
 			event.X-resizeStartX, event.Y-resizeStartY,
-			core.DefaultCellMetrics(), !m.SmoothPositioning(), m.ClientArea())
+			core.DefaultCellMetrics(), !m.SmoothPositioning(), m.ClientArea(),
+			WindowResizeLimits(resizing))
 
 		resizing.SetBounds(newBounds)
 		// Keep the edge highlight on the edge being dragged, tracking the

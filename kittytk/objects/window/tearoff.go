@@ -1350,13 +1350,38 @@ func (h *TearOffHost) resizeMove() bool {
 	gx, gy := h.global()
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
-	// The shared host minimum, on the hardened cell pitch this host sizes by.
+	// The shared host minimum, on the hardened cell pitch this host sizes by,
+	// raised by whatever the window states for itself.
 	minW := h.pxHardX(metrics.UnitsPerCellWidth * MinHostCols)
 	minH := h.pxHardY(metrics.UnitsPerCellHeight * MinHostRows)
+	winMin, winMax := h.win.MinimumSize(), h.win.MaximumSize()
+	if px := h.pxHardX(winMin.Width); px > minW {
+		minW = px
+	}
+	if px := h.pxHardY(winMin.Height); px > minH {
+		minH = px
+	}
+	// A window that says how far it grows stops there, and the floor still
+	// wins where the two limits cross.
+	maxW, maxH := -1, -1
+	if winMax.Width >= 0 {
+		if maxW = h.pxHardX(winMax.Width); maxW < minW {
+			maxW = minW
+		}
+	}
+	if winMax.Height >= 0 {
+		if maxH = h.pxHardY(winMax.Height); maxH < minH {
+			maxH = minH
+		}
+	}
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {
 		w -= dx
+		if maxW >= 0 && w > maxW {
+			dx += w - maxW
+			w = maxW
+		}
 		if w < minW {
 			dx -= minW - w
 			w = minW
@@ -1365,18 +1390,28 @@ func (h *TearOffHost) resizeMove() bool {
 	}
 	if h.resizeEdges&resizeRight != 0 {
 		w += dx
+		if maxW >= 0 && w > maxW {
+			w = maxW
+		}
 		if w < minW {
 			w = minW
 		}
 	}
 	if h.resizeEdges&resizeBottom != 0 {
 		ht += dy
+		if maxH >= 0 && ht > maxH {
+			ht = maxH
+		}
 		if ht < minH {
 			ht = minH
 		}
 	}
 	if h.resizeEdges&resizeTop != 0 {
 		ht -= dy
+		if maxH >= 0 && ht > maxH {
+			dy += ht - maxH
+			ht = maxH
+		}
 		if ht < minH {
 			dy -= minH - ht
 			ht = minH

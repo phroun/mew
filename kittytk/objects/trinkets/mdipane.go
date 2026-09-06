@@ -1730,7 +1730,8 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if resizing != nil {
 		newBounds := window.ApplyResize(resizeOriginal, resizeEdge,
 			event.X-resizeStartX, event.Y-resizeStartY,
-			m.EffectiveCellMetrics(), !core.FindSmoothPositioning(m.Self()), m.ClientArea())
+			m.EffectiveCellMetrics(), !core.FindSmoothPositioning(m.Self()), m.ClientArea(),
+			window.WindowResizeLimits(resizing))
 
 		resizing.SetBounds(newBounds)
 		m.setResizeBands(resizing, resizeEdge) // overlay follows the new bounds
