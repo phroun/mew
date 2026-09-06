@@ -411,3 +411,76 @@ func TestAControlInAScrolledColumnClearsTheLane(t *testing.T) {
 		t.Errorf("a caption is drawn at x=%d, inside the lane that ends at %d", at, lane)
 	}
 }
+
+// Content narrower than the viewport sits against the LEADING edge.
+//
+// A scroll area does not stretch its content by default, so a panel that asks
+// for less than the area gives leaves room over. That room belongs behind the
+// content, on the side the direction ends at -- parking it at the left in both
+// directions puts a right-to-left panel against the wrong edge with a gap where
+// the eye starts.
+func TestNarrowContentSitsAgainstTheLeadingEdge(t *testing.T) {
+	build := func(d core.Direction) (*ScrollArea, core.UnitRect) {
+		s := NewScrollArea()
+		s.SetDirection(d)
+		s.SetBounds(core.UnitRect{Width: 400, Height: 120})
+		content := NewPanel()
+		content.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
+		// Narrow, and tall enough to keep the vertical bar in play.
+		for i := 0; i < 30; i++ {
+			content.AddChild(NewLabel("short"))
+		}
+		s.SetContent(content)
+		s.Layout()
+		s.Paint(core.NewPainter(newInk(t)))
+		return s, content.Bounds()
+	}
+
+	ltr, at := build(core.DirLTR)
+	if at.Width >= ltr.viewportBounds().Width {
+		t.Fatalf("the content is %d wide against a viewport of %d; there is no room left over to place",
+			at.Width, ltr.viewportBounds().Width)
+	}
+	if got := ltr.viewportBounds().X; at.X != got {
+		t.Errorf("left to right: the content starts at x=%d, want the viewport's own %d", at.X, got)
+	}
+
+	rtl, at := build(core.DirRTL)
+	viewport := rtl.viewportBounds()
+	if want := viewport.X + viewport.Width - at.Width; at.X != want {
+		t.Errorf("right to left: the content starts at x=%d, want %d -- flush with the far edge",
+			at.X, want)
+	}
+	if got := at.X + at.Width; got != viewport.X+viewport.Width {
+		t.Errorf("right to left: the content ends at %d, want the viewport's far edge %d",
+			got, viewport.X+viewport.Width)
+	}
+}
+
+// An area that stretches its content to the viewport has no room left over to
+// place, so it does not shift it: the content is already as wide as the room.
+func TestAResizedTrinketIsNotShiftedAsWell(t *testing.T) {
+	s := NewScrollArea()
+	s.SetDirection(core.DirRTL)
+	s.SetTrinketResizable(true)
+	s.SetBounds(core.UnitRect{Width: 400, Height: 120})
+	content := NewPanel()
+	content.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
+	for i := 0; i < 30; i++ {
+		content.AddChild(NewLabel("short"))
+	}
+	s.SetContent(content)
+	s.Layout()
+	s.Paint(core.NewPainter(newInk(t)))
+
+	viewport := s.viewportBounds()
+	at := content.Bounds()
+	if at.Width != viewport.Width {
+		t.Fatalf("the content is %d wide against a viewport of %d; it was not stretched",
+			at.Width, viewport.Width)
+	}
+	if at.X != viewport.X {
+		t.Errorf("the content starts at x=%d, want the viewport's own %d -- there is no slack to place it in",
+			at.X, viewport.X)
+	}
+}

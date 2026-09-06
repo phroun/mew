@@ -1082,6 +1082,30 @@ func (s *ScrollArea) viewportBounds() core.UnitRect {
 	return core.UnitRect{X: core.LeadingX(s, bounds.Width, 0, width), Width: width, Height: height}
 }
 
+// contentWidthShown is how wide the content is drawn: the viewport's width
+// where the area resizes its trinket to fit, and the content's own otherwise.
+func (s *ScrollArea) contentWidthShown() core.Unit {
+	if s.trinketResizable {
+		return s.viewportBounds().Width
+	}
+	return s.contentWidth
+}
+
+// contentOriginX is where the content's left edge goes.
+//
+// Content narrower than the viewport sits against the LEADING edge, and the
+// room left over falls behind it -- so a panel in a right-to-left area is
+// flush right rather than parked at the left with a gap where the eye starts.
+// Content wider than the viewport has no slack: which part of it shows is the
+// scroll position's to say (see seekHorizontalStart), not this.
+func (s *ScrollArea) contentOriginX() core.Unit {
+	viewport := s.viewportBounds()
+	if slack := viewport.Width - s.contentWidthShown(); slack > 0 && core.ChromeMirrored(s) {
+		return viewport.X + slack
+	}
+	return viewport.X
+}
+
 // vLaneX is where the vertical bar's column begins, on the side the viewport
 // does not occupy.
 func (s *ScrollArea) vLaneX() core.Unit {
@@ -1398,8 +1422,8 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 			Height: s.contentHeight,
 		}
 
+		contentBounds.Width = s.contentWidthShown()
 		if s.trinketResizable {
-			contentBounds.Width = viewport.Width
 			// The height stays the measured one for content that answers
 			// height-for-width: it was measured at the width it is getting,
 			// and that measurement is what the vertical scroll range was
@@ -1416,14 +1440,15 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 		// and a drop-down opened from a control in here would otherwise land a
 		// column off the control it belongs to. The scroll offset stays out of
 		// them -- MapToScreen asks for that separately.
+		origin := s.contentOriginX()
 		s.content.SetBounds(core.UnitRect{
-			X:      viewport.X,
+			X:      origin,
 			Width:  contentBounds.Width,
 			Height: contentBounds.Height,
 		})
 
 		// Create clipped painter
-		contentPainter := p.WithOffset(viewport.X+contentBounds.X, contentBounds.Y).
+		contentPainter := p.WithOffset(origin+contentBounds.X, contentBounds.Y).
 			WithClip(core.UnitRect{
 				X:      scrollOffsetX,
 				Y:      scrollOffsetY,
@@ -1567,7 +1592,7 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 	if s.content != nil {
 		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 		le := event
-		le.X = event.X - viewport.X + scrollOffsetX
+		le.X = event.X - s.contentOriginX() + scrollOffsetX
 		le.Y = event.Y + scrollOffsetY
 		return s.content.HandleMousePress(le)
 	}
@@ -1617,7 +1642,7 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 			event.X < viewport.X+viewport.Width && event.Y < viewport.Height
 		if inViewport {
 			scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
-			le.X = event.X - viewport.X + scrollOffsetX
+			le.X = event.X - s.contentOriginX() + scrollOffsetX
 			le.Y = event.Y + scrollOffsetY
 		} else {
 			// Over a scrollbar lane (or outside the viewport): the content
@@ -1643,7 +1668,7 @@ func (s *ScrollArea) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		}); ok {
 			offX, offY := s.scrollOffsetUnits()
 			contentEvent := event
-			contentEvent.X += offX - viewport.X
+			contentEvent.X += offX - s.contentOriginX()
 			contentEvent.Y += offY
 			if handler.HandleMouseWheel(contentEvent) {
 				return true
@@ -1746,7 +1771,7 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if s.content != nil {
 		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 		le := event
-		le.X = event.X - viewport.X + scrollOffsetX
+		le.X = event.X - s.contentOriginX() + scrollOffsetX
 		le.Y = event.Y + scrollOffsetY
 		return s.content.HandleMouseRelease(le)
 	}
