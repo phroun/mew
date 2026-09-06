@@ -216,6 +216,16 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// placed against the row it sits in.
 	layoutDir := l.effectiveDirection(container)
 
+	// A row runs the way its direction reads. The run is laid out from the
+	// left either way and reflected at the end (see mirrorX), so the sizing,
+	// the boundaries and the air around inline trinkets have one answer that
+	// both directions share.
+	//
+	// Only a row has a run to reflect. A column hands each child the whole
+	// width and the direction is spent inside that, by alignContent, resolving
+	// the child's halign to a side.
+	mirrored := layoutDir == core.DirRTL && l.orientation == core.Horizontal
+
 	// Round spacing to whole cell size based on orientation
 	metrics := l.effectiveMetrics(container)
 	var spacing core.Unit
@@ -329,6 +339,10 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 				Height: sizes[i],
 			}
 			pos += sizes[i] + spacing
+		}
+
+		if mirrored {
+			itemBounds = mirrorX(rect, itemBounds)
 		}
 
 		// Apply alignment within the item bounds

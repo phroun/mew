@@ -313,6 +313,14 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 		itemBounds := core.UnitRect{X: x, Y: y, Width: width, Height: height}
 
+		// Columns run the way the direction reads, so column 0 is the rightmost
+		// in a right-to-left grid. The CELL is reflected and the child is placed
+		// in it afterwards: alignItem resolves a logical alignment to a side of
+		// the screen, and a side reflected again would come out the other one.
+		if layoutDir == core.DirRTL {
+			itemBounds = mirrorX(rect, itemBounds)
+		}
+
 		// Apply alignment
 		itemBounds = l.alignItem(item, itemBounds, layoutDir, metrics)
 		placeChild(container, item.Trinket, itemBounds, metrics)
@@ -552,7 +560,7 @@ func (l *GridLayout) measure(cols, rows int, metrics core.CellMetrics, colQ, row
 	rowGaps := l.rowGaps(rows, rowQ)
 
 	// Each track is charged what it will actually take: a whole number of
-	// cells where the surface has a grid, which is what Layout gives it. A
+	// cells where the surface places on them, which is what Layout gives it. A
 	// grid that measured the raw floors asked for less than it lays out, and
 	// a bordered panel at its own hint drew its frame through its children.
 	var w, h core.Unit

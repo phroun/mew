@@ -387,7 +387,7 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 		}
 	}
 
-	// Whole cells where the surface has a grid: a line laid out in fractions
+	// Whole cells where the surface places on them: a line laid out in fractions
 	// of a cell puts every item after the first between cells (see
 	// quantizeSizes). The room the sizes have to fit is the line's, less what
 	// the boundaries and the bearings take.
@@ -469,7 +469,7 @@ func (l *FlexLayout) minCross(item *FlexItem) core.Unit {
 }
 
 // lineCross is how deep a line is: the deepest thing in it, taken out to the
-// whole cell it needs where the surface has a grid, so the line below it
+// whole cell it needs where the surface places on cells, so the line below it
 // starts on one.
 func (l *FlexLayout) lineCross(line flexLine) core.Unit {
 	deepest := core.Unit(0)
@@ -499,6 +499,18 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 		layoutDir = core.FindEffectiveDirection(w)
 	}
 	metrics := l.effectiveMetrics(container)
+
+	// A flex is laid out from the left and reflected at the end where the
+	// direction reads right to left (see mirrorX). It settles both axes: a row
+	// runs the other way, and a wrapping column stacks its lines the other way,
+	// since the axis lines stack across is the one text runs along.
+	//
+	// A direction and a reversed flex_direction are separate statements and
+	// both apply. The direction settles where a line begins; reverse settles
+	// which end of the children is walked into it first and moves no slot, so a
+	// right-to-left row_reverse line still begins at the right and the children
+	// within it read left to right.
+	mirrored := layoutDir == core.DirRTL
 
 	base := make([]core.Unit, len(l.items))
 	for i, item := range l.items {
@@ -576,6 +588,9 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 					X: rect.X + line.crossPos, Y: rect.Y + positions[k],
 					Width: line.cross, Height: size,
 				}
+			}
+			if mirrored {
+				itemBounds = mirrorX(rect, itemBounds)
 			}
 			placed := l.alignCross(item, itemBounds, layoutDir)
 			if !l.isMainHorizontal() {
