@@ -102,7 +102,9 @@ b=new tab caption="Basic Trinkets" children={
 }
 
 s=new tab caption="Selection" children={
-	o=new panel layout=vbox spacing=0 children={
+	sev=new panel layout=vbox spacing=8 children={
+	sertl=new checkbox caption="direction=rtl -- a box sits on the side the direction reads from, with its caption running away from it" halign=textbegin fill=none
+	o=new panel layout=vbox spacing=0 stretch=1 children={
 		new panel layout=hbox spacing=8 children={
 			new panel border layout=vbox fixed_width=256 children={
 				new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap
@@ -155,6 +157,7 @@ s=new tab caption="Selection" children={
 			}
 		}
 	}
+	}
 }
 
 new tab caption="Lists" children={
@@ -176,7 +179,9 @@ new tab caption="Lists" children={
 }
 
 ss=new tab caption="Scroll Selection" children={
-	sp=new splitter orientation=vertical position=0.4 children={
+	ssv=new panel layout=vbox spacing=8 children={
+	ssrtl=new checkbox caption="direction=rtl -- the bars take the left edge and the boxes read from the right" halign=textbegin fill=none
+	ssc=new splitter orientation=vertical position=0.4 stretch=1 children={
 		new scrollarea children={
 			new panel layout=vbox spacing=0 children={
 				new label caption="Checkboxes (scrollable):"`)
@@ -211,10 +216,13 @@ ss=new tab caption="Scroll Selection" children={
 			}
 		}
 	}
+	}
 }
 
-new tab caption="Scroll Lists" children={
-	new splitter orientation=horizontal position=0.5 children={
+sl=new tab caption="Scroll Lists" children={
+	slv=new panel layout=vbox spacing=8 children={
+	slrtl=new checkbox caption="direction=rtl -- the first pane takes the right, and each area opens at the start of its content" halign=textbegin fill=none
+	slc=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		new scrollarea children={
 			new panel layout=vbox children={
 				new label caption="ListView (scrollable container):"
@@ -239,6 +247,7 @@ new tab caption="Scroll Lists" children={
 				new textinput min_width=160 placeholder="Type something..."
 			}
 		}
+	}
 	}
 }
 
@@ -426,8 +435,10 @@ lim=new tab caption="Limits" children={
 	}
 }
 
-new tab caption="Progress" children={
-	new panel layout=vbox spacing=16 children={
+pg=new tab caption="Progress" children={
+	pgv=new panel layout=vbox spacing=8 children={
+	pgrtl=new checkbox caption="direction=rtl -- a bar fills from the right" halign=textbegin fill=none
+	pgc=new panel layout=vbox spacing=16 stretch=1 children={
 		new label caption="Horizontal Progress Bars:"
 		new progress min_width=160 value=25
 		new progress min_width=160 value=50
@@ -435,6 +446,7 @@ new tab caption="Progress" children={
 		new progress min_width=160 value=100
 		new label caption="Indeterminate Progress:"
 		new progress min_width=160 indeterminate
+	}
 	}
 }
 
@@ -731,15 +743,15 @@ dns=w.t.dn.dnp.dnpre.dns
 dnn=w.t.dn.dnp.dnpre.dnn
 dnecho=w.t.dn.dnp.dnecho
 binput=w.t.b.bw.brow.input
-wfont=w.t.s.o.sp.c.wfont
-dfont=w.t.s.o.sp.c.dfont
-grid=w.t.s.o.sp.c.grid
-bgdef=w.t.s.o.sp.r.bgdef
-bggreen=w.t.s.o.sp.r.bggreen
-bggray=w.t.s.o.sp.r.bggray
-sbgdef=w.t.ss.sp.sa.sr.sbgdef
-sbggreen=w.t.ss.sp.sa.sr.sbggreen
-sbggray=w.t.ss.sp.sa.sr.sbggray
+wfont=w.t.s.sev.o.sp.c.wfont
+dfont=w.t.s.sev.o.sp.c.dfont
+grid=w.t.s.sev.o.sp.c.grid
+bgdef=w.t.s.sev.o.sp.r.bgdef
+bggreen=w.t.s.sev.o.sp.r.bggreen
+bggray=w.t.s.sev.o.sp.r.bggray
+sbgdef=w.t.ss.ssv.ssc.sa.sr.sbgdef
+sbggreen=w.t.ss.ssv.ssc.sa.sr.sbggreen
+sbggray=w.t.ss.ssv.ssc.sa.sr.sbggray
 mdi=w.t.mtab.mdisp.mdisa.mdi
 mdistatus=w.t.mtab.mdisp.mdisa.mdi.mdicp.mdistatus
 mdidock=w.t.mtab.mdisp.mdidock
@@ -760,6 +772,14 @@ grtl=w.t.gr.grv.grtl
 grc=w.t.gr.grv.grc
 fxrtl=w.t.fx.fxv.fxrtl
 fxc=w.t.fx.fxv.fxc
+sertl=w.t.s.sev.sertl
+serc=w.t.s.sev.o
+ssrtl=w.t.ss.ssv.ssrtl
+ssc=w.t.ss.ssv.ssc
+slrtl=w.t.sl.slv.slrtl
+slc=w.t.sl.slv.slc
+pgrtl=w.t.pg.pgv.pgrtl
+pgc=w.t.pg.pgv.pgc
 `)
 
 	// The menu bar and status bar are adopted as this application's

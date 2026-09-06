@@ -143,8 +143,15 @@ func (a *app) wireDirection() {
 			_ = target.Set("direction=ltr")
 		}
 	}
-	ui.Checkbox("grtl").OnToggle(turn(ui.Object("grc")))
-	ui.Checkbox("fxrtl").OnToggle(turn(ui.Object("fxc")))
+	// Written out rather than looped: a name reached through a variable is a
+	// name the surfacing check cannot read, and an unsurfaced handle is id 0,
+	// which is quiet -- the switch would look wired and do nothing.
+	ui.Checkbox("grtl").OnToggle(turn(ui.Object("grc")))   // a grid's columns
+	ui.Checkbox("fxrtl").OnToggle(turn(ui.Object("fxc")))  // a flex's runs and lines
+	ui.Checkbox("sertl").OnToggle(turn(ui.Object("serc"))) // boxes, arrows, captions
+	ui.Checkbox("ssrtl").OnToggle(turn(ui.Object("ssc")))  // a scroll area's bars
+	ui.Checkbox("slrtl").OnToggle(turn(ui.Object("slc")))  // a splitter's panes
+	ui.Checkbox("pgrtl").OnToggle(turn(ui.Object("pgc")))  // which end a bar fills from
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and

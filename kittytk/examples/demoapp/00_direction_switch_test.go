@@ -146,6 +146,54 @@ func TestTickingTheCheckboxTurnsTheGridTabOver(t *testing.T) {
 	}
 }
 
+// Every tab that shows something turning over has a switch, and each one
+// reaches the demonstrations rather than itself.
+//
+// The two tests above read the geometry, which is what says the Grid and Flex
+// tabs really turn over. This one is about the switches: that each is wired,
+// that it is pointed at the content and not at some neighbour, and that the
+// control itself stays where the reader left it.
+func TestEveryDirectionSwitchReachesItsOwnTab(t *testing.T) {
+	for _, c := range []struct{ tab, box, content string }{
+		{"Grid", "grtl", "grc"},
+		{"Flex", "fxrtl", "fxc"},
+		{"Selection", "sertl", "serc"},
+		{"Scroll Selection", "ssrtl", "ssc"},
+		{"Scroll Lists", "slrtl", "slc"},
+		{"Progress", "pgrtl", "pgc"},
+	} {
+		t.Run(c.tab, func(t *testing.T) {
+			ui, win, _ := openTabWithUI(t, c.tab)
+			(&app{ui: ui}).wireDirection()
+
+			box, _ := ui.Object(c.box).Target().(*trinkets.Checkbox)
+			content, _ := ui.Object(c.content).Target().(core.Trinket)
+			if box == nil || content == nil {
+				t.Fatalf("the %s tab has no switch behind %q or no content behind %q",
+					c.tab, c.box, c.content)
+			}
+			if got := core.FindEffectiveDirection(content); got != core.DirLTR {
+				t.Fatalf("as built the content reads %v, want %v", got, core.DirLTR)
+			}
+
+			box.Toggle()
+			win.Layout()
+			if got := core.FindEffectiveDirection(content); got != core.DirRTL {
+				t.Errorf("ticked, the content reads %v, want %v", got, core.DirRTL)
+			}
+			if got := core.FindEffectiveDirection(box); got != core.DirLTR {
+				t.Errorf("the switch turned over with what it switches; it sits outside that")
+			}
+
+			box.Toggle()
+			win.Layout()
+			if got := core.FindEffectiveDirection(content); got != core.DirLTR {
+				t.Errorf("unticked, the content reads %v, want %v back", got, core.DirLTR)
+			}
+		})
+	}
+}
+
 // The Flex tab's checkbox turns its runs over: the wrapping run starts each
 // line at the right instead of the left. Ticked through the app's own wiring,
 // so the Flex tab's handler is checked as well as the Grid tab's.
