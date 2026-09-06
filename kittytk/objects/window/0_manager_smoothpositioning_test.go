@@ -52,15 +52,19 @@ func TestDragTracksPointerOnSmoothSurfaces(t *testing.T) {
 func TestResizeSnapsToCellsOnCellSurfaces(t *testing.T) {
 	m, win := newPositioningManager(false)
 
-	// Grab the right edge (within one cell of x=400) and pull it out
-	// by 13 units - not a cell multiple.
+	// Grab the right edge (within one cell of x=400) and pull it out by 13
+	// units - not a cell multiple. On a cell surface the travel is the cells
+	// the POINTER crossed: it began in column 49 (396) and ended in column 51
+	// (409), so the edge follows it two columns out, to 336. Measuring the 13
+	// units and rounding them down to one column afterwards left the pointer a
+	// column past the edge it was dragging.
 	m.HandleMousePress(core.MousePressEvent{X: 396, Y: 160, Button: core.LeftButton})
 	m.HandleMouseMove(core.MouseMoveEvent{X: 409, Y: 160})
 	m.HandleMouseRelease(core.MouseReleaseEvent{X: 409, Y: 160, Button: core.LeftButton})
 
 	b := win.Bounds()
-	if b.Width != 328 || b.Height != 160 {
-		t.Errorf("cell surface resize: got %dx%d, want snapped 328x160", b.Width, b.Height)
+	if b.Width != 336 || b.Height != 160 {
+		t.Errorf("cell surface resize: got %dx%d, want snapped 336x160", b.Width, b.Height)
 	}
 }
 

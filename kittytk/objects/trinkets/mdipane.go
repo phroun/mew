@@ -1705,9 +1705,13 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle resize
 	if resizing != nil {
-		newBounds := window.ApplyResize(resizeOriginal, resizeEdge,
-			event.X-resizeStartX, event.Y-resizeStartY,
-			m.EffectiveCellMetrics(), !core.FindSmoothPositioning(m.Self()), m.ClientArea(),
+		snap := !core.FindSmoothPositioning(m.Self())
+		cells := m.EffectiveCellMetrics()
+		dx, dy := window.DragTravel(
+			core.UnitPoint{X: resizeStartX, Y: resizeStartY},
+			core.UnitPoint{X: event.X, Y: event.Y}, cells, snap)
+		newBounds := window.ApplyResize(resizeOriginal, resizeEdge, dx, dy,
+			cells, snap, m.ClientArea(),
 			window.WindowResizeLimits(resizing))
 
 		resizing.SetBounds(newBounds)
@@ -1777,12 +1781,14 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 			}
 		}
 
-		newX := event.X - offsetX
-		newY := event.Y - offsetY
+		origin := window.DragOrigin(
+			core.UnitPoint{X: event.X, Y: event.Y},
+			core.UnitPoint{X: offsetX, Y: offsetY},
+			metrics, !core.FindSmoothPositioning(m.Self()))
 
 		bounds := dragging.Bounds()
-		bounds.X = newX
-		bounds.Y = newY
+		bounds.X = origin.X
+		bounds.Y = origin.Y
 
 		// Maximize gesture: only when the POINTER itself moves above the pane's
 		// top (into/past the pane edge), not merely when the window's top edge
