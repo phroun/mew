@@ -260,3 +260,41 @@ was launched on. **Title only** beyond that.
 A design note rather than a defect. **Title only.**
 Repo is ambiguous — the editor placeholder lives in the toolkit
 (`objects/trinkets/editor_mew*`) but the behaviour is mew's.
+
+---
+
+## Added 2026-09-06
+
+### A layout places children off the cell grid, so their clicks are a cell out
+*Reproduced 2026-09-06 in the demo's Grid tab, span panel.*
+
+On a cell surface a trinket must stand on the cell grid: drawing rounds and
+hit-testing does not, so a trinket placed between cells draws in one and
+answers the mouse in another. Windows are held to this in `Window.SetBounds`.
+Nothing holds a trinket in a layout to it.
+
+Measured, in the demo's span panel (a bordered grid, four stretch bands, 640
+units wide): the three buttons land at x=16, **222** and **427**. A cell is 8
+units, so two of the three are three-quarters of a cell out, and a click on
+the painted button lands in the neighbouring column.
+
+Two sources, and both have to go:
+
+- **Stretch remainders.** Dividing what is left among tracks lands their
+  boundaries wherever the arithmetic falls (624 units over four bands).
+- **Sub-cell spacing.** The demo panel asks for `spacing=4`, half a cell,
+  which no cell surface can render.
+
+The fix belongs in the DISTRIBUTION, not after it: each track takes a whole
+number of cells with the remainder handed out a cell at a time, and spacing
+rounds to whole cells, so children are born on the grid.
+
+Snapping each child's origin afterwards was measured and is NOT the fix: it
+pulls a child up into the one above it, and `0_bordered_panels_test.go`
+catches the overlap. Six other layout tests also assert sub-cell coordinates
+and would need rewriting either way.
+
+Scope note: `calculateStretch` is shared by the box and the grid, so doing it
+there fixes both at once. Flex distributes its own. This is the open question
+already recorded above ("Nothing keeps a trinket's bounds on the cell grid")
+with the measurement attached.
