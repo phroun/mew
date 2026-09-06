@@ -29,6 +29,8 @@ type TreeColumn struct {
 	// Width is the current width in text cells; Min/MaxWidth bound
 	// drag-resizing. MaxWidth -1 does not bound; a maximum below the
 	// minimum loses to it, a minimum being the stronger statement.
+	//
+	// Zero does not bound either -- see maxWidth.
 	Width    int
 	MinWidth int
 	MaxWidth int
@@ -105,11 +107,29 @@ func NewTreeColumn(id, caption string, width int) *TreeColumn {
 	}
 }
 
+// maxWidth is how wide this column may be dragged, or -1 for no limit.
+//
+// Zero is no limit either, which is the one place a size in this toolkit does
+// not read zero as a real answer. It can afford not to: a column is measured
+// in whole text cells and never renders narrower than one, so a maximum of
+// zero bounds it to exactly what a maximum of one does and says nothing new.
+//
+// What it costs to read zero as a cap is the whole type. A TreeColumn is
+// written as a struct literal, so a field left out is zero -- and every
+// column written the ordinary way was capped at nothing and collapsed to a
+// single cell.
+func (c *TreeColumn) maxWidth() int {
+	if c.MaxWidth <= 0 {
+		return -1
+	}
+	return c.MaxWidth
+}
+
 // clampWidth bounds w to the column's Min/MaxWidth. The maximum applies
 // first and the minimum second, so where the two conflict the minimum wins.
 func (c *TreeColumn) clampWidth(w int) int {
-	if c.MaxWidth >= 0 && w > c.MaxWidth {
-		w = c.MaxWidth
+	if m := c.maxWidth(); m >= 0 && w > m {
+		w = m
 	}
 	if w < c.MinWidth {
 		w = c.MinWidth
@@ -2062,8 +2082,8 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			}
 			l := t.colDragL
 			transfer := l != nil && l.Resizable
-			if transfer && l.MaxWidth >= 0 {
-				if lim := l.MaxWidth - t.colDragLW; c > lim {
+			if lm := l.maxWidth(); transfer && lm >= 0 {
+				if lim := lm - t.colDragLW; c > lim {
 					c = lim
 				}
 			}
@@ -2091,8 +2111,8 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			if m > t.colDragPool+lFree {
 				m = t.colDragPool + lFree
 			}
-			if right.MaxWidth >= 0 && m > right.MaxWidth-t.colDragRW {
-				m = right.MaxWidth - t.colDragRW
+			if rm := right.maxWidth(); rm >= 0 && m > rm-t.colDragRW {
+				m = rm - t.colDragRW
 			}
 			if m < 0 {
 				m = 0
@@ -2133,8 +2153,8 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 			if m > t.colDragPool+rFree {
 				m = t.colDragPool + rFree
 			}
-			if left.MaxWidth >= 0 && m > left.MaxWidth-t.colDragLW {
-				m = left.MaxWidth - t.colDragLW
+			if lm := left.maxWidth(); lm >= 0 && m > lm-t.colDragLW {
+				m = lm - t.colDragLW
 			}
 			if m < 0 {
 				m = 0

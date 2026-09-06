@@ -6,11 +6,12 @@ import (
 	"github.com/phroun/kittytk/core"
 )
 
-// A column's maximum spells "no limit" the way the rest of the toolkit does,
-// so a maximum of zero can mean what it says.
-//
-// Zero was the spelling for "no limit", so it could not also be a limit -- and
-// a column is exactly where a caller might want to squeeze one to nothing.
+// A column's maximum spells "no limit" as -1, the way the rest of the toolkit
+// does. Zero is no limit either: a column is measured in whole text cells and
+// never renders narrower than one, so a maximum of zero bounds it to exactly
+// what a maximum of one does -- while reading zero as a cap makes every
+// struct literal that leaves MaxWidth out collapse to a single cell, which is
+// how the event viewer lost every column but its widest.
 func TestAColumnsMaximumIsMinusOneWhenThereIsNone(t *testing.T) {
 	c := NewTreeColumn("size", "Size", 10)
 	if c.MaxWidth != -1 {
@@ -47,11 +48,9 @@ func TestAColumnsMinimumBeatsItsMaximum(t *testing.T) {
 	}
 }
 
-// The maximum bounds the divider drag too, and a maximum of zero bounds it as
-// hard as it can: the column goes as narrow as its own minimum allows.
-//
-// The drag read the maximum as "no limit" at zero while clampWidth read it as
-// a limit, so the same column answered two ways depending on which asked.
+// The maximum bounds the divider drag too, and reads zero as no maximum
+// exactly as clampWidth does -- the same column must not answer two ways
+// depending on which one asked.
 func TestAColumnsMaximumBoundsTheDividerDrag(t *testing.T) {
 	for _, c := range []struct {
 		max  int
@@ -59,7 +58,7 @@ func TestAColumnsMaximumBoundsTheDividerDrag(t *testing.T) {
 	}{
 		{-1, 14}, // no limit: the drag's full four cells land
 		{12, 12}, // bounded above: it stops where it was told
-		{0, 3},   // as narrow as it may be, which its minimum settles at 3
+		{0, 14},  // zero is no maximum: the drag's full four cells land
 	} {
 		tv := newColumnsTree(60, 10)
 		tv.ColumnByID("size").MaxWidth = c.max
@@ -85,7 +84,7 @@ func TestAColumnsMaximumBoundsTheDividerDrag(t *testing.T) {
 	}{
 		{-1, 16},
 		{10, 10},
-		{0, 3},
+		{0, 16}, // zero is no maximum
 	} {
 		tv := newColumnsTree(60, 10)
 		tv.ColumnByID("kind").MaxWidth = c.max
@@ -113,7 +112,7 @@ func TestAColumnsMaximumBoundsTheMirroredDrag(t *testing.T) {
 	}{
 		{-1, 20},
 		{16, 16},
-		{0, 3},
+		{0, 20}, // zero is no maximum
 	} {
 		tv := newColumnsTree(60, 10)
 		tv.SetShowKey(false)
@@ -129,6 +128,44 @@ func TestAColumnsMaximumBoundsTheMirroredDrag(t *testing.T) {
 		if got := tv.ColumnByID("size").Width; got != c.want {
 			t.Errorf("with a maximum of %d a ten-cell drag into the blank left the column %d wide, want %d",
 				c.max, got, c.want)
+		}
+	}
+}
+
+// A column written as a struct literal keeps the width it declared. Every
+// column in the toolkit that is not built by NewTreeColumn is written this
+// way, so a maximum read out of the zero value collapses all of them at once
+// -- which is what happened to the event viewer: seven columns one cell wide,
+// and only the widest still readable.
+func TestAColumnWrittenAsALiteralKeepsItsWidth(t *testing.T) {
+	for _, c := range []*TreeColumn{
+		{ID: "seq", Caption: "#", Width: 7},
+		{ID: "event", Caption: "Event", Width: 14, Resizable: true},
+		{ID: "detail", Caption: "Detail", Width: 40, Resizable: true},
+	} {
+		if got := c.clampWidth(c.Width); got != c.Width {
+			t.Errorf("column %q declared %d cells and clamped to %d", c.ID, c.Width, got)
+		}
+	}
+}
+
+// End to end: the desktop's own event viewer, whose columns are the reason
+// this was noticed.
+func TestTheEventViewersColumnsKeepTheirWidths(t *testing.T) {
+	want := map[string]int{
+		"seq": 7, "event": 14, "key": 16, "mods": 22,
+		"repeat": 7, "text": 8, "detail": 40,
+	}
+	v := &eventViewer{}
+	v.build()
+	for id, w := range want {
+		c := v.tree.ColumnByID(id)
+		if c == nil {
+			t.Errorf("the event viewer has no %q column", id)
+			continue
+		}
+		if got := c.clampWidth(c.Width); got != w {
+			t.Errorf("the %q column is %d cells wide, want the %d it declared", id, got, w)
 		}
 	}
 }
