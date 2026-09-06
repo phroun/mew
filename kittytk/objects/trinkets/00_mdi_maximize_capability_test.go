@@ -93,7 +93,12 @@ func TestAMaximizedMDIChildsCapSurvivesAPaneResize(t *testing.T) {
 	if fr.Width != 320 || fr.Height != 200 {
 		t.Errorf("after a pane resize its frame is %v, want its maximum of 320x200", fr.Size())
 	}
-	if fr.X != (pane.Width-320)/2 || fr.Y != (pane.Height-200)/2 {
-		t.Errorf("after a pane resize its frame sits at %d,%d, want it centered in %v", fr.X, fr.Y, pane)
+	// Centred, then floored onto the cell grid the pane renders on.
+	cm := core.DefaultCellMetrics()
+	wantX := cm.RoundDownToCellX((pane.Width - 320) / 2)
+	wantY := cm.RoundDownToCellY((pane.Height - 200) / 2)
+	if fr.X != wantX || fr.Y != wantY {
+		t.Errorf("after a pane resize its frame sits at %d,%d, want %d,%d -- centered in %v "+
+			"and floored onto the cell grid", fr.X, fr.Y, wantX, wantY, pane)
 	}
 }

@@ -661,7 +661,7 @@ func (m *MDIPane) MaximizeWindow(win *window.Window) {
 	}
 	clientArea := m.ClientArea()
 	win.Maximize()
-	win.SetBounds(window.MaximizedBounds(win, clientArea))
+	win.SetBounds(clientArea)
 	m.Update()
 }
 
@@ -1116,7 +1116,7 @@ func (m *MDIPane) SetBounds(bounds core.UnitRect) {
 	clientArea := m.ClientArea()
 	for _, win := range m.windows {
 		if win.IsMaximized() {
-			win.SetBounds(window.MaximizedBounds(win, clientArea))
+			win.SetBounds(clientArea)
 		}
 	}
 }

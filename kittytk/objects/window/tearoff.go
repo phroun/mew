@@ -2,7 +2,6 @@ package window
 
 import (
 	"math"
-	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
@@ -101,11 +100,9 @@ type TearOffHost struct {
 	// clearly left the top strip.
 	dragRestored bool
 
-	// Double-click tracking for the title bar (zoom toggle), matching
-	// the in-surface manager's maximize double-click.
-	lastClickAt time.Time
-	lastClickX  core.Unit
-	lastClickY  core.Unit
+	// Double-click tracking for the title bar (zoom toggle), the same kit
+	// the in-surface manager's maximize double-click uses.
+	titleClicks DoubleClickTracker
 
 	// Popup overlays (combobox dropdowns, context menus) opened by
 	// trinkets inside the torn window: they belong to THIS surface.
@@ -956,6 +953,13 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			break
 		}
 		handled = h.win.HandleMousePress(e)
+		if handled || !h.inTitleBar(e.X, e.Y) {
+			// Anything but a plain click on the title bar disarms the
+			// tracker: a press the window took (a caption button) or one
+			// that landed elsewhere is not half of a double-click, and
+			// leaving it armed lets the NEXT title click pair with it.
+			h.titleClicks.Reset()
+		}
 		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) &&
 			!h.win.CanMaximize() {
 			// A window that may not be maximized may not be zoomed either:
@@ -966,16 +970,9 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		} else if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
 			// Double-click on the title bar toggles the zoom, exactly
 			// as it toggles maximize in-surface.
-			metrics := core.DefaultCellMetrics()
-			now := time.Now()
-			if now.Sub(h.lastClickAt) < 400*time.Millisecond &&
-				e.X-h.lastClickX < metrics.UnitsPerCellWidth && h.lastClickX-e.X < metrics.UnitsPerCellWidth &&
-				e.Y-h.lastClickY < metrics.UnitsPerCellHeight && h.lastClickY-e.Y < metrics.UnitsPerCellHeight {
-				h.lastClickAt = time.Time{}
+			if h.titleClicks.Press(e.X, e.Y, core.DefaultCellMetrics()) {
 				h.ToggleZoom()
 			} else {
-				h.lastClickAt = now
-				h.lastClickX, h.lastClickY = e.X, e.Y
 				h.beginDragAt(e.X, e.Y)
 			}
 			handled = true

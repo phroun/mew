@@ -868,7 +868,7 @@ func (m *WindowManager) SetScreenBounds(bounds core.UnitRect) {
 	clientArea := m.ClientArea()
 	for _, win := range m.windows {
 		if win.IsMaximized() {
-			win.SetBounds(MaximizedBounds(win, clientArea))
+			win.SetBounds(clientArea)
 		}
 	}
 }
@@ -1817,7 +1817,7 @@ func (m *WindowManager) MaximizeWindow(win *Window) {
 	}
 	clientArea := m.ClientArea()
 	win.Maximize()
-	win.SetBounds(MaximizedBounds(win, clientArea))
+	win.SetBounds(clientArea)
 }
 
 // MinimizeWindow minimizes a window.
@@ -1845,7 +1845,7 @@ func (m *WindowManager) RestoreWindow(win *Window) {
 	// it keeps stale bounds and, for a NoTitleWhenMaximized window, its frame,
 	// until the next manual resize/maximize.
 	if win.IsMaximized() {
-		win.SetBounds(MaximizedBounds(win, m.ClientArea()))
+		win.SetBounds(m.ClientArea())
 	}
 	m.ActivateWindow(win)
 
@@ -2499,9 +2499,13 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				localEvent.X -= bounds.X
 				localEvent.Y -= bounds.Y
 				if win.HandleMousePress(localEvent) {
-					// Window handled it (button click) - update click tracking but don't drag
+					// The window took it -- a caption button. That is not
+					// half of a double-click, so the tracker is disarmed
+					// rather than fed: recording it lets the NEXT plain
+					// title click pair with a button press and toggle
+					// maximize a second time.
 					m.mu.Lock()
-					m.titleClicks.Press(event.X, event.Y, metrics)
+					m.titleClicks.Reset()
 					m.lastClickWindow = win
 					m.pressedWindow = nil
 					m.mu.Unlock()

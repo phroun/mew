@@ -600,8 +600,12 @@ func TestTearOffHostZoomFillsTheWorkAreaAndFramesTheMaximumInside(t *testing.T) 
 	if fr.Width != 800 || fr.Height != 400 {
 		t.Errorf("the frame is %v, want the window's maximum of 800x400", fr.Size())
 	}
-	if fr.X != (1600-800)/2 || fr.Y != (970-400)/2 {
-		t.Errorf("the frame sits at %d,%d, want it centered in the surface", fr.X, fr.Y)
+	// Centred, then floored onto the cell grid this surface renders on.
+	cm := core.DefaultCellMetrics()
+	wantX, wantY := cm.RoundDownToCellX((1600-800)/2), cm.RoundDownToCellY((970-400)/2)
+	if fr.X != wantX || fr.Y != wantY {
+		t.Errorf("the frame sits at %d,%d, want %d,%d -- centered in the surface and "+
+			"floored onto the cell grid", fr.X, fr.Y, wantX, wantY)
 	}
 }
 

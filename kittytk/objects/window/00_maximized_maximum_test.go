@@ -14,7 +14,9 @@ import (
 // room around the window then belongs to the layer underneath, and on a
 // compositing host nothing repaints that layer when a window maximizes.
 func TestAMaximizedWindowTakesTheWholeRoom(t *testing.T) {
-	room := core.UnitRect{X: 40, Y: 24, Width: 800, Height: 600}
+	m := NewWindowManager()
+	m.SetScreenBounds(core.UnitRect{Width: 800, Height: 600})
+	room := m.ClientArea()
 	for _, max := range []core.UnitSize{
 		{Width: core.Unbounded, Height: core.Unbounded},
 		{Width: 300, Height: core.Unbounded},
@@ -22,15 +24,22 @@ func TestAMaximizedWindowTakesTheWholeRoom(t *testing.T) {
 	} {
 		win := NewWindow("w")
 		win.SetMaximumSize(max)
-		if got := MaximizedBounds(win, room); got != room {
-			t.Errorf("capped at %v it maximized to %v, want the whole %v", max, got, room)
+		m.AddWindow(win)
+		m.MaximizeWindow(win)
+		if got := win.Bounds(); got != room {
+			t.Errorf("capped at %v it maximized to %v, want the whole room %v", max, got, room)
 		}
+		m.RemoveWindow(win)
 	}
 }
 
 // And its frame sits inside that surface: capped where it says so, centered
 // there, whole on any axis it says nothing about.
+//
+// Centred and then floored onto the cell grid, which a cell surface needs and
+// which the numbers below are picked to make visible.
 func TestAMaximizedWindowsFrameStopsAtItsMaximum(t *testing.T) {
+	m := core.DefaultCellMetrics()
 	surface := core.UnitSize{Width: 800, Height: 600}
 	whole := core.UnitRect{Width: 800, Height: 600}
 
@@ -43,7 +52,7 @@ func TestAMaximizedWindowsFrameStopsAtItsMaximum(t *testing.T) {
 	// Bounded on one axis: capped there, centered there, whole on the other.
 	win = NewWindow("wide")
 	win.SetMaximumSize(core.UnitSize{Width: 300, Height: core.Unbounded})
-	want := core.UnitRect{X: (800 - 300) / 2, Y: 0, Width: 300, Height: 600}
+	want := core.UnitRect{X: m.RoundDownToCellX((800 - 300) / 2), Y: 0, Width: 300, Height: 600}
 	if got := MaximizedFrameRect(win, surface); got != want {
 		t.Errorf("a window capped at 300 wide framed %v, want %v", got, want)
 	}
@@ -51,7 +60,7 @@ func TestAMaximizedWindowsFrameStopsAtItsMaximum(t *testing.T) {
 	// Bounded on both.
 	win = NewWindow("both")
 	win.SetMaximumSize(core.UnitSize{Width: 300, Height: 200})
-	want = core.UnitRect{X: 250, Y: 200, Width: 300, Height: 200}
+	want = core.UnitRect{X: m.RoundDownToCellX(250), Y: m.RoundDownToCellY(200), Width: 300, Height: 200}
 	if got := MaximizedFrameRect(win, surface); got != want {
 		t.Errorf("a window capped at 300x200 framed %v, want %v", got, want)
 	}
@@ -212,8 +221,12 @@ func TestAMaximizedWindowsCapSurvivesARelayout(t *testing.T) {
 		if fr.Width != 480 || fr.Height != 320 {
 			t.Errorf("%s its frame is %v, want its maximum of 480x320", what, fr.Size())
 		}
-		if fr.X != (room.Width-480)/2 || fr.Y != (room.Height-320)/2 {
-			t.Errorf("%s its frame sits at %d,%d, want it centered in %v", what, fr.X, fr.Y, room)
+		cm := core.DefaultCellMetrics()
+		wantX := cm.RoundDownToCellX((room.Width - 480) / 2)
+		wantY := cm.RoundDownToCellY((room.Height - 320) / 2)
+		if fr.X != wantX || fr.Y != wantY {
+			t.Errorf("%s its frame sits at %d,%d, want %d,%d -- centered in %v and "+
+				"floored onto the cell grid", what, fr.X, fr.Y, wantX, wantY, room)
 		}
 	}
 	framed("maximized")

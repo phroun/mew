@@ -922,7 +922,7 @@ dwin=dw%d
 dcloser=dw%d.dsp.dtp.dclose
 dterm=dw%d.dsp.dterm
 set dterm feed="\e[1;36mThis banner arrived as protocol text.\e[0m\r\n\r\n"
-`, n, 40+n*16, 40+n*16, n, n, n)
+`, n, 40+n*16, 48+n*16, n, n, n)
 }
 
 // boundedWindowScript is a window that says how far it grows: maximizing it
@@ -945,7 +945,7 @@ bw%d=new window title="Bounded Window" x=%d y=%d width=280 height=160 tearable m
 }
 bwin=bw%d
 bwcloser=bw%d.bwp.bwclose
-`, n, 56+n*16, 40+n*16, n, n)
+`, n, 56+n*16, 48+n*16, n, n)
 }
 
 // aboutDialogScript is the About message box. The name and version come from

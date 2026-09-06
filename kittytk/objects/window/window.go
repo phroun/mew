@@ -505,16 +505,6 @@ func (w *Window) CanMaximize() bool {
 	return canMaximize(w.Flags())
 }
 
-// MaximizedBounds is where a maximized window sits in the room it was given:
-// the whole of it. A window that says how far it grows is maximized just the
-// same -- it takes the whole room as its surface and draws its frame in the
-// middle of it, at the size it allows, shading the room it declined (see
-// frameRect). Handing it smaller bounds instead would leave the room around
-// it to whoever painted the layer underneath, which is nobody's job.
-func MaximizedBounds(win *Window, clientArea core.UnitRect) core.UnitRect {
-	return clientArea
-}
-
 // MaximizedFrameRect is where a maximized window's frame sits inside the
 // surface it was given, in that surface's own coordinates.
 //
@@ -554,6 +544,19 @@ func MaximizedFrameRect(win *Window, surface core.UnitSize) core.UnitRect {
 	if height < surface.Height {
 		out.Y = (surface.Height - height) / 2
 		out.Height = height
+	}
+
+	// A cell surface renders a frame nowhere but the cell grid. Drawing
+	// rounds and hit-testing does not, so a frame centred between two rows
+	// draws in one and answers the mouse in the other -- the title bar of a
+	// bounded maximized window looking dead to a click that lands on it.
+	//
+	// The origin floors onto the grid; the size is left as stated, since a
+	// maximum is a maximum. A smooth surface has no grid to stand off.
+	if !core.FindSmoothPositioning(win) {
+		m := win.frameCellMetrics()
+		out.X = m.RoundDownToCellX(out.X)
+		out.Y = m.RoundDownToCellY(out.Y)
 	}
 	return out
 }

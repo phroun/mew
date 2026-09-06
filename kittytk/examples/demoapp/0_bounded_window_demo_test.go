@@ -79,14 +79,49 @@ func TestTheBoundedMDIChildStopsWhereItSays(t *testing.T) {
 	// The pane it lives in is larger than that, so maximizing it there leaves
 	// room over.
 	pane := core.UnitRect{Width: 640, Height: 400}
-	if got := window.MaximizedBounds(win, pane); got != pane {
-		t.Errorf("maximized in the pane its surface is %v, want the whole %v", got, pane)
-	}
 	fr := window.MaximizedFrameRect(win, pane.Size())
 	if fr.Width != 320 || fr.Height != 200 {
 		t.Errorf("maximized in the pane its frame is %v, want its maximum of 320x200", fr.Size())
 	}
-	if fr.X != (640-320)/2 || fr.Y != (400-200)/2 {
-		t.Errorf("maximized in the pane its frame sits at %d,%d, want it centered", fr.X, fr.Y)
+	// Centred, then floored onto the cell grid.
+	cm := core.DefaultCellMetrics()
+	wantX, wantY := cm.RoundDownToCellX((640-320)/2), cm.RoundDownToCellY((400-200)/2)
+	if fr.X != wantX || fr.Y != wantY {
+		t.Errorf("maximized in the pane its frame sits at %d,%d, want %d,%d -- centered "+
+			"and floored onto the cell grid", fr.X, fr.Y, wantX, wantY)
+	}
+}
+
+// Every window the demo opens has to land on the cell grid. A cell surface
+// renders a window nowhere else -- drawing rounds and hit-testing does not, so
+// a window standing off the grid draws in one row and answers the mouse in
+// another.
+//
+// The y coordinates are the ones to watch: a cell is 8 units across and 16
+// down, so a script author who steps both axes by the same number gets away
+// with it horizontally and not vertically.
+func TestTheDemosWindowsOpenOnTheCellGrid(t *testing.T) {
+	m := core.DefaultCellMetrics()
+	for _, c := range []struct {
+		name string
+		src  string
+		key  string
+	}{
+		{"bounded window", boundedWindowScript(1), "bwin"},
+		{"bounded window 2", boundedWindowScript(2), "bwin"},
+		{"demo terminal window", demoTerminalScript(1), "dwin"},
+		{"demo terminal window 2", demoTerminalScript(2), "dwin"},
+		{"secondary app window", secondaryBuildScript(1), "w"},
+	} {
+		win := buildWindow(t, c.src, c.key)
+		b := win.Bounds()
+		if b.X%m.UnitsPerCellWidth != 0 {
+			t.Errorf("%s opens at x=%d, which is %d units into a %d-unit cell",
+				c.name, b.X, b.X%m.UnitsPerCellWidth, m.UnitsPerCellWidth)
+		}
+		if b.Y%m.UnitsPerCellHeight != 0 {
+			t.Errorf("%s opens at y=%d, which is %d units into a %d-unit row",
+				c.name, b.Y, b.Y%m.UnitsPerCellHeight, m.UnitsPerCellHeight)
+		}
 	}
 }

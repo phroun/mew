@@ -643,6 +643,9 @@ type ScrollArea struct {
 	scrollY       int
 	contentWidth  core.Unit
 	contentHeight core.Unit
+	// contentHeightForWidth records whether the content's height was
+	// measured from its width rather than taken from its size hint.
+	contentHeightForWidth bool
 
 	// Scrollbars
 	hScrollBar *ScrollBar
@@ -1108,6 +1111,33 @@ func (s *ScrollArea) updateScrollBars() {
 	s.contentWidth = hint.Width
 	s.contentHeight = hint.Height
 
+	// Content whose height depends on its width -- anything that wraps -- is
+	// measured at the width it will be GIVEN, not the width it would have
+	// liked. Measured at its hint, a paragraph reflowing into a narrower
+	// viewport reports fewer lines than it draws, and the scroll range stops
+	// short of its own last line.
+	hfw, _ := s.content.(core.HeightForWidther)
+	s.contentHeightForWidth = hfw != nil && hfw.HasHeightForWidth()
+	if s.contentHeightForWidth {
+		width := s.contentWidth
+		if s.trinketResizable {
+			// Content that tracks the viewport is as wide as the viewport,
+			// and a vertical scrollbar takes a column out of that -- which
+			// can make the content taller still. Ask without the column, and
+			// again with it when the first answer overflows.
+			bounds := s.Bounds()
+			width = bounds.Width
+			if s.vScrollBarPolicy == ScrollBarAlwaysOn ||
+				(s.vScrollBarPolicy == ScrollBarAsNeeded && hfw.HeightForWidth(width) > bounds.Height) {
+				width -= s.EffectiveCellMetrics().UnitsPerCellWidth
+			}
+			s.contentWidth = width
+		}
+		if h := hfw.HeightForWidth(width); h > 0 {
+			s.contentHeight = h
+		}
+	}
+
 	viewport := s.viewportBounds()
 	metrics := s.EffectiveCellMetrics()
 
@@ -1313,7 +1343,14 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 
 		if s.trinketResizable {
 			contentBounds.Width = viewport.Width
-			contentBounds.Height = viewport.Height
+			// The height stays the measured one for content that answers
+			// height-for-width: it was measured at the width it is getting,
+			// and that measurement is what the vertical scroll range was
+			// built from. Squashing it to the viewport would draw a
+			// paragraph shorter than the range says it is.
+			if !s.contentHeightForWidth {
+				contentBounds.Height = viewport.Height
+			}
 		}
 
 		s.content.SetBounds(core.UnitRect{
