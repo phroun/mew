@@ -2168,16 +2168,17 @@ func (m *WindowManager) TileWindows() {
 	// render windows on the cell grid, so snap each cell there; shared edges
 	// round the same way and stay flush. Smooth (pixel) surfaces keep the exact
 	// proportional layout.
+	var snap core.CellMetrics
 	if !m.SmoothPositioning() {
-		metrics := core.DefaultCellMetrics()
+		snap = core.DefaultCellMetrics()
 		for i := range cells {
-			cells[i] = snapRectToCells(metrics, cells[i])
+			cells[i] = snapRectToCells(snap, cells[i])
 		}
 	}
 
 	for i, win := range windows {
 		win.Restore()
-		PlaceInCell(win, cells[i], items[i].Resizable)
+		PlaceInCell(win, cells[i], items[i].Resizable, snap)
 	}
 }
 
@@ -2192,16 +2193,58 @@ func snapRectToCells(m core.CellMetrics, r core.UnitRect) core.UnitRect {
 	return core.UnitRect{X: left, Y: top, Width: right - left, Height: bot - top}
 }
 
-// PlaceInCell moves win into cell: a resizable window fills it, a
-// non-resizable window keeps its own size at the cell's top-left.
-func PlaceInCell(win *Window, cell core.UnitRect, resizable bool) {
-	if resizable {
-		win.SetBounds(cell)
-		return
+// ConstrainSize holds a size between the window's own minimum and maximum.
+//
+// The maximum is capped first and the minimum raised after, so where the two
+// conflict the minimum wins, as it does wherever else they meet.
+func ConstrainSize(win *Window, size core.UnitSize) core.UnitSize {
+	if win == nil {
+		return size
 	}
-	b := win.Bounds()
-	b.X, b.Y = cell.X, cell.Y
-	win.SetBounds(b)
+	max, min := win.MaximumSize(), win.MinimumSize()
+	if max.Width >= 0 && size.Width > max.Width {
+		size.Width = max.Width
+	}
+	if max.Height >= 0 && size.Height > max.Height {
+		size.Height = max.Height
+	}
+	if size.Width < min.Width {
+		size.Width = min.Width
+	}
+	if size.Height < min.Height {
+		size.Height = min.Height
+	}
+	return size
+}
+
+// PlaceInCell moves win into cell: a resizable window fills as much of it as
+// it says it may grow to, a non-resizable window keeps its own size, and
+// either way what it does not fill it sits in the middle of -- the same thing
+// maximizing does with a room too big for the window.
+//
+// snap is the grid an origin must land on (a cell surface can render a window
+// nowhere else); its zero value asks for no snapping, which is what a smooth
+// surface wants.
+func PlaceInCell(win *Window, cell core.UnitRect, resizable bool, snap core.CellMetrics) {
+	size := win.Bounds().Size()
+	if resizable {
+		size = ConstrainSize(win, cell.Size())
+	}
+	r := core.UnitRect{
+		X:      cell.X + (cell.Width-size.Width)/2,
+		Y:      cell.Y + (cell.Height-size.Height)/2,
+		Width:  size.Width,
+		Height: size.Height,
+	}
+	// An origin floors onto the grid; it never ceils, which would push the
+	// window past the cell's far edge.
+	if snap.UnitsPerCellWidth > 0 {
+		r.X = snap.RoundDownToCellX(r.X)
+	}
+	if snap.UnitsPerCellHeight > 0 {
+		r.Y = snap.RoundDownToCellY(r.Y)
+	}
+	win.SetBounds(r)
 }
 
 // CascadeWindows arranges windows in a cascade.
@@ -2239,11 +2282,17 @@ func (m *WindowManager) CascadeWindows() {
 		y := clientArea.Y + core.Unit(i)*offset
 
 		// A window that can't be resized is only repositioned, keeping its
-		// own size; only resizable windows adopt the standard cascade size.
+		// own size; only resizable windows adopt the standard cascade size,
+		// and only as far as they say they grow. The stepped corner is the
+		// arrangement, so a window held under the standard size stays on its
+		// step rather than centring on it.
 		w, h := width, height
 		if win.Flags()&WindowFlagNoResize != 0 {
 			b := win.Bounds()
 			w, h = b.Width, b.Height
+		} else {
+			size := ConstrainSize(win, core.UnitSize{Width: w, Height: h})
+			w, h = size.Width, size.Height
 		}
 
 		// Wrap if off screen

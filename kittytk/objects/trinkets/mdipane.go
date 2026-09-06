@@ -730,9 +730,13 @@ func (m *MDIPane) TileWindows() {
 	}
 	cells := window.TileLayout(clientArea, items)
 
+	var snap core.CellMetrics
+	if !core.FindSmoothPositioning(m.Self()) {
+		snap = m.EffectiveCellMetrics()
+	}
 	for i, win := range visibleWindows {
 		win.Restore()
-		window.PlaceInCell(win, cells[i], items[i].Resizable)
+		window.PlaceInCell(win, cells[i], items[i].Resizable, snap)
 	}
 
 	m.Update()
@@ -773,11 +777,15 @@ func (m *MDIPane) CascadeWindows() {
 		y := clientArea.Y + core.Unit(i)*offset
 
 		// A window that can't be resized is only repositioned, keeping its
-		// own size; only resizable windows adopt the standard cascade size.
+		// own size; only resizable windows adopt the standard cascade size,
+		// and only as far as they say they grow.
 		w, h := width, height
 		if win.Flags()&window.WindowFlagNoResize != 0 {
 			b := win.Bounds()
 			w, h = b.Width, b.Height
+		} else {
+			size := window.ConstrainSize(win, core.UnitSize{Width: w, Height: h})
+			w, h = size.Width, size.Height
 		}
 
 		// Wrap if off screen
