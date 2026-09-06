@@ -420,6 +420,9 @@ func (d *Desktop) hostMoveMove(e core.MouseMoveEvent) bool {
 // window's), a drag disarms. Reports false when neither was in progress.
 func (d *Desktop) hostMoveEnd(e core.MouseReleaseEvent) bool {
 	d.mu.Lock()
+	// The button coming up is what makes the NEXT press a second click
+	// rather than a repeat of this one.
+	d.hostMove.clicks.Release()
 	pressed := d.hostTitlePressed
 	d.hostTitlePressed = hostTitleButtonNone
 	active := d.hostMove.active

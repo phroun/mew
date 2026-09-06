@@ -99,7 +99,7 @@ func TestDecodeTitleGeometry(t *testing.T) {
 	}
 }
 
-// The double-click tracker fires on the second press within 400ms and a
+// The double-click tracker fires on the second CLICK within 400ms and a
 // cell, consumes on fire (no tripling), and treats a press a cell away as
 // a fresh first click.
 func TestDoubleClickTrackerConsumesOnFire(t *testing.T) {
@@ -108,24 +108,52 @@ func TestDoubleClickTrackerConsumesOnFire(t *testing.T) {
 	if tr.Press(100, 50, cell) {
 		t.Error("first press fired")
 	}
+	tr.Release()
 	if !tr.Press(103, 52, cell) {
-		t.Error("second press within a cell did not fire")
+		t.Error("second click within a cell did not fire")
 	}
+	tr.Release()
 	if tr.Press(103, 52, cell) {
-		t.Error("third press fired (memory not consumed)")
+		t.Error("third click fired (memory not consumed)")
 	}
 	// A press far away is a fresh first click...
 	tr.Reset()
 	if tr.Press(100, 50, cell) {
 		t.Error("press after reset fired")
 	}
+	tr.Release()
 	if tr.Press(200, 50, cell) {
 		t.Error("press a full row away paired with the first")
 	}
 	// ...and stale timing never pairs.
-	tr = DoubleClickTracker{at: time.Now().Add(-time.Second), x: 100, y: 50}
+	tr = DoubleClickTracker{at: time.Now().Add(-time.Second), x: 100, y: 50, released: true}
 	if tr.Press(100, 50, cell) {
 		t.Error("a second press one second later fired")
+	}
+}
+
+// A double-click is press, RELEASE, press. A press delivered twice with the
+// button never coming up is one click reported twice -- a terminal echoing
+// the same button on two tracking modes, a host replaying an event -- and it
+// must not complete a double-click on its own, or EVERY single click reads as
+// one and a window maximizes and restores on each.
+func TestDoubleClickTrackerNeedsTheButtonToComeUp(t *testing.T) {
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
+	var tr DoubleClickTracker
+
+	if tr.Press(100, 50, cell) {
+		t.Error("first press fired")
+	}
+	if tr.Press(100, 50, cell) {
+		t.Error("a second press with no release between them fired")
+	}
+	if tr.Press(100, 50, cell) {
+		t.Error("a third press with no release between them fired")
+	}
+	// And once the button does come up, the next press completes the pair.
+	tr.Release()
+	if !tr.Press(100, 50, cell) {
+		t.Error("a press after the button came up did not fire")
 	}
 }
 

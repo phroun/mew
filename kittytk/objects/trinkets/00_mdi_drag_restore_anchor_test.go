@@ -83,3 +83,36 @@ func TestAnMDIPanesTrackerIsDisarmedByACaptionButton(t *testing.T) {
 		t.Error("a caption button left a click in the title bar's double-click tracker")
 	}
 }
+
+// A real double-click on an MDI child's title bar maximizes it, and a single
+// click on the maximized child does nothing. The pane owns this gesture for
+// its children exactly as the manager owns it for top-level windows.
+func TestAnMDIChildsTitleDoubleClickMaximizesAndRestores(t *testing.T) {
+	pane := NewMDIPane()
+	pane.SetBounds(core.UnitRect{Width: 800, Height: 608})
+	win := window.NewWindow("child")
+	win.SetBounds(core.UnitRect{X: 32, Y: 32, Width: 320, Height: 208})
+	pane.AddWindow(win)
+
+	click := func() {
+		b := win.Bounds()
+		fr := win.FrameRect()
+		x, y := b.X+fr.X+fr.Width/2, b.Y+fr.Y+4
+		pane.HandleMousePress(core.MousePressEvent{X: x, Y: y, Button: core.LeftButton})
+		pane.HandleMouseRelease(core.MouseReleaseEvent{X: x, Y: y, Button: core.LeftButton})
+	}
+
+	click()
+	click()
+	if !win.IsMaximized() {
+		t.Fatal("a double-click on the child's title bar did not maximize it")
+	}
+	click()
+	if !win.IsMaximized() {
+		t.Error("a single click after the maximize restored the child")
+	}
+	click()
+	if win.IsMaximized() {
+		t.Error("a second click did not restore the child")
+	}
+}

@@ -82,3 +82,40 @@ func TestTheManagersTrackerIsDisarmedByACaptionButton(t *testing.T) {
 		t.Error("a caption button left a click in the title bar's double-click tracker")
 	}
 }
+
+// And a real double-click still works, in the host that owns the gesture:
+// press, release, press, release on the title bar maximizes, and the same
+// again restores. Without this the release wiring above could go missing and
+// nothing would notice -- the tracker would simply never fire.
+func TestATitleDoubleClickStillMaximizesAndRestores(t *testing.T) {
+	m := NewWindowManager()
+	m.SetScreenBounds(core.UnitRect{Width: 800, Height: 608})
+	win := NewWindow("w")
+	win.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 304, Height: 208})
+	m.AddWindow(win)
+
+	click := func() {
+		b := win.Bounds()
+		fr := win.FrameRect()
+		x, y := b.X+fr.X+fr.Width/2, b.Y+fr.Y+4
+		m.HandleMousePress(core.MousePressEvent{X: x, Y: y, Button: core.LeftButton})
+		m.HandleMouseRelease(core.MouseReleaseEvent{X: x, Y: y, Button: core.LeftButton})
+	}
+
+	click()
+	click()
+	if !win.IsMaximized() {
+		t.Fatal("a double-click on the title bar did not maximize the window")
+	}
+
+	// A single click on the maximized window's title bar does nothing...
+	click()
+	if !win.IsMaximized() {
+		t.Error("a single click after the maximize restored the window")
+	}
+	// ...and the one after it completes the pair.
+	click()
+	if win.IsMaximized() {
+		t.Error("a second click did not restore the window")
+	}
+}

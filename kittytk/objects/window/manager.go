@@ -2899,6 +2899,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 // HandleMouseRelease processes mouse button release.
 func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.Lock()
+	// The button coming up is what makes the NEXT press a second click
+	// rather than a repeat of this one.
+	m.titleClicks.Release()
 	dragging := m.dragging
 	resizing := m.resizing
 	pressedWin := m.pressedWindow

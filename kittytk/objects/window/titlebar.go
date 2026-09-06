@@ -406,25 +406,39 @@ func MinHostSizePx(metrics core.CellMetrics, ppu float64) (w, h int) {
 // memory (a third click starts fresh rather than tripling). Callers that
 // track a target identity (the window manager, per window) Reset it when
 // the target changes.
+//
+// A double-click is press, RELEASE, press. The release is tracked because a
+// press on its own is not a click: one delivered twice -- a terminal
+// reporting the same button on two tracking modes, a host replaying an event,
+// a gesture that presses again without the button ever coming up -- would
+// otherwise complete a double-click by itself, and every single click would
+// read as one.
 type DoubleClickTracker struct {
-	at   time.Time
-	x, y core.Unit
+	at       time.Time
+	x, y     core.Unit
+	released bool
 }
 
 // Press records a press and reports whether it completed a double-click.
 func (t *DoubleClickTracker) Press(x, y core.Unit, metrics core.CellMetrics) bool {
 	now := time.Now()
-	isDouble := !t.at.IsZero() &&
+	isDouble := t.released && !t.at.IsZero() &&
 		now.Sub(t.at) < 400*time.Millisecond &&
 		x-t.x < metrics.UnitsPerCellWidth && t.x-x < metrics.UnitsPerCellWidth &&
 		y-t.y < metrics.UnitsPerCellHeight && t.y-y < metrics.UnitsPerCellHeight
 	if isDouble {
 		t.at = time.Time{}
+		t.released = false
 		return true
 	}
 	t.at, t.x, t.y = now, x, y
+	t.released = false
 	return false
 }
+
+// Release records the button coming back up, which is what makes the next
+// press a second CLICK rather than a repeat of the first.
+func (t *DoubleClickTracker) Release() { t.released = true }
 
 // Armed reports whether a press is pending -- whether the next one could
 // complete a double-click.
@@ -433,4 +447,5 @@ func (t *DoubleClickTracker) Armed() bool { return !t.at.IsZero() }
 // Reset forgets the pending click (the next press starts a fresh count).
 func (t *DoubleClickTracker) Reset() {
 	t.at = time.Time{}
+	t.released = false
 }

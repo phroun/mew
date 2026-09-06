@@ -1037,6 +1037,9 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			h.win.SetResizeBandEdges(0, EdgeThickness{})
 		}
 	case core.MouseReleaseEvent:
+		// The button coming up is what makes the NEXT press a second click
+		// rather than a repeat of this one.
+		h.titleClicks.Release()
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
 			handled = true
 			break
