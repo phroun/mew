@@ -675,27 +675,6 @@ func shadeRects(surface, inner core.UnitRect) []core.UnitRect {
 	return out
 }
 
-// paintState is the state the window's chrome is drawn and measured in.
-//
-// The real state, except for a maximized window whose growth is capped: that
-// one holds the whole room but draws its frame in the middle of it, so the
-// frame is an ordinary window's -- borders on every side, a title bar a
-// NoTitleWhenMaximized window keeps -- around a rect that is not the surface.
-// The zoom button still reads the real state and shows the restore glyph.
-func (w *Window) paintState() WindowState {
-	w.mu.RLock()
-	state := w.state
-	w.mu.RUnlock()
-	if state != WindowStateMaximized {
-		return state
-	}
-	b := w.Bounds()
-	if fr := MaximizedFrameRect(w, b.Size()); fr.Width < b.Width || fr.Height < b.Height {
-		return WindowStateNormal
-	}
-	return state
-}
-
 // hasTitleBar reports whether the window shows a title bar in the given state,
 // and thus whether its title-bar hit regions are live: the caption buttons,
 // drag-to-move/detach, and double-click-to-restore. A NoTitle or Frameless
@@ -1736,8 +1715,8 @@ func (w *Window) contentBounds() core.UnitRect {
 	bounds := w.frameRect()
 	metrics := w.frameCellMetrics()
 
-	state := w.paintState()
 	w.mu.RLock()
+	state := w.state
 	flags := w.flags
 	w.mu.RUnlock()
 
@@ -1976,7 +1955,7 @@ func (w *Window) Paint(p *core.Painter) {
 	quasiActive := w.quasiActive
 	w.mu.RUnlock()
 
-	state := w.paintState()
+	state := w.State()
 	bounds := w.Bounds()
 	metrics := p.Metrics()
 	scheme := w.GetScheme()
@@ -2539,6 +2518,12 @@ func (w *Window) TitleControlsInset() core.Unit {
 // has no border to align across, and the TUI stays exactly as it was.
 func (w *Window) maximizedControlInset() core.Unit {
 	if !core.FindGraphicalFrames(w) {
+		return 0
+	}
+	// A capped maximized window's frame sits in the middle of the room it
+	// holds rather than at the room's corner, so the host's own controls are
+	// nowhere near it and there is nothing there to line up with.
+	if fr := w.frameRect(); fr.X != 0 || fr.Y != 0 {
 		return 0
 	}
 	if host, ok := w.Parent().(TitleControlsInsetProvider); ok && host != nil {
@@ -4076,8 +4061,8 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	w.mu.RLock()
 	content := w.content
 	flags := w.flags
+	state := w.state
 	w.mu.RUnlock()
-	state := w.paintState()
 
 	// The titlebar chrome sits inside the frame border (offset down by the
 	// border), so the titlebar band runs [0, border+RowH) in window-local

@@ -88,3 +88,55 @@ func TestACappedMaximizedWindowsContentIsSizedToItsFrame(t *testing.T) {
 		t.Errorf("the content is %d wide inside a %d frame", cb.Width, fr.Width)
 	}
 }
+
+// It is maximized, so it wears a maximized window's frame: the title bar and
+// nothing else, flush to the frame's own edges. It merely wears it around a
+// rect in the middle of the room rather than around the room itself.
+//
+// A normal frame there is the giveaway that the window has stopped believing
+// it is maximized: side borders, a bottom border, rounded corners.
+func TestACappedMaximizedWindowWearsTheMaximizedFrame(t *testing.T) {
+	win := NewWindow("bounded")
+	win.SetMaximumSize(core.UnitSize{Width: 480, Height: 320})
+	win.SetBounds(core.UnitRect{Width: 1200, Height: 768})
+	win.Maximize()
+
+	fr := win.FrameRect()
+	if fr.Width != 480 || fr.Height != 320 {
+		t.Fatalf("the frame is %v, want its maximum of 480x320", fr.Size())
+	}
+	cb := win.ContentBounds()
+	if cb.X != 0 {
+		t.Errorf("the content starts %d in from the frame's left edge; a maximized "+
+			"window reserves no side border", cb.X)
+	}
+	if cb.Width != fr.Width {
+		t.Errorf("the content is %d wide in a %d frame; a maximized window reserves "+
+			"no side borders", cb.Width, fr.Width)
+	}
+	if cb.Y+cb.Height != fr.Height {
+		t.Errorf("the content ends %d short of the frame's bottom; a maximized window "+
+			"reserves no bottom border", fr.Height-(cb.Y+cb.Height))
+	}
+	// The title row is still reserved -- that is the one thing a maximized
+	// frame does draw.
+	if cb.Y == 0 {
+		t.Error("the content starts at the frame's top; the title bar was not reserved")
+	}
+}
+
+// The maximized control inset lines a maximized window's buttons up with the
+// host's own, which only means anything when the two start in the same place.
+// A capped window's frame starts in the middle of the room, so its buttons
+// belong at its own edge.
+func TestACappedMaximizedWindowsControlsSitAtItsOwnEdge(t *testing.T) {
+	win := NewWindow("bounded")
+	win.SetMaximumSize(core.UnitSize{Width: 480, Height: 320})
+	win.SetBounds(core.UnitRect{Width: 1200, Height: 768})
+	win.Maximize()
+
+	if got := win.TitleControlsInsetForTest(); got != 0 {
+		t.Errorf("the controls are inset %d into a frame that is already inset %d",
+			got, win.FrameRect().X)
+	}
+}
