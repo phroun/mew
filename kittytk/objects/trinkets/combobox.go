@@ -37,13 +37,20 @@ type ComboBox struct {
 	popupScreenMetrics core.CellMetrics
 
 	// Mouse interaction state
-	mouseDown       bool      // Mouse button is held down
-	dragging        bool      // Actually dragging (mouse moved while down)
-	clickMode       bool      // True = click-to-open mode (popup stays open), False = hold-and-drag mode
-	mouseDownX      core.Unit // Initial mouse X position
-	mouseDownY      core.Unit // Initial mouse Y position
-	originalIndex   int       // Index before popup opened (for cancel on release outside)
-	scrollHoverZone int       // -1 = hovering top scroll, 1 = bottom scroll, 0 = none
+	mouseDown  bool      // Mouse button is held down
+	dragging   bool      // Actually dragging (mouse moved while down)
+	clickMode  bool      // True = click-to-open mode (popup stays open), False = hold-and-drag mode
+	mouseDownX core.Unit // Initial mouse X position, in the BOX's own space
+	mouseDownY core.Unit // Initial mouse Y position, in the BOX's own space
+
+	// popupDownX/Y is the same grab point in SCREEN space, which is where the
+	// drop-down's own handlers work: a popup is a desktop overlay and the
+	// events routed to it carry screen coordinates. Measuring a drag needs
+	// both ends of the measurement in one space.
+	popupDownX      core.Unit
+	popupDownY      core.Unit
+	originalIndex   int // Index before popup opened (for cancel on release outside)
+	scrollHoverZone int // -1 = hovering top scroll, 1 = bottom scroll, 0 = none
 
 	// Scrollbar interaction state (click mode only)
 	scrollbarDragging   bool // Whether scrollbar thumb is being dragged
@@ -87,6 +94,18 @@ type ComboBox struct {
 func (c *ComboBox) SetEmbedHost(host core.Trinket, origin func() core.UnitPoint) {
 	c.embedHost = host
 	c.embedOrigin = origin
+}
+
+// markPopupGrab records where a press on the BOX landed, in the screen space
+// the drop-down's own handlers work in. Without a controller to map through
+// there is no drop-down either, and the box's own space is the best answer.
+func (c *ComboBox) markPopupGrab(localX, localY core.Unit) {
+	if pc := c.findPopupController(); pc != nil {
+		p := c.mapToScreen(pc, core.UnitPoint{X: localX, Y: localY})
+		c.popupDownX, c.popupDownY = p.X, p.Y
+		return
+	}
+	c.popupDownX, c.popupDownY = localX, localY
 }
 
 // mapToScreen maps a box-local point to screen space, through the
@@ -1315,6 +1334,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 			c.mouseDown = true
 			c.mouseDownX = event.X
 			c.mouseDownY = event.Y
+			c.popupDownX, c.popupDownY = event.X, event.Y
 			c.dragging = false
 			c.Update()
 		}
@@ -1406,8 +1426,8 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 
 	// Check if we need to start dragging (detects movement beyond threshold)
 	if c.mouseDown && !c.dragging {
-		dx := event.X - c.mouseDownX
-		dy := event.Y - c.mouseDownY
+		dx := event.X - c.popupDownX
+		dy := event.Y - c.popupDownY
 		if dx < 0 {
 			dx = -dx
 		}
@@ -1848,6 +1868,7 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 			c.mouseDown = true
 			c.mouseDownX = event.X
 			c.mouseDownY = event.Y
+			c.markPopupGrab(event.X, event.Y)
 			c.dragging = false
 			return true
 		}
@@ -1859,6 +1880,9 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 		c.dragging = false
 		c.clickMode = false // Will switch to click mode on release without drag
 		c.ShowPopup()
+		// After the drop-down exists, so the screen mapping resolves through
+		// the controller it registered with.
+		c.markPopupGrab(event.X, event.Y)
 		return true
 	}
 
@@ -1880,6 +1904,7 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 				c.mouseDown = true
 				c.mouseDownX = event.X
 				c.mouseDownY = event.Y
+				c.markPopupGrab(event.X, event.Y)
 				c.dragging = false
 				c.Update()
 			}

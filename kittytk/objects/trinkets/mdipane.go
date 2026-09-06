@@ -1736,10 +1736,17 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		clientArea := m.ClientArea()
 		metrics := m.EffectiveCellMetrics()
 
-		// Handle restore from maximized
+		// A maximized child comes down when it is PULLED down: the pointer has
+		// to travel a row BELOW the point it was grabbed at. Its top edge is
+		// the top of the pane already, so where the child would sit is at or
+		// below that from the moment it is grabbed, and any jitter a hand puts
+		// into a click answers that.
 		if dragging.IsMaximized() {
-			newY := event.Y - offsetY
-			if newY >= clientArea.Y {
+			m.mu.RLock()
+			startY := m.dragStartY
+			m.mu.RUnlock()
+
+			if event.Y-startY >= metrics.UnitsPerCellHeight {
 				// The FRAME being held, before the restore takes it away.
 				// It is the whole child except on a capped maximized one,
 				// which holds the pane and draws itself in the middle of it
@@ -1765,6 +1772,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
 				m.mu.Unlock()
 			} else {
+				// Not pulled down yet: a maximized child does not slide.
 				return true
 			}
 		}

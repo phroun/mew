@@ -2717,14 +2717,18 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		clientArea := m.ClientArea()
 		metrics := core.DefaultCellMetrics()
 
-		// If window is maximized, only restore if dragging DOWN (below menu bar)
-		// Dragging left/right while in menu bar area keeps window maximized
+		// A maximized window comes down when it is PULLED down: the pointer
+		// has to travel a row BELOW the point it was grabbed at. Its top edge
+		// is the top of the room already, so where the window would sit is at
+		// or below the menu bar from the moment it is grabbed, and any jitter
+		// a hand puts into a click answers that.
 		if dragging.IsMaximized() {
-			// Calculate where the window would be positioned
-			newY := event.Y - offsetY
+			m.mu.RLock()
+			startY := m.dragStartY
+			m.mu.RUnlock()
+			pulled := event.Y - startY
 
-			// Only restore if dragging below the menu bar
-			if newY >= clientArea.Y {
+			if pulled >= core.FindEffectiveCellMetrics(dragging).UnitsPerCellHeight {
 				// The FRAME being held, before the restore takes it away. It is
 				// the whole window except on a capped maximized one, which holds
 				// the room and draws itself in the middle of it -- and there the
@@ -2756,7 +2760,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
 				m.mu.Unlock()
 			} else {
-				// Still in menu bar area - keep maximized, don't process further
+				// Not pulled down yet: a maximized window does not slide.
 				return true
 			}
 		}
