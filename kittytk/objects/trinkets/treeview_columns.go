@@ -834,6 +834,11 @@ type colSpan struct {
 	w     core.Unit   // content width
 	divX  core.Unit   // divider column right of the span (-1 = none)
 	fixed bool        // pinned outside the horizontal scroll region
+	// divFrozen marks the divider right of this span as the boundary
+	// between a PINNED flank and the scrolling region, rather than an
+	// ordinary boundary between two columns. It is drawn as a double
+	// rule: what does not move is worth telling apart from what does.
+	divFrozen bool
 }
 
 // treeColLayout is the computed column geometry for one pass.
@@ -1033,6 +1038,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 		x += widths[i]
 		if i < n-1 {
 			sp.divX = snapColPos(x, q)
+			sp.divFrozen = (fl > 0 && i == fl-1) || (fr > 0 && i == n-fr-1)
 			x += divW
 		}
 		lay.spans = append(lay.spans, sp)
@@ -1438,17 +1444,27 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			}
 			if p.Graphical() {
 				// No divider cell on pixel surfaces: the hairline sits
-				// ON the span boundary.
+				// ON the span boundary. The frozen boundary gets a
+				// second hairline a hairline's width away, which is the
+				// double rule's answer here -- there is no glyph to
+				// swap when the line is a pixel rather than a cell.
 				fr, fg, fb := scheme.GetListFG().RGBComponents()
-				p.FillRectPixelsAlpha(sp.divX, 0, 0, 0,
-					1, p.UnitSpanPxY(0, divBottom), fr, fg, fb, 0.35)
+				h := p.UnitSpanPxY(0, divBottom)
+				p.FillRectPixelsAlpha(sp.divX, 0, 0, 0, 1, h, fr, fg, fb, 0.35)
+				if sp.divFrozen {
+					p.FillRectPixelsAlpha(sp.divX, 0, 2, 0, 1, h, fr, fg, fb, 0.35)
+				}
 			} else {
+				rule := '│'
+				if sp.divFrozen {
+					rule = '║'
+				}
 				for y := core.Unit(0); y < divBottom; y += metrics.UnitsPerCellHeight {
 					st := divStyle
 					if y < lay.headerH {
 						st = st.Underline()
 					}
-					p.DrawCell(sp.divX, y, '│', st)
+					p.DrawCell(sp.divX, y, rule, st)
 				}
 			}
 		}
