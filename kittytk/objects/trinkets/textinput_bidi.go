@@ -98,19 +98,22 @@ type fieldMark struct {
 	inRun bool // the run already carries this glyph; recolour it rather than draw it
 }
 
-// shiftAt is how far the piece holding final position x was moved from where
-// the shaper put it, which is what a redraw clipped out of the whole run has to
-// be offset by to land back on the same glyphs.
-func (g *fieldGeometry) shiftAt(x core.Unit) (core.Unit, int) {
+// shiftAtPx is how far the piece holding final device-pixel position x was
+// moved from where the shaper put it -- which is what a redraw clipped out of
+// the whole run has to be stamped at to land back on the same glyphs.
+//
+// A run nothing was pushed into is one piece moved by the room reserved at its
+// left end, which is a shift like any other.
+func (g *fieldGeometry) shiftAtPx(x int) int {
 	if g == nil {
-		return 0, 0
+		return 0
 	}
 	for i := range g.pieces {
-		if x >= g.pieces[i].lo && x < g.pieces[i].hi {
-			return g.pieces[i].shift, g.pieces[i].shiftPx
+		if x >= g.pieces[i].loPx && x < g.pieces[i].hiPx {
+			return g.pieces[i].shiftPx
 		}
 	}
-	return 0, 0
+	return g.headPx
 }
 
 // substituteFor is what the field draws in place of a rune it must not hand
@@ -405,6 +408,9 @@ func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, marked bool, p
 		}
 		g.total += g.head
 	}
+	// Everything below is laid out in the SHAPER's own coordinates, and the
+	// head is applied at the end -- as a shift, which is what it is. The run is
+	// stamped at that shift too, so the boxes and the glyphs move together.
 	if substituted {
 		g.draw = string(shaped)
 	}
@@ -427,7 +433,7 @@ func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, marked bool, p
 			}
 		}
 		g.rtl[i] = l.RTLAt(span[i][0])
-		g.lo[i], g.hi[i] = a+g.head, b+g.head
+		g.lo[i], g.hi[i] = a, b
 		if g.havePx {
 			c, d, _ := l.BoxOfPx(span[i][0], ppu)
 			for j := span[i][0] + 1; j < span[i][1]; j++ {
@@ -440,10 +446,10 @@ func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, marked bool, p
 					}
 				}
 			}
-			g.loPx[i], g.hiPx[i] = c+g.headPx, d+g.headPx
+			g.loPx[i], g.hiPx[i] = c, d
 		}
 		if substituted && span[i][1] > span[i][0]+1 {
-			m := fieldMark{x: a + g.head, w: b - a, text: string(shaped[span[i][0]:span[i][1]]), inRun: true}
+			m := fieldMark{x: a, w: b - a, text: string(shaped[span[i][0]:span[i][1]]), inRun: true}
 			if g.havePx {
 				m.xPx, m.wPx = g.loPx[i], g.hiPx[i]-g.loPx[i]
 			}
@@ -452,6 +458,20 @@ func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, marked bool, p
 	}
 	if marked {
 		t.markShapedRun(g, e, font, l, span, ppu)
+		return g
+	}
+	// Nothing was pushed in between, so the whole run moves as one.
+	if g.head != 0 {
+		for i := range g.lo {
+			g.lo[i], g.hi[i] = g.lo[i]+g.head, g.hi[i]+g.head
+			if g.havePx {
+				g.loPx[i], g.hiPx[i] = g.loPx[i]+g.headPx, g.hiPx[i]+g.headPx
+			}
+		}
+		for i := range g.marks {
+			g.marks[i].x += g.head
+			g.marks[i].xPx += g.headPx
+		}
 	}
 	return g
 }
@@ -478,13 +498,6 @@ func (t *TextInput) markShapedRun(g *fieldGeometry, e *text.Engine, font *core.F
 	frags := shapedFragments(l, ppu)
 	if len(frags) == 0 {
 		return
-	}
-	// The fragments come off the shaper's own line; the boxes have already been
-	// moved past whatever room the run reserves at its left end, so the
-	// fragments are moved to match before anything is measured against them.
-	for i := range frags {
-		frags[i].lo, frags[i].hi = frags[i].lo+g.head, frags[i].hi+g.head
-		frags[i].loPx, frags[i].hiPx = frags[i].loPx+g.headPx, frags[i].hiPx+g.headPx
 	}
 	// The first fragment in reading order is the one holding the line's first
 	// rune, and the line's base direction is that fragment's: everything ahead
@@ -593,10 +606,9 @@ type shapedFragment struct {
 }
 
 // edgesPx is a run's left and right edges in device pixels, taken from the run's
-// OWN pen and advance so the span covers that run and nothing beside it.
+// OWN pen so the span covers that run, all of it, and nothing beside it.
 func edgesPx(r *text.Run, ppu float64) (lo, hi int) {
-	lo = r.OriginPx(ppu)
-	return lo, lo + r.AdvancePx(ppu)
+	return r.OriginPx(ppu), r.EndPx(ppu)
 }
 
 // shapedFragments merges the shaper's runs into the stretches a reader sees as

@@ -841,16 +841,8 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// so the offset the run is stamped at is the offset of the piece the span
 	// falls in.
 	drawRun := func(lo, hi int, st style.CellStyle) {
-		_, shiftPx := g.shiftAt(core.Unit(0))
-		if len(g.pieces) > 0 {
-			for i := range g.pieces {
-				if lo-originPx >= g.pieces[i].loPx && lo-originPx < g.pieces[i].hiPx {
-					shiftPx = g.pieces[i].shiftPx
-					break
-				}
-			}
-		}
-		p.DrawTextOffsetClipped(0, 0, originPx+shiftPx, lo, hi, runStr, st, font)
+		p.DrawTextOffsetClipped(0, 0, originPx+g.shiftAtPx(lo-originPx), lo, hi,
+			runStr, st, font)
 	}
 
 	// Selection span (display indices) and the fixed anchor - the selection
@@ -871,7 +863,8 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// the shaper's own glyphs moved along rather than glyphs re-shaped.
 	if usePx {
 		if len(g.pieces) == 0 {
-			p.DrawTextOffsetClipped(0, 0, originPx, roomLoPx, roomHiPx, runStr, s, font)
+			p.DrawTextOffsetClipped(0, 0, originPx+g.headPx, roomLoPx, roomHiPx,
+				runStr, s, font)
 		} else {
 			for _, pc := range g.pieces {
 				lo, hi, ok := clipPx(pc.loPx, pc.hiPx)
