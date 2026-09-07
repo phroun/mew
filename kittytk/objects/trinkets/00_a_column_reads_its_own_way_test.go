@@ -149,3 +149,87 @@ func TestTheColumnHostingTheTreeReadsTheTreesWay(t *testing.T) {
 		t.Errorf("in a left-to-right tree the host column begins on the %v, want the left", got)
 	}
 }
+
+// A choice cell's arrow belongs to the CELL, so it stands at the end the
+// column's own text runs to -- and the value keeps only what is left before
+// it, never the room the arrow took.
+func TestTheChoiceArrowFollowsItsColumn(t *testing.T) {
+	// A value that all but fills its cell, so text drawn into the arrow's
+	// room would run right over it.
+	const long = "PNG image (compressed)"
+
+	place := func(colDir core.Direction) (arrow core.Unit, value struct {
+		x, w core.Unit
+	}, span colSpan) {
+		tv := NewTreeView()
+		tv.SetShowHeader(true)
+		kind := NewTreeColumn("kind", "Kind", 22*cell)
+		kind.Editable = true
+		kind.Direction = colDir
+		kind.Enum = []TreeEnumOption{{Key: "png", Value: long}, {Key: "txt", Value: "Text"}}
+		kind.EnumStore = "key"
+		tv.AddColumn(kind)
+		it := NewTreeItem("alpha")
+		it.SetValue("kind", "png")
+		tv.AddRootItem(it)
+		tv.SetBounds(core.UnitRect{Width: 60 * 8, Height: 10 * 16})
+		tv.SetCurrentIndex(0)
+		tv.SetFocus()
+		tv.headerZone = hzContent
+		tv.editLastCol = kind
+
+		ink := newInk(t)
+		tv.Paint(core.NewPainter(ink))
+		a, ok := ink.textAt(choiceArrowGlyph)
+		if !ok {
+			t.Fatalf("%v: the choice target drew no arrow", colDir)
+		}
+		var drawn string
+		for _, tx := range ink.texts {
+			if tx.s != choiceArrowGlyph && tx.s != "Kind" && tx.s != "alpha" {
+				drawn, value.x = tx.s, tx.x
+			}
+		}
+		if drawn == "" {
+			t.Fatalf("%v: the choice cell drew no value", colDir)
+		}
+		value.w = tv.MeasureText(drawn)
+		for _, sp := range tv.columnLayout().spans {
+			if sp.col != nil {
+				span = sp
+			}
+		}
+		return a, value, span
+	}
+
+	for _, tc := range []struct {
+		dir core.Direction
+		// whether the arrow takes the far end of the cell
+		far bool
+	}{
+		{core.DirLTR, true},
+		{core.DirRTL, false},
+	} {
+		arrow, value, sp := place(tc.dir)
+		if far := arrow > value.x; far != tc.far {
+			t.Errorf("%v: the arrow at %d against a value at %d took the wrong end of the cell",
+				tc.dir, arrow, value.x)
+		}
+		if arrow < sp.x || arrow >= sp.x+sp.w {
+			t.Errorf("%v: the arrow at %d is outside its cell [%d,%d)",
+				tc.dir, arrow, sp.x, sp.x+sp.w)
+		}
+		// The value stops short of the arrow's room rather than running
+		// under it.
+		aw := tv0MeasureArrow()
+		if value.x < arrow+aw && arrow < value.x+value.w {
+			t.Errorf("%v: the value [%d,%d) runs over the arrow at [%d,%d)",
+				tc.dir, value.x, value.x+value.w, arrow, arrow+aw)
+		}
+	}
+}
+
+// tv0MeasureArrow is the arrow's own width, measured the way the tree does.
+func tv0MeasureArrow() core.Unit {
+	return NewTreeView().MeasureText(choiceArrowGlyph)
+}

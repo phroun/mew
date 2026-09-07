@@ -1494,8 +1494,13 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			textSp := sp
 			if targetSegW > 0 && enterCol != treeKeyColumn && len(enterCol.Enum) > 0 {
 				choiceArrow = choiceArrowGlyph
+				// The arrow takes the end of the cell the column's own
+				// text runs TO, and the value keeps what is before it.
 				if room := t.choiceArrowRoom(); textSp.w > room {
 					textSp.w -= room
+					if t.colMirrored(enterCol) {
+						textSp.x += room
+					}
 				}
 			}
 			switch {
@@ -1510,11 +1515,16 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				t.drawAligned(cp, text, textSp, itemY, cellStyle, font, t.cellTextSide(sp.col, text))
 			}
 			if choiceArrow != "" {
-				ax := targetSegX + targetSegW - t.MeasureText(choiceArrow)
-				if p.Graphical() {
-					ax -= 2
+				aw := t.MeasureText(choiceArrow)
+				ax := targetSegX + targetSegW - aw
+				inset := core.Unit(-2)
+				if t.colMirrored(enterCol) {
+					ax, inset = targetSegX, 2
 				}
-				if ax >= targetSegX {
+				if p.Graphical() {
+					ax += inset
+				}
+				if ax >= targetSegX && ax+aw <= targetSegX+targetSegW {
 					cp.DrawText(ax, itemY, choiceArrow, cellStyle, font)
 				}
 			}
@@ -2208,6 +2218,10 @@ func (t *TreeView) dividerGrabZone() (grab0, grab1 core.Unit) {
 // column's spare width when the key shows (slack LEFT of every line),
 // else the blank width right of the last column (slack RIGHT).
 //
+// Everything here is measured ALONG THE RUN, so "left" and "right" name
+// the columns before and after the grabbed line in the order the tree
+// reads them, and a drag "left" is a drag back towards the run's start.
+//
 // Slack left: dragging LEFT widens the RIGHT column, funded by the
 // pool first and then by narrowing the LEFT column; dragging RIGHT
 // narrows the right column, the cells returning to the key. Slack
@@ -2288,7 +2302,10 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 	// the columns it settles have to be whole cells to be drawn and hit in
 	// the same place -- while a surface that can place between them keeps
 	// the pointer's own distance, so a column follows the pointer exactly.
-	delta := x - t.colDragStartX // + = rightward
+	// + = along the run, so the arithmetic below reads the same either way
+	// round: what a drag does is settled by the columns astride the line,
+	// which the direction has already ordered.
+	delta := t.panStep(x - t.colDragStartX)
 	if q := t.colQuantum(); q > 1 {
 		delta = (delta / q) * q
 	}
@@ -2534,9 +2551,10 @@ func (t *TreeView) handleMultiMove(event core.MouseMoveEvent) bool {
 		t.applyFitDrag(event.X)
 		return true
 	}
-	// How far the drag has come, in whole cells where the surface draws in
-	// them and in the pointer's own units where it does not.
-	delta := event.X - t.colDragStartX
+	// How far the drag has come ALONG THE RUN, in whole cells where the
+	// surface draws in them and in the pointer's own units where it does
+	// not.
+	delta := t.panStep(event.X - t.colDragStartX)
 	if q := t.colQuantum(); q > 1 {
 		delta = (delta / q) * q
 	}
@@ -2898,6 +2916,12 @@ func (t *TreeView) OpenColumnChooser() bool {
 // apparatus are not asked. They carry the indent, the expander and the
 // connector lines, which run the way the TREE reads, and a caption that began
 // at the other end from the lines leading to it would not be a tree.
+// colMirrored reports whether a column's own content reads right to left,
+// which is what places the chrome a cell of that column carries.
+func (t *TreeView) colMirrored(col *TreeColumn) bool {
+	return t.colDirection(col) == core.DirRTL
+}
+
 func (t *TreeView) colDirection(col *TreeColumn) core.Direction {
 	if col != nil && col != treeKeyColumn && col != t.treeHostColumn() {
 		if col.Direction != core.DirInherit {

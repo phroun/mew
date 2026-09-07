@@ -552,7 +552,7 @@ det=new tab caption="Details" children={
 			dsizec=new column id=size caption="Size" width=80 align=layoutend sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=112 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=192 sortable
-			dtagsc=new column id=tags caption="Tags" width=64 editable
+			dtagsc=new column id=tags caption="Tags" width=64 editable direction=rtl
 			drawc=new column id=rawsize caption="Raw Size" width=80 align=layoutend numeric hidden !optional
 		} items={
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
@@ -583,6 +583,7 @@ det=new tab caption="Details" children={
 			dpinr=new checkbox caption="Pin last"
 			dledger=new checkbox caption="Ledger"
 			dlines=new checkbox caption="Tree lines"
+			drtl=new checkbox caption="direction=rtl"
 		}
 	}
 }
@@ -736,6 +737,7 @@ dpinl=w.t.det.dbox.drow.dpinl
 dpinr=w.t.det.dbox.drow.dpinr
 dledger=w.t.det.dbox.drow.dledger
 dlines=w.t.det.dbox.drow.dlines
+drtl=w.t.det.dbox.drow.drtl
 tfwatch=w.t.tf.tfp.tfrow.tfr.tfwatch
 tfecho=w.t.tf.tfp.tfrow.tfr.tfecho
 tfmask=w.t.tf.tfp.tfrow.tfr.tfmask
@@ -1080,6 +1082,18 @@ bwclose=mdi.b%d.p.bp.cl
 // (each column owns its data, keyed by item), per the two-batch
 // pattern: items build first so their IDs exist, then the values
 // reference them. id resolves a surfaced correlation key to its wire ID.
+// tagValues fills the Tags column, which declares itself right to left
+// whatever the tree around it reads. Its cells hold both scripts, so
+// textbegin is asked of each cell's own text -- and the column's own
+// direction answers for the ones that are not strongly either way.
+var tagValues = map[string]string{
+	"ds1": "מסך", "ds2": "מסך", "dpc": "פרויקט", "dpcin": "פרויקט",
+	"dsrc": "code", "dmain": "code", "dutil": "code",
+	"dbuild": "log", "dread": "readme", "ddocs": "מסמכים",
+	"dnotes": "notes", "darch": "ארכיון", "dfin": "final",
+	"dold": "old", "darj": "ארכיון",
+}
+
 func detailsValuesScript(id func(name string) uint64) string {
 	col := func(colKey string, vals map[string]string) string {
 		var b strings.Builder
@@ -1115,7 +1129,7 @@ func detailsValuesScript(id func(name string) uint64) string {
 		"dnotes": "Today at 8:16 AM", "darch": "Today at 8:20 AM",
 		"dfin": "Today at 8:21 AM", "dold": "Today at 8:22 AM",
 		"darj": "Yesterday at 12:17 AM",
-	}) + col("dtagsc", map[string]string{}) + col("drawc", map[string]string{
+	}) + col("dtagsc", tagValues) + col("drawc", map[string]string{
 		// The Size column's sort proxy: the same sizes expanded to
 		// plain byte counts, so "sort by Size" compares 2048-style
 		// numbers while the visible cells keep their "2 KB" captions.

@@ -155,6 +155,10 @@ func (a *app) wireDirection() {
 	// The LIST rather than the pane it sits in: the tree beside it is a later
 	// project, and turning the pane over would turn that too.
 	ui.Checkbox("lirtl").OnToggle(turn(ui.Object("lilv")))
+	// The TREE rather than the box holding it, so the switches under it stay
+	// where the reader left them. The Tags column names its own direction and
+	// keeps it either way round.
+	ui.Checkbox("drtl").OnToggle(turn(ui.Object("dtree")))
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and

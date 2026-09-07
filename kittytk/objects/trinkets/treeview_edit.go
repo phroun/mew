@@ -249,6 +249,9 @@ func (t *TreeView) mountEditor(col *TreeColumn) {
 		cb := NewComboBox()
 		cb.SetCellMetrics(&cm)
 		cb.SetFont(font)
+		// The editor reads the way the cell it stands in does, so the
+		// value and the arrow keep the places they had a moment ago.
+		cb.SetDirection(t.colDirection(col))
 		// Borrowed ancestry: the popup controller walk and the
 		// drop-down's screen geometry (drop direction, scrolling)
 		// resolve through the tree at the live cell origin - the
@@ -292,6 +295,7 @@ func (t *TreeView) mountEditor(col *TreeColumn) {
 		ed := NewTextInput()
 		ed.SetCellMetrics(&cm)
 		ed.SetFont(font)
+		ed.SetDirection(t.colDirection(col))
 		ed.SetText(raw)
 		ed.SelectAll()
 		ed.SetFocus()

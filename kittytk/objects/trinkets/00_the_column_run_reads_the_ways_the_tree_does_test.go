@@ -400,3 +400,101 @@ func TestThePinnedEndKeepsItsBoundary(t *testing.T) {
 		}
 	}
 }
+
+// Dragging a divider widens the column BEFORE it along the run, so the
+// pointer's own travel is read the way the columns are ordered: towards the
+// run's end widens, back along it narrows, on either side of the screen.
+func TestDraggingADividerReadsTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		dir core.Direction
+		// which way across the SCREEN a widening drag goes
+		widens core.Unit
+	}{
+		{core.DirLTR, +1},
+		{core.DirRTL, -1},
+	} {
+		tv := runTree(t, tc.dir, false)
+		tv.SetKeyWidth(10 * cell) // leave a data column's divider in view
+		lay := tv.columnLayout()
+
+		var div colSpan
+		for _, sp := range lay.spans {
+			if lay.divVisible(sp) && sp.col != nil && sp.col.Resizable {
+				div = sp
+				break
+			}
+		}
+		if div.col == nil {
+			t.Fatalf("%v: no resizable column with a visible divider", tc.dir)
+		}
+		before := div.col.Width
+
+		grab := div.divX
+		if !tv.handleMultiPress(core.MousePressEvent{Button: core.LeftButton, X: grab, Y: 0}) {
+			t.Fatalf("%v: the header did not take the press on the divider at %d", tc.dir, grab)
+		}
+		tv.handleMultiMove(core.MouseMoveEvent{X: grab + tc.widens*4*cell, Y: 0})
+		if div.col.Width <= before {
+			t.Errorf("%v: dragging %d units along the run left the column at %d, was %d",
+				tc.dir, tc.widens*4*cell, div.col.Width, before)
+		}
+
+		// And back the other way narrows it again.
+		wide := div.col.Width
+		tv.handleMultiMove(core.MouseMoveEvent{X: grab - tc.widens*2*cell, Y: 0})
+		if div.col.Width >= wide {
+			t.Errorf("%v: dragging back left the column at %d, was %d",
+				tc.dir, div.col.Width, wide)
+		}
+	}
+}
+
+// In fit mode a line moves by trading cells across it against the slack pool,
+// and which of the two columns gives way is settled by their order along the
+// run -- so the pointer's travel is read that way too.
+func TestTheFitDragReadsTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		dir core.Direction
+		// which way across the SCREEN a drag towards the run's end goes
+		along core.Unit
+	}{
+		{core.DirLTR, +1},
+		{core.DirRTL, -1},
+	} {
+		tv := treeOn(t, false)
+		tv.SetDirection(tc.dir)
+		tv.SetShowHeader(true)
+		tv.SetBounds(core.UnitRect{Width: 60 * 8, Height: 10 * 16})
+		lay := tv.columnLayout()
+
+		// The first divider: the key column is left of it, so the column
+		// to its right is the one the drag moves.
+		first := lay.spans[0]
+		if !lay.divVisible(first) || lay.spans[1].col == nil {
+			t.Fatalf("%v: no key-column divider to grab", tc.dir)
+		}
+		right := lay.spans[1].col
+		before := right.Width
+
+		grab := first.divX
+		if !tv.handleMultiPress(core.MousePressEvent{Button: core.LeftButton, X: grab, Y: 0}) {
+			t.Fatalf("%v: the header did not take the press at %d", tc.dir, grab)
+		}
+		if !tv.colDragFit {
+			t.Fatalf("%v: a fit-mode tree did not arm the composite drag", tc.dir)
+		}
+		// Along the run: the right column gives its cells back to the key.
+		tv.handleMultiMove(core.MouseMoveEvent{X: grab + tc.along*3*cell, Y: 0})
+		if right.Width >= before {
+			t.Errorf("%v: dragging along the run left the right column at %d, was %d",
+				tc.dir, right.Width, before)
+		}
+		// And back the other way returns them.
+		narrow := right.Width
+		tv.handleMultiMove(core.MouseMoveEvent{X: grab - tc.along*3*cell, Y: 0})
+		if right.Width <= narrow {
+			t.Errorf("%v: dragging back left the right column at %d, was %d",
+				tc.dir, right.Width, narrow)
+		}
+	}
+}
