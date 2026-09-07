@@ -337,7 +337,7 @@ new tab caption="Vertical Tabs" children={
 					new textinput placeholder="Type here..."
 				}
 			}`)
-	for _, name := range []string{"Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"} {
+	for _, name := range []string{"Fourth", "Fifth", "שישי", "שביעי", "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"} {
 		fmt.Fprintf(&b, `
 			new tab caption=%q children={
 				new panel layout=vbox children={
@@ -365,7 +365,7 @@ new tab caption="Vertical Tabs" children={
 					new label caption="Gamma tab content"
 				}
 			}`)
-	for _, name := range []string{"Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu", "Nu"} {
+	for _, name := range []string{"Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "קאפא", "למדא", "Mu", "Nu"} {
 		fmt.Fprintf(&b, `
 			new tab caption=%q children={
 				new panel layout=vbox children={

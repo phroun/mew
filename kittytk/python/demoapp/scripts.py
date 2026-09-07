@@ -281,7 +281,7 @@ new tab caption="Vertical Tabs" children={
                     new textinput placeholder="Type here..."
                 }
             }''')
-    for name in ["Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth",
+    for name in ["Fourth", "Fifth", "שישי", "שביעי", "Eighth", "Ninth",
                  "Tenth", "Eleventh", "Twelfth", "Thirteenth"]:
         b.append('\n\t\t\t\tnew tab caption=%s children={\n'
                  '\t\t\t\t\tnew panel layout=vbox children={\n'
@@ -309,7 +309,7 @@ new tab caption="Vertical Tabs" children={
                 }
             }''')
     for name in ["Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota",
-                 "Kappa", "Lambda", "Mu", "Nu"]:
+                 "קאפא", "למדא", "Mu", "Nu"]:
         b.append('\n\t\t\t\tnew tab caption=%s children={\n'
                  '\t\t\t\t\tnew panel layout=vbox children={\n'
                  '\t\t\t\t\t\tnew label caption="%s tab content\\nin a sideopposite strip."\n'
