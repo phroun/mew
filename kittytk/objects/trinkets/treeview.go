@@ -1080,13 +1080,13 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return t.expandOrDescend(current)
 
 	case core.CmdTrinketItemLeft:
-		if t.arrowStep(-1) < 0 {
-			return t.collapseOrEnclosing(current)
+		if core.ChromeMirrored(t) {
+			return t.expandOrDescend(current)
 		}
-		return t.expandOrDescend(current)
+		return t.collapseOrEnclosing(current)
 
 	case core.CmdTrinketItemRight:
-		if t.arrowStep(1) < 0 {
+		if core.ChromeMirrored(t) {
 			return t.collapseOrEnclosing(current)
 		}
 		return t.expandOrDescend(current)

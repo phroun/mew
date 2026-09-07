@@ -334,15 +334,31 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	entriesPerRow := d.entriesPerRow()
 
-	switch d.KeyCommand(event.Key) {
-	case core.CmdTrinketItemLeft, core.CmdTrinketItemPrior:
+	// A side-named arrow says which way across the SCREEN, and the entries run
+	// the way the dock reads -- so the left arrow steps back along them in a
+	// dock reading left to right and on along them in one reading the other
+	// way. prior and next name the sequence outright and never turn.
+	cmd := d.KeyCommand(event.Key)
+	if cmd == core.CmdTrinketItemLeft || cmd == core.CmdTrinketItemRight {
+		onward := cmd == core.CmdTrinketItemRight
+		if core.ChromeMirrored(d) {
+			onward = !onward
+		}
+		cmd = core.CmdTrinketItemPrior
+		if onward {
+			cmd = core.CmdTrinketItemNext
+		}
+	}
+
+	switch cmd {
+	case core.CmdTrinketItemPrior:
 		if d.selectedIndex > 0 {
 			d.selectedIndex--
 			d.Update()
 		}
 		return true
 
-	case core.CmdTrinketItemRight, core.CmdTrinketItemNext:
+	case core.CmdTrinketItemNext:
 		if d.selectedIndex < len(d.entries)-1 {
 			d.selectedIndex++
 			d.Update()

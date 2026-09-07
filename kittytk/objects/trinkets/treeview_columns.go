@@ -576,11 +576,14 @@ func (t *TreeView) handleHeaderFocusKey(cmd string) bool {
 		// arrow walks them the way it points on the screen. Tab keeps
 		// its own order whichever way they are laid out.
 		case cmd == core.CmdTrinketItemLeft || cmd == core.CmdTrinketItemRight:
-			toward := -1
-			if cmd == core.CmdTrinketItemRight {
-				toward = 1
+			// The left arrow walks back along the stops where the tree
+			// reads left to right, and on along them where it reads the
+			// other way.
+			back := cmd == core.CmdTrinketItemLeft
+			if core.ChromeMirrored(t) {
+				back = !back
 			}
-			if t.arrowStep(toward) < 0 {
+			if back {
 				if t.headerFocusIdx == 0 {
 					t.setHeaderZone(hzBar, 0)
 				} else {
@@ -2779,11 +2782,12 @@ func (t *TreeView) panStep(delta core.Unit) core.Unit {
 	return delta
 }
 
-// arrowStep turns a horizontal arrow into a step along the run. The key names
-// a SIDE OF THE SCREEN -- the left arrow always points left -- and what lies
-// that way is the direction's answer: the previous column and the enclosing
-// item in a tree reading left to right, the next ones in a tree reading the
-// other way. toward is -1 for the left arrow and +1 for the right.
+// arrowStep turns a horizontal arrow into a step through a SEQUENCE the tree
+// keeps in the order its columns run -- the edit ring, the header's stops.
+// The key names a side of the screen; which end of the sequence lies that way
+// is the direction's answer. toward is -1 for the left arrow, +1 for the
+// right. Where the answer is not a step but a choice between two acts, the
+// switch asks core.ChromeMirrored outright rather than reading a sign.
 func (t *TreeView) arrowStep(toward int) int {
 	if core.ChromeMirrored(t) {
 		return -toward

@@ -208,16 +208,32 @@ func (r *RadioButton) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (r *RadioButton) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch r.KeyCommand(event.Key) {
+	// A group laid out in a row runs the way its form reads, so the left
+	// arrow walks back through it where that is left to right and on through
+	// it where it is not. Up and down cross a column, which no direction
+	// turns over, and prior and next name the sequence outright.
+	cmd := r.KeyCommand(event.Key)
+	if cmd == core.CmdTrinketItemLeft || cmd == core.CmdTrinketItemRight {
+		onward := cmd == core.CmdTrinketItemRight
+		if core.ChromeMirrored(r) {
+			onward = !onward
+		}
+		cmd = core.CmdTrinketItemPrior
+		if onward {
+			cmd = core.CmdTrinketItemNext
+		}
+	}
+
+	switch cmd {
 	case core.CmdTrinketActivate:
 		r.SetChecked(true)
 		return true
-	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp, core.CmdTrinketItemLeft:
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if r.group != nil {
 			r.group.SelectPrevious()
 			return true
 		}
-	case core.CmdTrinketItemNext, core.CmdTrinketItemDown, core.CmdTrinketItemRight:
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		if r.group != nil {
 			r.group.SelectNext()
 			return true

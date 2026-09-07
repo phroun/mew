@@ -81,14 +81,16 @@ Down = window_move_fine_down
 Down = window_size_fine_down
 Down = trinket_item_down
 Down = trinket_item_next
+; A side-named key carries only side-named commands. prior and next are the
+; sequence, and where a sequence runs across the screen is the direction's
+; answer -- so a trinket laid out that way declares item_left/item_right and
+; reads the side itself, rather than being handed a step it cannot turn.
 Left = window_move_fine_left
 Left = window_size_fine_left
 Left = trinket_item_left
-Left = trinket_item_prior
 Right = window_move_fine_right
 Right = window_size_fine_right
 Right = trinket_item_right
-Right = trinket_item_next
 
 S-Up = window_size_fine_up
 S-Up = trinket_sel_up
