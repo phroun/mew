@@ -785,18 +785,29 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	if edgePxH < 1 {
 		edgePxH = 1
 	}
-	barEdgeY := rowY + rowH - hairH // content side of a top bar
-	tabEdgeY := rowY                // selected tab's outer side
+	// Both edge lines lie ALONG a row boundary, and each is named by the
+	// boundary it lies along rather than by where its top happens to fall.
+	//
+	// A row boundary is a cell edge, so it converts to a device pixel exactly;
+	// a unit position inside the row does not, and a line placed by its top at
+	// rowH minus its own thickness ends up floating clear of the bottom
+	// wherever a unit is worth more pixels than the line is thick. That is the
+	// half denomination, where one unit is two pixels and the hairline is one.
+	// So the line hangs off its boundary by its thickness in DEVICE PIXELS,
+	// and sits flush at every denomination.
+	barEdgeY, barEdgeUp := rowY+rowH, true // content side of a top bar
+	tabEdgeY, tabEdgeUp := rowY, false     // selected tab's outer side
 	if !top {
-		barEdgeY = rowY
-		tabEdgeY = rowY + rowH - hairH
+		barEdgeY, barEdgeUp = rowY, false
+		tabEdgeY, tabEdgeUp = rowY+rowH, true
 	}
-	// hlineExt draws the bar/tab edge line from x0 to x1, extended by an exact
+	// hlineExt draws the bar/tab edge line from x0 to x1 along the boundary at
+	// y -- above it when up, below it otherwise -- extended by an exact
 	// device-pixel amount on the left/right (padL/padR). The feet are nudged
 	// inward by one line thickness in device pixels (see below); their edge
 	// meets these lines a line-thickness further in, so the abutting run is
 	// extended to reach the shifted foot with no gap.
-	hlineExt := func(x0, x1 core.Unit, y core.Unit, padL, padR int) {
+	hlineExt := func(x0, x1 core.Unit, y core.Unit, up bool, padL, padR int) {
 		if x1 <= x0 {
 			return
 		}
@@ -804,11 +815,17 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 		if wPx <= 0 {
 			return
 		}
-		if !p.FillRectPixels(x0, y, -padL, 0, wPx, edgePxH, line) {
-			p.FillRect(core.UnitRect{X: x0, Y: y, Width: x1 - x0, Height: hairH}, ' ', line)
+		offY := 0
+		cellY := y
+		if up {
+			offY = -edgePxH
+			cellY = y - hairH
+		}
+		if !p.FillRectPixels(x0, y, -padL, offY, wPx, edgePxH, line) {
+			p.FillRect(core.UnitRect{X: x0, Y: cellY, Width: x1 - x0, Height: hairH}, ' ', line)
 		}
 	}
-	hline := func(x0, x1, y core.Unit) { hlineExt(x0, x1, y, 0, 0) }
+	hline := func(x0, x1, y core.Unit, up bool) { hlineExt(x0, x1, y, up, 0, 0) }
 	// The curve radius is split by axis so a tab keeps its shape under
 	// re-denomination: the HORIZONTAL radii come from the cell width (the
 	// foot flares within the slash cell, the shoulder is a column and a
@@ -825,7 +842,7 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 		rBigX = (bodyRight - bodyLeft) / 2
 	}
 	if leadX < 0 || rBigX <= 0 || rSmallX <= 0 || rBigY <= 0 || rSmallY <= 0 || bodyRight <= bodyLeft {
-		hline(0, stripW, barEdgeY)
+		hline(0, stripW, barEdgeY, barEdgeUp)
 		return
 	}
 	footY := rowY + rowH - rSmallY // slash cells flare at the bar edge
@@ -855,7 +872,7 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	// translation, identical on both sides at every sub-cell phase, so the seam
 	// is a clean continuous line AND the tab stays mirror-symmetric (a unit-space
 	// offset would snap differently per side/position and reintroduce a notch).
-	hlineExt(0, leadX+cw-rSmallX, barEdgeY, 0, edgePxH)
+	hlineExt(0, leadX+cw-rSmallX, barEdgeY, barEdgeUp, 0, edgePxH)
 	arc(leadX+cw-rSmallX, footY, rSmallX, rSmallY, false, !top, edgePxH, tab)
 	arc(bodyLeft, shoY, rBigX, rBigY, true, top, 0, bar)
 	// Straight vertical run on the tab's side where the two radii
@@ -869,20 +886,20 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 		p.FillRect(core.UnitRect{X: bodyLeft, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 	}
 	if hasTrail {
-		hline(bodyLeft+rBigX, bodyRight-rBigX, tabEdgeY)
+		hline(bodyLeft+rBigX, bodyRight-rBigX, tabEdgeY, tabEdgeUp)
 		arc(bodyRight-rBigX, shoY, rBigX, rBigY, false, top, 0, bar)
 		arc(bodyRight, footY, rSmallX, rSmallY, true, !top, -edgePxH, tab)
 		if gapLen > 0 {
 			p.FillRect(core.UnitRect{X: bodyRight - hairW, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 		}
-		hlineExt(bodyRight+rSmallX, stripW, barEdgeY, edgePxH, 0)
+		hlineExt(bodyRight+rSmallX, stripW, barEdgeY, barEdgeUp, edgePxH, 0)
 		return
 	}
 	// Partial tab cut off before its trailing slash: sudden color
 	// transition, with the edge line dropping straight down the cut.
-	hline(bodyLeft+rBigX, endX, tabEdgeY)
+	hline(bodyLeft+rBigX, endX, tabEdgeY, tabEdgeUp)
 	p.FillRect(core.UnitRect{X: endX - hairW, Y: rowY, Width: hairW, Height: rowH}, ' ', line)
-	hline(endX, stripW, barEdgeY)
+	hline(endX, stripW, barEdgeY, barEdgeUp)
 }
 
 // overflowEllipsisWidth is the tab strip's "..." width: measured
