@@ -429,12 +429,12 @@ func treeViewProps() map[string]protocol.Property {
 			t.SetKeyWidth(core.Unit(n))
 			return nil
 		})).Tip("Key column width in units (scroll mode).").Def("160"),
-		"fixed_left": intProp("fixed_left", func(t *TreeView, n int) {
-			t.SetFixedColumns(n, t.fixedRight)
-		}).Tip("Visible columns pinned outside horizontal scrolling, from the left.").Def("0"),
-		"fixed_right": intProp("fixed_right", func(t *TreeView, n int) {
-			t.SetFixedColumns(t.fixedLeft, n)
-		}).Tip("Visible columns pinned outside horizontal scrolling, from the right.").Def("0"),
+		"fixed_begin": intProp("fixed_begin", func(t *TreeView, n int) {
+			t.SetFixedColumns(n, t.fixedEnd)
+		}).Tip("Visible columns pinned outside horizontal scrolling, counted from where the run begins.").Def("0"),
+		"fixed_end": intProp("fixed_end", func(t *TreeView, n int) {
+			t.SetFixedColumns(t.fixedBegin, n)
+		}).Tip("Visible columns pinned outside horizontal scrolling, counted from where the run ends.").Def("0"),
 		"sorted": boolProp("sorted", func(t *TreeView, b bool) {
 			t.SetSorted(b, t.sortedBy, t.sortDescending)
 		}).Tip("Show the sort indicator.").Def("false"),

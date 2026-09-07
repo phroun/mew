@@ -618,14 +618,14 @@ func (a *app) wireDetails() {
 		if s == protocol.FlagTrue {
 			n = 2
 		}
-		_ = dtree.Set(fmt.Sprintf("fixed_left=%d", n))
+		_ = dtree.Set(fmt.Sprintf("fixed_begin=%d", n))
 	})
 	ui.Checkbox("dpinr").OnToggle(func(s protocol.FlagState) {
 		n := 0
 		if s == protocol.FlagTrue {
 			n = 1
 		}
-		_ = dtree.Set(fmt.Sprintf("fixed_right=%d", n))
+		_ = dtree.Set(fmt.Sprintf("fixed_end=%d", n))
 	})
 	ui.Checkbox("dledger").OnToggle(func(s protocol.FlagState) {
 		if s == protocol.FlagTrue {

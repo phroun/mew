@@ -728,16 +728,19 @@ func (t *TreeView) SetFitWidth(on bool) {
 	t.Update()
 }
 
-// SetFixedColumns pins the first left / last right visible columns
-// outside the horizontal scrolling region.
-func (t *TreeView) SetFixedColumns(left, right int) {
-	if left < 0 {
-		left = 0
+// SetFixedColumns pins visible columns outside the horizontal scrolling
+// region: the first `begin` of the run and the last `end` of it.
+//
+// Counted along the RUN and not across the screen, so pinning the first column
+// pins the one the reader starts at whichever way the tree reads.
+func (t *TreeView) SetFixedColumns(begin, end int) {
+	if begin < 0 {
+		begin = 0
 	}
-	if right < 0 {
-		right = 0
+	if end < 0 {
+		end = 0
 	}
-	t.fixedLeft, t.fixedRight = left, right
+	t.fixedBegin, t.fixedEnd = begin, end
 	t.Update()
 }
 
@@ -859,8 +862,10 @@ type colSpan struct {
 type treeColLayout struct {
 	spans      []colSpan
 	headerH    core.Unit
-	blankW     core.Unit // trailing blank right of the last span (natural)
-	contentW   core.Unit // width left of the scrollbar lane
+	blankW     core.Unit // blank past the last span along the run (natural)
+	contentX   core.Unit // where the content band starts (the lane took the other side)
+	dividerW   core.Unit // what a divider occupies: a column in the TUI, nothing on pixels
+	contentW   core.Unit // width of the content band, beside the scrollbar lane
 	scrollL    core.Unit // horizontal scroll region [scrollL, scrollR)
 	scrollR    core.Unit
 	maxHScroll core.Unit // in units
@@ -909,6 +914,9 @@ func (t *TreeView) columnLayout() treeColLayout {
 	if lay.contentW < cw {
 		lay.contentW = cw
 	}
+	// The lane takes the TRAILING edge, so the content band starts a column
+	// in where the tree reads right to left.
+	lay.contentX = core.LeadingX(t, bounds.Width, 0, lay.contentW)
 	content := snapColPos(lay.contentW, q)
 
 	seq := t.visibleColumns()
@@ -929,6 +937,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 	if core.FindGraphicalFrames(t.Self()) {
 		divW = 0
 	}
+	lay.dividerW = divW
 	dividers := core.Unit(n-1) * divW
 	if dividers < 0 {
 		dividers = 0
@@ -987,7 +996,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 	}
 
 	// Fixed pinning: clamp counts, and in fit mode everything is fixed.
-	fl, fr := t.fixedLeft, t.fixedRight
+	fl, fr := t.fixedBegin, t.fixedEnd
 	if fl+fr > n {
 		fl = n
 		fr = 0
@@ -1074,7 +1083,46 @@ func (t *TreeView) columnLayout() treeColLayout {
 			last.w = lay.scrollR - last.x
 		}
 	}
+
+	// Everything above is in RUN coordinates: the first column at 0, the run
+	// growing away from it. Turning those into places on the screen is one
+	// reflection, so the sizing, the pinning, the pan and the blank are
+	// settled once and read the same either way -- and a divider reflects as
+	// the band it occupies, which on a pixel surface is no band at all.
+	for i := range lay.spans {
+		sp := &lay.spans[i]
+		sp.x = lay.runToScreen(t, sp.x, sp.w, content)
+		if sp.divX >= 0 {
+			sp.divX = lay.runToScreen(t, sp.divX, divW, content)
+		}
+	}
+	if core.ChromeMirrored(t) {
+		lay.scrollL, lay.scrollR = content-lay.scrollR, content-lay.scrollL
+	}
+	lay.scrollL += lay.contentX
+	lay.scrollR += lay.contentX
 	return lay
+}
+
+// runToScreen turns a place in the RUN into a place on the screen: itself past
+// the content band's own start where the tree reads left to right, reflected
+// within the band where it reads the other way.
+func (l *treeColLayout) runToScreen(t *TreeView, x, w, content core.Unit) core.Unit {
+	if core.ChromeMirrored(t) {
+		return l.contentX + content - x - w
+	}
+	return l.contentX + x
+}
+
+// runOffset undoes runToScreen for a span: how far past the scrolling region's
+// beginning the span begins, measured along the RUN. A span's painted x has
+// the pan already in it, so a caller after the natural offset adds hScroll
+// back.
+func (l *treeColLayout) runOffset(t *TreeView, sp colSpan) core.Unit {
+	if core.ChromeMirrored(t) {
+		return l.scrollR - sp.x - sp.w
+	}
+	return sp.x - l.scrollL
 }
 
 // neededWidth is the narrowest width that still shows this column's content:
@@ -1159,16 +1207,24 @@ func (l *treeColLayout) spanClip(sp colSpan, height core.Unit) (core.UnitRect, b
 			x1 = l.scrollR
 		}
 	}
-	if x1 > l.contentW {
-		x1 = l.contentW
+	if end := l.contentX + l.contentW; x1 > end {
+		x1 = end
 	}
-	if x0 < 0 {
-		x0 = 0
+	if x0 < l.contentX {
+		x0 = l.contentX
 	}
 	if x1 <= x0 {
 		return core.UnitRect{}, false
 	}
 	return core.UnitRect{X: x0, Y: 0, Width: x1 - x0, Height: height}, true
+}
+
+// divPinned reports whether a divider stands OUTSIDE the scrolling region --
+// on a pinned span, or on the boundary the region ends at. Which side of the
+// region that boundary lands on is the direction's answer, so it is asked
+// against both edges.
+func (l *treeColLayout) divPinned(sp colSpan) bool {
+	return sp.fixed || sp.divX == l.scrollR || sp.divX+l.dividerW == l.scrollL
 }
 
 // divVisible reports whether a divider at divX should paint (dividers
@@ -1177,8 +1233,8 @@ func (l *treeColLayout) divVisible(sp colSpan) bool {
 	if sp.divX < 0 {
 		return false
 	}
-	if sp.fixed || sp.divX == l.scrollR {
-		return sp.divX < l.contentW
+	if l.divPinned(sp) {
+		return sp.divX >= l.contentX && sp.divX < l.contentX+l.contentW
 	}
 	return sp.divX >= l.scrollL && sp.divX < l.scrollR
 }
@@ -1355,11 +1411,11 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			// surfaces they run under the scrollbar lane too (the slim
 			// scrollbar overlays them); the TUI reserves that column
 			// for the full-cell scrollbar glyphs.
-			rowW := lay.contentW
+			rowX, rowW := lay.contentX, lay.contentW
 			if p.Graphical() {
-				rowW = bounds.Width
+				rowX, rowW = 0, bounds.Width
 			}
-			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: rowW, Height: metrics.UnitsPerCellHeight}, ' ', s)
+			p.FillRect(core.UnitRect{X: rowX, Y: itemY, Width: rowW, Height: metrics.UnitsPerCellHeight}, ' ', s)
 		}
 
 		host := t.treeHostColumn()
@@ -1462,7 +1518,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			if !lay.divVisible(sp) {
 				continue
 			}
-			if (sp.fixed || sp.divX == lay.scrollR) != fixedPass {
+			if lay.divPinned(sp) != fixedPass {
 				continue
 			}
 			if p.Graphical() {
@@ -1524,8 +1580,14 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 	if !p.Graphical() || t.fitWidth {
 		return
 	}
+	// A fade stands where there is more content past the edge: behind the pan
+	// on the side the run came from, ahead of it on the side it can still go
+	// -- and which side of the screen each of those is, the direction says.
 	showLeft := t.hScroll > 0
 	showRight := t.hScroll < lay.maxHScroll
+	if core.ChromeMirrored(t) {
+		showLeft, showRight = showRight, showLeft
+	}
 	if !showLeft && !showRight {
 		return
 	}
@@ -2493,7 +2555,10 @@ func (t *TreeView) hScrollbarGeometry(lay treeColLayout) (trackX0, trackX1, thum
 			pos = 0
 		}
 	}
-	thumbX0 = snapColPos(trackX0+pos, t.colQuantum())
+	// pos is how far the pan has travelled ALONG THE RUN; the thumb reports
+	// that journey on the screen, which starts against the track's far side
+	// and walks back where the tree reads right to left.
+	thumbX0 = snapColPos(trackX0+core.LeadingX(t, track, pos, thumb), t.colQuantum())
 	thumbX1 = thumbX0 + thumb
 	return trackX0, trackX1, thumbX0, thumbX1, true
 }
@@ -2569,9 +2634,9 @@ func (t *TreeView) handleHBarPress(event core.MousePressEvent) bool {
 		t.hbarDragStartX = event.X
 		t.hbarDragStartHS = t.hScroll
 	case event.X >= trackX0 && event.X < thumbX0:
-		t.scrollHorizontally(-(trackX1 - trackX0))
+		t.scrollHorizontally(t.panStep(-(trackX1 - trackX0)))
 	case event.X >= thumbX1 && event.X < trackX1:
-		t.scrollHorizontally(trackX1 - trackX0)
+		t.scrollHorizontally(t.panStep(trackX1 - trackX0))
 	}
 	return true
 }
@@ -2591,7 +2656,7 @@ func (t *TreeView) handleHBarMove(event core.MouseMoveEvent) bool {
 	if scrollable <= 0 {
 		return true
 	}
-	delta := event.X - t.hbarDragStartX
+	delta := t.panStep(event.X - t.hbarDragStartX)
 	if q := t.colQuantum(); q > 1 {
 		delta = (delta / q) * q
 	}
@@ -2607,6 +2672,15 @@ func (t *TreeView) handleHBarMove(event core.MouseMoveEvent) bool {
 		t.Update()
 	}
 	return true
+}
+
+// panStep turns a distance travelled across the SCREEN into a distance along
+// the run, which is the other way about where the tree reads right to left.
+func (t *TreeView) panStep(delta core.Unit) core.Unit {
+	if core.ChromeMirrored(t) {
+		return -delta
+	}
+	return delta
 }
 
 // scrollHorizontally pans the scroll region by delta units (scroll

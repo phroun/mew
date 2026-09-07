@@ -354,7 +354,7 @@ func (t *TreeView) ensureEditColVisible() {
 // needed to reveal col (scroll mode only). Same conservative rule as
 // the ScrollArea's EnsureRectVisible: no movement at all when the
 // cell is already fully in view; otherwise align the nearer edge,
-// prioritizing (never hiding) the left edge.
+// prioritizing (never hiding) the edge the column begins at.
 func (t *TreeView) ensureColVisible(col *TreeColumn) {
 	if t.fitWidth || col == nil {
 		return
@@ -370,7 +370,7 @@ func (t *TreeView) ensureColVisible(col *TreeColumn) {
 		// The span's NATURAL offset within the scrolling region (its
 		// painted x has the current scroll already applied).
 		view := lay.scrollR - lay.scrollL
-		start := sp.x - lay.scrollL + t.hScroll
+		start := lay.runOffset(t, sp) + t.hScroll
 		end := start + sp.w
 		hs := t.hScroll
 		if start < hs {
@@ -378,7 +378,7 @@ func (t *TreeView) ensureColVisible(col *TreeColumn) {
 		} else if end > hs+view {
 			hs = end - view
 			if hs > start {
-				hs = start // never hide the left edge
+				hs = start // never hide where the column begins
 			}
 		}
 		if hs < 0 {

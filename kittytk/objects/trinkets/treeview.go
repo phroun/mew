@@ -113,13 +113,13 @@ type TreeView struct {
 	// the KEY column; data columns render item cell values beside it.
 	columns    []*TreeColumn
 	showHeader bool
-	showKey    bool   // key column shown as the first visible column
-	keyCaption string // header caption over the key (tree) column
-	ledger     bool   // alternate non-selected rows in LedgerOdd/LedgerEven
-	treeLines  bool   // connector lines + leaf glyphs in the indent space
-	fitWidth   bool   // true: squeeze to width (no hscroll); false: pan
-	fixedLeft  int    // visible columns pinned outside the hscroll region
-	fixedRight int
+	showKey    bool      // key column shown as the first visible column
+	keyCaption string    // header caption over the key (tree) column
+	ledger     bool      // alternate non-selected rows in LedgerOdd/LedgerEven
+	treeLines  bool      // connector lines + leaf glyphs in the indent space
+	fitWidth   bool      // true: squeeze to width (no hscroll); false: pan
+	fixedBegin int       // visible columns pinned outside the hscroll region,
+	fixedEnd   int       // counted from the run's beginning and its end
 	keyWidth   core.Unit // key column width in scroll mode (0 = default)
 	hScroll    core.Unit // horizontal scroll offset in units
 
@@ -771,14 +771,29 @@ func (t *TreeView) visibleCount() int {
 	return n
 }
 
+// laneX is the column the vertical scrollbar stands in: the TRAILING edge,
+// which is the near side of the screen where the tree reads right to left.
+// The column band starts on the other side of it (see columnLayout).
+func (t *TreeView) laneX() core.Unit {
+	w := t.Bounds().Width
+	lane := t.EffectiveCellMetrics().UnitsPerCellWidth
+	return core.LeadingX(t, w, w-lane, lane)
+}
+
+// onLane reports whether a tree-local x is in the scrollbar's column. The lane
+// is one column wherever it stands, so what puts a press on it is being IN the
+// column rather than past its near edge.
+func (t *TreeView) onLane(x core.Unit) bool {
+	at := t.laneX()
+	return x >= at && x < at+t.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
-	bounds := t.Bounds()
-	metrics := t.EffectiveCellMetrics()
 	totalItems := len(t.flatList)
 
-	scrollbarX = bounds.Width - metrics.UnitsPerCellWidth
+	scrollbarX = t.laneX()
 	trackHeight = visibleCount
 
 	if totalItems <= visibleCount {
@@ -868,9 +883,8 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 		// No track stripe: the hairline reads as another column
 		// divider next to the real ones. The bare thumb is the bar.
 		_, thumbU, posU := t.scrollbarUnits(visibleCount)
-		laneX := t.Bounds().Width - metrics.UnitsPerCellWidth
 		p.FillRect(core.UnitRect{
-			X:      laneX + 1,
+			X:      t.laneX() + 1,
 			Y:      headerH + core.Unit(posU+0.5),
 			Width:  metrics.UnitsPerCellWidth - 2,
 			Height: core.Unit(thumbU + 0.5),
@@ -1189,8 +1203,8 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	contentY := event.Y - headerH
 
 	// Check if click is on scrollbar
-	scrollbarX, thumbStart, thumbHeight, _ := t.scrollbarGeometry(t.visibleCount())
-	if event.X >= scrollbarX && len(t.flatList) > t.visibleCount() {
+	_, thumbStart, thumbHeight, _ := t.scrollbarGeometry(t.visibleCount())
+	if t.onLane(event.X) && len(t.flatList) > t.visibleCount() {
 		clickedRow := int(contentY / metrics.UnitsPerCellHeight)
 
 		// Pixel surfaces anchor the drag to the grab point within
@@ -1245,9 +1259,9 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	// Click on tree content (before scrollbar)
-	if event.X >= scrollbarX {
-		return false // Click is past the content area
+	// Click on tree content (beside the scrollbar)
+	if t.onLane(event.X) {
+		return false // Click is in the lane, not the content area
 	}
 
 	// Calculate which item was clicked
@@ -1255,8 +1269,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	clickedIndex := t.scrollOffset + clickedRow
 
 	// Only process if click is on a valid item
-	contentWidth := bounds.Width - metrics.UnitsPerCellWidth
-	if event.X >= 0 && event.X < contentWidth && contentY >= 0 && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
+	if event.X >= 0 && event.X < bounds.Width && contentY >= 0 && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
 		item := t.flatList[clickedIndex]
 		level := item.Level()
 
@@ -1276,7 +1289,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 				}
 			}
 			if keyX < 0 {
-				keyX = contentWidth // no tree host in view: no indicator hit
+				keyX = bounds.Width // no tree host in view: no indicator hit
 			}
 		}
 		indicatorX := keyX + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.UnitsPerCellWidth
@@ -1351,8 +1364,8 @@ func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
 	if x < 0 || y < 0 || x >= bounds.Width || y >= bounds.Height {
 		return false
 	}
-	scrollbarX, thumbStart, thumbHeight, _ := t.scrollbarGeometry(visibleCount)
-	if x < scrollbarX {
+	_, thumbStart, thumbHeight, _ := t.scrollbarGeometry(visibleCount)
+	if !t.onLane(x) {
 		return false
 	}
 	contentY := y - t.headerHeight() // the track starts below the header
@@ -1547,8 +1560,9 @@ func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		return false
 	}
 
-	// Horizontal wheel pans the column scroll region (scroll mode).
-	if event.DeltaX != 0 && t.scrollHorizontally(core.Unit(event.DeltaX*2)*t.EffectiveCellMetrics().UnitsPerCellWidth) {
+	// Horizontal wheel pans the column scroll region (scroll mode). The wheel
+	// names a direction on the screen; the pan travels along the run.
+	if event.DeltaX != 0 && t.scrollHorizontally(t.panStep(core.Unit(event.DeltaX*2)*t.EffectiveCellMetrics().UnitsPerCellWidth)) {
 		core.ClaimWheelGesture(event, t.HandleMouseWheel)
 		return true
 	}
