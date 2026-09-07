@@ -17,7 +17,7 @@ func newColumnsTree(widthCells, heightRows int) *TreeView {
 	tv := NewTreeView()
 	tv.SetShowHeader(true)
 	size := NewTreeColumn("size", "Size", 10*cell)
-	size.Align = "right"
+	size.Align = core.AlignOpticalRight
 	kind := NewTreeColumn("kind", "Kind", 12*cell)
 	tv.AddColumn(size)
 	tv.AddColumn(kind)

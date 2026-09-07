@@ -56,7 +56,7 @@ func (t *TreeView) clickEditSlop() (dx, dy core.Unit) {
 // treeKeyColumn is the sentinel identifying the KEY (tree) column in
 // the edit ring. It never lives in t.columns and is never painted
 // from - only its pointer identity matters.
-var treeKeyColumn = &TreeColumn{Align: "left"}
+var treeKeyColumn = &TreeColumn{Align: core.AlignLayoutBegin}
 
 // SetEditable makes the KEY (tree) column editable in the row editor,
 // exactly like a data column's Editable trait (the editor writes the

@@ -549,11 +549,11 @@ new tab caption="Vertical Tabs" children={
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
 		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 columns={
-			dsizec=new column id=size caption="Size" width=80 align=right sortable sortproxy=4
+			dsizec=new column id=size caption="Size" width=80 align=layoutend sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=112 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=192 sortable
 			dtagsc=new column id=tags caption="Tags" width=64 editable
-			drawc=new column id=rawsize caption="Raw Size" width=80 align=right numeric hidden !optional
+			drawc=new column id=rawsize caption="Raw Size" width=80 align=layoutend numeric hidden !optional
 		} items={
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
 			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"

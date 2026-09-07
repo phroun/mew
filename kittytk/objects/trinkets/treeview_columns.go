@@ -36,8 +36,22 @@ type TreeColumn struct {
 	MinWidth core.Unit
 	MaxWidth core.Unit
 
-	// Align is "left" (default), "center", or "right".
-	Align string
+	// Align is where this column's text sits in its cell, in the seven
+	// words the rest of the toolkit uses. textbegin and textend follow
+	// each CELL's own text, so one column may hold Hebrew and English
+	// and read each the way its own script does; layoutbegin and
+	// layoutend follow the COLUMN's direction, so every cell matches;
+	// the optical pair names a side of the screen outright.
+	Align core.HAlign
+
+	// Direction is which way this column's content reads. DirInherit --
+	// the zero value, and the default -- takes the tree's, so a column
+	// says something here only when it differs from the form around it.
+	//
+	// It is the CONTENT's direction and not the layout's: where the
+	// column sits among the others is the tree's to settle, since the
+	// columns are one run and a run reads one way.
+	Direction core.Direction
 
 	// Resizable allows drag-resizing via the header divider.
 	Resizable bool
@@ -104,7 +118,7 @@ func NewTreeColumn(id, caption string, width core.Unit) *TreeColumn {
 	return &TreeColumn{
 		ID: id, Caption: caption, Width: width,
 		MinWidth: treeColMinWidth, MaxWidth: core.Unbounded,
-		Align: "left", Resizable: true, Optional: true,
+		Align: core.AlignTextBegin, Resizable: true, Optional: true,
 		SortProxy: -1, EnumStore: "value",
 	}
 }
@@ -1224,20 +1238,28 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			// Same glyph family as the tree's expander ('▼' and its
 			// inverse), right-aligned in the span so it reads as the
 			// header's affordance, not part of the caption.
+			// A caption begins where its column does and the arrow sits
+			// at the other end of it, so a column that reads the other
+			// way has a header that reads with it.
+			capSide := t.colSide(sp.col, core.AlignLayoutBegin)
 			if t.sortIndicatorFor(sp.col) {
 				arrow := "▲"
 				if t.sortDescending {
 					arrow = "▼"
 				}
-				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, "right")
-				// Keep the caption clear of the arrow.
+				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, t.colSide(sp.col, core.AlignLayoutEnd))
+				// Keep the caption clear of the arrow, off whichever end
+				// the arrow took.
 				capSp := sp
 				if room := t.arrowRoom(arrow); capSp.w > room {
 					capSp.w -= room
+					if capSide == core.SideRight {
+						capSp.x += room
+					}
 				}
-				t.drawAligned(cp, caption, capSp, 0, headerStyle, font, "left")
+				t.drawAligned(cp, caption, capSp, 0, headerStyle, font, capSide)
 			} else {
-				t.drawAligned(cp, caption, sp, 0, headerStyle, font, "left")
+				t.drawAligned(cp, caption, sp, 0, headerStyle, font, capSide)
 			}
 		}
 		if p.Graphical() {
@@ -1405,10 +1427,11 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				t.paintTreeCell(cp, item, sp, itemY, s, cellStyle, metrics, font, item.Text)
 			case sp.col == host:
 				// Key column hidden: this column carries the expander
-				// and indent (and is forced left-aligned for it).
+				// and indent, and begins where the tree does for it.
 				t.paintTreeCell(cp, item, sp, itemY, s, cellStyle, metrics, font, sp.col.displayValue(item.Value(sp.col.ID)))
 			default:
-				t.drawAligned(cp, sp.col.displayValue(item.Value(sp.col.ID)), textSp, itemY, cellStyle, font, sp.col.Align)
+				text := sp.col.displayValue(item.Value(sp.col.ID))
+				t.drawAligned(cp, text, textSp, itemY, cellStyle, font, t.cellTextSide(sp.col, text))
 			}
 			if choiceArrow != "" {
 				ax := targetSegX + targetSegW - t.MeasureText(choiceArrow)
@@ -1693,7 +1716,7 @@ func ellipsizeText(font *core.Font, m core.CellMetrics, text string, avail core.
 
 // drawAligned draws one cell value inside a span with the column's
 // alignment, ellipsized to fit.
-func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.Unit, s style.CellStyle, font *core.Font, align string) {
+func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.Unit, s style.CellStyle, font *core.Font, side core.HSide) {
 	metrics := t.EffectiveCellMetrics()
 	pad := metrics.UnitsPerCellWidth / 2
 	avail := sp.w - pad
@@ -1703,15 +1726,15 @@ func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.
 	text = ellipsizeText(font, metrics, text, avail)
 	tw := t.MeasureText(text)
 	x := sp.x
-	switch align {
-	case "right":
+	switch side {
+	case core.SideRight:
 		x = sp.x + sp.w - tw - pad/2
-	case "center":
+	case core.SideCenter:
 		x = sp.x + (sp.w-tw)/2
 	default:
 		if p.Graphical() {
 			// Pixel surfaces run spans edge to edge (no divider cell);
-			// inset left-aligned text off the hairline.
+			// inset the text off the hairline.
 			x = sp.x + pad/2
 		}
 	}
@@ -2727,4 +2750,49 @@ func (t *TreeView) OpenColumnChooser() bool {
 	}
 	t.openColumnChooser(true)
 	return true
+}
+
+// colDirection is which way a column's content reads: what the column says
+// when it says anything, else the tree's own.
+//
+// The KEY column and, where the key is hidden, the column hosting the tree
+// apparatus are not asked. They carry the indent, the expander and the
+// connector lines, which run the way the TREE reads, and a caption that began
+// at the other end from the lines leading to it would not be a tree.
+func (t *TreeView) colDirection(col *TreeColumn) core.Direction {
+	if col != nil && col != treeKeyColumn && col != t.treeHostColumn() {
+		if col.Direction != core.DirInherit {
+			return col.Direction
+		}
+	}
+	return core.FindEffectiveDirection(t)
+}
+
+// cellTextSide is where one cell's text begins inside the room it is given.
+//
+// The column's align says which question to ask: textbegin and textend are
+// asked of the CELL's own text, so a column of names reads each one the way
+// its script does; layoutbegin and layoutend are asked of the column, so every
+// cell in it matches; the optical pair answers a side of the screen outright
+// and neither is asked.
+func (t *TreeView) cellTextSide(col *TreeColumn, text string) core.HSide {
+	dir, _ := textDirectionOf(core.DirInherit, text)
+	return core.ResolveHAlign(t.colAlign(col), dir, t.colDirection(col))
+}
+
+// colAlign is a column's stated alignment, and the tree's leading edge for the
+// column that hosts the tree apparatus -- its caption has to start where the
+// lines leading to it stop.
+func (t *TreeView) colAlign(col *TreeColumn) core.HAlign {
+	if col == nil || col == treeKeyColumn || col == t.treeHostColumn() {
+		return core.AlignLayoutBegin
+	}
+	return col.Align
+}
+
+// colSide resolves a LOGICAL alignment against a column's direction, for the
+// chrome that belongs to the column rather than to one of its cells: the
+// header caption and the sort indicator.
+func (t *TreeView) colSide(col *TreeColumn, a core.HAlign) core.HSide {
+	return core.ResolveHAlign(a, core.DirInherit, t.colDirection(col))
 }

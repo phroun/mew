@@ -76,12 +76,12 @@ func (v *eventViewer) build() core.Trinket {
 	// column counted them.
 	const cell = core.Unit(8)
 	for _, c := range []*TreeColumn{
-		{ID: "seq", Caption: "#", Width: 7 * cell, Align: "right", Optional: true,
+		{ID: "seq", Caption: "#", Width: 7 * cell, Align: core.AlignLayoutEnd, Optional: true,
 			Sortable: true, Numeric: true},
 		{ID: "event", Caption: "Event", Width: 14 * cell, Resizable: true, Optional: true},
 		{ID: "key", Caption: "Key", Width: 16 * cell, Resizable: true, Optional: true},
 		{ID: "mods", Caption: "Modifiers", Width: 22 * cell, Resizable: true, Optional: true},
-		{ID: "repeat", Caption: "Repeat", Width: 7 * cell, Align: "center", Optional: true},
+		{ID: "repeat", Caption: "Repeat", Width: 7 * cell, Align: core.AlignCenter, Optional: true},
 		{ID: "text", Caption: "Text", Width: 8 * cell, Resizable: true, Optional: true},
 		{ID: "detail", Caption: "Detail", Width: 40 * cell, Resizable: true, Optional: true},
 	} {

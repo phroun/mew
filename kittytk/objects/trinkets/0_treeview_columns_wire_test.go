@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
 )
 
@@ -17,7 +18,7 @@ func TestTreeViewColumnsOverWire(t *testing.T) {
 
 	build := `
 tree=new treeview caption="Name" showheader sorted sortedby=-1 columns={
-	sizec=new column id=size caption="Size" width=80 align=right sortable
+	sizec=new column id=size caption="Size" width=80 align=opticalright sortable
 	kindc=new column id=kind caption="Kind" width=96 optional
 } items={
 	a=new item caption="Report.txt"
@@ -46,7 +47,7 @@ tree=new treeview caption="Name" showheader sorted sortedby=-1 columns={
 		t.Fatalf("columns = %d, want 2", len(tv.Columns()))
 	}
 	size := tv.ColumnByID("size")
-	if size == nil || size.Width != 80 || size.Align != "right" || !size.Sortable {
+	if size == nil || size.Width != 80 || size.Align != core.AlignOpticalRight || !size.Sortable {
 		t.Fatalf("size column misapplied: %+v", size)
 	}
 	// Wire-built columns get the documented defaults: resizable and

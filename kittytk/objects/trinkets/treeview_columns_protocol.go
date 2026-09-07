@@ -248,7 +248,8 @@ func init() {
 		// columns silently lose the divider drag and the [=] chooser.
 		New: func() any {
 			return &wireColumn{col: TreeColumn{
-				Width: 8, MinWidth: 3, MaxWidth: -1, Align: "left",
+				Width: treeColDefaultWidth, MinWidth: treeColMinWidth,
+				MaxWidth: core.Unbounded, Align: core.AlignTextBegin,
 				Resizable: true, Optional: true, SortProxy: -1,
 			}}
 		},
@@ -268,17 +269,32 @@ func init() {
 			"max_width": colUnits("max_width", func(c *TreeColumn, w core.Unit) { c.MaxWidth = w }).
 				Tip("Widest the column may be dragged, in units. -1 is no limit; a maximum below min_width loses to it.").Def("-1"),
 			"align": protocol.NewProperty("enum", colProp("align", func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
-				w, err := protocol.AsWord("align", v, f)
+				word, err := protocol.AsWord("align", v, f)
 				if err != nil {
 					return err
 				}
-				switch w {
-				case "left", "center", "right":
-					c.target().Align = w
-					return nil
+				a, err := hAlignWord("align", word)
+				if err != nil {
+					return err
 				}
-				return fmt.Errorf("align: expected left, center, or right")
-			})).OneOf("left", "center", "right").Def("left").Tip("Cell text alignment."),
+				c.target().Align = a
+				return nil
+			})).OneOf(hAlignWordList()...).Def("textbegin").
+				Tip("Where a cell's text sits. textbegin/textend follow each cell's own script; " +
+					"layoutbegin/layoutend follow the column's direction; the optical pair names a side outright."),
+			"direction": protocol.NewProperty("enum", colProp("direction", func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
+				word, err := protocol.AsWord("direction", v, f)
+				if err != nil {
+					return err
+				}
+				d, err := directionWord("direction", word)
+				if err != nil {
+					return err
+				}
+				c.target().Direction = d
+				return nil
+			})).OneOf("inherit", "ltr", "rtl").Def("inherit").
+				Tip("Which way this column's CONTENT reads; inherit takes the treeview's. Where the column sits among the others is the treeview's to settle."),
 			"resizable": colFlag("resizable", func(c *TreeColumn, b bool) { c.Resizable = b }).Tip("Header divider drag-resizes this column.").Def("true"),
 			"hidden":    colFlag("hidden", func(c *TreeColumn, b bool) { c.Hidden = b }).Tip("Column is not displayed.").Def("false"),
 			"optional":  colFlag("optional", func(c *TreeColumn, b bool) { c.Optional = b }).Tip("Column appears in the [=] show/hide chooser.").Def("true"),
