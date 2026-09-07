@@ -538,7 +538,7 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	// the band's centerline.
 	boxY := divider.Y + (divider.Height-h)/2
 	p.FillRect(core.UnitRect{X: boxX, Y: boxY, Width: boxW, Height: h}, ' ', titleStyle)
-	p.DrawText(boxX+pad, boxY, label, titleStyle, font)
+	p.DrawText(boxX+pad, boxY, sp.CellRun(label), titleStyle, font)
 }
 
 // HandleMousePress handles mouse button presses.

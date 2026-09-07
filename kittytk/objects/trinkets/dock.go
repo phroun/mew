@@ -290,7 +290,7 @@ func (d *DockRow) Paint(p *core.Painter) {
 			Width:  interiorWidth,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		titlePainter.DrawText(interiorX, y, title, entryStyle, font)
+		titlePainter.DrawText(interiorX, y, d.CellRun(title), entryStyle, font)
 	}
 }
 

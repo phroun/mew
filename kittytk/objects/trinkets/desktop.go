@@ -6076,7 +6076,7 @@ func (s *StatusBar) Paint(p *core.Painter) {
 			drawTextSegments(slot, textX, 0, font, s.EffectiveCellMetrics(), segs...)
 		} else {
 			// Draw plain text
-			slot.DrawText(textX, 0, section.Text, statusBarStyle, font)
+			slot.DrawText(textX, 0, s.CellRun(section.Text), statusBarStyle, font)
 		}
 
 		x += sectionWidth

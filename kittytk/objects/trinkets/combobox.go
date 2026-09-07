@@ -807,7 +807,7 @@ func (c *ComboBox) SizeHint() core.UnitSize {
 	minWidth := c.MeasureText("----------") // Minimum 10 chars
 	maxWidth := minWidth
 	for _, item := range c.items {
-		itemWidth := c.MeasureText(item)
+		itemWidth := c.MeasureText(c.CellRun(item))
 		if itemWidth > maxWidth {
 			maxWidth = itemWidth
 		}
@@ -878,7 +878,8 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	textAreaWidth := bounds.Width - arrowWidth
 
 	// Draw text
-	shown := c.displayText(text, textAreaWidth)
+	// Cut to fit first, prepared for the cell target after.
+	shown := c.CellRun(c.displayText(text, textAreaWidth))
 	p.DrawText(core.LeadingX(c.ancestor(), bounds.Width, 0, c.MeasureText(shown)), 0, shown, s, font)
 
 	// Draw dropdown arrow at the trailing edge
@@ -964,8 +965,9 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			Width:  bounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		rowPainter.DrawText(core.LeadingX(c.ancestor(), bounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(item)),
-			itemY, item, s, font)
+		run := c.CellRun(item)
+		rowPainter.DrawText(core.LeadingX(c.ancestor(), bounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
+			itemY, run, s, font)
 	}
 
 	// Draw scroll indicators if needed
@@ -1081,8 +1083,9 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			Width:  popupBounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		rowPainter.DrawText(core.LeadingX(c.ancestor(), popupBounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(item)),
-			itemY, item, s, font)
+		run := c.CellRun(item)
+		rowPainter.DrawText(core.LeadingX(c.ancestor(), popupBounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
+			itemY, run, s, font)
 	}
 
 	// Draw scroll down indicator or scrollbar

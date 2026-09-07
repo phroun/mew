@@ -15,6 +15,12 @@ import (
 type cellInk struct {
 	core.RenderBackend
 	texts []string
+	cells []rune // the glyphs stamped one at a time, in the order they went down
+}
+
+func (c *cellInk) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
+	c.cells = append(c.cells, ch)
+	c.RenderBackend.DrawCell(x, y, ch, s)
 }
 
 func (c *cellInk) DrawText(x, y core.Unit, text string, s style.CellStyle, f *core.Font) core.Unit {
@@ -123,4 +129,52 @@ func TestACaptionedTrinketHandsItsCellsOverInOrder(t *testing.T) {
 	draw("button", func() core.Trinket { return NewButton(shalom) })
 	draw("checkbox", func() core.Trinket { return NewCheckbox(shalom) })
 	draw("radio button", func() core.Trinket { return NewRadioButton(shalom) })
+}
+
+// The rest of the chrome that shows a caption: a combo box's value, a
+// separator's and a splitter's inline title, a dock entry.
+func TestTheRestOfTheChromeHandsItsCellsOverInOrder(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	const shalom = "שלום"
+	turned := string([]rune{'ם', 'ו', 'ל', 'ש'})
+
+	draw := func(name string, make func() core.Trinket) {
+		t.Helper()
+		for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+			px, err := raster.New(900, 400)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ink := &cellInk{RenderBackend: px}
+			form := NewPanel()
+			form.SetDirection(dir)
+			w := make()
+			form.AddChild(w)
+			w.SetBounds(core.UnitRect{Width: 60 * 8, Height: 5 * 16})
+			w.Paint(core.NewPainter(ink))
+
+			found := strings.Contains(string(ink.cells), turned)
+			for _, s := range ink.texts {
+				if s == turned {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s %v: handed over %q / %q, want the turned-over caption %q",
+					name, dir, ink.texts, string(ink.cells), turned)
+			}
+		}
+	}
+
+	// A separator spreads its title across the cells of its rule one at a
+	// time, so the run has to be turned over BEFORE it is spread.
+	draw("separator", func() core.Trinket { return NewHSeparator(shalom) })
+	draw("combo box", func() core.Trinket {
+		c := NewComboBox()
+		c.AddItem(shalom)
+		c.SetCurrentIndex(0)
+		return c
+	})
 }
