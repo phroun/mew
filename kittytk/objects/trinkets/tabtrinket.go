@@ -659,18 +659,27 @@ func (t *TabTrinket) calculateTabBarWidth() core.Unit {
 
 // calculateTotalTabsWidth returns the total width needed to display all tabs.
 // Format: [prefix][tab1 text][sep][tab2 text][sep]...
-// - Prefix: 4 chars if first tab selected (" _/ "), else 2 ("  ")
-// - Separator: 4 chars if adjacent to selected (" \_ " or " _/ "), else 2 ("  ")
+// - Prefix: the join width if the first tab is selected, else 2 ("  ")
+// - Separator: the join width beside the selected tab, else 2 ("  ")
 func (t *TabTrinket) calculateTotalTabsWidth() core.Unit {
 	metrics := t.EffectiveCellMetrics()
 	if len(t.tabs) == 0 {
 		return 0
 	}
 
-	// Prefix: 4 if first tab selected, else 2
+	// What a join beside the selected tab costs. The two shapes draw it with
+	// a different number of cells: a top strip's " _/<" and " \_ " are four,
+	// a bottom strip's " \_" and "_/ " are three. Charging four either way
+	// left a bottom strip reckoning itself a cell wider at each such join
+	// than it drew, which is room its alignment then had nothing to put in.
+	join := 4
+	if t.tabEdge() == TabEdgeBottom {
+		join = 3
+	}
+
 	prefixWidth := 2
 	if t.currentIndex == 0 {
-		prefixWidth = 4
+		prefixWidth = join
 	}
 	total := core.Unit(prefixWidth) * metrics.UnitsPerCellWidth
 
@@ -678,10 +687,11 @@ func (t *TabTrinket) calculateTotalTabsWidth() core.Unit {
 		// Tab text - use font measurement for accurate width
 		total += t.MeasureText(tab.Text)
 
-		// Separator after tab: 4 if this or next tab is selected, else 2
+		// Separator after tab: the join width if this or the next tab is
+		// selected, else 2
 		sepWidth := 2
 		if i == t.currentIndex || (i+1 < len(t.tabs) && i+1 == t.currentIndex) {
-			sepWidth = 4
+			sepWidth = join
 		}
 		total += core.Unit(sepWidth) * metrics.UnitsPerCellWidth
 	}

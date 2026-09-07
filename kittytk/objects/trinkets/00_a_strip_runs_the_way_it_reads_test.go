@@ -710,3 +710,77 @@ func TestTheSlashBetweenTwoBottomTabsKeepsTheSelection(t *testing.T) {
 		}
 	}
 }
+
+// Slack is what the strip has left after its run, so the run has to be
+// measured as it is drawn. The two shapes join their tabs with a different
+// number of cells, and a strip that reckons its run wider than it draws it
+// keeps room back: pushed to the far end, the run stops short of it, and
+// centred, it sits off to one side by half of what was kept back.
+func TestACentredRunHasTheSameRoomAtBothEnds(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	// Where the painted run begins and ends within the strip, from the marks
+	// the strip made rather than from the widths it reckoned with.
+	run := func(dir core.Direction, pos TabPosition, a TabAlign, cur int) (before, after core.Unit) {
+		px, err := raster.New(600, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := &inkRecorder{RenderBackend: px}
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		tt.SetTabAlign(a)
+		form.AddChild(tt)
+		for i := 0; i < 3; i++ {
+			tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
+		}
+		tt.SetBounds(core.UnitRect{Width: 40 * cell, Height: 10 * 16})
+		tt.currentIndex = cur
+		tt.Paint(core.NewPainter(ink))
+
+		lo, hi := core.Unit(-1), core.Unit(-1)
+		for _, sp := range tt.stripSpans {
+			if sp.owner < 0 {
+				continue // the strip's own furniture, not the run
+			}
+			if lo < 0 || sp.x < lo {
+				lo = sp.x
+			}
+			if sp.x+sp.w > hi {
+				hi = sp.x + sp.w
+			}
+		}
+		if lo < 0 {
+			t.Fatalf("%v %v: the strip drew no tabs", dir, pos)
+		}
+		return lo, tt.Bounds().Width - hi
+	}
+
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+			// Every selection, because the join beside the selected tab is the
+			// one the two shapes draw differently.
+			for _, cur := range []int{-1, 0, 1, 2} {
+				before, after := run(dir, pos, TabsAlignCenter, cur)
+				// Odd slack cannot be split evenly, so the halves can differ
+				// by the one unit that will not divide.
+				if d := before - after; d > 1 || d < -1 {
+					t.Errorf("%v %v cur=%d: centred, the run has %d in front of it and %d behind",
+						dir, pos, cur, before, after)
+				}
+
+				if _, after := run(dir, pos, TabsAlignOpposite, cur); after != 0 {
+					t.Errorf("%v %v cur=%d: pushed to the far end, the run stops %d short of it",
+						dir, pos, cur, after)
+				}
+				if before, _ := run(dir, pos, TabsAlignNatural, cur); before != 0 {
+					t.Errorf("%v %v cur=%d: packed, the run begins %d into the strip",
+						dir, pos, cur, before)
+				}
+			}
+		}
+	}
+}
