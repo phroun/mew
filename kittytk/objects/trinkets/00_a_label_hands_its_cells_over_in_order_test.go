@@ -171,6 +171,7 @@ func TestTheRestOfTheChromeHandsItsCellsOverInOrder(t *testing.T) {
 	// A separator spreads its title across the cells of its rule one at a
 	// time, so the run has to be turned over BEFORE it is spread.
 	draw("separator", func() core.Trinket { return NewHSeparator(shalom) })
+	draw("message box", func() core.Trinket { return NewMessageBox("Title", shalom, ButtonOK) })
 	draw("combo box", func() core.Trinket {
 		c := NewComboBox()
 		c.AddItem(shalom)

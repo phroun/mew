@@ -352,7 +352,7 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 	textX := metrics.UnitsPerCellWidth * 6
 	lineY := textY
 	for _, line := range strings.Split(c.text, "\n") {
-		p.DrawText(textX, lineY, line, contentStyle, font)
+		p.DrawText(textX, lineY, c.CellRun(line), contentStyle, font)
 		lineY += metrics.UnitsPerCellHeight
 	}
 
@@ -1025,7 +1025,7 @@ func (d *InputDialog) Paint(p *core.Painter) {
 
 	// Label
 	y := metrics.UnitsPerCellHeight * 2
-	p.DrawText(metrics.UnitsPerCellWidth*2, y, d.labelText, theme.Normal, nil)
+	p.DrawText(metrics.UnitsPerCellWidth*2, y, d.CellRun(d.labelText), theme.Normal, nil)
 
 	// Input
 	y += metrics.UnitsPerCellHeight
