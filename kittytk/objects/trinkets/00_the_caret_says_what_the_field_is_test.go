@@ -5,6 +5,7 @@ import (
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // A caret's SHAPE says what the field is: a bar between two characters, where
@@ -61,6 +62,23 @@ func TestTheCaretSaysWhatTheFieldIs(t *testing.T) {
 	// insertion point to anchor on.
 	if !editable.InputArea || !reading.InputArea {
 		t.Error("the caret was placed without saying it is the insertion point")
+	}
+
+	// And it says what colour to be. A terminal's caret colour is one global
+	// preference, chosen against the terminal's own background, and a thin bar
+	// in it disappears into the ground a field paints for itself -- which the
+	// field is the only thing that knows.
+	scheme := NewTextInput().GetScheme()
+	if want := scheme.GetFocusedEditBoxBarCursor().Bg; editable.Color != want {
+		t.Errorf("the bar asked for colour %v, want the field's own bar colour %v",
+			editable.Color, want)
+	}
+	if want := scheme.GetFocusedEditBoxCursor().Bg; reading.Color != want {
+		t.Errorf("the block asked for colour %v, want the field's own block colour %v",
+			reading.Color, want)
+	}
+	if editable.Color == style.ColorDefault {
+		t.Error("the field left the caret in whatever colour the terminal had")
 	}
 }
 

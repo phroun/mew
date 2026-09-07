@@ -43,8 +43,11 @@ func markerRow(g *fieldGeometry, runes []rune) string {
 //
 // A fragment carries the arrow it reads AWAY from at its reading start and a
 // bar where its reading stops, so a right-to-left piece wears "<" on its right
-// and "|" on its left. The piece a reader starts at goes bare when it reads the
-// way the whole line does: the line already says which way that is.
+// and "|" on its left.
+//
+// The line's own ends carry no notation: the piece a reader starts at goes bare
+// when it reads the way the whole line does, and the piece it stops at closes
+// without a bar for the same reason -- there is nowhere for the eye to jump.
 func TestTheMarkersShowWhereTheReadingTurns(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, err := raster.New(800, 200)
@@ -62,12 +65,14 @@ func TestTheMarkersShowWhereTheReadingTurns(t *testing.T) {
 		{"english", "abc", "..."},
 		{"hebrew", "שלום", "...."},
 		// English, then a Hebrew word, then English again. The Hebrew reads
-		// from its right, so its arrow is on its right and its bar on its left;
-		// the English after it starts a new piece and gets both.
-		{"hebrew inside english", "abc שלום xyz", "....|....<>....|"},
+		// from its right, so its arrow is on its right and its bar on its left.
+		// The English after it starts a new piece, so it takes an arrow -- but
+		// it ends the line reading the way the line does, so no bar closes it.
+		{"hebrew inside english", "abc שלום xyz", "....|....<>...."},
 		// The mirror: the line begins right-to-left, so the first piece goes
-		// bare and the English island inside it is marked at both ends.
-		{"english inside hebrew", "אבג abc דהו", "|....<>...|...."},
+		// bare, the English island inside it is marked at both ends, and the
+		// Hebrew that ends the line closes without a bar.
+		{"english inside hebrew", "אבג abc דהו", "....<>...|...."},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ti := NewTextInput()
@@ -161,6 +166,25 @@ func TestMarkingTheLineOnlyMovesIt(t *testing.T) {
 	}
 	if covered != plain.total {
 		t.Errorf("the pieces cover %d of the shaper's %d-wide line", covered, plain.total)
+	}
+
+	// In PIXELS too, which is the denomination they are drawn in: each piece is
+	// a stretch of the run with room of its own, and the pieces come in order
+	// with no two over the same ground. A piece measured across its neighbour
+	// stamps the whole run twice into one place, which shows as a second,
+	// half-clipped copy of the text.
+	pixels := ti.runGeometry(runes, ti.EffectiveFont(), true, true, 2)
+	if len(pixels.pieces) < 2 {
+		t.Fatalf("a line that turns over twice was drawn in %d piece(s)", len(pixels.pieces))
+	}
+	for i, pc := range pixels.pieces {
+		if pc.hiPx <= pc.loPx {
+			t.Errorf("piece %d spans [%d,%d) pixels", i, pc.loPx, pc.hiPx)
+		}
+		if i > 0 && pc.loPx < pixels.pieces[i-1].hiPx {
+			t.Errorf("piece %d starts at %d, inside piece %d which runs to %d",
+				i, pc.loPx, i-1, pixels.pieces[i-1].hiPx)
+		}
 	}
 }
 

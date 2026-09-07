@@ -161,6 +161,11 @@ type TUIBackend struct {
 	// stays off the wire. Emitted only while the cursor is visible.
 	cursorStyle     int
 	cursorStyleSent int
+	// cursorColor is the ink the focused trinket asked its caret be drawn in
+	// (ColorDefault: the reader's own), cursorColorSent what the terminal was
+	// last told. Written beside the cursor for the same reason the shape is.
+	cursorColor     style.Color
+	cursorColorSent style.Color
 
 	// Input handling
 	keyboard   *keyboard.Handler
@@ -348,6 +353,11 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		hasUnicode: true, // Assume Unicode support
 		osc52:      opts.OSC52Clipboard,
 		osc52Paste: opts.OSC52Paste,
+		// The terminal starts on the reader's own caret colour, and so does
+		// what we believe about it -- the zero Color is black, which would let
+		// a trinket asking for black go unwritten.
+		cursorColor:     style.ColorDefault,
+		cursorColorSent: style.ColorDefault,
 	}
 	return t
 }
@@ -640,8 +650,10 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Leave alternate screen
 		t.writeTTY("\033[?1049l")
 
-		// Reset colors
+		// Reset colors, the caret's own among them: a caret left in a colour
+		// this process chose would follow the shell that inherits the terminal.
 		t.writeTTY("\033[0m")
+		t.writeTTY("\033]112\033\\")
 
 		unregisterLive(t)
 	})
@@ -916,6 +928,18 @@ func (t *TUIBackend) EndFrame() {
 		if t.cursorStyle != t.cursorStyleSent {
 			out.WriteString(fmt.Sprintf("\033[%d q", t.cursorStyle))
 			t.cursorStyleSent = t.cursorStyle
+		}
+		// The ink, likewise: OSC 12 sets the caret's colour and OSC 112 hands
+		// the reader's own back. A terminal that knows neither drops both, and
+		// the caret keeps the colour it always had.
+		if t.cursorColor != t.cursorColorSent {
+			if t.cursorColor == style.ColorDefault {
+				out.WriteString("\033]112\033\\")
+			} else {
+				r, g, b := t.cursorColor.RGBComponents()
+				out.WriteString(fmt.Sprintf("\033]12;#%02X%02X%02X\033\\", r, g, b))
+			}
+			t.cursorColorSent = t.cursorColor
 		}
 		if !t.cursorShown {
 			out.WriteString("\033[?25h")
@@ -1490,12 +1514,23 @@ func (t *TUIBackend) SetCursorVisible(visible bool) {
 // SetCursorStyle records the DECSCUSR shape for the next present. It is not
 // written immediately: a shape only reaches the terminal beside the cursor it
 // belongs to, so it can never reveal or restyle a hidden cursor.
-func (t *TUIBackend) SetCursorStyle(style int) {
-	if style < 0 || style > 6 {
+func (t *TUIBackend) SetCursorStyle(shape int) {
+	if shape < 0 || shape > 6 {
 		return
 	}
 	t.mu.Lock()
-	t.cursorStyle = style
+	t.cursorStyle = shape
+	t.mu.Unlock()
+}
+
+// SetCursorColor records the caret's ink for the next present, implementing
+// core.CursorColorer. ColorDefault hands the reader's own colour back.
+//
+// Recorded rather than written, for the reason the shape is: it reaches the
+// terminal beside the cursor it belongs to.
+func (t *TUIBackend) SetCursorColor(c style.Color) {
+	t.mu.Lock()
+	t.cursorColor = c
 	t.mu.Unlock()
 }
 

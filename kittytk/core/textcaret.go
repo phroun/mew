@@ -1,5 +1,7 @@
 package core
 
+import "github.com/phroun/kittytk/style"
+
 // The text caret is the platform's OWN cursor — the one a terminal draws and
 // blinks itself, in whatever shape DECSCUSR selected. It is distinct from the
 // mouse cursor (see cursor.go) and from any caret a trinket paints into its own
@@ -28,6 +30,16 @@ type TextCaret struct {
 	// Style is the DECSCUSR shape: 0 the terminal's own default, 1/2
 	// blinking/steady block, 3/4 underline, 5/6 bar.
 	Style int
+
+	// Color is the ink the caret is drawn in, or ColorDefault to leave the
+	// reader's own setting alone.
+	//
+	// A terminal's caret colour is a global preference, chosen once against a
+	// terminal's own background -- so on a trinket that paints a background of
+	// its own it can land somewhere it cannot be seen. A trinket that knows
+	// what it painted can say what shows up on it; anything else says nothing
+	// and gets the colour the reader picked.
+	Color style.Color
 
 	// InputArea marks (X, Y) as the INSERTION POINT for an input method,
 	// whether or not the platform draws a caret there.
@@ -104,20 +116,22 @@ func FocusedTextSink(fm *FocusManager) TextSinkState {
 }
 
 // RequestTextCaret asks the platform to place its real text caret at local
-// (x, y) with the given DECSCUSR shape. Later requests replace earlier ones —
-// paint order decides, so whatever paints on top owns the caret. Out-of-range
-// shapes are clamped to the terminal default.
-func (p *Painter) RequestTextCaret(x, y Unit, style int) {
+// (x, y) with the given DECSCUSR shape, drawn in ink — or style.ColorDefault to
+// leave the reader's own caret colour alone. Later requests replace earlier
+// ones — paint order decides, so whatever paints on top owns the caret.
+// Out-of-range shapes are clamped to the terminal default.
+func (p *Painter) RequestTextCaret(x, y Unit, shape int, ink style.Color) {
 	if p.caret == nil {
 		return
 	}
-	if style < 0 || style > 6 {
-		style = 0
+	if shape < 0 || shape > 6 {
+		shape = 0
 	}
 	sx, sy := p.toScreen(x, y)
 	// A drawn caret is also where typing goes, so this is an insertion
 	// point too and an input method can anchor on it.
-	p.caret.caret = TextCaret{Visible: true, InputArea: true, X: sx, Y: sy, Style: style}
+	p.caret.caret = TextCaret{Visible: true, InputArea: true, X: sx, Y: sy,
+		Style: shape, Color: ink}
 }
 
 // RequestTextInputArea marks local (x, y) as the insertion point for an
@@ -134,7 +148,7 @@ func (p *Painter) RequestTextInputArea(x, y Unit) {
 		return
 	}
 	sx, sy := p.toScreen(x, y)
-	p.caret.caret = TextCaret{InputArea: true, X: sx, Y: sy}
+	p.caret.caret = TextCaret{InputArea: true, X: sx, Y: sy, Color: style.ColorDefault}
 }
 
 // TextCaretRequest returns the caret requested during this frame (Visible false

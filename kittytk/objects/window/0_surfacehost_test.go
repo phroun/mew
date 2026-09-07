@@ -177,7 +177,7 @@ func newCaretTrinket(style int, x, y core.Unit) *caretTrinket {
 
 func (c *caretTrinket) Paint(p *core.Painter) {
 	if c.focused {
-		p.RequestTextCaret(c.localX, c.localY, c.style)
+		p.RequestTextCaret(c.localX, c.localY, c.style, style.ColorDefault)
 	}
 }
 
@@ -226,8 +226,8 @@ func TestSurfaceHostHidesCaretWithoutRequest(t *testing.T) {
 func TestTextCaretLastRequestWins(t *testing.T) {
 	p := core.NewPainter(nullPaintBackend{})
 	p.ResetTextCaretRequest()
-	p.RequestTextCaret(10, 10, 2) // content underneath
-	p.RequestTextCaret(40, 8, 5)  // overlay painted after it
+	p.RequestTextCaret(10, 10, 2, style.ColorDefault) // content underneath
+	p.RequestTextCaret(40, 8, 5, style.ColorDefault)  // overlay painted after it
 
 	got := p.TextCaretRequest()
 	if !got.Visible || got.X != 40 || got.Y != 8 || got.Style != 5 {
@@ -242,7 +242,7 @@ func TestTextCaretSurvivesPainterDerivation(t *testing.T) {
 	p.ResetTextCaretRequest()
 
 	child := p.WithTransform(core.NewTranslation(16, 48))
-	child.RequestTextCaret(8, 16, 3)
+	child.RequestTextCaret(8, 16, 3, style.ColorDefault)
 
 	got := p.TextCaretRequest()
 	if !got.Visible || got.X != 24 || got.Y != 64 {

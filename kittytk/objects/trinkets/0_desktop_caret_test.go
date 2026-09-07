@@ -6,6 +6,7 @@ import (
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
+	"github.com/phroun/kittytk/style"
 )
 
 // caretAsker requests the platform text caret from inside a desktop-composited
@@ -21,7 +22,7 @@ func newCaretAsker(style int) *caretAsker {
 	return c
 }
 
-func (c *caretAsker) Paint(p *core.Painter) { p.RequestTextCaret(4, 6, c.style) }
+func (c *caretAsker) Paint(p *core.Painter) { p.RequestTextCaret(4, 6, c.style, style.ColorDefault) }
 
 // The DESKTOP composites every window into one surface, so it owns the frame
 // and must apply the caret request itself. Without this a focused terminal

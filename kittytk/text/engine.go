@@ -105,6 +105,18 @@ func (r *Run) OriginPx(ppu float64) int {
 	return int(math.Round(float64(r.x) / 64 * ppu))
 }
 
+// AdvancePx is the run's own advance in device pixels at ppu pixels per unit,
+// scaled from the unrounded advance its glyphs add up to.
+//
+// It is the run's OWN, which is not what the caret positions either side of it
+// give: those are answers about logical indices, and an index at a run boundary
+// belongs to the run on the other side of it. A caller measuring a run by
+// asking for the caret at its first and last index gets that other run's edge
+// and a span reaching across it.
+func (r *Run) AdvancePx(ppu float64) int {
+	return int(math.Round(float64(r.advanceOf()) / 64 * ppu))
+}
+
 // Line is one wrapped line: runs stored in visual order (leftmost
 // first), with metrics for stacking.
 type Line struct {

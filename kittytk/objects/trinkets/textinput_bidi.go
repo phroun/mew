@@ -489,12 +489,22 @@ func (t *TextInput) markShapedRun(g *fieldGeometry, e *text.Engine, font *core.F
 	// The first fragment in reading order is the one holding the line's first
 	// rune, and the line's base direction is that fragment's: everything ahead
 	// of the first strong character is neutral, and neutrals take the base.
-	bare := 0
+	bare, last := 0, 0
 	for i := range frags {
 		if frags[i].start < frags[bare].start {
 			bare = i
 		}
+		if frags[i].start > frags[last].start {
+			last = i
+		}
 	}
+	// The line's own direction is that first fragment's: everything ahead of
+	// the first strong character is neutral, and neutrals take the base.
+	baseRTL := frags[bare].rtl
+	// The closing bar says the reading stops here and the eye jumps. At the
+	// LINE's own end there is nowhere to jump to, so a last fragment reading
+	// the way the line does closes without one.
+	closes := func(i int) bool { return i != bare && (i != last || frags[i].rtl != baseRTL) }
 
 	width := func(glyph rune) (core.Unit, int) {
 		sp := e.ShapeRun(font, string(glyph))
@@ -520,8 +530,15 @@ func (t *TextInput) markShapedRun(g *fieldGeometry, e *text.Engine, font *core.F
 	}
 	for i := range frags {
 		f := &frags[i]
-		if i != bare {
-			put(markerAt(f.rtl, true))
+		// A fragment reads away from one edge and stops at the other: a
+		// left-to-right one begins at its left, a right-to-left one at its
+		// right. So the arrow and the bar swap ends with the fragment.
+		if f.rtl {
+			if closes(i) {
+				put(markerEndGlyph)
+			}
+		} else if i != bare {
+			put(markerLTRGlyph)
 		}
 		shift[i], shiftPx[i] = x-f.lo, xPx-f.loPx
 		g.pieces = append(g.pieces, fieldPiece{
@@ -529,8 +546,12 @@ func (t *TextInput) markShapedRun(g *fieldGeometry, e *text.Engine, font *core.F
 			loPx: xPx, hiPx: xPx + (f.hiPx - f.loPx), shiftPx: shiftPx[i],
 		})
 		x, xPx = x+(f.hi-f.lo), xPx+(f.hiPx-f.loPx)
-		if i != bare {
-			put(markerAt(f.rtl, false))
+		if f.rtl {
+			if i != bare {
+				put(markerRTLGlyph)
+			}
+		} else if closes(i) {
+			put(markerEndGlyph)
 		}
 	}
 	g.total = x
@@ -562,18 +583,6 @@ func (t *TextInput) markShapedRun(g *fieldGeometry, e *text.Engine, font *core.F
 	}
 }
 
-// markerAt is the mark for one end of a fragment: the arrow the reading runs
-// away from where it BEGINS, and the bar where it stops.
-func markerAt(rtl, leftEdge bool) rune {
-	if rtl == leftEdge {
-		return markerEndGlyph // the left of a left-to-right piece, the right of a right-to-left one
-	}
-	if rtl {
-		return markerRTLGlyph
-	}
-	return markerLTRGlyph
-}
-
 // shapedFragment is a maximal stretch of one direction in a shaped line: the
 // logical runes it covers, and where it sits.
 type shapedFragment struct {
@@ -583,14 +592,11 @@ type shapedFragment struct {
 	loPx, hiPx int
 }
 
-// edgesPx is a run's left and right edges in device pixels, read from the
-// line's own unrounded pen so they sit on the glyphs rather than near them.
-func edgesPx(l *text.Line, r *text.Run, ppu float64) (lo, hi int) {
-	lo, hi = l.CaretXPx(r.Runes.Start, ppu), l.CaretXPx(r.Runes.End, ppu)
-	if lo > hi {
-		lo, hi = hi, lo
-	}
-	return lo, hi
+// edgesPx is a run's left and right edges in device pixels, taken from the run's
+// OWN pen and advance so the span covers that run and nothing beside it.
+func edgesPx(r *text.Run, ppu float64) (lo, hi int) {
+	lo = r.OriginPx(ppu)
+	return lo, lo + r.AdvancePx(ppu)
 }
 
 // shapedFragments merges the shaper's runs into the stretches a reader sees as
@@ -603,7 +609,7 @@ func shapedFragments(l *text.Line, ppu float64) []shapedFragment {
 		if n := len(out); n > 0 && out[n-1].rtl == r.RTL && out[n-1].hi == r.X {
 			f := &out[n-1]
 			f.hi = r.X + r.Width
-			if _, hiPx := edgesPx(l, r, ppu); hiPx > f.hiPx {
+			if _, hiPx := edgesPx(r, ppu); hiPx > f.hiPx {
 				f.hiPx = hiPx
 			}
 			if r.Runes.Start < f.start {
@@ -618,7 +624,7 @@ func shapedFragments(l *text.Line, ppu float64) []shapedFragment {
 			start: r.Runes.Start, end: r.Runes.End, rtl: r.RTL,
 			lo: r.X, hi: r.X + r.Width,
 		}
-		f.loPx, f.hiPx = edgesPx(l, r, ppu)
+		f.loPx, f.hiPx = edgesPx(r, ppu)
 		out = append(out, f)
 	}
 	return out
@@ -652,7 +658,11 @@ func (t *TextInput) cellGeometry(runes []rune, marked bool) *fieldGeometry {
 
 	var lay *khatool.Layout
 	if marked {
-		lay = khatool.OrderMarked(runes, baseRTL, core.CellRides)
+		// No bar at the line's own reading end: the field reserves its own room
+		// for the caret's last position (see head), and past that room is the
+		// field's own ground, which says the line ended more plainly than a
+		// mark could.
+		lay = khatool.OrderMarkedWith(runes, baseRTL, core.CellRides, khatool.Marks{})
 	} else {
 		lay = khatool.Order(runes, baseRTL, core.CellRides)
 	}
@@ -814,11 +824,14 @@ const (
 	moreRightGlyph = '▶'
 )
 
-// markWidth is the room one more-marker takes.
+// markWidth is the room one more-marker takes: one character cell, whatever
+// face the field is set in.
+//
+// Not the glyph's own width. A proportional face's triangle is most of an em
+// wide, which is a large bite out of a short field and a different bite in
+// every face -- and the arrow is chrome about the field's edge, not a character
+// of the text, so it takes the field's own unit rather than the font's.
 func (t *TextInput) markWidth() core.Unit {
-	if w := t.MeasureText(string(moreRightGlyph)); w > 0 {
-		return w
-	}
 	return t.EffectiveCellMetrics().UnitsPerCellWidth
 }
 

@@ -140,7 +140,7 @@ func TestNoteSubtreeRepaintStopsOnCycle(t *testing.T) {
 func TestRequestTextCaretIsAlsoAnInputArea(t *testing.T) {
 	p := NewPainter(&caretTestBackend{})
 	p.ResetTextCaretRequest()
-	p.RequestTextCaret(10, 20, 5)
+	p.RequestTextCaret(10, 20, 5, style.ColorDefault)
 
 	got := p.TextCaretRequest()
 	if !got.Visible {

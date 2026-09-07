@@ -89,5 +89,50 @@ func TestAnArrowSitsOnTheFieldsEdge(t *testing.T) {
 		if !atRight {
 			t.Errorf("focused=%v: no arrow ending at the field's last pixel (%d)", focused, right)
 		}
+
+		// And each arrow's box is exactly the room reserved for it. The run is
+		// laid out in what is left over, so a box wider than the reservation
+		// draws over the text and a narrower one leaves a gap the text does not
+		// reach.
+		wantPx := p.UnitSpanPxX(0, ti.markWidth())
+		for _, f := range rec.fills {
+			if f.st.Bg != want.Bg || f.w <= 0 {
+				continue
+			}
+			if f.x != 0 && f.x+f.w != right {
+				continue // not one of the arrows
+			}
+			if f.w != wantPx {
+				t.Errorf("focused=%v: an arrow box is %dpx wide and %d is reserved",
+					focused, f.w, wantPx)
+			}
+		}
+	}
+}
+
+// The arrow takes one character cell, whatever face the field is set in. A
+// proportional triangle is most of an em wide -- a large bite out of a short
+// field, and a different bite in every face -- and this is chrome about the
+// field's edge rather than a character of the text.
+func TestAnArrowTakesOneCell(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(600, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(px)
+
+	for _, m := range []core.CellMetrics{
+		{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+	} {
+		ti := NewTextInput()
+		cm := m
+		ti.SetCellMetrics(&cm)
+		if got := ti.markWidth(); got != m.UnitsPerCellWidth {
+			t.Errorf("at %dx%d the arrow takes %d, want one cell of %d",
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, got, m.UnitsPerCellWidth)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package trinkets
 
 import (
 	"fmt"
+	"math"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -782,9 +783,15 @@ func (t *TextInput) Paint(p *core.Painter) {
 	if t.moreLeft {
 		roomLo, roomLoPx = mark, markPx
 	}
-	roomHi, roomHiPx := roomLo+usable, roomLoPx+p.UnitSpanPxX(0, usable)
-	if roomHi > bounds.Width {
-		roomHi, roomHiPx = bounds.Width, fieldPx
+	// The right edge of the room is measured back from the field's own edge,
+	// which is where the arrow is drawn: the two have to be the same pixel, or
+	// the text runs under the arrow or stops short of it.
+	roomHi, roomHiPx := bounds.Width, fieldPx
+	if t.moreRight {
+		roomHi, roomHiPx = bounds.Width-mark, fieldPx-markPx
+	}
+	if roomLo+usable < roomHi {
+		roomHi, roomHiPx = roomLo+usable, roomLoPx+p.UnitSpanPxX(0, usable)
 	}
 
 	// originX is where the run's own zero falls in the field, which is what
@@ -1112,10 +1119,14 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// after that character. A BLOCK covers a cell, so it is asked for at the
 	// cell the character itself occupies.
 	if !usePx {
+		// The field paints its own ground under the caret, so it says what
+		// shows up on it: a terminal's caret colour is one global preference,
+		// chosen against the terminal's own background, and a thin bar in it
+		// disappears into a field that painted something else.
 		if blockCaret {
-			p.RequestTextCaret(caretLo, 0, decscusrBlock)
+			p.RequestTextCaret(caretLo, 0, decscusrBlock, cursorStyle.Bg)
 		} else {
-			p.RequestTextCaret(caretX, 0, decscusrBar)
+			p.RequestTextCaret(caretX, 0, decscusrBar, barStyle.Bg)
 		}
 		t.paintSecondaryCaret(p, g, displayText, cursorDisp, blank, bounds,
 			cursorStyle, originX, clipUnits, font)
@@ -1270,13 +1281,48 @@ func (t *TextInput) paintMoreArrow(p *core.Painter, glyph rune, x core.Unit, xPx
 	w core.Unit, wPx, rowHPx int, s style.CellStyle, font *core.Font, usePx bool) {
 	if usePx {
 		p.FillRectPixels(0, 0, xPx, 0, wPx, rowHPx, s)
-		p.DrawTextOffsetClipped(0, 0, xPx, xPx, xPx+wPx, string(glyph),
-			s.WithBg(style.ColorTransparent), font)
+		// Drawn rather than set from the font. A glyph's width belongs to the
+		// face and this box is one cell wide whatever face the field carries,
+		// so the glyph would have to be trimmed to fit -- and a triangle
+		// trimmed at the point is an arrow with no point.
+		fillTrianglePx(p, xPx, wPx, rowHPx, glyph == moreLeftGlyph, s.Fg)
 		return
 	}
 	p.FillRect(core.UnitRect{X: x, Width: w,
 		Height: t.EffectiveCellMetrics().UnitsPerCellHeight}, ' ', s)
 	p.DrawText(x, 0, string(glyph), s, font)
+}
+
+// fillTrianglePx paints a solid triangle inside a device-pixel box, pointing
+// left or right: rows of the box, each as long as the triangle is wide there,
+// aligned against the vertical side the point is opposite.
+func fillTrianglePx(p *core.Painter, xPx, wPx, hPx int, pointLeft bool, c style.Color) {
+	// Inset, so the arrow reads as a mark inside the field's edge rather than
+	// a block filling it.
+	pad := hPx / 5
+	top, h := pad, hPx-2*pad
+	w := wPx - wPx/4
+	if h < 1 || w < 1 {
+		top, h, w = 0, hPx, wPx
+	}
+	left := xPx + (wPx-w)/2
+	fill := style.DefaultStyle().WithBg(c)
+	mid := float64(h-1) / 2
+	for i := 0; i < h; i++ {
+		d := 1.0
+		if mid > 0 {
+			d = math.Abs(float64(i)-mid) / mid
+		}
+		run := int(math.Round(float64(w) * (1 - d)))
+		if run < 1 {
+			run = 1
+		}
+		x := left
+		if pointLeft {
+			x = left + w - run
+		}
+		p.FillRectPixels(0, 0, x, top+i, run, 1, fill)
+	}
 }
 
 // blockCaretStyle is the pair the read-only block inverts.

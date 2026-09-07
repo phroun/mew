@@ -822,7 +822,11 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 					// surface reaches this — Paint hands graphical targets to
 					// paintGraphical, which draws its own cursor and reports
 					// the insertion point itself.)
-					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle())
+					// A terminal's own caret colour is the reader's, and this trinket
+					// paints the terminal's own ground under it, so nothing here
+					// has a better answer than theirs.
+					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle(),
+						style.ColorDefault)
 				} else {
 					// Painted fallback for an unfocused terminal.
 					var ch rune = ' '
