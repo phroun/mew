@@ -766,19 +766,10 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	metrics := t.EffectiveCellMetrics()
 	cw := metrics.UnitsPerCellWidth
 	// The anchors arrive in the strip's RUN coordinates, like every other mark
-	// the strip made. Reflecting them turns the silhouette over with the tape:
-	// the run's lead foot is the screen's trailing one once the run is, so the
-	// pair swaps as well as moves, and the shape below is drawn from left to
-	// right either way without knowing which it is.
-	if mirror {
-		lead, trail := leadX, trailX
-		if trail >= 0 {
-			leadX, trailX = stripW-trail-cw, stripW-lead-cw
-		} else {
-			leadX = stripW - lead - cw
-		}
-		endX = stripW - endX
-	}
+	// the strip made, and everything below is worked out in them. Each mark is
+	// reflected as it is DRAWN -- which is what the tape does, and what lets a
+	// tab with only one foot (the last in the strip, or one cut short) turn
+	// over without a mirror image of its own arithmetic.
 	rowH := metrics.UnitsPerCellHeight
 	line := bar.WithBg(bar.Fg)
 	// The whole tab outline - the arc strokes AND the straight edge lines - is
@@ -825,6 +816,10 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 		if x1 <= x0 {
 			return
 		}
+		if mirror {
+			x0, x1 = stripW-x1, stripW-x0
+			padL, padR = padR, padL
+		}
 		wPx := p.UnitSpanPxX(x0, x1) + padL + padR
 		if wPx <= 0 {
 			return
@@ -845,6 +840,13 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	// foot flares within the slash cell, the shoulder is a column and a
 	// quarter), the VERTICAL radii from the row height, so the silhouette
 	// keeps its shape under re-denomination (see tabSilhouetteRadii).
+	// vrule draws one of the shape's vertical strokes, reflected like the rest.
+	vrule := func(x, y, h core.Unit) {
+		if mirror {
+			x = stripW - x - hairW
+		}
+		p.FillRect(core.UnitRect{X: x, Y: y, Width: hairW, Height: h}, ' ', line)
+	}
 	rSmallX, rBigX, rSmallY, rBigY := tabSilhouetteRadii(cw, rowH)
 	bodyLeft := leadX + cw
 	bodyRight := trailX
@@ -870,6 +872,11 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	// antialiased by the backend when it can, scanline fills
 	// otherwise.
 	arc := func(x, y, rX, rY core.Unit, cRight, cBottom bool, offXPx int, fill style.CellStyle) {
+		if mirror {
+			x = stripW - x - rX
+			cRight = !cRight
+			offXPx = -offXPx
+		}
 		box := core.UnitRect{X: x, Y: y, Width: rX, Height: rY}
 		if p.DrawArcWedge(box, cRight, cBottom, hairU, offXPx, 0, fill.WithFg(bar.Fg)) {
 			return
@@ -897,28 +904,23 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 		gapY = rowY + rBigY
 	}
 	if gapLen > 0 {
-		p.FillRect(core.UnitRect{X: bodyLeft, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
+		vrule(bodyLeft, gapY, gapLen)
 	}
 	if hasTrail {
 		hline(bodyLeft+rBigX, bodyRight-rBigX, tabEdgeY, tabEdgeUp)
 		arc(bodyRight-rBigX, shoY, rBigX, rBigY, false, top, 0, bar)
 		arc(bodyRight, footY, rSmallX, rSmallY, true, !top, -edgePxH, tab)
 		if gapLen > 0 {
-			p.FillRect(core.UnitRect{X: bodyRight - hairW, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
+			vrule(bodyRight-hairW, gapY, gapLen)
 		}
 		hlineExt(bodyRight+rSmallX, stripW, barEdgeY, barEdgeUp, edgePxH, 0)
 		return
 	}
-	// Partial tab cut off before its trailing slash: sudden color
-	// transition, with the edge line dropping straight down the cut.
-	//
-	// Reflected, the cut lands on the near side of the body rather than the
-	// far one, so bodyRight comes out behind bodyLeft and the guard above has
-	// already drawn the plain edge line: a selected tab clipped mid-way in a
-	// turned-over strip shows no silhouette. It keeps its colours and its
-	// place; what it loses is the shaped foot on the side it was cut.
+	// A tab with no trailing slash -- the last in the strip, or one cut short
+	// by the strip's end: sudden color transition, with the edge line dropping
+	// straight down the cut.
 	hline(bodyLeft+rBigX, endX, tabEdgeY, tabEdgeUp)
-	p.FillRect(core.UnitRect{X: endX - hairW, Y: rowY, Width: hairW, Height: rowH}, ' ', line)
+	vrule(endX-hairW, rowY, rowH)
 	hline(endX, stripW, barEdgeY, barEdgeUp)
 }
 

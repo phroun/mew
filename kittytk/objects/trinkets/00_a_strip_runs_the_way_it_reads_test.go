@@ -99,3 +99,115 @@ func TestATurnedOverStripIsTheStripReflected(t *testing.T) {
 		}
 	}
 }
+
+// shapeTape writes down the silhouette: its arcs, the strokes that join them,
+// and the edge line the strip carries between them. These go straight to the
+// painter rather than onto the strip's tape, so they are recorded here.
+type shapeTape struct {
+	core.RenderBackend
+	marks   []string
+	reflect core.Unit // device pixels across the bar, when the strip is turned
+}
+
+func (r *shapeTape) GraphicalMode() bool { return true }
+
+func (r *shapeTape) at(xPx, wPx int, what string) {
+	if r.reflect > 0 {
+		xPx = int(r.reflect) - xPx - wPx
+	}
+	r.marks = append(r.marks, fmt.Sprintf("%d+%d %s", xPx, wPx, what))
+}
+
+func (r *shapeTape) FillRectPx(x, y, w, h int, s style.CellStyle) {
+	r.at(x, w, fmt.Sprintf("rect h=%d y=%d", h, y))
+}
+
+// The strokes that join the arcs are unit rects rather than pixel ones.
+func (r *shapeTape) FillRect(rect core.UnitRect, ch rune, s style.CellStyle) {
+	r.at(int(rect.X), int(rect.Width), fmt.Sprintf("rule h=%d y=%d", rect.Height, rect.Y))
+}
+func (r *shapeTape) DrawArcWedge(rect core.UnitRect, centerRight, centerBottom bool, strokeW core.Unit, offXPx, offYPx int, s style.CellStyle) {
+	corner := "left"
+	if centerRight != (r.reflect > 0) {
+		corner = "right"
+	}
+	off := offXPx
+	if r.reflect > 0 {
+		off = -off
+	}
+	r.at(int(rect.X), int(rect.Width),
+		fmt.Sprintf("arc %s bottom=%v off=%d", corner, centerBottom, off))
+}
+
+// The selected tab's silhouette turns over with the run it stands in: the same
+// arcs, the same strokes, the same edge line, reflected. A tab with no
+// trailing foot -- the last in the strip, or one cut short by its end -- turns
+// over like any other.
+func TestATurnedOverSilhouetteIsTheSilhouetteReflected(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	tape := func(dir core.Direction, pos TabPosition, n, sel, scroll, wCells int) []string {
+		px, err := raster.New(900, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		rec := &shapeTape{RenderBackend: px}
+		p := core.NewPainter(rec)
+		if dir == core.DirRTL {
+			rec.reflect = core.Unit(p.UnitSpanPxX(0, core.Unit(wCells*8)))
+		}
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		form.AddChild(tt)
+		for i := 0; i < n; i++ {
+			tt.AddTab(fmt.Sprintf("Tab%d", i), NewPanel())
+		}
+		tt.SetCurrentIndex(sel)
+		tt.tabScrollOffset = scroll
+		tt.SetBounds(core.UnitRect{Width: core.Unit(wCells * 8), Height: 10 * 16})
+		tt.Paint(p)
+		out := append([]string(nil), rec.marks...)
+		sort.Strings(out)
+		return out
+	}
+
+	for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+		for _, c := range []struct {
+			n, sel, scroll, w int
+			what              string
+		}{
+			{3, 1, 0, 40, "a tab with both feet"},
+			{1, 0, 0, 40, "the only tab"},
+			// These reach the branch where the selected tab has NO trailing
+			// foot: the strip has run out of room and the tab carries the
+			// overflow mark itself. Reflecting the two anchors rather than
+			// each mark left the shape with its right edge behind its left,
+			// and the whole silhouette collapsed to one line drawn straight
+			// across the strip -- through the tab it was meant to outline.
+			{2, 0, 0, 14, "a tab that runs out of room"},
+			{3, 1, 0, 18, "the same, with a tab either side"},
+			{3, 1, 0, 20, "the same again, a little wider"},
+			{5, 1, 1, 14, "one in a scrolled strip"},
+			{9, 1, 0, 20, "one in a long strip"},
+			{3, 2, 1, 20, "the last tab of a scrolled strip"},
+		} {
+			straight := tape(core.DirLTR, pos, c.n, c.sel, c.scroll, c.w)
+			turned := tape(core.DirRTL, pos, c.n, c.sel, c.scroll, c.w)
+			if len(straight) != len(turned) {
+				t.Errorf("%v, %s: %d silhouette marks straight, %d turned",
+					pos, c.what, len(straight), len(turned))
+				continue
+			}
+			for i := range straight {
+				if straight[i] != turned[i] {
+					t.Errorf("%v, %s: mark %d is %q straight and %q reflected",
+						pos, c.what, i, straight[i], turned[i])
+					break
+				}
+			}
+		}
+	}
+}
