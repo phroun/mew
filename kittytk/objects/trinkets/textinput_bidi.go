@@ -185,6 +185,37 @@ func readsToTheLeft(rtl []bool) bool {
 	return len(rtl) > 0 && rtl[len(rtl)-1]
 }
 
+// secondaryCaretAt is the character the caret's OTHER reading belongs to, and
+// which side of it that reading sits on.
+//
+// At a direction change one insertion point stands in two places on the line:
+// what is typed next lands at whichever end matches its own direction, and a
+// single caret would name one of them and hide the other. The primary follows
+// the character the caret precedes; this one rests one blank past the character
+// BEFORE it, in that character's own direction -- the same "one past, in its own
+// direction" form the end of the line takes.
+//
+// A direction control the author typed marks the turn itself, so a boundary
+// either side of one has no second reading to show.
+func (g *fieldGeometry) secondaryCaretAt(runes []rune, p int) (q int, leftOf, ok bool) {
+	if g == nil || p <= 0 || p >= len(g.lo) || p >= len(runes) {
+		return 0, false, false
+	}
+	if g.rtl[p] == g.rtl[p-1] {
+		return 0, false, false
+	}
+	if khatool.IsDirectionControl(runes[p]) || khatool.IsDirectionControl(runes[p-1]) {
+		return 0, false, false
+	}
+	// A mark has no box of its own, so step back to the base carrying it: the
+	// caret goes past the CLUSTER, not past a sliver inside it.
+	q = p - 1
+	for q > 0 && g.hi[q] <= g.lo[q] {
+		q--
+	}
+	return q, g.rtl[q], true
+}
+
 // spans is the stretches of the drawn run that logical runes [from, to) were
 // drawn in, left to right.
 //

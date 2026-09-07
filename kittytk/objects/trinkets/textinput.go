@@ -1101,11 +1101,31 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// regular (silver) white.
 	cursorStyle := scheme.GetFocusedEditBoxCursor()
 	barStyle := scheme.GetFocusedEditBoxBarCursor()
+
+	// On a cell surface the caret is the TERMINAL's own -- placed and shaped
+	// through DECSCUSR, blinking on the reader's own settings, landing on the
+	// cell grid a terminal cursor belongs on. A field that painted one there
+	// would be putting a second caret beside the real one.
+	//
+	// A BAR sits at the left edge of the cell it is given, so it is asked for at
+	// the caret's leading edge -- which on a right-to-left character is the cell
+	// after that character. A BLOCK covers a cell, so it is asked for at the
+	// cell the character itself occupies.
+	if !usePx {
+		if blockCaret {
+			p.RequestTextCaret(caretLo, 0, decscusrBlock)
+		} else {
+			p.RequestTextCaret(caretX, 0, decscusrBar)
+		}
+		t.paintSecondaryCaret(p, g, displayText, cursorDisp, blank, bounds,
+			cursorStyle, originX, clipUnits, font)
+		return
+	}
+
 	// The graphical bar caret blinks (keystrokes restart the
-	// phase); a block stays steady, on a cell surface and on a
-	// read-only field alike. A blink says "type here" and paces
-	// itself to a keystroke that is not coming.
-	if p.Graphical() && !blockCaret {
+	// phase); a block stays steady, on a read-only field. A blink says
+	// "type here" and paces itself to a keystroke that is not coming.
+	if !blockCaret {
 		t.ensureCaretTimer()
 	}
 	// Tell the platform where the insertion point is, without
@@ -1151,67 +1171,96 @@ func (t *TextInput) Paint(p *core.Painter) {
 		// leaves.
 		overSel := selLo >= 0 && cursorDisp >= selLo && cursorDisp < selHi
 		block := blockCaretStyle(s, selStyle, fillStyle.Bg, overSel)
-		if usePx {
-			if lo, hi, ok := clipPx(caretLoPx, caretHiPx); ok {
-				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, block)
-				drawRun(lo, hi, block.WithBg(style.ColorTransparent))
-			}
-		} else if lo, hi, ok := clipUnits(caretLo, caretHi); ok {
-			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-			p.FillRect(core.UnitRect{X: lo, Width: hi - lo,
-				Height: bounds.Height}, ' ', block)
-			vis, at := g.cellSlice(lo-originX, hi-originX, cw)
-			p.DrawText(originX+at, 0, vis, block, font)
+		if lo, hi, ok := clipPx(caretLoPx, caretHiPx); ok {
+			p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, block)
+			drawRun(lo, hi, block.WithBg(style.ColorTransparent))
 		}
+		t.paintSecondaryCaretPx(p, g, displayText, cursorDisp, runPx(" ", blank),
+			rowHPx, barStyle, clipPx)
 		return
 	}
-	if p.Graphical() && !t.caretVisible() {
+	if !t.caretVisible() {
 		return
 	}
 	if caretX < roomLo || caretX > roomHi {
 		return
 	}
-	drawn := false
-	if usePx {
-		// Site the bar at the same accumulated pixel advance the glyphs
-		// painted at, so it sits exactly on the boundary before the cursor's
-		// character.
-		bar := p.DeviceScale()
-		x := caretXPx
-		if x+bar > roomHiPx {
-			x = roomHiPx - bar
-		}
-		drawn = p.FillRectPixels(0, 0, x, 0, bar, rowHPx, barStyle)
-		// A second bar where the reading turns. The insertion point there is
-		// one place in the text and two places on the line - what is typed
-		// next lands at whichever end matches its own direction - and a single
-		// bar would name one of them and hide the other. The half-height mark
-		// is the subordinate one: it shows where the text on the other side
-		// of the turn continues.
-		if drawn && cursorDisp > 0 && cursorDisp < n && g.rtl[cursorDisp] != g.rtl[cursorDisp-1] {
-			second := g.loPx[cursorDisp-1]
-			if !g.rtl[cursorDisp-1] {
-				second = g.hiPx[cursorDisp-1]
-			}
-			if x, _, ok := clipPx(second, second+1); ok {
-				p.FillRectPixels(0, 0, x, rowHPx/2, bar, rowHPx-rowHPx/2, barStyle)
-			}
+	// Site the bar at the same accumulated pixel advance the glyphs painted at,
+	// so it sits exactly on the boundary before the cursor's character.
+	bar := p.DeviceScale()
+	x := caretXPx
+	if x+bar > roomHiPx {
+		x = roomHiPx - bar
+	}
+	p.FillRectPixels(0, 0, x, 0, bar, rowHPx, barStyle)
+	t.paintSecondaryCaretPx(p, g, displayText, cursorDisp, runPx(" ", blank),
+		rowHPx, barStyle, clipPx)
+}
+
+// The DECSCUSR shapes a field asks the platform for. A bar sits between two
+// characters, where text goes IN; a block sits on the character you are at,
+// where it does not. Blinking says the field is waiting for a key; a field
+// being read is not, so its block is steady.
+const (
+	decscusrBlock = 2
+	decscusrBar   = 5
+)
+
+// paintSecondaryCaret marks the caret's other reading on a cell surface: the
+// cell one past the character before the caret, in that character's own
+// direction, drawn in reverse video the way the primary cell caret is.
+//
+// The terminal owns the one real caret, so this is painted. Which is right for
+// what it is: the primary is where the caret IS, and this is where the text on
+// the other side of the turn carries on.
+func (t *TextInput) paintSecondaryCaret(p *core.Painter, g *fieldGeometry,
+	runes []rune, caret int, blank core.Unit, bounds core.UnitRect,
+	st style.CellStyle, originX core.Unit,
+	clip func(lo, hi core.Unit) (core.Unit, core.Unit, bool), font *core.Font) {
+	q, leftOf, ok := g.secondaryCaretAt(runes, caret)
+	if !ok {
+		return
+	}
+	lo, hi := g.hi[q], g.hi[q]+blank
+	if leftOf {
+		lo, hi = g.lo[q]-blank, g.lo[q]
+		if lo < 0 {
+			return
 		}
 	}
-	if !drawn {
-		// Cell surfaces fall back to the reverse-video block.
-		if !p.DrawCaret(caretX, 0, t.EffectiveCellMetrics().UnitsPerCellHeight, barStyle) {
-			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-			lo, hi, ok := clipUnits(caretLo, caretHi)
-			if !ok {
-				return
-			}
-			p.FillRect(core.UnitRect{X: lo, Width: hi - lo,
-				Height: bounds.Height}, ' ', cursorStyle)
-			vis, at := g.cellSlice(lo-originX, hi-originX, cw)
-			p.DrawText(originX+at, 0, vis, cursorStyle, font)
-		}
+	a, b, on := clip(lo, hi)
+	if !on {
+		return
 	}
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+	p.FillRect(core.UnitRect{X: a, Width: b - a, Height: bounds.Height}, ' ', st)
+	vis, at := g.cellSlice(a-originX, b-originX, cw)
+	p.DrawText(originX+at, 0, vis, st, font)
+}
+
+// paintSecondaryCaretPx is paintSecondaryCaret on a pixel surface, where the
+// primary is a bar: the same mark in the same place, half the height, so the
+// two are told apart at a glance.
+func (t *TextInput) paintSecondaryCaretPx(p *core.Painter, g *fieldGeometry,
+	runes []rune, caret, blankPx, rowHPx int, st style.CellStyle,
+	clip func(lo, hi int) (int, int, bool)) {
+	q, leftOf, ok := g.secondaryCaretAt(runes, caret)
+	if !ok || !g.havePx {
+		return
+	}
+	x := g.hiPx[q]
+	if leftOf {
+		x = g.loPx[q]
+	}
+	bar := p.DeviceScale()
+	if bar < 1 {
+		bar = 1
+	}
+	lo, _, on := clip(x, x+bar)
+	if !on {
+		return
+	}
+	p.FillRectPixels(0, 0, lo, rowHPx/2, bar, rowHPx-rowHPx/2, st)
 }
 
 // paintMoreArrow draws one end-of-run arrow at a fixed place in the field:
