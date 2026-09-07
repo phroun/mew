@@ -385,6 +385,32 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	}
 }
 
+// collapseOrEnclosing closes an open item, or climbs to the one enclosing it:
+// a step BACK along the tree, whichever arrow asked for it.
+func (t *TreeView) collapseOrEnclosing(current *TreeItem) bool {
+	if current != nil {
+		if current.Expanded && !current.IsLeaf() {
+			t.CollapseItem(current)
+		} else if current.Parent != nil {
+			t.SetCurrentItem(current.Parent)
+		}
+	}
+	return true
+}
+
+// expandOrDescend opens a closed item, or steps into the one already open: a
+// step ON along the tree.
+func (t *TreeView) expandOrDescend(current *TreeItem) bool {
+	if current != nil {
+		if !current.Expanded && !current.IsLeaf() {
+			t.ExpandItem(current)
+		} else if current.Expanded && len(current.Children) > 0 {
+			t.SetCurrentItem(current.Children[0])
+		}
+	}
+	return true
+}
+
 // ExpandItem expands an item to show its children.
 func (t *TreeView) ExpandItem(item *TreeItem) {
 	if item.IsLeaf() || item.Expanded {
@@ -1013,34 +1039,34 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return t.OpenColumnChooser()
 
 	case core.CmdTrinketColumnLeft:
-		return t.moveEnterTargetColumn(-1)
+		return t.moveEnterTargetColumn(t.arrowStep(-1))
 
 	case core.CmdTrinketColumnRight:
-		return t.moveEnterTargetColumn(1)
+		return t.moveEnterTargetColumn(t.arrowStep(1))
 
-	// One body, two commands, and they are the same act: collapse_or_enclosing
-	// IS what a left arrow has always done here. They are separate names only
-	// because item_left is also the grid's column walk, which handleEditTargetKey
-	// took above -- so anything reaching here means the classic movement.
-	case core.CmdTrinketItemLeft, core.CmdTrinketCollapseOrEnclosing:
-		if current != nil {
-			if current.Expanded && !current.IsLeaf() {
-				t.CollapseItem(current)
-			} else if current.Parent != nil {
-				t.SetCurrentItem(current.Parent)
-			}
-		}
-		return true
+	// The named commands say the ACT, so they mean the same thing whichever
+	// way the tree reads. The arrows name a side of the screen, and a tree
+	// grows away from the edge it reads from -- so which of the two acts an
+	// arrow asks for is the direction's answer. item_left and item_right are
+	// also the grid's column walk, which handleEditTargetKey took above; what
+	// reaches here is the classic movement.
+	case core.CmdTrinketCollapseOrEnclosing:
+		return t.collapseOrEnclosing(current)
 
-	case core.CmdTrinketItemRight, core.CmdTrinketExpandOrDescend:
-		if current != nil {
-			if !current.Expanded && !current.IsLeaf() {
-				t.ExpandItem(current)
-			} else if current.Expanded && len(current.Children) > 0 {
-				t.SetCurrentItem(current.Children[0])
-			}
+	case core.CmdTrinketExpandOrDescend:
+		return t.expandOrDescend(current)
+
+	case core.CmdTrinketItemLeft:
+		if t.arrowStep(-1) < 0 {
+			return t.collapseOrEnclosing(current)
 		}
-		return true
+		return t.expandOrDescend(current)
+
+	case core.CmdTrinketItemRight:
+		if t.arrowStep(1) < 0 {
+			return t.collapseOrEnclosing(current)
+		}
+		return t.expandOrDescend(current)
 
 	case core.CmdTrinketBeg:
 		if len(t.flatList) > 0 {

@@ -515,12 +515,14 @@ func (t *TreeView) stepEditRow(delta int) {
 // (trinket_collapse_or_enclosing / trinket_expand_or_descend), so nothing
 // here reads the Shift bit out of the event.
 func (t *TreeView) handleEditTargetKey(cmd string) bool {
+	// The edit ring is in the columns' own order, so an arrow walks it the
+	// way it points on the screen.
 	delta := 0
 	switch cmd {
 	case core.CmdTrinketItemLeft:
-		delta = -1
+		delta = t.arrowStep(-1)
 	case core.CmdTrinketItemRight:
-		delta = 1
+		delta = t.arrowStep(1)
 	default:
 		return false
 	}

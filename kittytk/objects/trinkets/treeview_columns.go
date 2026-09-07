@@ -572,14 +572,27 @@ func (t *TreeView) handleHeaderFocusKey(cmd string) bool {
 				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
 			}
 			return true
-		case cmd == core.CmdTrinketItemLeft:
-			if t.headerFocusIdx == 0 {
-				t.setHeaderZone(hzBar, 0)
+		// The header stops stand in the order the columns run, so an
+		// arrow walks them the way it points on the screen. Tab keeps
+		// its own order whichever way they are laid out.
+		case cmd == core.CmdTrinketItemLeft || cmd == core.CmdTrinketItemRight:
+			toward := -1
+			if cmd == core.CmdTrinketItemRight {
+				toward = 1
+			}
+			if t.arrowStep(toward) < 0 {
+				if t.headerFocusIdx == 0 {
+					t.setHeaderZone(hzBar, 0)
+				} else {
+					t.setHeaderZone(hzItems, t.headerFocusIdx-1)
+				}
+			} else if t.headerFocusIdx+1 >= n {
+				t.setHeaderZone(hzContent, 0)
 			} else {
-				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
+				t.setHeaderZone(hzItems, t.headerFocusIdx+1)
 			}
 			return true
-		case cmd == core.CmdFocusNext || cmd == core.CmdTrinketItemRight:
+		case cmd == core.CmdFocusNext:
 			if t.headerFocusIdx+1 >= n {
 				t.setHeaderZone(hzContent, 0)
 			} else {
@@ -2764,6 +2777,18 @@ func (t *TreeView) panStep(delta core.Unit) core.Unit {
 		return -delta
 	}
 	return delta
+}
+
+// arrowStep turns a horizontal arrow into a step along the run. The key names
+// a SIDE OF THE SCREEN -- the left arrow always points left -- and what lies
+// that way is the direction's answer: the previous column and the enclosing
+// item in a tree reading left to right, the next ones in a tree reading the
+// other way. toward is -1 for the left arrow and +1 for the right.
+func (t *TreeView) arrowStep(toward int) int {
+	if core.ChromeMirrored(t) {
+		return -toward
+	}
+	return toward
 }
 
 // scrollHorizontally pans the scroll region by delta units (scroll
