@@ -1999,13 +1999,41 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 }
 
 // HandleMouseMove extends the selection while the button is held. Past
-// either edge it hands off to the autoscroll timer (which keeps walking the
-// selection while the pointer is held still out there); inside the box it
-// tracks the pointer directly.
+// either side it hands off to the autoscroll timer (which keeps walking the
+// selection while the pointer is held still out there); above or below it takes
+// everything to that end of the content; inside the box it tracks the pointer
+// directly.
 func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if !t.selecting || event.Buttons&core.LeftButton == 0 {
 		return false
 	}
+	// Dragged clear of the field ABOVE or BELOW, the selection runs to the end
+	// of the content that way: back to the beginning, or on to the end. A
+	// field is one line, so leaving it upward or downward is leaving the text
+	// altogether -- there is no next line to reach for, and the only thing
+	// further that way is the rest of what is here.
+	//
+	// It answers before the sideways reach and stops it, because it is an
+	// answer rather than a walk: a pointer dragged out past a corner is asking
+	// for everything to that end, and there is nothing for a timer to keep
+	// stepping toward afterwards.
+	bounds := t.Bounds()
+	if event.Y < 0 || event.Y >= bounds.Height {
+		t.stopAutoScroll()
+		to := len(t.text)
+		if event.Y < 0 {
+			to = 0
+		}
+		if to != t.cursorPos {
+			t.cursorPos = to
+			t.selEnd = to
+			t.ensureCursorVisible()
+			t.resetCaretBlink()
+			t.Update()
+		}
+		return true
+	}
+
 	// Past the room's edge, not the field's. The arrows sit INSIDE the field
 	// and the run gives up their cells, so the pointer reaching one is already
 	// past everything there is to select -- which is exactly when a drag wants

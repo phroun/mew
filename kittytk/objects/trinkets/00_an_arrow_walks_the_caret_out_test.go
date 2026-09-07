@@ -445,3 +445,70 @@ func TestAPressAtTheEndChangesNothing(t *testing.T) {
 			"want %d and %d", ti.cursorPos, ti.scroll, at, scroll)
 	}
 }
+
+// A field is ONE line, so a drag leaving it upward or downward is leaving the
+// text altogether -- there is no next line to reach for, and the only thing
+// further that way is the rest of what is here. So the selection runs to that
+// end of the content at once.
+func TestADragOffTheTopOrBottomTakesEverythingThatWay(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	long := strings.Repeat("abcdefghij", 8)
+	n := len([]rune(long))
+
+	for _, c := range []struct {
+		name string
+		y    core.Unit
+		want int
+	}{
+		{"above", -1, 0},
+		{"below", 16, n},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ti := scrolledField(t, long, n/2)
+			roomLo, roomHi := ti.room()
+			ti.HandleMousePress(core.MousePressEvent{
+				Button: core.LeftButton, X: (roomLo + roomHi) / 2})
+			anchor := ti.selStart
+
+			ti.HandleMouseMove(core.MouseMoveEvent{
+				X: (roomLo + roomHi) / 2, Y: c.y, Buttons: core.LeftButton})
+			if ti.cursorPos != c.want {
+				t.Errorf("dragged %s, the caret is at %d, want %d", c.name, ti.cursorPos, c.want)
+			}
+			if ti.selStart != anchor || ti.selEnd != c.want {
+				t.Errorf("dragged %s, the selection is [%d,%d), want [%d,%d)",
+					c.name, ti.selStart, ti.selEnd, anchor, c.want)
+			}
+
+			// It is an answer, not a walk: nothing is left stepping afterwards.
+			if ti.scrollDir != 0 {
+				t.Errorf("dragged %s, an autoscroll is still running (%d)", c.name, ti.scrollDir)
+			}
+
+			// Out past a CORNER is the same answer: the end that way wins over
+			// the sideways reach, which has nothing left to reach for.
+			ti = scrolledField(t, long, n/2)
+			ti.HandleMousePress(core.MousePressEvent{
+				Button: core.LeftButton, X: (roomLo + roomHi) / 2})
+			ti.HandleMouseMove(core.MouseMoveEvent{
+				X: -20, Y: c.y, Buttons: core.LeftButton})
+			if ti.cursorPos != c.want {
+				t.Errorf("dragged out past the %s-left corner, the caret is at %d, want %d",
+					c.name, ti.cursorPos, c.want)
+			}
+			if ti.scrollDir != 0 {
+				t.Errorf("dragged out past the %s-left corner, an autoscroll is running", c.name)
+			}
+
+			// Coming back inside, the drag tracks the pointer again.
+			ti.HandleMouseMove(core.MouseMoveEvent{
+				X: (roomLo + roomHi) / 2, Y: 8, Buttons: core.LeftButton})
+			if ti.cursorPos == c.want {
+				t.Errorf("back inside the field, the caret stayed at the %s end", c.name)
+			}
+			ti.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+		})
+	}
+}
