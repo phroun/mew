@@ -2919,6 +2919,26 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	}
 }
 
+// sideTabTextX is where a side strip's label goes within its slot: against the
+// edge its OWN script reads from, so a Hebrew name sits at the right of the
+// slot and an English one at the left. Which edge the strip itself stands on
+// does not come into it -- a column of tabs does not turn over, and what a
+// label is doing is READING.
+//
+// slotX/slotW are the tab's own box; a column of padding is kept on each side.
+func (t *TabTrinket) sideTabTextX(slotX, slotW core.Unit, label string) core.Unit {
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+	x0, room := slotX+cw, slotW-cw*2
+	side := core.ResolveHAlign(core.AlignTextNatural,
+		text.FirstStrongDirection(label), core.FindEffectiveDirection(t))
+	if side == core.SideRight {
+		if w := t.MeasureText(label); w < room {
+			return x0 + room - w
+		}
+	}
+	return x0
+}
+
 func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabWidth := t.calculateTabBarWidth()
 	hasFocus := t.HasFocus()
@@ -2966,7 +2986,6 @@ func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme
 		p.FillRect(core.UnitRect{X: contentX, Y: y, Width: tabWidth, Height: metrics.UnitsPerCellHeight}, ' ', s)
 
 		// Draw tab text using font-aware rendering
-		textX := contentX + metrics.UnitsPerCellWidth
 		maxTextWidth := tabWidth - metrics.UnitsPerCellWidth*2 // Leave padding on both sides
 
 		// Truncate text if it doesn't fit
@@ -2984,7 +3003,7 @@ func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme
 				currentWidth += charWidth
 			}
 		}
-		p.DrawText(textX, y, displayText, s, font)
+		p.DrawText(t.sideTabTextX(contentX, tabWidth, displayText), y, displayText, s, font)
 
 		y += metrics.UnitsPerCellHeight
 	}
@@ -3051,7 +3070,6 @@ func (t *TabTrinket) paintRightTabs(p *core.Painter, bounds core.UnitRect, schem
 		p.FillRect(core.UnitRect{X: tabX, Y: y, Width: tabWidth, Height: metrics.UnitsPerCellHeight}, ' ', s)
 
 		// Draw tab text using font-aware rendering
-		textX := tabX + metrics.UnitsPerCellWidth
 		maxTextWidth := tabWidth - metrics.UnitsPerCellWidth*2 // Leave padding on both sides
 
 		// Truncate text if it doesn't fit
@@ -3069,7 +3087,7 @@ func (t *TabTrinket) paintRightTabs(p *core.Painter, bounds core.UnitRect, schem
 				currentWidth += charWidth
 			}
 		}
-		p.DrawText(textX, y, displayText, s, font)
+		p.DrawText(t.sideTabTextX(tabX, tabWidth, displayText), y, displayText, s, font)
 
 		y += metrics.UnitsPerCellHeight
 	}

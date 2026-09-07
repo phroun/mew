@@ -285,3 +285,60 @@ func TestTheDotsStayOnTheEndTheWordEndsAt(t *testing.T) {
 			"word keeps its dots on its own end", turnedDots, turnedWord)
 	}
 }
+
+// A column of tabs does not turn over, but each LABEL in it still reads its
+// own way: a Hebrew name sits against the right of its slot and an English one
+// against the left, in a strip on either edge and in a form reading either
+// way. What a label is doing is reading.
+func TestASideTabsLabelSitsWhereItsScriptReadsFrom(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	const english, hebrewName = "Alpha", "שלום"
+
+	at := func(dir core.Direction, pos TabPosition, caption string) (x, slotLo, slotHi core.Unit) {
+		px, err := raster.New(600, 400)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := newInk(t)
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		form.AddChild(tt)
+		tt.AddTab(caption, NewPanel())
+		tt.AddTab("Beta", NewPanel())
+		tt.SetBounds(core.UnitRect{Width: 40 * 8, Height: 10 * 16})
+		tt.Paint(core.NewPainter(ink))
+		got, ok := ink.textAt(caption)
+		if !ok {
+			t.Fatalf("%v %v: the strip drew no %q", dir, pos, caption)
+		}
+		w := tt.calculateTabBarWidth()
+		lo := core.Unit(0)
+		if tt.tabEdge() == TabEdgeRight {
+			lo = tt.Bounds().Width - w
+		}
+		return got, lo + 8, lo + w - 8
+	}
+
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		for _, pos := range []TabPosition{TabsSide, TabsSideOpposite} {
+			eng, lo, _ := at(dir, pos, english)
+			if eng != lo {
+				t.Errorf("%v %v: the English label sits at %d, want the slot's left at %d",
+					dir, pos, eng, lo)
+			}
+			heb, lo, hi := at(dir, pos, hebrewName)
+			if heb <= lo {
+				t.Errorf("%v %v: the Hebrew label sits at %d, hugging the slot's left at %d",
+					dir, pos, heb, lo)
+			}
+			if heb >= hi {
+				t.Errorf("%v %v: the Hebrew label at %d has run past the slot's right at %d",
+					dir, pos, heb, hi)
+			}
+		}
+	}
+}
