@@ -126,8 +126,18 @@ type Scheme struct {
 	DarkPaneEditBoxPlaceholder    *CellStyle // nil = EditBoxPlaceholder
 	FocusedEditBoxText            *CellStyle // black on dark cyan
 	FocusedEditBoxCursor          *CellStyle // black on white (cell block cursor)
-	FocusedEditBoxBarCursor       *CellStyle // bright white (graphical bar caret)
-	FocusedEditBoxFill            *CellStyle // white on cyan
+	// FocusedEditBoxCaret is the INSERTION caret's ink -- the bar a field
+	// always in insert mode wears, painted on a pixel surface and asked of the
+	// terminal on a cell one.
+	//
+	// One colour, not a pair. A block cursor covers a character and inverts it,
+	// so it needs both an ink and a ground; a bar covers nothing and has only
+	// an ink. It is brighter than the block's ground by default, because a bar
+	// is a few pixels wide and has to be found against whatever the field is
+	// painted in -- and a theme that sets a field's own colours is the thing
+	// that knows what shows up on them.
+	FocusedEditBoxCaret *Color     // bright white
+	FocusedEditBoxFill  *CellStyle // white on cyan
 	// An input method's in-flight composition. ActiveClause is the segment it
 	// is CONVERTING right now — and is what a composition with no clause wears
 	// throughout, since all of such a one is the material being worked on.
@@ -443,7 +453,7 @@ func DefaultScheme() *Scheme {
 		DarkPaneEditBoxPlaceholder:        nil, // EditBoxPlaceholder
 		FocusedEditBoxText:                ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 		FocusedEditBoxCursor:              ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		FocusedEditBoxBarCursor:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
+		FocusedEditBoxCaret:               colorPtr(ColorBrightWhite),
 		FocusedEditBoxFill:                ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorCyan)),
 		FocusedEditBoxIMEInactive:         ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorCyan)),
 		FocusedEditBoxIMEActiveClause:     ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
@@ -924,7 +934,7 @@ func (s *Scheme) GetFocusedEditBoxIMEInactive() CellStyle {
 	if s.FocusedEditBoxIMEInactive != nil {
 		return *s.FocusedEditBoxIMEInactive
 	}
-	return DefaultStyle().WithFg(s.GetFocusedEditBoxBarCursor().Bg)
+	return DefaultStyle().WithFg(s.GetFocusedEditBoxCaret())
 }
 
 // GetFocusedEditBoxIMEActiveClause returns the style for the clause an input
@@ -942,11 +952,11 @@ func (s *Scheme) GetFocusedEditBoxIMEActiveClause() CellStyle {
 	return s.GetFocusedEditBoxIMEInactive()
 }
 
-// GetFocusedEditBoxBarCursor returns the color for the graphical bar
-// caret (a brighter white than the cell block cursor, for contrast),
-// falling back to the block cursor color when unset.
-func (s *Scheme) GetFocusedEditBoxBarCursor() CellStyle {
-	return or(s.FocusedEditBoxBarCursor, s.FocusedEditBoxCursor)
+// GetFocusedEditBoxCaret returns the ink the insertion caret is drawn in,
+// falling back to the block cursor's ground when the scheme sets no caret of
+// its own -- one caret in one colour either way.
+func (s *Scheme) GetFocusedEditBoxCaret() Color {
+	return orColor(s.FocusedEditBoxCaret, s.GetFocusedEditBoxCursor().Bg)
 }
 
 // GetEditBoxSelection returns the selection colors inside an edit

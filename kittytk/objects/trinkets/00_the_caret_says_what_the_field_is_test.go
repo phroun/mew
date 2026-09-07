@@ -64,21 +64,66 @@ func TestTheCaretSaysWhatTheFieldIs(t *testing.T) {
 		t.Error("the caret was placed without saying it is the insertion point")
 	}
 
-	// And it says what colour to be. A terminal's caret colour is one global
-	// preference, chosen against the terminal's own background, and a thin bar
-	// in it disappears into the ground a field paints for itself -- which the
-	// field is the only thing that knows.
+	// And it says what colour to be, from the theme. A terminal's caret colour
+	// is one global preference, chosen against the terminal's own background,
+	// and a thin bar in it disappears into the ground a field paints for
+	// itself -- which the theme that chose that ground is the thing that knows.
 	scheme := NewTextInput().GetScheme()
-	if want := scheme.GetFocusedEditBoxBarCursor().Bg; editable.Color != want {
-		t.Errorf("the bar asked for colour %v, want the field's own bar colour %v",
+	if want := scheme.GetFocusedEditBoxCaret(); editable.Color != want {
+		t.Errorf("the bar asked for colour %v, want the theme's caret ink %v",
 			editable.Color, want)
 	}
 	if want := scheme.GetFocusedEditBoxCursor().Bg; reading.Color != want {
-		t.Errorf("the block asked for colour %v, want the field's own block colour %v",
+		t.Errorf("the block asked for colour %v, want the theme's block ground %v",
 			reading.Color, want)
 	}
 	if editable.Color == style.ColorDefault {
 		t.Error("the field left the caret in whatever colour the terminal had")
+	}
+}
+
+// The caret's ink is the THEME's to set: a bar is a few pixels wide against
+// whatever ground the field is painted in, and the scheme that chose that
+// ground is the thing that knows what shows up on it.
+func TestAThemeSetsTheCaretsInk(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	const id = style.SchemeID(4210)
+	mine := style.DefaultScheme()
+	mine.FocusedEditBoxCaret = nil
+	fallback := mine.GetFocusedEditBoxCaret()
+	if want := mine.GetFocusedEditBoxCursor().Bg; fallback != want {
+		t.Errorf("a scheme naming no caret falls back to %v, want the block's ground %v",
+			fallback, want)
+	}
+
+	want := style.RGB(0x33, 0xCC, 0x99)
+	mine.FocusedEditBoxCaret = &want
+	if got := mine.GetFocusedEditBoxCaret(); got != want {
+		t.Fatalf("the scheme's own caret ink came back as %v, want %v", got, want)
+	}
+	style.GlobalSchemeRegistry().Register(id, mine)
+	t.Cleanup(func() { style.GlobalSchemeRegistry().Register(id, style.DefaultScheme()) })
+
+	px, err := raster.New(600, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ink := &cellInk{RenderBackend: px}
+	form := NewPanel()
+	ti := NewTextInput()
+	form.AddChild(ti)
+	ti.SetScheme(id)
+	ti.SetText("hello")
+	ti.SetCursorPosition(2)
+	ti.SetBounds(core.UnitRect{Width: 30 * 8, Height: 16})
+	ti.SetFocus()
+	p := core.NewPainter(ink)
+	ti.Paint(p)
+
+	if got := p.TextCaretRequest().Color; got != want {
+		t.Errorf("the field asked for caret ink %v, want the scheme's %v", got, want)
 	}
 }
 

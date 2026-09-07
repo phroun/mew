@@ -1103,11 +1103,13 @@ func (t *TextInput) Paint(p *core.Painter) {
 		caretX, caretXPx = caretHi+originX, caretHiPx+originPx
 	}
 
-	// The graphical bar caret uses a brighter white than the cell
-	// block cursor, for contrast; the block fallback keeps the
-	// regular (silver) white.
+	// The block cursor is a PAIR -- it covers a character and inverts it -- and
+	// the insertion caret is one colour, since it covers nothing. The caret is
+	// the brighter of the two by default: a few pixels wide, it has to be found
+	// against whatever the field is painted in.
 	cursorStyle := scheme.GetFocusedEditBoxCursor()
-	barStyle := scheme.GetFocusedEditBoxBarCursor()
+	caretInk := scheme.GetFocusedEditBoxCaret()
+	barStyle := style.DefaultStyle().WithBg(caretInk)
 
 	// On a cell surface the caret is the TERMINAL's own -- placed and shaped
 	// through DECSCUSR, blinking on the reader's own settings, landing on the
@@ -1126,7 +1128,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 		if blockCaret {
 			p.RequestTextCaret(caretLo, 0, decscusrBlock, cursorStyle.Bg)
 		} else {
-			p.RequestTextCaret(caretX, 0, decscusrBar, barStyle.Bg)
+			p.RequestTextCaret(caretX, 0, decscusrBar, caretInk)
 		}
 		t.paintSecondaryCaret(p, g, displayText, cursorDisp, blank, bounds,
 			cursorStyle, originX, clipUnits, font)
