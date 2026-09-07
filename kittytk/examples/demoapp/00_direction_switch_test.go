@@ -163,6 +163,7 @@ func TestEveryDirectionSwitchReachesItsOwnTab(t *testing.T) {
 		{"Progress", "pgrtl", "pgc"},
 		{"Lists", "lirtl", "lilv"},
 		{"Details", "drtl", "dtree"},
+		{"Vertical Tabs", "vtrtl", "vtc"},
 	} {
 		t.Run(c.tab, func(t *testing.T) {
 			ui, win, _ := openTabWithUI(t, c.tab)

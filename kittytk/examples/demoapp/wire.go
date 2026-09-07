@@ -159,6 +159,9 @@ func (a *app) wireDirection() {
 	// where the reader left them. The Tags column names its own direction and
 	// keeps it either way round.
 	ui.Checkbox("drtl").OnToggle(turn(ui.Object("dtree")))
+	// The splitter holding the two tab strips: its panes turn, and each strip
+	// resolves side and sideopposite against the direction it now inherits.
+	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("vtc")))
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and

@@ -485,8 +485,10 @@ new tab caption="Bottom Tabs" children={
 	}
 }
 
-new tab caption="Vertical Tabs" children={
-	new splitter orientation=horizontal position=0.5 children={
+vt=new tab caption="Vertical Tabs" children={
+	vtv=new panel layout=vbox spacing=8 children={
+		vtrtl=new checkbox caption="direction=rtl -- side takes the edge the form reads from, sideopposite the far one, and the splitter's panes turn with them" halign=textnatural fill=none
+		vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		new tabs position=side children={
 			new tab caption="First" children={
 				new panel layout=vbox children={
@@ -542,6 +544,7 @@ new tab caption="Vertical Tabs" children={
 			}`, name, name)
 	}
 	b.WriteString(`
+		}
 		}
 	}
 }
@@ -738,6 +741,8 @@ dpinr=w.t.det.dbox.drow.dpinr
 dledger=w.t.det.dbox.drow.dledger
 dlines=w.t.det.dbox.drow.dlines
 drtl=w.t.det.dbox.drow.drtl
+vtrtl=w.t.vt.vtv.vtrtl
+vtc=w.t.vt.vtv.vtc
 tfwatch=w.t.tf.tfp.tfrow.tfr.tfwatch
 tfecho=w.t.tf.tfp.tfrow.tfr.tfecho
 tfmask=w.t.tf.tfp.tfrow.tfr.tfmask
