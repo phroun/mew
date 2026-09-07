@@ -63,15 +63,75 @@ type Tab struct {
 	Data     interface{}
 }
 
-// TabPosition determines where the tab bar is displayed.
+// TabPosition is where a tab strip is asked to stand.
+//
+// top and bottom name an edge no direction moves. The other four are sides,
+// and a side is a question the direction answers: TabsSide and
+// TabsSideOpposite are stated against it, while the optical pair names a side
+// of the SCREEN outright -- spelled at length, as in the align vocabulary, so
+// that pinning one reads as a decision rather than an oversight.
 type TabPosition int
 
 const (
 	TabsTop TabPosition = iota
 	TabsBottom
-	TabsLeft
-	TabsRight
+	// TabsSide is the side the direction reads from: the left of a form
+	// reading left to right, the right of one reading the other way.
+	TabsSide
+	// TabsSideOpposite is the far side from that -- an unusual choice, and a
+	// valid one: it stands the strip where the content does not begin.
+	TabsSideOpposite
+	// TabsOpticalLeft is the left, whatever any direction says.
+	TabsOpticalLeft
+	// TabsOpticalRight is the right, whatever any direction says.
+	TabsOpticalRight
 )
+
+// TabEdge is a tab strip's position with the direction already SPENT: which
+// edge of the box it actually stands on.
+//
+// The painter and the hit test take this and never a TabPosition, the same way
+// a backend takes an HSide and never an HAlign -- a direction is resolved once,
+// where the trinket tree can be walked, and everything downstream reads a
+// plain edge.
+type TabEdge int
+
+const (
+	TabEdgeTop TabEdge = iota
+	TabEdgeBottom
+	TabEdgeLeft
+	TabEdgeRight
+)
+
+// tabEdge resolves this strip's position into the edge it stands on.
+func (t *TabTrinket) tabEdge() TabEdge {
+	switch t.tabPosition {
+	case TabsBottom:
+		return TabEdgeBottom
+	case TabsOpticalLeft:
+		return TabEdgeLeft
+	case TabsOpticalRight:
+		return TabEdgeRight
+	case TabsSide:
+		if core.ChromeMirrored(t) {
+			return TabEdgeRight
+		}
+		return TabEdgeLeft
+	case TabsSideOpposite:
+		if core.ChromeMirrored(t) {
+			return TabEdgeLeft
+		}
+		return TabEdgeRight
+	}
+	return TabEdgeTop
+}
+
+// onSide reports whether the strip runs DOWN an edge rather than across one,
+// which is what decides which arrows it answers and which paint path it takes.
+func (t *TabTrinket) onSide() bool {
+	e := t.tabEdge()
+	return e == TabEdgeLeft || e == TabEdgeRight
+}
 
 // NewTabTrinket creates a new tab trinket.
 func NewTabTrinket() *TabTrinket {
@@ -233,7 +293,7 @@ func (t *TabTrinket) AllChildren() []core.Trinket {
 // CollectFocusChain implements FocusChainProvider to customize tab order.
 // For bottom tabs, content comes before the tab bar in the focus sequence.
 func (t *TabTrinket) CollectFocusChain(collector func(core.Trinket)) {
-	if t.tabPosition == TabsBottom {
+	if t.tabEdge() == TabEdgeBottom {
 		// Bottom tabs: content first, then tab bar
 		for _, child := range t.Children() {
 			collector(child)
@@ -443,7 +503,7 @@ func (t *TabTrinket) ShowSeparator() bool {
 }
 
 // SetShowSeparator sets whether to show a separator between the tab bar and content.
-// For vertical tabs (TabsLeft/TabsRight), this draws a vertical line on the inside edge.
+// For vertical tabs (a strip on either side), this draws a vertical line on the inside edge.
 // For horizontal tabs (TabsTop/TabsBottom), this adds an extra row in the active tab color.
 func (t *TabTrinket) SetShowSeparator(show bool) {
 	t.showSeparator = show
@@ -493,22 +553,22 @@ func (t *TabTrinket) contentBounds() core.UnitRect {
 		separatorWidth = metrics.UnitsPerCellWidth
 	}
 
-	switch t.tabPosition {
-	case TabsTop:
+	switch t.tabEdge() {
+	case TabEdgeTop:
 		return core.UnitRect{
 			X:      0,
 			Y:      tabHeight + separatorHeight,
 			Width:  bounds.Width,
 			Height: bounds.Height - tabHeight - separatorHeight,
 		}
-	case TabsBottom:
+	case TabEdgeBottom:
 		return core.UnitRect{
 			X:      0,
 			Y:      0,
 			Width:  bounds.Width,
 			Height: bounds.Height - tabHeight - separatorHeight,
 		}
-	case TabsLeft:
+	case TabEdgeLeft:
 		tabWidth := t.calculateTabBarWidth()
 		// Scrollbar reuses the outside padding column, no extra width needed
 		return core.UnitRect{
@@ -517,7 +577,7 @@ func (t *TabTrinket) contentBounds() core.UnitRect {
 			Width:  bounds.Width - tabWidth - separatorWidth,
 			Height: bounds.Height,
 		}
-	case TabsRight:
+	case TabEdgeRight:
 		tabWidth := t.calculateTabBarWidth()
 		// Scrollbar reuses the outside padding column, no extra width needed
 		return core.UnitRect{
@@ -891,7 +951,7 @@ func (t *TabTrinket) isLastTabFullyVisible() bool {
 	availableWidth := bounds.Width - scrollButtonsWidth
 
 	// Tab format varies by position
-	isBottomTabs := t.tabPosition == TabsBottom
+	isBottomTabs := t.tabEdge() == TabEdgeBottom
 
 	// Calculate width needed for visible tabs
 	x := leftEllipseWidth
@@ -1031,7 +1091,7 @@ func (t *TabTrinket) vertScrollbarGeometry() (scrollbarX core.Unit, thumbStart, 
 	visibleCount := t.vertVisibleCount()
 
 	// Scrollbar position depends on tab position
-	if t.tabPosition == TabsLeft {
+	if t.tabEdge() == TabEdgeLeft {
 		scrollbarX = 0 // Left edge (outside)
 	} else {
 		scrollbarX = bounds.Width - metrics.UnitsPerCellWidth // Right edge (outside)
@@ -1236,14 +1296,14 @@ func (t *TabTrinket) Paint(p *core.Painter) {
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
 	// Draw tab bar based on position
-	switch t.tabPosition {
-	case TabsTop:
+	switch t.tabEdge() {
+	case TabEdgeTop:
 		t.paintTopTabs(p, bounds, scheme, metrics)
-	case TabsBottom:
+	case TabEdgeBottom:
 		t.paintBottomTabs(p, bounds, scheme, metrics)
-	case TabsLeft:
+	case TabEdgeLeft:
 		t.paintLeftTabs(p, bounds, scheme, metrics)
-	case TabsRight:
+	case TabEdgeRight:
 		t.paintRightTabs(p, bounds, scheme, metrics)
 	}
 
@@ -2819,8 +2879,9 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 	// strip actually runs along answers; the other one falls through, so a
 	// vertical strip never swallows a horizontal arrow.
 	if t.HasFocus() {
-		// Determine navigation direction based on tab position
-		isVertical := t.tabPosition == TabsLeft || t.tabPosition == TabsRight
+		// Which axis the strip runs along, once the direction has settled
+		// which edge it stands on.
+		isVertical := t.onSide()
 
 		switch cmd {
 		case core.CmdTrinketItemLeft:
@@ -2918,7 +2979,7 @@ func (t *TabTrinket) nextTabAndEnsureVisible() {
 		if t.tabs[idx].Enabled {
 			t.SetCurrentIndex(idx)
 			// Use appropriate ensure visible based on tab position
-			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+			if t.onSide() {
 				t.vertEnsureVisible(idx)
 			} else {
 				t.ensureTabFullyVisible(idx)
@@ -2939,7 +3000,7 @@ func (t *TabTrinket) prevTabAndEnsureVisible() {
 		if t.tabs[idx].Enabled {
 			t.SetCurrentIndex(idx)
 			// Use appropriate ensure visible based on tab position
-			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+			if t.onSide() {
 				t.vertEnsureVisible(idx)
 			} else {
 				t.ensureTabFullyVisible(idx)
@@ -2954,7 +3015,7 @@ func (t *TabTrinket) firstTab() {
 	for i := 0; i < len(t.tabs); i++ {
 		if t.tabs[i].Enabled {
 			t.SetCurrentIndex(i)
-			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+			if t.onSide() {
 				t.vertEnsureVisible(i)
 			} else {
 				t.ensureTabFullyVisible(i)
@@ -2969,7 +3030,7 @@ func (t *TabTrinket) lastTab() {
 	for i := len(t.tabs) - 1; i >= 0; i-- {
 		if t.tabs[i].Enabled {
 			t.SetCurrentIndex(i)
-			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+			if t.onSide() {
 				t.vertEnsureVisible(i)
 			} else {
 				t.ensureTabFullyVisible(i)
@@ -3006,19 +3067,19 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 	tabHeight := t.tabBarHeight()
 
 	// Check if click is in tab bar
-	switch t.tabPosition {
-	case TabsTop:
+	switch t.tabEdge() {
+	case TabEdgeTop:
 		if event.Y < tabHeight {
 			t.handleTabBarClick(event.X)
 			return true
 		}
-	case TabsBottom:
+	case TabEdgeBottom:
 		bounds := t.Bounds()
 		if event.Y >= bounds.Height-tabHeight {
 			t.handleTabBarClick(event.X)
 			return true
 		}
-	case TabsLeft:
+	case TabEdgeLeft:
 		tabWidth := t.calculateTabBarWidth()
 		needsScrolling := t.vertTabsNeedScrolling()
 
@@ -3039,7 +3100,7 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 			}
 			return true
 		}
-	case TabsRight:
+	case TabEdgeRight:
 		bounds := t.Bounds()
 		tabWidth := t.calculateTabBarWidth()
 		needsScrolling := t.vertTabsNeedScrolling()
@@ -3136,7 +3197,7 @@ func (t *TabTrinket) handleTabBarClick(x core.Unit) {
 	// Tab format varies by position:
 	// Top tabs: prefix 4 chars if selected, else 2; separator 4 chars if adjacent to selected, else 2
 	// Bottom tabs: prefix 3 chars if selected, else 2; separator 3 chars if adjacent to selected, else 2
-	isBottomTabs := t.tabPosition == TabsBottom
+	isBottomTabs := t.tabEdge() == TabEdgeBottom
 
 	tabX := leftEllipseWidth
 	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
@@ -3321,7 +3382,7 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 	}
 
 	// Tab format varies by position
-	isBottomTabs := t.tabPosition == TabsBottom
+	isBottomTabs := t.tabEdge() == TabEdgeBottom
 
 	// Try scrolling right until the tab is fully visible.
 	// Use <= to also verify fit when current tab becomes the first visible tab,
@@ -3440,7 +3501,7 @@ func (t *TabTrinket) HandleFocusOut() {
 // overVertScrollbarThumb reports whether a widget-local point lies on the
 // vertical tab scrollbar thumb.
 func (t *TabTrinket) overVertScrollbarThumb(x, y core.Unit) bool {
-	if t.tabPosition != TabsLeft && t.tabPosition != TabsRight {
+	if !t.onSide() {
 		return false
 	}
 	if len(t.tabs) <= t.vertVisibleCount() {
@@ -3543,10 +3604,10 @@ func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		// Determine if mouse is in the tab area
 		inTabArea := false
-		switch t.tabPosition {
-		case TabsLeft:
+		switch t.tabEdge() {
+		case TabEdgeLeft:
 			inTabArea = event.X < tabWidth
-		case TabsRight:
+		case TabEdgeRight:
 			tabX := bounds.Width - tabWidth
 			inTabArea = event.X >= tabX
 		}
@@ -3651,7 +3712,7 @@ func (t *TabTrinket) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		if step == 0 {
 			return false
 		}
-		vertical := t.tabPosition == TabsLeft || t.tabPosition == TabsRight
+		vertical := t.onSide()
 		if vertical {
 			visible := t.vertVisibleCount()
 			maxOffset := len(t.tabs) - visible
@@ -3760,7 +3821,7 @@ func (t *TabTrinket) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 // HandleResize is called when the tab trinket is resized.
 func (t *TabTrinket) HandleResize(oldSize, newSize core.UnitSize) {
 	// Adjust scroll offset based on new size and tab position
-	isVertical := t.tabPosition == TabsLeft || t.tabPosition == TabsRight
+	isVertical := t.onSide()
 	if isVertical {
 		t.adjustVertScrollOffsetForResize(oldSize.Height > newSize.Height)
 	} else {

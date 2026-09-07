@@ -319,11 +319,11 @@ new tab caption="Bottom Tabs" children={
 
 new tab caption="Vertical Tabs" children={
 	new splitter orientation=horizontal position=0.5 children={
-		new tabs position=left children={
+		new tabs position=side children={
 			new tab caption="First" children={
 				new panel layout=vbox children={
-					new label caption="This is the first tab in a\nTabsLeft layout."
-					new label caption="Tabs are displayed vertically\nalong the left edge."
+					new label caption="position=side: the strip stands\non the edge the form reads from."
+					new label caption="A form reading right to left\nwould stand it on the right."
 				}
 			}
 			new tab caption="Second" children={
@@ -341,17 +341,17 @@ new tab caption="Vertical Tabs" children={
 		fmt.Fprintf(&b, `
 			new tab caption=%q children={
 				new panel layout=vbox children={
-					new label caption="%s tab content\nin TabsLeft layout."
+					new label caption="%s tab content\nin a side strip."
 				}
 			}`, name, name)
 	}
 	b.WriteString(`
 		}
-		new tabs position=right children={
+		new tabs position=sideopposite children={
 			new tab caption="Alpha" children={
 				new panel layout=vbox children={
-					new label caption="This is the first tab in a\nTabsRight layout."
-					new label caption="Tabs are displayed vertically\nalong the right edge."
+					new label caption="position=sideopposite: the far side\nfrom the one the form reads from."
+					new label caption="Unusual, and valid -- it stands\nwhere the content does not begin."
 				}
 			}
 			new tab caption="Beta" children={
@@ -369,7 +369,7 @@ new tab caption="Vertical Tabs" children={
 		fmt.Fprintf(&b, `
 			new tab caption=%q children={
 				new panel layout=vbox children={
-					new label caption="%s tab content\nin TabsRight layout."
+					new label caption="%s tab content\nin a sideopposite strip."
 				}
 			}`, name, name)
 	}

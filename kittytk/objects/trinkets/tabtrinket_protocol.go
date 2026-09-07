@@ -96,17 +96,21 @@ func init() {
 					return err
 				}
 				pos, ok := map[string]TabPosition{
-					"top":    TabsTop,
-					"bottom": TabsBottom,
-					"left":   TabsLeft,
-					"right":  TabsRight,
+					"top":          TabsTop,
+					"bottom":       TabsBottom,
+					"side":         TabsSide,
+					"sideopposite": TabsSideOpposite,
+					"opticalleft":  TabsOpticalLeft,
+					"opticalright": TabsOpticalRight,
 				}[w]
 				if !ok {
 					return fmt.Errorf("position: unknown value %q", w)
 				}
 				tw.SetTabPosition(pos)
 				return nil
-			})).OneOf("top", "bottom", "left", "right").Tip("Tab strip edge."),
+			})).OneOf("top", "bottom", "side", "sideopposite", "opticalleft", "opticalright").
+				Tip("Which edge the tab strip stands on. side is the edge the direction reads from " +
+					"and sideopposite the far one; the optical pair names a side of the screen outright."),
 			"children": protocol.NewCollection(func(parent, child any) error {
 				tw, ok := parent.(*TabTrinket)
 				if !ok {
