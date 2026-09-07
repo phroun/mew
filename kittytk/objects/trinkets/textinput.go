@@ -102,6 +102,14 @@ type TextInput struct {
 	scrollDir   int
 	scrollOverX core.Unit
 
+	// Held on an end-of-run arrow: which one (-1 left, +1 right), and the
+	// timer walking the caret that way while the button stays down. Separate
+	// from the drag autoscroll above, which is a SELECTION being dragged; this
+	// one carries the caret alone.
+	arrowDir    int
+	arrowExtend bool
+	arrowTimer  *DesktopTimer
+
 	// Context menu hover row (-1 = none).
 	menuHover int
 
@@ -178,6 +186,22 @@ func NewTextInput() *TextInput {
 // be selected with the mouse, which is exactly what the I-beam offers.
 func (t *TextInput) CursorShape() core.CursorShape {
 	if !t.IsEnabled() {
+		return core.CursorDefault
+	}
+	return core.CursorText
+}
+
+// CursorShapeAt implements core.CursorShaper: the I-beam over the text, and a
+// plain arrow over the end-of-run arrows, which are chrome rather than text --
+// a press there walks the caret toward that end instead of putting it under the
+// pointer, and the shape says so before the press. The coordinates arrive in
+// the same space as HandleMouseMove, so the geometry the press path uses
+// locates them.
+func (t *TextInput) CursorShapeAt(x, y core.Unit) core.CursorShape {
+	if !t.IsEnabled() {
+		return core.CursorDefault
+	}
+	if t.arrowAt(x) != 0 {
 		return core.CursorDefault
 	}
 	return core.CursorText
@@ -599,6 +623,151 @@ func (t *TextInput) blankWidth() core.Unit {
 		return w
 	}
 	return t.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
+// room is the span the RUN has inside the field: what is left of the field's
+// width after the end-of-run arrows take their cells.
+func (t *TextInput) room() (lo, hi core.Unit) {
+	hi = t.Bounds().Width
+	if t.moreLeft {
+		lo = t.markWidth()
+	}
+	if t.moreRight {
+		hi -= t.markWidth()
+	}
+	if hi < lo {
+		hi = lo
+	}
+	return lo, hi
+}
+
+// arrowAt is which end-of-run arrow x lands on: -1 the left one, +1 the right,
+// 0 neither. Only where one is actually drawn -- with nothing hidden that way
+// the cell belongs to the run.
+func (t *TextInput) arrowAt(x core.Unit) int {
+	lo, hi := t.room()
+	switch {
+	case t.moreLeft && x >= 0 && x < lo:
+		return -1
+	case t.moreRight && x >= hi && x < t.Bounds().Width:
+		return 1
+	}
+	return 0
+}
+
+// arrowStep moves the caret toward one end of the run: -1 the left, +1 the
+// right. reach says whether it may go past what is already shown.
+//
+// A press takes the caret as far that way as the field ALREADY shows -- the
+// outermost position in view, with nothing scrolling. When it is already there,
+// a press reaches half the room's width further on and the view comes with it,
+// which is what pressing an arrow that has stopped doing anything should do.
+// Held down, it walks one character at a time instead, so the run creeps past
+// rather than jumping.
+func (t *TextInput) arrowStep(dir int, reach, extend bool) {
+	if dir == 0 || t.Bounds().Width <= 0 {
+		return
+	}
+	displayText, _, _, _ := t.composedText()
+	g := t.runGeometry(displayText, t.EffectiveFont(), t.shapesText(), t.markersShown(), 0)
+	blank := t.blankWidth()
+	lo, hi := t.room()
+	usable := hi - lo
+	left := dir < 0
+
+	// The span a caret can stand in without the view moving. It is the room
+	// less the LOOK-AHEAD margin on the side being approached: the caret is
+	// never allowed that close to the edge it is walking toward, so a caret put
+	// right on it would be pushed off again by the window and the press would
+	// scroll after all -- which is exactly what the first press must not do.
+	ahead, _ := t.showAheadUnits(blank)
+	still := func(at core.Unit) (core.Unit, core.Unit) {
+		if left {
+			return at + ahead, at + usable
+		}
+		return at, at + usable - ahead
+	}
+
+	from, to := still(t.scroll)
+	if p, ok := g.outermostIn(from, to, blank, left); ok && p != t.cursorPos {
+		t.carryCaretTo(p, extend)
+		return
+	}
+	if reach {
+		// Half a room, ceiled so it is never a step of nothing.
+		step := (usable + 1) / 2
+		at := t.scroll + step
+		if left {
+			at = t.scroll - step
+		}
+		from, to = still(at)
+		if p, ok := g.outermostIn(from, to, blank, left); ok && p != t.cursorPos {
+			t.carryCaretTo(p, extend)
+			return
+		}
+	}
+	// Nothing fits the window asked for -- a field narrower than a character,
+	// or the run already at its end. One position further along the line is
+	// still an answer, and it is the one a held arrow wants anyway.
+	if p, ok := g.nextVisual(t.cursorPos, blank, left); ok {
+		t.carryCaretTo(p, extend)
+	}
+}
+
+// carryCaretTo puts the caret at p and lets the window follow it, which is what
+// scrolls the field: the view is worked out from where the caret is.
+//
+// extend drags the selection along instead of collapsing it -- the anchor is
+// wherever it already was, and only the moving end follows, which is what
+// shift does to every other way of moving the caret here.
+func (t *TextInput) carryCaretTo(p int, extend bool) {
+	if p < 0 {
+		p = 0
+	}
+	if p > len(t.text) {
+		p = len(t.text)
+	}
+	t.cursorPos = p
+	if extend {
+		t.selEnd = p
+	} else {
+		t.selStart, t.selEnd = p, p
+	}
+	t.ensureCursorVisible()
+	t.resetCaretBlink()
+	t.Update()
+}
+
+// startArrowRepeat walks the caret one character at a time while an arrow is
+// held. The first step has already happened, so this waits out a hold's worth
+// of stillness before repeating -- a press is a press, not the start of a run.
+func (t *TextInput) startArrowRepeat(dir int, extend bool) {
+	t.stopArrowRepeat()
+	t.arrowDir, t.arrowExtend = dir, extend
+	d := findDesktopFor(t)
+	if d == nil {
+		return
+	}
+	t.arrowTimer = d.StartTimer(400*time.Millisecond, func() {
+		if t.arrowDir == 0 {
+			return
+		}
+		t.arrowStep(t.arrowDir, false, t.arrowExtend)
+		if d := findDesktopFor(t); d != nil {
+			t.arrowTimer = d.StartRepeatingTimer(60*time.Millisecond, func() {
+				t.arrowStep(t.arrowDir, false, t.arrowExtend)
+			})
+		}
+	})
+}
+
+// stopArrowRepeat ends the walk when the button comes up.
+func (t *TextInput) stopArrowRepeat() {
+	if t.arrowTimer != nil {
+		t.arrowTimer.Stop()
+		t.arrowTimer = nil
+	}
+	t.arrowDir, t.arrowExtend = 0, false
 }
 
 // markersShown reports whether the direction markers are on the run: asked
@@ -1747,6 +1916,19 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 // HandleMousePress handles mouse clicks.
 func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.LeftButton {
+		// The end-of-run arrows are chrome, not text: a press on one walks the
+		// caret toward that end rather than placing it where the pointer is.
+		// It is not part of a multi-click run either -- a fast second press on
+		// an arrow is a second press, not a word to select.
+		if dir := t.arrowAt(event.X); dir != 0 {
+			extend := event.Modifiers&core.ShiftModifier != 0
+			t.SetFocus()
+			t.clickStreak = 0
+			t.selecting = false
+			t.arrowStep(dir, true, extend)
+			t.startArrowRepeat(dir, extend)
+			return true
+		}
 		font := t.EffectiveFont()
 		pos := t.findCharAtX(event.X, font)
 		if pos > len(t.text) {
@@ -1806,14 +1988,18 @@ func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if !t.selecting || event.Buttons&core.LeftButton == 0 {
 		return false
 	}
-	bounds := t.Bounds()
-	if event.X < 0 {
-		t.scrollOverX = -event.X
+	// Past the room's edge, not the field's. The arrows sit INSIDE the field
+	// and the run gives up their cells, so the pointer reaching one is already
+	// past everything there is to select -- which is exactly when a drag wants
+	// the text to keep coming.
+	roomLo, roomHi := t.room()
+	if event.X < roomLo {
+		t.scrollOverX = roomLo - event.X
 		t.startAutoScroll(-1)
 		return true
 	}
-	if event.X >= bounds.Width {
-		t.scrollOverX = event.X - bounds.Width
+	if event.X >= roomHi {
+		t.scrollOverX = event.X - roomHi
 		t.startAutoScroll(1)
 		return true
 	}
@@ -1909,8 +2095,12 @@ func (t *TextInput) autoScrollSpeed() int {
 	return speed
 }
 
-// HandleMouseRelease ends a drag selection.
+// HandleMouseRelease ends a drag selection, or a held end-of-run arrow.
 func (t *TextInput) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if t.arrowDir != 0 {
+		t.stopArrowRepeat()
+		return true
+	}
 	if t.selecting {
 		t.selecting = false
 		t.stopAutoScroll()
@@ -1928,6 +2118,7 @@ func (t *TextInput) HandleFocusIn() {
 func (t *TextInput) HandleFocusOut() {
 	t.stopCaretTimer()
 	t.stopAutoScroll()
+	t.stopArrowRepeat()
 	t.selecting = false
 	// A composition belongs to the caret it was being typed at. Focus
 	// moving elsewhere abandons it: the input method will start a fresh

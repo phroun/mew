@@ -219,6 +219,71 @@ func (g *fieldGeometry) secondaryCaretAt(runes []rune, p int) (q int, leftOf, ok
 	return q, g.rtl[q], true
 }
 
+// outermostIn is the caret position sitting furthest toward one end of the span
+// [lo, hi), and whether the span holds one at all.
+//
+// Fully inside, both edges: a position whose box is half off the end of the room
+// is one the field would have to SCROLL to show, and the whole point of asking
+// is to find how far the caret can go without scrolling anything.
+func (g *fieldGeometry) outermostIn(lo, hi, blank core.Unit, towardLeft bool) (int, bool) {
+	if g == nil {
+		return 0, false
+	}
+	best, found := 0, false
+	var bestX core.Unit
+	for p := 0; p <= len(g.lo); p++ {
+		a, b := g.caretBox(p, blank)
+		if a < lo || b > hi {
+			continue
+		}
+		x := a
+		if !towardLeft {
+			x = b
+		}
+		if !found || (towardLeft && x < bestX) || (!towardLeft && x > bestX) {
+			best, bestX, found = p, x, true
+		}
+	}
+	return best, found
+}
+
+// nextVisual is the caret position one step further along the LINE from p --
+// the nearest box beyond p's own, left or right.
+//
+// Visual, not logical. A step to the left is a step to the left on a line that
+// turns over too, where the character to the left of a Hebrew letter is the one
+// AFTER it in the text.
+func (g *fieldGeometry) nextVisual(p int, blank core.Unit, towardLeft bool) (int, bool) {
+	if g == nil {
+		return 0, false
+	}
+	fromLo, fromHi := g.caretBox(p, blank)
+	best, found := 0, false
+	var bestX core.Unit
+	for q := 0; q <= len(g.lo); q++ {
+		if q == p {
+			continue
+		}
+		a, b := g.caretBox(q, blank)
+		if towardLeft {
+			if a >= fromLo {
+				continue
+			}
+			if !found || a > bestX {
+				best, bestX, found = q, a, true
+			}
+			continue
+		}
+		if b <= fromHi {
+			continue
+		}
+		if !found || b < bestX {
+			best, bestX, found = q, b, true
+		}
+	}
+	return best, found
+}
+
 // spans is the stretches of the drawn run that logical runes [from, to) were
 // drawn in, left to right.
 //
