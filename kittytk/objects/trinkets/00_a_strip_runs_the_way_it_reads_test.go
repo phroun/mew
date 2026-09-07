@@ -224,8 +224,9 @@ func TestATurnedOverSilhouetteIsTheSilhouetteReflected(t *testing.T) {
 func TestTheDotsStayOnTheEndTheWordEndsAt(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
-	// A label wide enough that the strip runs out of room and the tab has to
-	// carry its own overflow mark.
+	// A strip too narrow for the first label, so the tab has to trim it and
+	// carry its own overflow mark. Given room for the whole word the dots
+	// would be the STRIP's, and those belong to the strip's run.
 	place := func(dir core.Direction, caption string) (word, dots core.Unit, ok bool) {
 		px, err := raster.New(900, 300)
 		if err != nil {
@@ -241,7 +242,7 @@ func TestTheDotsStayOnTheEndTheWordEndsAt(t *testing.T) {
 		tt.AddTab("Second", NewPanel())
 		tt.AddTab("Third", NewPanel())
 		tt.SetCurrentIndex(0)
-		tt.SetBounds(core.UnitRect{Width: 18 * 8, Height: 10 * 16})
+		tt.SetBounds(core.UnitRect{Width: 17 * 8, Height: 10 * 16})
 		tt.Paint(core.NewPainter(ink))
 
 		word, dots = -1, -1
@@ -781,6 +782,164 @@ func TestACentredRunHasTheSameRoomAtBothEnds(t *testing.T) {
 						dir, pos, cur, before)
 				}
 			}
+		}
+	}
+}
+
+// Given exactly the room it says it needs, a strip draws every tab whole. The
+// width a strip asks for and the width it lays down are worked out separately,
+// tab by tab, and a strip that asks for more than it draws spends the
+// difference trimming a label and marking the loss with dots it had the room
+// not to need.
+func TestAStripGivenTheRoomItAsksForDrawsEveryTabWhole(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+		for _, cur := range []int{0, 1, 2} {
+			px, err := raster.New(900, 300)
+			if err != nil {
+				t.Fatal(err)
+			}
+			core.SetTextMeasurer(px)
+			ink := newInk(t)
+			tt := NewTabTrinket()
+			tt.SetTabPosition(pos)
+			NewPanel().AddChild(tt)
+			for _, name := range []string{"One", "Second", "Third"} {
+				tt.AddTab(name, NewPanel())
+			}
+			tt.SetCurrentIndex(cur)
+			tt.SetBounds(core.UnitRect{Width: tt.calculateTotalTabsWidth(), Height: 10 * 16})
+			tt.Paint(core.NewPainter(ink))
+
+			for i, name := range []string{"One", "Second", "Third"} {
+				if _, ok := ink.textAt(name); !ok {
+					t.Errorf("%v cur=%d: tab %d's label %q was not drawn whole in the %d it asked for",
+						pos, cur, i, name, tt.Bounds().Width)
+				}
+			}
+			if _, ok := ink.cellAt('.'); ok {
+				t.Errorf("%v cur=%d: the strip marked an overflow in the room it asked for", pos, cur)
+			}
+			if tt.tabsNeedScrolling() {
+				t.Errorf("%v cur=%d: the strip wants to scroll in the room it asked for", pos, cur)
+			}
+		}
+	}
+
+	// The same reckoning decides, tab by tab, how much of a label a scrolling
+	// strip has room for. A lead-in and a join are three cells each, so a
+	// strip with exactly that much past its scroll buttons draws the first
+	// label whole -- and one cell less is one cell short.
+	const label = "Default"
+	// Whether the whole label was drawn, and whether the join out of it was:
+	// a strip that reckons the join wider than it draws has room for the
+	// label and then stops, leaving the tab without the shape that joins it
+	// to the run.
+	fits := func(pos TabPosition, spare core.Unit) (whole, joined bool) {
+		px, err := raster.New(900, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := newInk(t)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		NewPanel().AddChild(tt)
+		for _, name := range []string{label, "Second", "Third", "Fourth", "Fifth"} {
+			tt.AddTab(name, NewPanel())
+		}
+		tt.SetCurrentIndex(0)
+		// The buttons, the lead-in, the label, and the join out of it.
+		room := 6*cell + 3*cell + tt.MeasureText(label) + 3*cell
+		tt.SetBounds(core.UnitRect{Width: room + spare, Height: 10 * 16})
+		tt.Paint(core.NewPainter(ink))
+		if !tt.tabsNeedScrolling() {
+			t.Fatalf("%v spare=%d: the strip has room for every tab; the case needs it to scroll", pos, spare)
+		}
+		_, whole = ink.textAt(label)
+		// Each shape's join carries the diagonal its lead-in does not, so
+		// finding it says the strip drew the join and not just the way in.
+		join := '\\'
+		if tt.tabEdge() == TabEdgeBottom {
+			join = '/'
+		}
+		_, joined = ink.cellAt(join)
+		return whole, joined
+	}
+	for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+		whole, joined := fits(pos, 0)
+		if !whole {
+			t.Errorf("%v: given exactly the room for its lead-in, its label and its join, "+
+				"the strip trimmed %q anyway", pos, label)
+		}
+		if !joined {
+			t.Errorf("%v: given exactly the room for its lead-in, its label and its join, "+
+				"the strip drew %q and then stopped, without the join out of it", pos, label)
+		}
+		if whole, _ := fits(pos, -cell); whole {
+			t.Errorf("%v: a cell short of the room for its lead-in, its label and its join, "+
+				"the strip drew %q whole", pos, label)
+		}
+	}
+}
+
+// A strip marks an overflow at its end when there is a tab past it. Where the
+// tabs it is showing fill it exactly, the run ends where the strip does and
+// there is nothing to mark: the dots at the front, standing for the tabs
+// scrolled off it, are the only ones.
+func TestAStripShowingItsLastTabWholeMarksNoOverflowAtItsEnd(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	const scroll = 2
+	names := []string{"One", "Second", "Third", "Fourth", "Fifth"}
+
+	// How much room the tabs it is showing take, learned from a strip with
+	// room to spare rather than reckoned a second time here.
+	strip := func(pos TabPosition, width core.Unit) (*TabTrinket, *inkRecorder) {
+		px, err := raster.New(900, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := newInk(t)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		NewPanel().AddChild(tt)
+		for _, name := range names {
+			tt.AddTab(name, NewPanel())
+		}
+		tt.SetCurrentIndex(scroll)
+		tt.SetBounds(core.UnitRect{Width: width, Height: 10 * 16})
+		tt.tabScrollOffset = scroll
+		tt.Paint(core.NewPainter(ink))
+		return tt, ink
+	}
+
+	for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+		roomy, _ := strip(pos, 90*cell)
+		runEnd := core.Unit(0)
+		for _, sp := range roomy.stripSpans {
+			if sp.owner >= 0 && sp.x+sp.w > runEnd {
+				runEnd = sp.x + sp.w
+			}
+		}
+		// Exactly that much, plus the scroll buttons the strip will want.
+		tt, ink := strip(pos, runEnd+6*cell)
+		if !tt.tabsNeedScrolling() {
+			t.Fatalf("%v: the strip has room for every tab; the case needs it to scroll", pos)
+		}
+		lo, hi, n := ink.span('.')
+		if n != 3 {
+			t.Errorf("%v: the strip drew %d dots, want the three standing for the tabs in front of the run",
+				pos, n)
+		}
+		if n > 0 && (lo != 0 || hi >= 3*cell) {
+			t.Errorf("%v: the strip drew dots from %d to %d; showing its last tab whole, "+
+				"the only dots are the mark at the front", pos, lo, hi)
+		}
+		if tt.canScrollRight() {
+			t.Errorf("%v: the strip says it can scroll on, with its last tab whole on it", pos)
 		}
 	}
 }

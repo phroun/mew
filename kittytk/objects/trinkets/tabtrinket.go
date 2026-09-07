@@ -659,27 +659,22 @@ func (t *TabTrinket) calculateTabBarWidth() core.Unit {
 
 // calculateTotalTabsWidth returns the total width needed to display all tabs.
 // Format: [prefix][tab1 text][sep][tab2 text][sep]...
-// - Prefix: the join width if the first tab is selected, else 2 ("  ")
-// - Separator: the join width beside the selected tab, else 2 ("  ")
+// - Prefix: 3 cells if the first tab is selected (" /<"), else 2 ("  ")
+// - Separator: 3 cells beside the selected tab (" \ " or " /<"), else 2 ("  ")
+//
+// The two shapes draw those three cells differently -- a top strip leads into
+// its tab with a slash and a bottom one with a backslash -- but a join costs
+// the same either way: a space, the diagonal, and the cell that carries the
+// focus marker.
 func (t *TabTrinket) calculateTotalTabsWidth() core.Unit {
 	metrics := t.EffectiveCellMetrics()
 	if len(t.tabs) == 0 {
 		return 0
 	}
 
-	// What a join beside the selected tab costs. The two shapes draw it with
-	// a different number of cells: a top strip's " _/<" and " \_ " are four,
-	// a bottom strip's " \_" and "_/ " are three. Charging four either way
-	// left a bottom strip reckoning itself a cell wider at each such join
-	// than it drew, which is room its alignment then had nothing to put in.
-	join := 4
-	if t.tabEdge() == TabEdgeBottom {
-		join = 3
-	}
-
 	prefixWidth := 2
 	if t.currentIndex == 0 {
-		prefixWidth = join
+		prefixWidth = 3
 	}
 	total := core.Unit(prefixWidth) * metrics.UnitsPerCellWidth
 
@@ -687,11 +682,11 @@ func (t *TabTrinket) calculateTotalTabsWidth() core.Unit {
 		// Tab text - use font measurement for accurate width
 		total += t.MeasureText(tab.Text)
 
-		// Separator after tab: the join width if this or the next tab is
-		// selected, else 2
+		// Separator after tab: 3 cells if this or the next tab is selected,
+		// else 2
 		sepWidth := 2
 		if i == t.currentIndex || (i+1 < len(t.tabs) && i+1 == t.currentIndex) {
-			sepWidth = join
+			sepWidth = 3
 		}
 		total += core.Unit(sepWidth) * metrics.UnitsPerCellWidth
 	}
@@ -1067,49 +1062,25 @@ func (t *TabTrinket) isLastTabFullyVisible() bool {
 		isLastVisible := i == len(t.tabs)-1
 		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
 
-		// When left ellipsis is showing, omit leading underscore/space from prefix
+		// When the overflow mark is showing, the prefix drops its leading space
 		hasLeftEllipsis := t.tabScrollOffset > 0
 		prefixWidth := 0
 		if isFirstVisible {
-			if isBottomTabs {
+			if isSelected {
+				prefixWidth = 3 // " /<" on a top strip, " \_" on a bottom one
 				if hasLeftEllipsis {
-					// Tighter: "\_" (2) or " " (1)
-					if isSelected {
-						prefixWidth = 2
-					} else {
-						prefixWidth = 1
-					}
-				} else {
-					if isSelected {
-						prefixWidth = 3
-					} else {
-						prefixWidth = 2
-					}
+					prefixWidth = 2 // tighter beside the mark: "/<" or "\_"
 				}
 			} else {
+				prefixWidth = 2 // "  "
 				if hasLeftEllipsis {
-					// Tighter: "/<" (2) or " " (1)
-					if isSelected {
-						prefixWidth = 2
-					} else {
-						prefixWidth = 1
-					}
-				} else {
-					if isSelected {
-						prefixWidth = 4
-					} else {
-						prefixWidth = 2
-					}
+					prefixWidth = 1 // " "
 				}
 			}
 		}
-		sepWidth := 2
+		sepWidth := 2 // "  "
 		if isSelected || nextIsSelected {
-			if isBottomTabs {
-				sepWidth = 3
-			} else {
-				sepWidth = 4
-			}
+			sepWidth = 3 // the join beside the selected tab
 		}
 		// Prefix and separator are decorative (cell-based), text is font-based
 		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.UnitsPerCellWidth + t.MeasureText(tab.Text)
@@ -1118,7 +1089,7 @@ func (t *TabTrinket) isLastTabFullyVisible() bool {
 		if x > availableWidth {
 			// For top tabs, allow a grace margin ONLY if all essential content fits.
 			// Essential = prefix + text + (space/bracket + backslash for selected)
-			// Non-essential = trailing underscore + space (or just trailing spaces for unselected)
+			// Non-essential = the trailing space (or both trailing spaces for unselected)
 			if !isBottomTabs && isLastVisible {
 				essentialSepWidth := 0
 				if isSelected {
@@ -1687,16 +1658,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	// Pressed button style from scheme with underline
 	pressedStyle := scheme.GetPressedTabsButton().Underline()
 	// Pixel surfaces draw the strip's edge as one continuous hairline
-	// in a post-pass (paintTabShape); the cell attributes and '_'
-	// filler glyphs would double that line, so they are dropped.
-	underscoreCh := '_'
+	// in a post-pass (paintTabShape); the cell attributes would double
+	// that line, so they are dropped.
 	slashCh, backslashCh := '/', '\\'
 	if p.Graphical() {
 		tabBarUnderlined = tabBarStyle
 		selectedStyle = scheme.GetActiveTab()
 		focusedSelectedStyle = scheme.GetFocusedTab()
 		pressedStyle = scheme.GetPressedTabsButton()
-		underscoreCh = ' '
 		// The arcs and edge line of paintTabShape replace the literal
 		// slash glyphs on pixel surfaces.
 		slashCh, backslashCh = ' ', ' '
@@ -1736,12 +1705,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	// Available width is the absolute position where tabs must stop (before scroll buttons)
 	availableWidth := bounds.Width - scrollButtonsWidth
 
-	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
-	// - Prefix: " _/ " (4 chars) if first visible tab is selected, else "  " (2 chars)
+	// Tab format: [prefix][tab1 text][sep][tab2 text][sep]...
+	// - Prefix: " / " (3 chars) if first visible tab is selected, else "  " (2 chars)
 	// - Separator after each tab:
-	//   - " \_ " (4 chars) if current tab is selected
-	//   - " _/ " (4 chars) if next tab is selected
+	//   - " \ " (3 chars) if current tab is selected
+	//   - " / " (3 chars) if next tab is selected
 	//   - "  " (2 chars) otherwise
+	// The cell beside the diagonal carries the focus marker, "<" or ">", when
+	// the strip has the focus.
 	// Where the run BEGINS: past any overflow mark, and past whatever
 	// slack the alignment put in front of it (see tabRunOffset).
 	x := leftEllipseWidth + t.tabRunOffset()
@@ -1792,7 +1763,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		nextIsSelected := !isLastVisible && tabIndex+1 == t.currentIndex
 
 		// Calculate this tab's width
-		// When left ellipsis is showing, omit leading "_" from prefix
+		// When left ellipsis is showing, omit the leading space from the prefix
 		hasLeftEllipsis := t.tabScrollOffset > 0
 		prefixWidth := 0
 		if isFirstVisible {
@@ -1803,7 +1774,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					prefixWidth = 1 // " " if not selected
 				}
 			} else {
-				prefixWidth = 4 // " _/<" if selected
+				prefixWidth = 3 // " /<" if selected
 				if !isSelected {
 					prefixWidth = 2 // "  " if not selected
 				}
@@ -1811,7 +1782,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 		sepWidth := 2 // Default "  "
 		if isSelected || nextIsSelected {
-			sepWidth = 4 // " \_ " or " _/ "
+			sepWidth = 3 // " \ " or " /<"
 		}
 		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
 		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.UnitsPerCellWidth + t.MeasureText(tab.Text)
@@ -1893,16 +1864,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 							x += metrics.UnitsPerCellWidth * 2
 						} else {
 							tape.cell(x, 0, ' ', tabBarUnderlined)
-							tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-							tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle)
-							selLeadX = x + metrics.UnitsPerCellWidth*2
+							tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle)
+							selLeadX = x + metrics.UnitsPerCellWidth
 							selShapeStyle = s
 							if hasFocus {
-								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth*2, 0, '<', focusedSelectedStyle)
 							} else {
-								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
+								tape.cell(x+metrics.UnitsPerCellWidth*2, 0, ' ', s)
 							}
-							x += metrics.UnitsPerCellWidth * 4
+							x += metrics.UnitsPerCellWidth * 3
 						}
 					} else {
 						if hasLeftEllipsis {
@@ -1951,10 +1921,6 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 						selEndX = x
 					}
 					if x < availableWidth {
-						tape.cell(x, 0, underscoreCh, tabBarUnderlined)
-						x += metrics.UnitsPerCellWidth
-					}
-					if x < availableWidth {
 						tape.cell(x, 0, ' ', tabBarUnderlined)
 						x += metrics.UnitsPerCellWidth
 					}
@@ -1993,16 +1959,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 							x += metrics.UnitsPerCellWidth * 2
 						} else {
 							tape.cell(x, 0, ' ', tabBarUnderlined)
-							tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-							tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle)
-							selLeadX = x + metrics.UnitsPerCellWidth*2
+							tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle)
+							selLeadX = x + metrics.UnitsPerCellWidth
 							selShapeStyle = s
 							if hasFocus {
-								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth*2, 0, '<', focusedSelectedStyle)
 							} else {
-								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
+								tape.cell(x+metrics.UnitsPerCellWidth*2, 0, ' ', s)
 							}
-							x += metrics.UnitsPerCellWidth * 4
+							x += metrics.UnitsPerCellWidth * 3
 						}
 					} else {
 						if hasLeftEllipsis {
@@ -2147,18 +2112,17 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					}
 					x += metrics.UnitsPerCellWidth * 2
 				} else {
-					// " _/<" (4 chars) when focused, " _/ " when not focused
+					// " /<" (3 chars) when focused, " / " when not focused
 					tape.cell(x, 0, ' ', tabBarUnderlined)
-					tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-					tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle) // slash not underlined
-					selLeadX = x + metrics.UnitsPerCellWidth*2
+					tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle) // slash not underlined
+					selLeadX = x + metrics.UnitsPerCellWidth
 					selShapeStyle = s
 					if hasFocus {
-						tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+						tape.cell(x+metrics.UnitsPerCellWidth*2, 0, '<', focusedSelectedStyle)
 					} else {
-						tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
+						tape.cell(x+metrics.UnitsPerCellWidth*2, 0, ' ', s)
 					}
-					x += metrics.UnitsPerCellWidth * 4
+					x += metrics.UnitsPerCellWidth * 3
 				}
 			} else {
 				if hasLeftEllipsis {
@@ -2210,7 +2174,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 		// Draw separator after tab
 		if isSelected {
-			// ">\_ " (4 chars) when focused, " \_ " when not focused
+			// ">\ " (3 chars) when focused, " \ " when not focused
 			// Space/bracket adjacent to label not underlined, rest underlined except slash (none here)
 			if hasFocus {
 				tape.cell(x, 0, '>', focusedSelectedStyle)
@@ -2220,28 +2184,26 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			tape.cell(x+metrics.UnitsPerCellWidth, 0, backslashCh, tabBarStyle) // backslash not underlined (like slash)
 			lastSlashX = x + metrics.UnitsPerCellWidth                          // Track backslash position
 			selTrailX = x + metrics.UnitsPerCellWidth
-			tape.cell(x+metrics.UnitsPerCellWidth*2, 0, underscoreCh, tabBarUnderlined)
-			tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', tabBarUnderlined)
-			x += metrics.UnitsPerCellWidth * 4
+			tape.cell(x+metrics.UnitsPerCellWidth*2, 0, ' ', tabBarUnderlined)
+			x += metrics.UnitsPerCellWidth * 3
 		} else if nextIsSelected {
-			// " _/<" (4 chars) when focused, " _/ " when not focused
+			// " /<" (3 chars) when focused, " / " when not focused
 			// Underlined except slash and space/bracket adjacent to selected label
 			tape.cell(x, 0, ' ', tabBarUnderlined)
-			tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-			tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle) // slash not underlined
-			lastSlashX = x + metrics.UnitsPerCellWidth*2                      // Track slash position
-			selLeadX = x + metrics.UnitsPerCellWidth*2
+			tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle) // slash not underlined
+			lastSlashX = x + metrics.UnitsPerCellWidth                      // Track slash position
+			selLeadX = x + metrics.UnitsPerCellWidth
 			if hasFocus {
 				selShapeStyle = focusedSelectedStyle
 			} else {
 				selShapeStyle = selectedStyle
 			}
 			if hasFocus {
-				tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+				tape.cell(x+metrics.UnitsPerCellWidth*2, 0, '<', focusedSelectedStyle)
 			} else {
-				tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', selectedStyle)
+				tape.cell(x+metrics.UnitsPerCellWidth*2, 0, ' ', selectedStyle)
 			}
-			x += metrics.UnitsPerCellWidth * 4
+			x += metrics.UnitsPerCellWidth * 3
 		} else {
 			// "  " (2 chars) regular separator - underlined
 			tape.cell(x, 0, ' ', tabBarUnderlined)
@@ -3802,49 +3764,25 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 			isLastVisible := i == len(t.tabs)-1
 			nextIsSelected := !isLastVisible && i+1 == t.currentIndex
 
-			// When left ellipsis is showing, omit leading underscore/space from prefix
+			// When the overflow mark is showing, the prefix drops its leading space
 			hasLeftEllipsis := t.tabScrollOffset > 0
 			prefixWidth := 0
 			if isFirstVisible {
-				if isBottomTabs {
+				if isSelected {
+					prefixWidth = 3 // " /<" on a top strip, " \_" on a bottom one
 					if hasLeftEllipsis {
-						// Tighter: "\_" (2) or " " (1)
-						if isSelected {
-							prefixWidth = 2
-						} else {
-							prefixWidth = 1
-						}
-					} else {
-						if isSelected {
-							prefixWidth = 3
-						} else {
-							prefixWidth = 2
-						}
+						prefixWidth = 2 // tighter beside the mark: "/<" or "\_"
 					}
 				} else {
+					prefixWidth = 2 // "  "
 					if hasLeftEllipsis {
-						// Tighter: "/<" (2) or " " (1)
-						if isSelected {
-							prefixWidth = 2
-						} else {
-							prefixWidth = 1
-						}
-					} else {
-						if isSelected {
-							prefixWidth = 4
-						} else {
-							prefixWidth = 2
-						}
+						prefixWidth = 1 // " "
 					}
 				}
 			}
-			sepWidth := 2
+			sepWidth := 2 // "  "
 			if isSelected || nextIsSelected {
-				if isBottomTabs {
-					sepWidth = 3
-				} else {
-					sepWidth = 4
-				}
+				sepWidth = 3 // the join beside the selected tab
 			}
 			// Prefix and separator are decorative (cell-based), text is font-based
 			tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.UnitsPerCellWidth + t.MeasureText(tab.Text)
