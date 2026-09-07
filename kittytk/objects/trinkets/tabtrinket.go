@@ -1658,14 +1658,16 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	// Pressed button style from scheme with underline
 	pressedStyle := scheme.GetPressedTabsButton().Underline()
 	// Pixel surfaces draw the strip's edge as one continuous hairline
-	// in a post-pass (paintTabShape); the cell attributes would double
-	// that line, so they are dropped.
+	// in a post-pass (paintTabShape); the cell attributes and '_'
+	// filler glyphs would double that line, so they are dropped.
+	underscoreCh := '_'
 	slashCh, backslashCh := '/', '\\'
 	if p.Graphical() {
 		tabBarUnderlined = tabBarStyle
 		selectedStyle = scheme.GetActiveTab()
 		focusedSelectedStyle = scheme.GetFocusedTab()
 		pressedStyle = scheme.GetPressedTabsButton()
+		underscoreCh = ' '
 		// The arcs and edge line of paintTabShape replace the literal
 		// slash glyphs on pixel surfaces.
 		slashCh, backslashCh = ' ', ' '
@@ -1706,13 +1708,19 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	availableWidth := bounds.Width - scrollButtonsWidth
 
 	// Tab format: [prefix][tab1 text][sep][tab2 text][sep]...
-	// - Prefix: " / " (3 chars) if first visible tab is selected, else "  " (2 chars)
+	// - Prefix: "_/ " (3 chars) if first visible tab is selected, else "  " (2 chars)
 	// - Separator after each tab:
-	//   - " \ " (3 chars) if current tab is selected
-	//   - " / " (3 chars) if next tab is selected
+	//   - " \_" (3 chars) if current tab is selected
+	//   - "_/ " (3 chars) if next tab is selected
 	//   - "  " (2 chars) otherwise
-	// The cell beside the diagonal carries the focus marker, "<" or ">", when
-	// the strip has the focus.
+	//
+	// A join is three cells: the diagonal, the cell on the TAB's side of it
+	// carrying the focus marker ("<" or ">") when the strip has the focus, and
+	// the cell on the BAR's side carrying an underscore. That underscore draws
+	// at the foot of its cell, which is where a top strip's line runs, so the
+	// line reads as one unbroken run into the tab on a terminal that cannot
+	// underline. It sits against the neighbouring label, the far side of the
+	// join from the tab it belongs to.
 	// Where the run BEGINS: past any overflow mark, and past whatever
 	// slack the alignment put in front of it (see tabRunOffset).
 	x := leftEllipseWidth + t.tabRunOffset()
@@ -1863,7 +1871,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 							}
 							x += metrics.UnitsPerCellWidth * 2
 						} else {
-							tape.cell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x, 0, underscoreCh, tabBarUnderlined)
 							tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle)
 							selLeadX = x + metrics.UnitsPerCellWidth
 							selShapeStyle = s
@@ -1921,7 +1929,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 						selEndX = x
 					}
 					if x < availableWidth {
-						tape.cell(x, 0, ' ', tabBarUnderlined)
+						tape.cell(x, 0, underscoreCh, tabBarUnderlined)
 						x += metrics.UnitsPerCellWidth
 					}
 				} else {
@@ -1958,7 +1966,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 							}
 							x += metrics.UnitsPerCellWidth * 2
 						} else {
-							tape.cell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x, 0, underscoreCh, tabBarUnderlined)
 							tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle)
 							selLeadX = x + metrics.UnitsPerCellWidth
 							selShapeStyle = s
@@ -2112,8 +2120,8 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					}
 					x += metrics.UnitsPerCellWidth * 2
 				} else {
-					// " /<" (3 chars) when focused, " / " when not focused
-					tape.cell(x, 0, ' ', tabBarUnderlined)
+					// "_/<" (3 chars) when focused, "_/ " when not focused
+					tape.cell(x, 0, underscoreCh, tabBarUnderlined)
 					tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle) // slash not underlined
 					selLeadX = x + metrics.UnitsPerCellWidth
 					selShapeStyle = s
@@ -2174,7 +2182,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 		// Draw separator after tab
 		if isSelected {
-			// ">\ " (3 chars) when focused, " \ " when not focused
+			// ">\_" (3 chars) when focused, " \_" when not focused
 			// Space/bracket adjacent to label not underlined, rest underlined except slash (none here)
 			if hasFocus {
 				tape.cell(x, 0, '>', focusedSelectedStyle)
@@ -2184,12 +2192,12 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			tape.cell(x+metrics.UnitsPerCellWidth, 0, backslashCh, tabBarStyle) // backslash not underlined (like slash)
 			lastSlashX = x + metrics.UnitsPerCellWidth                          // Track backslash position
 			selTrailX = x + metrics.UnitsPerCellWidth
-			tape.cell(x+metrics.UnitsPerCellWidth*2, 0, ' ', tabBarUnderlined)
+			tape.cell(x+metrics.UnitsPerCellWidth*2, 0, underscoreCh, tabBarUnderlined)
 			x += metrics.UnitsPerCellWidth * 3
 		} else if nextIsSelected {
-			// " /<" (3 chars) when focused, " / " when not focused
+			// "_/<" (3 chars) when focused, "_/ " when not focused
 			// Underlined except slash and space/bracket adjacent to selected label
-			tape.cell(x, 0, ' ', tabBarUnderlined)
+			tape.cell(x, 0, underscoreCh, tabBarUnderlined)
 			tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle) // slash not underlined
 			lastSlashX = x + metrics.UnitsPerCellWidth                      // Track slash position
 			selLeadX = x + metrics.UnitsPerCellWidth

@@ -49,6 +49,17 @@ func (r *inkRecorder) cellAt(ch rune) (core.Unit, bool) {
 	return 0, false
 }
 
+// glyphAt is the last glyph drawn on the cell at x, and whether one was.
+func (r *inkRecorder) glyphAt(x core.Unit) (rune, bool) {
+	ch, ok := rune(0), false
+	for _, c := range r.cells {
+		if c.x == x {
+			ch, ok = c.ch, true
+		}
+	}
+	return ch, ok
+}
+
 // textAt is where a string was drawn.
 func (r *inkRecorder) textAt(s string) (core.Unit, bool) {
 	for _, t := range r.texts {

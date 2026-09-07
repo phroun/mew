@@ -943,3 +943,81 @@ func TestAStripShowingItsLastTabWholeMarksNoOverflowAtItsEnd(t *testing.T) {
 		}
 	}
 }
+
+// A terminal that cannot underline draws the strip's line with the underscore
+// glyph, which sits at the foot of its cell. So each join beside the selected
+// tab spends one of its three cells on an underscore -- on the side of the
+// diagonal where the line it stands for runs. On a top strip the tabs rise out
+// of the bar's line, which runs along the bottom of the row OUTSIDE the tab, so
+// the underscore sits against the neighbouring label; on a bottom strip the
+// line along the bottom is the selected tab's own outer edge, so it sits inside
+// the tab instead. The other side of the diagonal is the focus marker's.
+func TestAJoinCarriesItsLineOnTheSideThatLineRunsAlong(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	// The two cells either side of a diagonal, with the middle tab selected.
+	joins := func(pos TabPosition) (beforeIn, afterIn, beforeOut, afterOut rune) {
+		px, err := raster.New(900, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := newInk(t)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		NewPanel().AddChild(tt)
+		for _, name := range []string{"One", "Two", "Six"} {
+			tt.AddTab(name, NewPanel())
+		}
+		tt.SetCurrentIndex(1)
+		tt.SetBounds(core.UnitRect{Width: 30 * cell, Height: 10 * 16})
+		tt.Paint(core.NewPainter(ink))
+
+		// Each shape leads into its tab with one diagonal and out with the
+		// other: a top strip rises on a slash, a bottom one hangs on a
+		// backslash.
+		in, out := '/', '\\'
+		if tt.tabEdge() == TabEdgeBottom {
+			in, out = '\\', '/'
+		}
+		inX, ok := ink.cellAt(in)
+		if !ok {
+			t.Fatalf("%v: the strip drew no way into its selected tab", pos)
+		}
+		outX, ok := ink.cellAt(out)
+		if !ok {
+			t.Fatalf("%v: the strip drew no way out of its selected tab", pos)
+		}
+		beforeIn, _ = ink.glyphAt(inX - cell)
+		afterIn, _ = ink.glyphAt(inX + cell)
+		beforeOut, _ = ink.glyphAt(outX - cell)
+		afterOut, _ = ink.glyphAt(outX + cell)
+		return beforeIn, afterIn, beforeOut, afterOut
+	}
+
+	// A top strip: the bar's line runs outside the tab, so the underscores are
+	// the cells the neighbouring labels stand against.
+	beforeIn, afterIn, beforeOut, afterOut := joins(TabsTop)
+	if beforeIn != '_' {
+		t.Errorf("a top strip leads into its tab over %q, want the line running in on an underscore", beforeIn)
+	}
+	if afterOut != '_' {
+		t.Errorf("a top strip leaves its tab onto %q, want the line running on over an underscore", afterOut)
+	}
+	if afterIn == '_' || beforeOut == '_' {
+		t.Errorf("a top strip put an underscore inside its tab, at %q and %q; the line there is the tab's top edge",
+			afterIn, beforeOut)
+	}
+
+	// A bottom strip: the line along the bottom of the row is the tab's own
+	// outer edge, so the underscores are inside it.
+	beforeIn, afterIn, beforeOut, afterOut = joins(TabsBottom)
+	if afterIn != '_' || beforeOut != '_' {
+		t.Errorf("a bottom strip drew %q and %q inside its tab, want its outer edge run along on underscores",
+			afterIn, beforeOut)
+	}
+	if beforeIn == '_' || afterOut == '_' {
+		t.Errorf("a bottom strip put an underscore on the bar beside its tab, at %q and %q; "+
+			"the bar's line there runs along the top of the row", beforeIn, afterOut)
+	}
+}
