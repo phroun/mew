@@ -333,6 +333,10 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		opts.CellMetrics = core.DefaultCellMetrics()
 	}
 
+	// What a layout measures has to be what this backend advances, so the
+	// rule it emits by is the rule core hands out (see core.CellWidth).
+	core.SetCellWidth(cellRuneWidth)
+
 	t := &TUIBackend{
 		metrics:    opts.CellMetrics,
 		output:     opts.Output,

@@ -290,12 +290,16 @@ func (f *Font) MeasureTextIn(text string, m CellMetrics) Unit {
 	total := Unit(0)
 	isTuesday := f.Name == "Tuesday"
 	for _, ch := range text {
+		w := CellWidth(ch)
+		if w == 0 {
+			continue // paints into the cell before it and advances nothing
+		}
 		if isTuesday && isAlphabetic(ch) {
 			total += 2 * cw
 		} else {
 			total += cw
 		}
-		if isWideChar(ch) {
+		if w == 2 {
 			total += cw
 		}
 	}
@@ -322,6 +326,10 @@ func (f *Font) MeasureText(text string) Unit {
 	isTuesday := f.Name == "Tuesday"
 
 	for _, ch := range text {
+		w := CellWidth(ch)
+		if w == 0 {
+			continue // paints into the cell before it and advances nothing
+		}
 		// Determine base width for this character
 		if isTuesday && isAlphabetic(ch) {
 			total += 16
@@ -330,7 +338,7 @@ func (f *Font) MeasureText(text string) Unit {
 		}
 
 		// Wide characters (CJK, etc.) need additional width
-		if isWideChar(ch) {
+		if w == 2 {
 			total += 8
 		}
 	}
