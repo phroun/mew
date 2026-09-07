@@ -249,7 +249,7 @@ func init() {
 		New: func() any {
 			return &wireColumn{col: TreeColumn{
 				Width: treeColDefaultWidth, MinWidth: treeColMinWidth,
-				MaxWidth: core.Unbounded, Align: core.AlignTextBegin,
+				MaxWidth: core.Unbounded, Align: core.AlignTextNatural,
 				Resizable: true, Optional: true, SortProxy: -1,
 			}}
 		},
@@ -279,9 +279,9 @@ func init() {
 				}
 				c.target().Align = a
 				return nil
-			})).OneOf(hAlignWordList()...).Def("textbegin").
-				Tip("Where a cell's text sits. textbegin/textend follow each cell's own script; " +
-					"layoutbegin/layoutend follow the column's direction; the optical pair names a side outright."),
+			})).OneOf(hAlignWordList()...).Def("textnatural").
+				Tip("Where a cell's text sits. textnatural/textopposite follow each cell's own script; " +
+					"layoutnatural/layoutopposite follow the column's direction; the optical pair names a side outright."),
 			"direction": protocol.NewProperty("enum", colProp("direction", func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
 				word, err := protocol.AsWord("direction", v, f)
 				if err != nil {

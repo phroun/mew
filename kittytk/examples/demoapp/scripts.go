@@ -103,7 +103,7 @@ b=new tab caption="Basic Trinkets" children={
 
 s=new tab caption="Selection" children={
 	sev=new panel layout=vbox spacing=8 children={
-	sertl=new checkbox caption="direction=rtl -- a box sits on the side the direction reads from, with its caption running away from it" halign=textbegin fill=none
+	sertl=new checkbox caption="direction=rtl -- a box sits on the side the direction reads from, with its caption running away from it" halign=textnatural fill=none
 	o=new panel layout=vbox spacing=0 stretch=1 children={
 		new panel layout=hbox spacing=8 children={
 			new panel border layout=vbox fixed_width=256 children={
@@ -162,7 +162,7 @@ s=new tab caption="Selection" children={
 
 li=new tab caption="Lists" children={
 	liv=new panel layout=vbox spacing=8 children={
-	lirtl=new checkbox caption="direction=rtl on the LIST -- its bar takes the left, and each item still reads its own language" halign=textbegin fill=none
+	lirtl=new checkbox caption="direction=rtl on the LIST -- its bar takes the left, and each item still reads its own language" halign=textnatural fill=none
 	lisp=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		lilp=new panel layout=vbox children={
 			new label caption="ListView:"
@@ -190,7 +190,7 @@ li=new tab caption="Lists" children={
 
 ss=new tab caption="Scroll Selection" children={
 	ssv=new panel layout=vbox spacing=8 children={
-	ssrtl=new checkbox caption="direction=rtl -- the bars take the left edge and the boxes read from the right" halign=textbegin fill=none
+	ssrtl=new checkbox caption="direction=rtl -- the bars take the left edge and the boxes read from the right" halign=textnatural fill=none
 	ssc=new splitter orientation=vertical position=0.4 stretch=1 children={
 		new scrollarea children={
 			new panel layout=vbox spacing=0 children={
@@ -231,7 +231,7 @@ ss=new tab caption="Scroll Selection" children={
 
 sl=new tab caption="Scroll Lists" children={
 	slv=new panel layout=vbox spacing=8 children={
-	slrtl=new checkbox caption="direction=rtl -- the first pane takes the right, and each area opens at the start of its content" halign=textbegin fill=none
+	slrtl=new checkbox caption="direction=rtl -- the first pane takes the right, and each area opens at the start of its content" halign=textnatural fill=none
 	slc=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		new scrollarea children={
 			new panel layout=vbox children={
@@ -334,20 +334,20 @@ dn=new tab caption="Denomination" children={
 
 gr=new tab caption="Grid" children={
 	grv=new panel layout=vbox spacing=8 children={
-		grtl=new checkbox caption="direction=rtl -- column 0 becomes the rightmost, and every halign below turns over with it" halign=textbegin fill=none
+		grtl=new checkbox caption="direction=rtl -- column 0 becomes the rightmost, and every halign below turns over with it" halign=textnatural fill=none
 		grc=new panel layout=vbox spacing=8 stretch=1 children={
 			new label caption="A form: labels in a column that sizes to them, fields in one that takes the rest."
 			new panel border layout=grid spacing=8 columns={
 				new band id=labels
 				new band id=fields stretch=1
 			} children={
-				new label caption="Name:" row=0 column=labels halign=textend fill=none
+				new label caption="Name:" row=0 column=labels halign=textopposite fill=none
 				new textinput row=0 column=fields placeholder="Ada Lovelace"
-				new label caption="Address:" row=1 column=labels halign=textend fill=none
+				new label caption="Address:" row=1 column=labels halign=textopposite fill=none
 				new textinput row=1 column=fields placeholder="12 Marylebone Road"
-				new label caption="Notes:" row=2 column=labels halign=textend valign=top fill=none
+				new label caption="Notes:" row=2 column=labels halign=textopposite valign=top fill=none
 				new textinput row=2 column=fields placeholder="anything at all"
-				new panel layout=hbox spacing=8 row=3 column=labels column_span=2 halign=textend fill=none children={
+				new panel layout=hbox spacing=8 row=3 column=labels column_span=2 halign=textopposite fill=none children={
 					new button caption="Save" action=demo.grid.save
 					new button caption="Cancel" action=demo.grid.cancel
 				}
@@ -373,7 +373,7 @@ gr=new tab caption="Grid" children={
 
 fx=new tab caption="Flex" children={
 	fxv=new panel layout=vbox spacing=8 children={
-		fxrtl=new checkbox caption="direction=rtl -- each run begins at the right, and a wrapping run stacks its lines from there" halign=textbegin fill=none
+		fxrtl=new checkbox caption="direction=rtl -- each run begins at the right, and a wrapping run stacks its lines from there" halign=textnatural fill=none
 		fxc=new panel layout=vbox spacing=8 stretch=1 children={
 			new label caption="Wrapping: eight cards in a run that breaks when it runs out of room."
 			new panel border layout=flex flex_wrap=wrap spacing=4 align_items=begin children={
@@ -414,7 +414,7 @@ lim=new tab caption="Limits" children={
 			new band id=lcap
 			new band id=lval stretch=1
 		} children={
-			new label caption="max_width:" row=0 column=lcap halign=textend fill=none
+			new label caption="max_width:" row=0 column=lcap halign=textopposite fill=none
 			limmaxrow=new panel layout=hbox spacing=4 row=0 column=lval children={
 				lmaxnone=new radiobutton caption="none" group=limmax checked
 				lmax200=new radiobutton caption="200" group=limmax
@@ -422,7 +422,7 @@ lim=new tab caption="Limits" children={
 				lmax40=new radiobutton caption="40" group=limmax
 				lmax0=new radiobutton caption="0" group=limmax
 			}
-			new label caption="min_width:" row=1 column=lcap halign=textend fill=none
+			new label caption="min_width:" row=1 column=lcap halign=textopposite fill=none
 			limminrow=new panel layout=hbox spacing=4 row=1 column=lval children={
 				lmin0=new radiobutton caption="none" group=limmin checked
 				lmin160=new radiobutton caption="160" group=limmin
@@ -436,9 +436,9 @@ lim=new tab caption="Limits" children={
 		}
 		limalignrow=new panel layout=hbox spacing=4 children={
 			new label caption="halign:" fill=none
-			lhbegin=new radiobutton caption="textbegin" group=limalign
+			lhbegin=new radiobutton caption="textnatural" group=limalign
 			lhcenter=new radiobutton caption="center" group=limalign checked
-			lhend=new radiobutton caption="textend" group=limalign
+			lhend=new radiobutton caption="textopposite" group=limalign
 			lhfill=new checkbox caption="fill" checked
 		}
 		new spacer
@@ -447,7 +447,7 @@ lim=new tab caption="Limits" children={
 
 pg=new tab caption="Progress" children={
 	pgv=new panel layout=vbox spacing=8 children={
-	pgrtl=new checkbox caption="direction=rtl -- a bar fills from the right" halign=textbegin fill=none
+	pgrtl=new checkbox caption="direction=rtl -- a bar fills from the right" halign=textnatural fill=none
 	pgc=new panel layout=vbox spacing=16 stretch=1 children={
 		new label caption="Horizontal Progress Bars:"
 		new progress min_width=160 value=25
@@ -549,11 +549,11 @@ new tab caption="Vertical Tabs" children={
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
 		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 columns={
-			dsizec=new column id=size caption="Size" width=80 align=layoutend sortable sortproxy=4
+			dsizec=new column id=size caption="Size" width=80 align=layoutopposite sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=112 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=192 sortable
 			dtagsc=new column id=tags caption="Tags" width=64 editable direction=rtl
-			drawc=new column id=rawsize caption="Raw Size" width=80 align=layoutend numeric hidden !optional
+			drawc=new column id=rawsize caption="Raw Size" width=80 align=layoutopposite numeric hidden !optional
 		} items={
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
 			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
@@ -633,65 +633,65 @@ mt=new tab caption="Terminal" children={
 df=new tab caption="Defaults" children={
 	dfsa=new scrollarea stretch=1 children={
 		dfv=new panel layout=vbox spacing=0 children={
-			new label halign=textbegin fill=none caption="One of each trinket, with nothing setting a size on any of them.\nWhat you see is what each one asks for when nobody tells it.\n\nA trinket that can size itself from its own content does: a button\nfrom its caption, a label from its text, a combo box from its items.\nOne that cannot falls back to three cells, which is meant to look\nwrong -- it is how a trinket says nobody gave it a size."
+			new label halign=textnatural fill=none caption="One of each trinket, with nothing setting a size on any of them.\nWhat you see is what each one asks for when nobody tells it.\n\nA trinket that can size itself from its own content does: a button\nfrom its caption, a label from its text, a combo box from its items.\nOne that cannot falls back to three cells, which is meant to look\nwrong -- it is how a trinket says nobody gave it a size."
 
-			new label halign=textbegin fill=none caption="--- button"
-			new button halign=textbegin fill=none caption="Button"
-			new label halign=textbegin fill=none caption="--- checkbox"
-			new checkbox halign=textbegin fill=none caption="Checkbox"
-			new label halign=textbegin fill=none caption="--- radiobutton"
-			new radiobutton halign=textbegin fill=none caption="Radio button" group=dfgroup
-			new label halign=textbegin fill=none caption="--- label"
-			new label halign=textbegin fill=none caption="Label"
-			new label halign=textbegin fill=none caption="--- textinput"
-			new textinput halign=textbegin fill=none placeholder="Text input"
-			new label halign=textbegin fill=none caption="--- combobox"
-			new combobox halign=textbegin fill=none items={
+			new label halign=textnatural fill=none caption="--- button"
+			new button halign=textnatural fill=none caption="Button"
+			new label halign=textnatural fill=none caption="--- checkbox"
+			new checkbox halign=textnatural fill=none caption="Checkbox"
+			new label halign=textnatural fill=none caption="--- radiobutton"
+			new radiobutton halign=textnatural fill=none caption="Radio button" group=dfgroup
+			new label halign=textnatural fill=none caption="--- label"
+			new label halign=textnatural fill=none caption="Label"
+			new label halign=textnatural fill=none caption="--- textinput"
+			new textinput halign=textnatural fill=none placeholder="Text input"
+			new label halign=textnatural fill=none caption="--- combobox"
+			new combobox halign=textnatural fill=none items={
 				new item caption="Combo item one"
 				new item caption="Combo item two"
 			}
-			new label halign=textbegin fill=none caption="--- progress"
-			new progress halign=textbegin fill=none value=60
-			new label halign=textbegin fill=none caption="--- separator"
-			new separator halign=textbegin fill=none caption="Separator"
-			new label halign=textbegin fill=none caption="--- spacer"
-			new spacer halign=textbegin fill=none
-			new label halign=textbegin fill=none caption="--- listview"
-			new listview halign=textbegin fill=none items={
+			new label halign=textnatural fill=none caption="--- progress"
+			new progress halign=textnatural fill=none value=60
+			new label halign=textnatural fill=none caption="--- separator"
+			new separator halign=textnatural fill=none caption="Separator"
+			new label halign=textnatural fill=none caption="--- spacer"
+			new spacer halign=textnatural fill=none
+			new label halign=textnatural fill=none caption="--- listview"
+			new listview halign=textnatural fill=none items={
 				new item caption="List item one"
 				new item caption="List item two"
 				new item caption="List item three"
 			}
-			new label halign=textbegin fill=none caption="--- treeview"
-			new treeview halign=textbegin fill=none items={
+			new label halign=textnatural fill=none caption="--- treeview"
+			new treeview halign=textnatural fill=none items={
 				new item caption="Tree item" items={
 					new item caption="Tree child"
 				}
 			}
-			new label halign=textbegin fill=none caption="--- panel (no layout, bordered)"
-			new panel halign=textbegin fill=none border
-			new label halign=textbegin fill=none caption="--- scrollarea"
-			new scrollarea halign=textbegin fill=none children={
+			new label halign=textnatural fill=none caption="--- panel (no layout, bordered)"
+			new panel halign=textnatural fill=none border
+			new label halign=textnatural fill=none caption="--- scrollarea"
+			new scrollarea halign=textnatural fill=none children={
 				new label caption="Scroll area content"
 			}
-			new label halign=textbegin fill=none caption="--- splitter"
-			new splitter halign=textbegin fill=none orientation=vertical children={
+			new label halign=textnatural fill=none caption="--- splitter"
+			new splitter halign=textnatural fill=none orientation=vertical children={
 				new label caption="Splitter first"
 				new label caption="Splitter second"
 			}
-			new label halign=textbegin fill=none caption="--- tabs"
-			new tabs halign=textbegin fill=none children={
+			new label halign=textnatural fill=none caption="--- tabs"
+			new tabs halign=textnatural fill=none children={
 				new tab caption="One" children={new label caption="Tab one"}
 				new tab caption="Two" children={new label caption="Tab two"}
 			}
-			new label halign=textbegin fill=none caption="--- editor"
-			new editor halign=textbegin fill=none
-			new label halign=textbegin fill=none caption="--- terminal"
-			new terminal halign=textbegin fill=none
-			new label halign=textbegin fill=none caption="--- dockrow"
-			new dockrow halign=textbegin fill=none
-			new label halign=textbegin fill=none caption="--- mdipane"
-			new mdipane halign=textbegin fill=none
+			new label halign=textnatural fill=none caption="--- editor"
+			new editor halign=textnatural fill=none
+			new label halign=textnatural fill=none caption="--- terminal"
+			new terminal halign=textnatural fill=none
+			new label halign=textnatural fill=none caption="--- dockrow"
+			new dockrow halign=textnatural fill=none
+			new label halign=textnatural fill=none caption="--- mdipane"
+			new mdipane halign=textnatural fill=none
 		}
 	}
 }
@@ -1084,7 +1084,7 @@ bwclose=mdi.b%d.p.bp.cl
 // reference them. id resolves a surfaced correlation key to its wire ID.
 // tagValues fills the Tags column, which declares itself right to left
 // whatever the tree around it reads. Its cells hold both scripts, so
-// textbegin is asked of each cell's own text -- and the column's own
+// textnatural is asked of each cell's own text -- and the column's own
 // direction answers for the ones that are not strongly either way.
 var tagValues = map[string]string{
 	"ds1": "מסך", "ds2": "מסך", "dpc": "פרויקט", "dpcin": "פרויקט",

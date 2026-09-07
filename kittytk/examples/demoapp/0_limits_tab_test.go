@@ -105,15 +105,15 @@ func TestLimitsTabShowsWhereACappedChildSits(t *testing.T) {
 
 	// Where it sits in what is left is its alignment's answer, and changing
 	// that after the build reaches the layout.
-	_ = ui.Object("lfill").Set("halign=textbegin")
+	_ = ui.Object("lfill").Set("halign=textnatural")
 	begin, _ := at()
-	_ = ui.Object("lfill").Set("halign=textend")
+	_ = ui.Object("lfill").Set("halign=textopposite")
 	end, _ := at()
 	_ = ui.Object("lfill").Set("halign=center")
 	middle, _ := at()
 
 	if !(begin < middle && middle < end) {
-		t.Errorf("textbegin, center and textend put it at x=%d, %d and %d", begin, middle, end)
+		t.Errorf("textnatural, center and textopposite put it at x=%d, %d and %d", begin, middle, end)
 	}
 
 	// Filling is what the maximum interrupted: turned off, the button falls

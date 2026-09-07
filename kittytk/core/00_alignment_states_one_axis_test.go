@@ -35,8 +35,8 @@ func TestAnAlignmentSaysWhichAxisItWasAskedAbout(t *testing.T) {
 // Over is what a container's answer and a child's meet in: the child wins the
 // fields it asked about, and the container keeps the rest.
 func TestAlignmentOverKeepsWhatTheChildDidNotAskAbout(t *testing.T) {
-	band := Alignment{H: AlignTextEnd, V: AlignTop, FillH: false, FillV: false}.
-		WithH(AlignTextEnd).WithFill(false, false)
+	band := Alignment{H: AlignTextOpposite, V: AlignTop, FillH: false, FillV: false}.
+		WithH(AlignTextOpposite).WithFill(false, false)
 
 	child := Alignment{}.WithV(AlignBottom)
 	got := child.Over(band)
@@ -44,8 +44,8 @@ func TestAlignmentOverKeepsWhatTheChildDidNotAskAbout(t *testing.T) {
 	if got.V != AlignBottom || !got.VSet {
 		t.Errorf("the child's own axis was lost: %+v", got)
 	}
-	if got.H != AlignTextEnd {
-		t.Errorf("the horizontal is %v, want the band's AlignTextEnd -- the child said "+
+	if got.H != AlignTextOpposite {
+		t.Errorf("the horizontal is %v, want the band's AlignTextOpposite -- the child said "+
 			"nothing about it", got.H)
 	}
 	if got.FillH || got.FillV {

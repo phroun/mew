@@ -8,7 +8,7 @@ import (
 
 // The run of a horizontal box reads the way its direction does.
 //
-// The toolkit already sells AlignLayoutBegin as "the side the surrounding
+// The toolkit already sells AlignLayoutNatural as "the side the surrounding
 // direction begins on", so a row whose own beginning is always the left edge
 // contradicts a word every trinket can be given.
 //

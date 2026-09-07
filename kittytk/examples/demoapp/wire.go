@@ -193,9 +193,9 @@ func (a *app) wireLimits() {
 	ui.Object("lmin0").On("toggle", set(mid, "min_width=0"))
 	ui.Object("lmin160").On("toggle", set(mid, "min_width=160"))
 
-	ui.Object("lhbegin").On("toggle", set(capped, "halign=textbegin"))
+	ui.Object("lhbegin").On("toggle", set(capped, "halign=textnatural"))
 	ui.Object("lhcenter").On("toggle", set(capped, "halign=center"))
-	ui.Object("lhend").On("toggle", set(capped, "halign=textend"))
+	ui.Object("lhend").On("toggle", set(capped, "halign=textopposite"))
 
 	// Filling is what the maximum interrupts, so it is worth turning off to
 	// see that the two arrive at the same placement.

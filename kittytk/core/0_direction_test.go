@@ -143,8 +143,8 @@ func TestTextDirectionPrefersWhatTheTrinketSays(t *testing.T) {
 }
 
 // A trinket with no opinion -- a caption of digits, or one that declines --
-// takes the direction around it, which is what makes textbegin land where
-// layoutbegin does.
+// takes the direction around it, which is what makes textnatural land where
+// layoutnatural does.
 func TestTextDirectionFallsBackToTheSurroundings(t *testing.T) {
 	form := newDirBox()
 	form.SetDirection(DirRTL)

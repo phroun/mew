@@ -120,7 +120,7 @@ func FindEffectiveDirection(w Trinket) Direction {
 // punctuation, or of nothing at all has no strongly directional character in
 // it and so names no direction -- which is the common case, not a rare one --
 // and a trinket may also decline outright. Either way the layout falls back to
-// the direction in force around it, so textbegin lands where layoutbegin does.
+// the direction in force around it, so textnatural lands where layoutnatural does.
 type TextDirectioner interface {
 	TextDirection() (Direction, bool)
 }

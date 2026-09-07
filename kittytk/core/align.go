@@ -5,21 +5,28 @@ package core
 // Four of the seven are stated against a direction and swap sides with it; the
 // two optical ones never move, and are spelled at length so that pinning a
 // side reads as a decision rather than an oversight.
+//
+// NATURAL is the side a direction reads from -- where something goes when
+// nothing fights the reading. OPPOSITE is the other side of the same box, and
+// what it is opposite TO is the natural side named in the same word: the
+// text's own for the text pair, the surrounding layout's for the layout pair.
+// Neither ever names a side of the screen; that is what optical is for.
 type HAlign int
 
 const (
-	// AlignTextBegin is the side this trinket's OWN text begins on -- left for
-	// an English caption, right for a Hebrew one. A trinket whose text names
-	// no direction, and one that carries no text at all, falls back to the
-	// direction in force around it, so this lands where AlignLayoutBegin does.
-	AlignTextBegin HAlign = iota
-	// AlignTextEnd is the opposite side from where the trinket's text begins.
-	AlignTextEnd
-	// AlignLayoutBegin is the side the surrounding direction begins on,
+	// AlignTextNatural is the side this trinket's OWN text reads from -- left
+	// for an English caption, right for a Hebrew one. A trinket whose text
+	// names no direction, and one that carries no text at all, falls back to
+	// the direction in force around it, so this lands where
+	// AlignLayoutNatural does.
+	AlignTextNatural HAlign = iota
+	// AlignTextOpposite is the far side from where the trinket's text begins.
+	AlignTextOpposite
+	// AlignLayoutNatural is the side the surrounding direction reads from,
 	// whatever the trinket's own text says.
-	AlignLayoutBegin
-	// AlignLayoutEnd is the opposite side from that.
-	AlignLayoutEnd
+	AlignLayoutNatural
+	// AlignLayoutOpposite is the far side from that.
+	AlignLayoutOpposite
 	// AlignCenter is the middle, which no direction moves.
 	AlignCenter
 	// AlignOpticalLeft is the left, whatever any direction says.
@@ -159,13 +166,13 @@ func ResolveHAlign(a HAlign, textDir, layoutDir Direction) HSide {
 		textDir = layoutDir
 	}
 
-	begin := func(d Direction) HSide {
+	natural := func(d Direction) HSide {
 		if d == DirRTL {
 			return SideRight
 		}
 		return SideLeft
 	}
-	end := func(d Direction) HSide {
+	opposite := func(d Direction) HSide {
 		if d == DirRTL {
 			return SideLeft
 		}
@@ -173,14 +180,14 @@ func ResolveHAlign(a HAlign, textDir, layoutDir Direction) HSide {
 	}
 
 	switch a {
-	case AlignTextBegin:
-		return begin(textDir)
-	case AlignTextEnd:
-		return end(textDir)
-	case AlignLayoutBegin:
-		return begin(layoutDir)
-	case AlignLayoutEnd:
-		return end(layoutDir)
+	case AlignTextNatural:
+		return natural(textDir)
+	case AlignTextOpposite:
+		return opposite(textDir)
+	case AlignLayoutNatural:
+		return natural(layoutDir)
+	case AlignLayoutOpposite:
+		return opposite(layoutDir)
 	case AlignOpticalLeft:
 		return SideLeft
 	case AlignOpticalRight:

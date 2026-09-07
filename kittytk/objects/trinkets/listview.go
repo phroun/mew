@@ -606,7 +606,7 @@ func (l *ListView) showsScrollbar() bool {
 // column of figures still lines up with everything around it.
 func (l *ListView) itemTextSide(item *ListItem) core.HSide {
 	dir, _ := textDirectionOf(core.DirInherit, item.Text)
-	return core.ResolveHAlign(core.AlignTextBegin, dir, core.FindEffectiveDirection(l))
+	return core.ResolveHAlign(core.AlignTextNatural, dir, core.FindEffectiveDirection(l))
 }
 
 // scrollbarGeometry returns scrollbar dimensions and thumb position.

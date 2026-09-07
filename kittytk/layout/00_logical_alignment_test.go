@@ -73,12 +73,12 @@ func placeInVBox(c *dirContainer, item core.Trinket) core.UnitRect {
 	return item.Bounds()
 }
 
-// layoutbegin follows the room the item sits in: the same item, asking for the
+// layoutnatural follows the room the item sits in: the same item, asking for the
 // same thing, lands on opposite sides of a left-to-right and a right-to-left
 // form.
 func TestLayoutBeginFollowsTheContainer(t *testing.T) {
 	const w = core.Unit(24)
-	a := core.Alignment{H: core.AlignLayoutBegin, V: core.AlignMiddle}
+	a := core.Alignment{H: core.AlignLayoutNatural, V: core.AlignMiddle}
 
 	got := placeInVBox(newDirContainer(core.DirLTR), newAlignedTrinket(w, 16, a))
 	if got.X != 0 || got.Width != w {
@@ -91,11 +91,11 @@ func TestLayoutBeginFollowsTheContainer(t *testing.T) {
 	}
 }
 
-// textbegin follows the item's OWN text, so an English caption keeps its left
+// textnatural follows the item's OWN text, so an English caption keeps its left
 // edge in a right-to-left form while everything around it begins on the right.
 func TestTextBeginFollowsTheItemsOwnText(t *testing.T) {
 	const w = core.Unit(24)
-	a := core.Alignment{H: core.AlignTextBegin, V: core.AlignMiddle}
+	a := core.Alignment{H: core.AlignTextNatural, V: core.AlignMiddle}
 
 	english := newAlignedTrinket(w, 16, a)
 	english.textDir, english.speaks = core.DirLTR, true

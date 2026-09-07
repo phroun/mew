@@ -37,10 +37,10 @@ type TreeColumn struct {
 	MaxWidth core.Unit
 
 	// Align is where this column's text sits in its cell, in the seven
-	// words the rest of the toolkit uses. textbegin and textend follow
+	// words the rest of the toolkit uses. textnatural and textopposite follow
 	// each CELL's own text, so one column may hold Hebrew and English
-	// and read each the way its own script does; layoutbegin and
-	// layoutend follow the COLUMN's direction, so every cell matches;
+	// and read each the way its own script does; layoutnatural and
+	// layoutopposite follow the COLUMN's direction, so every cell matches;
 	// the optical pair names a side of the screen outright.
 	Align core.HAlign
 
@@ -118,7 +118,7 @@ func NewTreeColumn(id, caption string, width core.Unit) *TreeColumn {
 	return &TreeColumn{
 		ID: id, Caption: caption, Width: width,
 		MinWidth: treeColMinWidth, MaxWidth: core.Unbounded,
-		Align: core.AlignTextBegin, Resizable: true, Optional: true,
+		Align: core.AlignTextNatural, Resizable: true, Optional: true,
 		SortProxy: -1, EnumStore: "value",
 	}
 }
@@ -1333,13 +1333,13 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			// A caption begins where its column does and the arrow sits
 			// at the other end of it, so a column that reads the other
 			// way has a header that reads with it.
-			capSide := t.colSide(sp.col, core.AlignLayoutBegin)
+			capSide := t.colSide(sp.col, core.AlignLayoutNatural)
 			if t.sortIndicatorFor(sp.col) {
 				arrow := "▲"
 				if t.sortDescending {
 					arrow = "▼"
 				}
-				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, t.colSide(sp.col, core.AlignLayoutEnd))
+				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, t.colSide(sp.col, core.AlignLayoutOpposite))
 				// Keep the caption clear of the arrow, off whichever end
 				// the arrow took.
 				capSp := sp
@@ -2962,9 +2962,9 @@ func (t *TreeView) colDirection(col *TreeColumn) core.Direction {
 
 // cellTextSide is where one cell's text begins inside the room it is given.
 //
-// The column's align says which question to ask: textbegin and textend are
+// The column's align says which question to ask: textnatural and textopposite are
 // asked of the CELL's own text, so a column of names reads each one the way
-// its script does; layoutbegin and layoutend are asked of the column, so every
+// its script does; layoutnatural and layoutopposite are asked of the column, so every
 // cell in it matches; the optical pair answers a side of the screen outright
 // and neither is asked.
 func (t *TreeView) cellTextSide(col *TreeColumn, text string) core.HSide {
@@ -2977,7 +2977,7 @@ func (t *TreeView) cellTextSide(col *TreeColumn, text string) core.HSide {
 // lines leading to it stop.
 func (t *TreeView) colAlign(col *TreeColumn) core.HAlign {
 	if col == nil || col == treeKeyColumn || col == t.treeHostColumn() {
-		return core.AlignLayoutBegin
+		return core.AlignLayoutNatural
 	}
 	return col.Align
 }

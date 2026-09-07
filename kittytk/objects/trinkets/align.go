@@ -12,13 +12,13 @@ import (
 // rows running top to bottom whatever the direction.
 var (
 	hAlignWords = map[string]core.HAlign{
-		"textbegin":    core.AlignTextBegin,
-		"textend":      core.AlignTextEnd,
-		"layoutbegin":  core.AlignLayoutBegin,
-		"layoutend":    core.AlignLayoutEnd,
-		"center":       core.AlignCenter,
-		"opticalleft":  core.AlignOpticalLeft,
-		"opticalright": core.AlignOpticalRight,
+		"textnatural":    core.AlignTextNatural,
+		"textopposite":   core.AlignTextOpposite,
+		"layoutnatural":  core.AlignLayoutNatural,
+		"layoutopposite": core.AlignLayoutOpposite,
+		"center":         core.AlignCenter,
+		"opticalleft":    core.AlignOpticalLeft,
+		"opticalright":   core.AlignOpticalRight,
 	}
 	vAlignWords = map[string]core.VAlign{
 		"top":    core.AlignTop,
@@ -34,7 +34,7 @@ var (
 )
 
 func hAlignWordList() []string {
-	return []string{"textbegin", "textend", "layoutbegin", "layoutend", "center", "opticalleft", "opticalright"}
+	return []string{"textnatural", "textopposite", "layoutnatural", "layoutopposite", "center", "opticalleft", "opticalright"}
 }
 
 // hAlignWord maps the wire vocabulary onto a horizontal alignment.

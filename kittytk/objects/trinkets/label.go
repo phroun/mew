@@ -26,7 +26,7 @@ type Label struct {
 func NewLabel(text string) *Label {
 	l := &Label{
 		text:      text,
-		alignment: core.AlignTextBegin,
+		alignment: core.AlignTextNatural,
 	}
 	l.TrinketBase = *core.NewTrinketBase()
 	l.Init(l)

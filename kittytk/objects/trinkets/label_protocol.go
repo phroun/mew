@@ -27,7 +27,7 @@ func init() {
 				}
 				l.SetAlignment(a)
 				return nil
-			})).OneOf(hAlignWordList()...).Def("textbegin").
+			})).OneOf(hAlignWordList()...).Def("textnatural").
 				Tip("Text alignment within the label."),
 			"text_direction": textDirectionProp((*Label).SetTextDirection),
 		},

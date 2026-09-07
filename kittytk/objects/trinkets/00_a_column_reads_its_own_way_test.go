@@ -51,11 +51,11 @@ func TestAColumnTakesTheTreesDirectionUnlessItSaysOtherwise(t *testing.T) {
 	}
 }
 
-// textbegin is asked of each CELL's own text, so one column holds Hebrew and
+// textnatural is asked of each CELL's own text, so one column holds Hebrew and
 // English together and reads each the way its own script does.
 func TestTextBeginIsAskedOfEachCell(t *testing.T) {
 	tv, col := mixedTree(core.DirLTR)
-	col.Align = core.AlignTextBegin
+	col.Align = core.AlignTextNatural
 
 	if got := tv.cellTextSide(col, english); got != core.SideLeft {
 		t.Errorf("an English cell begins on the %v, want the left", got)
@@ -72,29 +72,29 @@ func TestTextBeginIsAskedOfEachCell(t *testing.T) {
 		t.Errorf("a figure in a right-to-left column begins on the %v, want the right", got)
 	}
 	// The English cell is unmoved by the column turning: its own script is
-	// what textbegin asks about.
+	// what textnatural asks about.
 	if got := tv.cellTextSide(col, english); got != core.SideLeft {
 		t.Errorf("an English cell in a right-to-left column begins on the %v, want the left", got)
 	}
 }
 
-// layoutbegin is asked of the COLUMN, so every cell in it matches whatever the
+// layoutnatural is asked of the COLUMN, so every cell in it matches whatever the
 // column reads -- which is what a column of one language wants.
 func TestLayoutBeginIsAskedOfTheColumn(t *testing.T) {
 	tv, col := mixedTree(core.DirLTR)
-	col.Align = core.AlignLayoutBegin
+	col.Align = core.AlignLayoutNatural
 	col.Direction = core.DirRTL
 
 	for _, text := range []string{english, hebrew, figure} {
 		if got := tv.cellTextSide(col, text); got != core.SideRight {
-			t.Errorf("%q under layoutbegin in a right-to-left column begins on the %v, want the right",
+			t.Errorf("%q under layoutnatural in a right-to-left column begins on the %v, want the right",
 				text, got)
 		}
 	}
-	col.Align = core.AlignLayoutEnd
+	col.Align = core.AlignLayoutOpposite
 	for _, text := range []string{english, hebrew, figure} {
 		if got := tv.cellTextSide(col, text); got != core.SideLeft {
-			t.Errorf("%q under layoutend in a right-to-left column ends on the %v, want the left",
+			t.Errorf("%q under layoutopposite in a right-to-left column ends on the %v, want the left",
 				text, got)
 		}
 	}

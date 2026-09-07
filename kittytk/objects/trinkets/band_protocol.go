@@ -16,7 +16,7 @@ import (
 //	    new band id=labels max_size=96
 //	    new band id=fields stretch=1 min_size=80
 //	} children={
-//	    new label caption="Name:" row=0 column=labels halign=textend fill=none
+//	    new label caption="Name:" row=0 column=labels halign=textopposite fill=none
 //	    new textinput row=0 column=fields
 //	}
 //
