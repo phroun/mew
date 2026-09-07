@@ -52,7 +52,7 @@ func CellRunMapped(text string, dir Direction) (run []rune, where []int) {
 	if text == "" || dir == DirInherit || HasTextMeasurer() {
 		return identity()
 	}
-	lay := khatool.Order(runes, dir == DirRTL, ridesCell)
+	lay := khatool.Order(runes, dir == DirRTL, CellRides)
 	if lay == nil {
 		return identity() // visual order is logical order, and nothing to shape
 	}
@@ -79,11 +79,16 @@ func CellRunMapped(text string, dir Direction) (run []rune, where []int) {
 	return out, where
 }
 
-// ridesCell is the cluster rule for a cell target, and it asks the same
+// CellRides is the cluster rule for a cell target, and it asks the same
 // question the emitter answers when it advances: a rune the target gives no
 // cell to is drawn INTO the cell before it, so it travels with that cell when
 // a run turns over. See CellWidth.
-func ridesCell(runes []rune, i int) bool {
+//
+// It is exported because a caller that orders a run ITSELF -- to know where
+// each rune of it landed, which is what a caret and a selection need -- has to
+// cluster by the same rule this package does, or its idea of the run and the
+// run drawn are two different pictures.
+func CellRides(runes []rune, i int) bool {
 	if i < 0 || i >= len(runes) {
 		return false
 	}
