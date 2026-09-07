@@ -114,9 +114,10 @@ func (t *TreeView) setCellValue(item *TreeItem, col *TreeColumn, v string) {
 	item.SetValue(col.ID, v)
 }
 
-// treeCellTextInset is where the caption text begins within a
-// tree-hosting cell: the indent, the expander cell, and the icon
-// (when the item has one) - mirroring paintTreeCell exactly.
+// treeCellTextInset is how far into a tree-hosting cell the caption text
+// begins, measured along the run: the indent, the expander cell, and the icon
+// (when the item has one) - mirroring paintTreeCell exactly. Where that lands
+// in the span is treeRunX's answer.
 func (t *TreeView) treeCellTextInset(item *TreeItem) core.Unit {
 	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	inset := core.Unit(item.Level()*t.indentWidth+1+treeLeftPadCells) * cw
@@ -646,14 +647,17 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 		// starts - past the indent, expander, and icon - so it lines
 		// up with the value it replaces.
 		if sp.col == nil || (host != nil && sp.col == host) {
-			if textX := sp.x + t.treeCellTextInset(t.editItem); textX > r.X {
-				d := textX - r.X
-				if d >= r.Width {
-					return core.UnitRect{}, false // fully in the apparatus clip
-				}
-				r.X += d
-				r.Width -= d
+			inset := t.treeCellTextInset(t.editItem)
+			w := sp.w - inset
+			if w <= 0 {
+				return core.UnitRect{}, false // no room past the apparatus
 			}
+			x0 := max(t.treeRunX(sp, inset, w), r.X)
+			x1 := min(t.treeRunX(sp, inset, w)+w, r.X+r.Width)
+			if x1 <= x0 {
+				return core.UnitRect{}, false // fully in the apparatus clip
+			}
+			r.X, r.Width = x0, x1-x0
 		}
 		return r, true
 	}
@@ -761,10 +765,10 @@ func (t *TreeView) handleEditMouseRelease(event core.MouseReleaseEvent) bool {
 // disagree.
 func (t *TreeView) treeCellEditZone(sp colSpan, item *TreeItem) (x0, w core.Unit) {
 	metrics := t.EffectiveCellMetrics()
-	textX := sp.x + t.treeCellTextInset(item)
-	avail := sp.x + sp.w - textX
+	inset := t.treeCellTextInset(item)
+	avail := sp.w - inset
 	if avail <= 0 {
-		return textX, 0
+		return t.treeRunX(sp, inset, 0), 0
 	}
 	text := item.Text
 	if sp.col != nil {
@@ -779,7 +783,7 @@ func (t *TreeView) treeCellEditZone(sp colSpan, item *TreeItem) (x0, w core.Unit
 	if zone > avail {
 		zone = avail
 	}
-	return textX, zone
+	return t.treeRunX(sp, inset, zone), zone
 }
 
 // editableColumnAt resolves which editable column the point x (in a

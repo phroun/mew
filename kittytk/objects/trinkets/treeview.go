@@ -336,35 +336,32 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	// This is needed for keyboard navigation when the TreeView is inside
 	// a ScrollArea and the selected item moves outside the visible area.
 	// For mouse clicks, SetFocusWithoutScroll() prevents unwanted scrolling.
-	if index >= 0 {
+	if sp, ok := t.treeHostSpan(); ok && index >= 0 {
 		metrics := t.EffectiveCellMetrics()
+		cw := metrics.UnitsPerCellWidth
 		item := t.flatList[index]
-		level := item.Level()
 
-		// Calculate the item's content start position (one space before the expand indicator)
-		// For root items (level 0), start at X=0
-		contentStartCells := level*t.indentWidth + treeLeftPadCells
-		if contentStartCells > 0 {
-			contentStartCells-- // Show one space of indent
+		// What has to be in view is the row's own content: one column of
+		// indent still showing, then the expander and the caption behind
+		// it, measured along the run and placed where it is drawn.
+		at := core.Unit(item.Level()*t.indentWidth+treeLeftPadCells) * cw
+		if at > 0 {
+			at -= cw
+		}
+		w := 2*cw + t.MeasureText(item.Text)
+		if room := sp.w - at; w > room {
+			w = room
 		}
 
-		// Calculate actual content width: expand indicator (2 chars) + text
-		expandIndicatorWidth := 2 // "▶ " or "▼ " or "  " (for leaves)
-		textWidth := len(item.Text)
-		actualContentCells := expandIndicatorWidth + textWidth
+		// The visual Y position of this item, after the internal scroll.
+		itemY := core.Unit(index-t.scrollOffset) * metrics.UnitsPerCellHeight
 
-		// Calculate the visual Y position of this item (after internal scrolling)
-		// This is where the item appears on screen, relative to the TreeView's bounds
-		visualRow := index - t.scrollOffset
-		itemY := core.Unit(visualRow) * metrics.UnitsPerCellHeight
-
-		itemRect := core.UnitRect{
-			X:      core.Unit(contentStartCells) * metrics.UnitsPerCellWidth,
+		t.ScrollRectIntoView(core.UnitRect{
+			X:      t.treeRunX(sp, at, w),
 			Y:      itemY,
-			Width:  core.Unit(actualContentCells) * metrics.UnitsPerCellWidth,
+			Width:  w,
 			Height: metrics.UnitsPerCellHeight,
-		}
-		t.ScrollRectIntoView(itemRect)
+		})
 	}
 
 	// Announce selection change for accessibility
@@ -675,7 +672,6 @@ func (t *TreeView) Paint(p *core.Painter) {
 
 		item := t.flatList[itemIndex]
 		itemY := core.Unit(i) * metrics.UnitsPerCellHeight
-		level := item.Level()
 
 		// Determine style
 		var s style.CellStyle
@@ -708,46 +704,10 @@ func (t *TreeView) Paint(p *core.Painter) {
 			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 
-		// Calculate x position with indent (plus the left breathing pad)
-		x := core.Unit(level*t.indentWidth+treeLeftPadCells) * metrics.UnitsPerCellWidth
-
-		// Connector lines fill the indent space (never widen it).
-		if t.treeLines {
-			for ci, r := range t.treeLinePrefix(item) {
-				if r != ' ' {
-					t.drawTreeLineCell(p, core.Unit(ci+treeLeftPadCells)*metrics.UnitsPerCellWidth, itemY, r, s, metrics)
-				}
-			}
-		}
-
-		// Draw expand/collapse indicator
-		if !item.IsLeaf() {
-			if item.Expanded {
-				p.DrawCell(x, itemY, '▼', s)
-			} else {
-				p.DrawCell(x, itemY, '▸', s)
-			}
-		} else if t.treeLines {
-			p.DrawCell(x, itemY, '▪', s)
-		} else {
-			p.DrawCell(x, itemY, ' ', s)
-		}
-		x += metrics.UnitsPerCellWidth
-
-		// Draw icon if present
-		if item.Icon != nil && len(item.Icon.Cells) > 0 {
-			cell := item.Icon.Cells[0]
-			p.DrawCell(x, itemY, cell.Char, cell.Style)
-			x += metrics.UnitsPerCellWidth * 2
-		}
-
-		// Draw text using font-aware rendering
-		font := t.EffectiveFont()
-		availableWidth := bounds.Width - x
-		if availableWidth < 0 {
-			availableWidth = 0
-		}
-		p.DrawText(x, itemY, ellipsizeText(font, t.EffectiveCellMetrics(), item.Text, availableWidth), s, font)
+		// One tree cell across the row, beside the scrollbar's lane: the
+		// same apparatus the multi-column presentation draws in its host
+		// span, over a span the width of the content.
+		t.paintTreeCell(p, item, t.rowSpan(), itemY, s, s, metrics, t.EffectiveFont(), item.Text)
 	}
 
 	// Draw scrollbar if needed
@@ -769,6 +729,38 @@ func (t *TreeView) visibleCount() int {
 		n = 0
 	}
 	return n
+}
+
+// treeHostSpan is the span the tree apparatus is drawn in: the key column's,
+// or - with the key hidden - the first visible data column's, and the whole
+// row in the single-column presentation. ok=false when the host has been
+// panned out of sight, where there is nothing of the tree to hit.
+func (t *TreeView) treeHostSpan() (colSpan, bool) {
+	if !t.multiColumn() {
+		return t.rowSpan(), true
+	}
+	lay := t.columnLayout()
+	host := t.treeHostColumn()
+	for _, sp := range lay.spans {
+		if sp.col == nil || (host != nil && sp.col == host) {
+			return sp, true
+		}
+	}
+	return colSpan{}, false
+}
+
+// rowSpan is the single-column presentation's one span: the whole row, less
+// the scrollbar's lane when there is a scrollbar, so a caption never runs
+// under the bar.
+func (t *TreeView) rowSpan() colSpan {
+	w := t.Bounds().Width
+	if len(t.flatList) > t.visibleCount() {
+		w -= t.EffectiveCellMetrics().UnitsPerCellWidth
+	}
+	if w < 0 {
+		w = 0
+	}
+	return colSpan{x: core.LeadingX(t, t.Bounds().Width, 0, w), w: w, divX: -1}
 }
 
 // laneX is the column the vertical scrollbar stands in: the TRAILING edge,
@@ -1271,30 +1263,15 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	// Only process if click is on a valid item
 	if event.X >= 0 && event.X < bounds.Width && contentY >= 0 && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
 		item := t.flatList[clickedIndex]
-		level := item.Level()
 
 		// Check if clicked on expand/collapse indicator. In the
 		// multi-column presentation the tree lives in its host span -
 		// the key column, or (key hidden) the first visible data
-		// column - which may be panned; offset accordingly.
-		keyX := core.Unit(0)
-		if t.multiColumn() {
-			lay := t.columnLayout()
-			host := t.treeHostColumn()
-			keyX = core.Unit(-1)
-			for _, sp := range lay.spans {
-				if sp.col == nil || (host != nil && sp.col == host) {
-					keyX = sp.x
-					break
-				}
-			}
-			if keyX < 0 {
-				keyX = bounds.Width // no tree host in view: no indicator hit
-			}
-		}
-		indicatorX := keyX + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.UnitsPerCellWidth
-		if event.X >= indicatorX && event.X < indicatorX+metrics.UnitsPerCellWidth {
-			if !item.IsLeaf() {
+		// column - which may be panned; the painter's own arithmetic
+		// says where the glyph ended up.
+		if sp, ok := t.treeHostSpan(); ok {
+			ix, iw := t.treeExpanderRect(sp, item)
+			if event.X >= ix && event.X < ix+iw && !item.IsLeaf() {
 				t.ToggleItem(item)
 				return true
 			}

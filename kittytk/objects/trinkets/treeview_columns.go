@@ -640,13 +640,18 @@ func (t *TreeView) treeLinePrefix(item *TreeItem) []rune {
 	for n, k := item, level-1; k >= 0; n, k = n.Parent, k-1 {
 		chain[k] = n
 	}
+	// The elbow opens towards the caption, which is the way the tree reads.
+	tee, elbow := '├', '└'
+	if core.ChromeMirrored(t) {
+		tee, elbow = '┤', '┘'
+	}
 	for k, n := range chain {
 		at := k * t.indentWidth
 		if k == level-1 {
 			if t.hasNextVisualSibling(n) {
-				out[at] = '├'
+				out[at] = tee
 			} else {
-				out[at] = '└'
+				out[at] = elbow
 			}
 			for i := at + 1; i < len(out); i++ {
 				out[i] = '─'
@@ -674,22 +679,37 @@ func (t *TreeView) drawTreeLineCell(p *core.Painter, x, y core.Unit, r rune, s s
 	vert := func(from, to core.Unit) {
 		p.FillRectPixelsAlpha(cx, from, 0, 0, 1, p.UnitSpanPxY(from, to), fr, fg, fb, 1)
 	}
-	horiz := func(from core.Unit) {
+	// The leg an elbow or a tee reaches out with, towards the caption: the
+	// rest of the cell one way round, the front of it the other, ending ON
+	// the stroke so the join is closed.
+	legOut := func(from core.Unit) {
 		p.FillRectPixelsAlpha(from, cy, 0, 0, p.UnitSpanPxX(from, x+cw), 1, fr, fg, fb, 1)
+	}
+	legBack := func(to core.Unit) {
+		p.FillRectPixelsAlpha(x, cy, 0, 0, p.UnitSpanPxX(x, to)+1, 1, fr, fg, fb, 1)
+	}
+	// The elbow's vertical leg meets the horizontal stroke, one extra pixel
+	// so that corner is closed too.
+	corner := func() {
+		p.FillRectPixelsAlpha(cx, y, 0, 0, 1, p.UnitSpanPxY(y, cy)+1, fr, fg, fb, 1)
 	}
 	switch r {
 	case '│':
 		vert(y, y+ch)
 	case '├':
 		vert(y, y+ch)
-		horiz(cx)
+		legOut(cx)
+	case '┤':
+		vert(y, y+ch)
+		legBack(cx)
 	case '└':
-		// The elbow's vertical leg meets the horizontal stroke (one
-		// extra pixel so the corner is closed).
-		p.FillRectPixelsAlpha(cx, y, 0, 0, 1, p.UnitSpanPxY(y, cy)+1, fr, fg, fb, 1)
-		horiz(cx)
+		corner()
+		legOut(cx)
+	case '┘':
+		corner()
+		legBack(cx)
 	case '─':
-		horiz(x)
+		legOut(x)
 	}
 }
 
@@ -1709,41 +1729,69 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 	}
 }
 
+// treeRunX turns a place measured from a tree-hosting cell's BEGINNING into a
+// place in the span. The apparatus reads the way the TREE does whatever the
+// column hosting it says for itself, because the lines have to arrive at the
+// caption they lead to.
+func (t *TreeView) treeRunX(sp colSpan, at, w core.Unit) core.Unit {
+	return sp.x + core.LeadingX(t, sp.w, at, w)
+}
+
+// treeExpanderRect is the cell the expander glyph stands in: past the pad and
+// the item's indent. The painter draws it there and the mouse looks for it
+// there, so both ask here.
+func (t *TreeView) treeExpanderRect(sp colSpan, item *TreeItem) (x, w core.Unit) {
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+	at := core.Unit(item.Level()*t.indentWidth+treeLeftPadCells) * cw
+	return t.treeRunX(sp, at, cw), cw
+}
+
 // paintTreeCell draws a tree-hosting cell for one row: indent,
 // expander, icon, then the given text (the key column's caption, or -
 // with the key hidden - the host data column's value), constrained to
-// the span and always left-aligned.
+// the span and beginning at its leading edge.
 func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s, textStyle style.CellStyle, metrics core.CellMetrics, font *core.Font, text string) {
-	level := item.Level()
-	x := sp.x + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.UnitsPerCellWidth
+	cw := metrics.UnitsPerCellWidth
 	// Connector lines fill the indent space (never widen it).
 	if t.treeLines {
 		for ci, r := range t.treeLinePrefix(item) {
 			if r != ' ' {
-				t.drawTreeLineCell(p, sp.x+core.Unit(ci+treeLeftPadCells)*metrics.UnitsPerCellWidth, itemY, r, s, metrics)
+				t.drawTreeLineCell(p, t.treeRunX(sp, core.Unit(ci+treeLeftPadCells)*cw, cw), itemY, r, s, metrics)
 			}
 		}
 	}
+	x, _ := t.treeExpanderRect(sp, item)
 	if !item.IsLeaf() {
 		if item.Expanded {
 			p.DrawCell(x, itemY, '▼', s)
 		} else {
-			p.DrawCell(x, itemY, '▸', s)
+			p.DrawCell(x, itemY, t.expanderGlyph(), s)
 		}
 	} else if t.treeLines {
 		p.DrawCell(x, itemY, '▪', s)
 	}
-	x += metrics.UnitsPerCellWidth
+	// Past the apparatus: the icon's cell, then everything left of the span
+	// for the caption.
+	at := t.treeCellTextInset(item)
 	if item.Icon != nil && len(item.Icon.Cells) > 0 {
 		cell := item.Icon.Cells[0]
-		p.DrawCell(x, itemY, cell.Char, cell.Style)
-		x += metrics.UnitsPerCellWidth * 2
+		p.DrawCell(t.treeRunX(sp, at-2*cw, cw), itemY, cell.Char, cell.Style)
 	}
-	avail := sp.x + sp.w - x
+	avail := sp.w - at
 	if avail < 0 {
 		avail = 0
 	}
-	p.DrawText(x, itemY, ellipsizeText(font, t.EffectiveCellMetrics(), text, avail), textStyle, font)
+	text = ellipsizeText(font, t.EffectiveCellMetrics(), text, avail)
+	p.DrawText(t.treeRunX(sp, at, t.MeasureText(text)), itemY, text, textStyle, font)
+}
+
+// expanderGlyph is the arrow a collapsed item wears: it points the way the
+// tree runs, which is where its children will appear from.
+func (t *TreeView) expanderGlyph() rune {
+	if core.ChromeMirrored(t) {
+		return '◂'
+	}
+	return '▸'
 }
 
 // ellipsizeText fits text into avail, replacing a cut tail with an
