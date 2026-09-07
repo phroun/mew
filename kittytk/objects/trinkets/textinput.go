@@ -51,6 +51,10 @@ type TextInput struct {
 	// where an author's own direction control sits. They show while the field
 	// is FOCUSED -- they are for working on the text, and a field being read
 	// wants the plain picture.
+	//
+	// On by default. Someone editing a line that turns over needs to see where
+	// it turns; a field that hid that until it was asked would hide it from
+	// everyone who did not already know to ask.
 	showBidiControls bool
 
 	// Callbacks
@@ -132,9 +136,10 @@ const (
 // NewTextInput creates a new text input.
 func NewTextInput() *TextInput {
 	t := &TextInput{
-		echoMode:  EchoNormal,
-		maxLength: -1, // No limit
-		showAhead: defaultShowAhead,
+		echoMode:         EchoNormal,
+		maxLength:        -1, // No limit
+		showAhead:        defaultShowAhead,
+		showBidiControls: true,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
 	t.SetCommands(
@@ -279,7 +284,7 @@ func (t *TextInput) ShowBidiControls() bool {
 	return t.showBidiControls
 }
 
-// SetShowBidiControls turns the direction markers on: a mark where each
+// SetShowBidiControls turns the direction markers on or off: a mark where each
 // fragment of the line begins and which way it reads, and the author's own
 // direction controls shown as themselves rather than spent invisibly.
 //
@@ -287,6 +292,9 @@ func (t *TextInput) ShowBidiControls() bool {
 // the line looks like, which is worth it while the text is being worked on and
 // noise while it is being read, so a field that loses focus falls back to the
 // plain picture of the same text.
+//
+// This is here to turn them OFF: they are on unless a caller says otherwise,
+// because someone editing a line that turns over needs to see where it turns.
 func (t *TextInput) SetShowBidiControls(show bool) {
 	if t.showBidiControls == show {
 		return

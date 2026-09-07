@@ -306,7 +306,7 @@ tf=new tab caption="Text Fields" children={
 
 				new label caption="Mixed directions. Walk the caret through it:"
 				tfbidi=new textinput min_width=160 text="abc שלום xyz"
-				tfbidic=new checkbox caption="show_bidi_controls -- where the reading turns, while focused" halign=textnatural fill=none
+				tfbidic=new checkbox caption="show_bidi_controls -- where the reading turns, while focused" halign=textnatural fill=none checked
 
 				new label caption="show_ahead - how much stays in sight past the caret:"
 				tfahead=new textinput min_width=160 text="the quick brown fox jumps over the lazy dog" show_ahead=6

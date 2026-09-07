@@ -116,17 +116,22 @@ func TestDirectionMarkersComeAndGoWithTheFocus(t *testing.T) {
 	ti.SetText(mixed)
 	ti.SetBounds(core.UnitRect{Width: 40 * 8, Height: 16})
 
-	if ti.markersShown() {
-		t.Error("a field nobody asked shows markers")
+	// On unless it is turned off, and even then only while focused.
+	if !ti.ShowBidiControls() {
+		t.Error("a field that was not asked either way keeps the marks off")
 	}
-	ti.SetShowBidiControls(true)
 	if ti.markersShown() {
 		t.Error("an unfocused field shows markers")
 	}
 	ti.SetFocus()
 	if !ti.markersShown() {
-		t.Fatal("a focused field that was asked shows no markers")
+		t.Fatal("a focused field shows no markers")
 	}
+	ti.SetShowBidiControls(false)
+	if ti.markersShown() {
+		t.Error("a field asked for none shows them anyway")
+	}
+	ti.SetShowBidiControls(true)
 
 	plain := ti.runGeometry(runes, ti.EffectiveFont(), false, false, 0)
 	marked := ti.runGeometry(runes, ti.EffectiveFont(), false, true, 0)
