@@ -90,6 +90,25 @@ func init() {
 				tw.Update()
 				return nil
 			})).Tip("Tab body background color."),
+			"align": protocol.NewProperty("enum", wprop("align", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
+				w, err := protocol.AsWord("align", v, f)
+				if err != nil {
+					return err
+				}
+				a, ok := map[string]TabAlign{
+					"natural":  TabsAlignNatural,
+					"center":   TabsAlignCenter,
+					"opposite": TabsAlignOpposite,
+				}[w]
+				if !ok {
+					return fmt.Errorf("align: unknown value %q", w)
+				}
+				tw.SetTabAlign(a)
+				return nil
+			})).OneOf("natural", "center", "opposite").Def("natural").
+				Tip("Where the tabs sit along a strip with room to spare: packed at the end " +
+					"the run starts from, centred, or packed at the far end. A strip that has " +
+					"to scroll has no slack to place and ignores this."),
 			"position": protocol.NewProperty("enum", wprop("position", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("position", v, f)
 				if err != nil {

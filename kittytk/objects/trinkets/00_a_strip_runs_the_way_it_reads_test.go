@@ -405,3 +405,114 @@ func TestAPressFindsTheTabItWasDrawnOn(t *testing.T) {
 		}
 	}
 }
+
+// A strip with room to spare can put its slack at either end, or split it.
+// Which end is "natural" is the run's own, so the whole arrangement turns over
+// with the strip -- and a strip that has to scroll has no slack to place.
+func TestASlackStripPutsItsTabsWhereItIsTold(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	// Where the run begins, measured from the end the run starts at.
+	runStart := func(dir core.Direction, a TabAlign, tabs int) (into, bar core.Unit) {
+		px, err := raster.New(600, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := newInk(t)
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		form.AddChild(tt)
+		for i := 0; i < tabs; i++ {
+			tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
+		}
+		tt.SetTabAlign(a)
+		tt.SetBounds(core.UnitRect{Width: 60 * 8, Height: 10 * 16})
+		tt.Paint(core.NewPainter(ink))
+		x, ok := ink.textAt("0000")
+		if !ok {
+			t.Fatalf("%v %d: the strip drew no first tab", dir, a)
+		}
+		w := tt.Bounds().Width
+		if core.ChromeMirrored(tt) {
+			return w - x - tt.MeasureText("0000"), w
+		}
+		return x, w
+	}
+
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		natural, bar := runStart(dir, TabsAlignNatural, 3)
+		center, _ := runStart(dir, TabsAlignCenter, 3)
+		opposite, _ := runStart(dir, TabsAlignOpposite, 3)
+
+		if center <= natural {
+			t.Errorf("%v: centred, the run begins %d into the strip; packed, %d",
+				dir, center, natural)
+		}
+		if opposite <= center {
+			t.Errorf("%v: at the far end the run begins %d into the strip; centred, %d",
+				dir, opposite, center)
+		}
+		if opposite >= bar {
+			t.Errorf("%v: the run begins at %d, past the strip's %d", dir, opposite, bar)
+		}
+		// Centred means the slack is split, so the run's start is halfway
+		// between where the two packed arrangements put it.
+		if want := (natural + opposite) / 2; center != want {
+			t.Errorf("%v: centred, the run begins at %d; halfway between %d and %d is %d",
+				dir, center, natural, opposite, want)
+		}
+	}
+
+	// And the mouse follows: a press at the run's start finds the first tab,
+	// while the slack in front of it belongs to no tab at all.
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		px, err := raster.New(600, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		form.AddChild(tt)
+		for i := 0; i < 3; i++ {
+			tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
+		}
+		tt.SetTabAlign(TabsAlignOpposite)
+		tt.SetBounds(core.UnitRect{Width: 60 * 8, Height: 10 * 16})
+
+		hit := func(x core.Unit) int {
+			tt.currentIndex = -1
+			tt.handleTabBarClick(x)
+			return tt.currentIndex
+		}
+		into := tt.tabRunOffset()
+		at := into + 4*cell // inside the first tab, past its prefix
+		if core.ChromeMirrored(tt) {
+			at = tt.Bounds().Width - at - 1
+		}
+		if got := hit(at); got != 0 {
+			t.Errorf("%v: a press %d into the packed run found tab %d, want the first",
+				dir, into, got)
+		}
+		slack := into / 2 // well inside the room in front of the run
+		if core.ChromeMirrored(tt) {
+			slack = tt.Bounds().Width - slack - 1
+		}
+		if got := hit(slack); got >= 0 {
+			t.Errorf("%v: a press in the slack in front of the run found tab %d", dir, got)
+		}
+	}
+
+	// A strip that has to scroll spends its room on the overflow marks.
+	for _, a := range []TabAlign{TabsAlignCenter, TabsAlignOpposite} {
+		packed, _ := runStart(core.DirLTR, TabsAlignNatural, 40)
+		got, _ := runStart(core.DirLTR, a, 40)
+		if got != packed {
+			t.Errorf("a scrolling strip moved its run to %d for align %d; it has no slack to place",
+				got, a)
+		}
+	}
+}

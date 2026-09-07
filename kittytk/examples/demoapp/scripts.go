@@ -461,10 +461,10 @@ pg=new tab caption="Progress" children={
 }
 
 bt=new tab caption="Bottom Tabs" children={
-	btabs=new tabs position=bottom children={
+	btabs=new tabs position=bottom align=center children={
 		new tab caption="First" children={
 			new panel layout=vbox children={
-				new label caption="This TabTrinket has tabs at the bottom."
+				new label caption="This TabTrinket has tabs at the bottom,\nand align=center: they all fit, so the\nslack is split and they sit in the middle."
 				new label caption="Notice how the tab connectors are inverted:"
 				new label caption="  Top tabs use: _/ and \\_"
 				new label caption="  Bottom tabs use: \\_ and _/"

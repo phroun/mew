@@ -22,6 +22,7 @@ type TabTrinket struct {
 
 	// Tab bar position
 	tabPosition TabPosition
+	tabAlign    TabAlign
 
 	// Appearance
 	movable       bool // Can tabs be reordered
@@ -87,6 +88,55 @@ const (
 	// TabsOpticalRight is the right, whatever any direction says.
 	TabsOpticalRight
 )
+
+// TabAlign is where a strip's tabs sit along it when they all fit.
+//
+// A strip that has to scroll has no slack to place: the tabs start where the
+// run starts and the overflow marks take the rest. Where they DO all fit,
+// this says which end the spare room goes to -- and since the run itself is
+// what turns over, natural and opposite are stated against it rather than
+// against the screen.
+type TabAlign int
+
+const (
+	// TabsAlignNatural packs the tabs at the end the run starts from, and the
+	// slack falls at the other. The usual arrangement.
+	TabsAlignNatural TabAlign = iota
+	// TabsAlignCenter splits the slack evenly, so the tabs sit in the middle.
+	TabsAlignCenter
+	// TabsAlignOpposite packs them at the far end, the slack falling where
+	// they would ordinarily start.
+	TabsAlignOpposite
+)
+
+// SetTabAlign says where the tabs sit along a strip that has room to spare.
+func (t *TabTrinket) SetTabAlign(a TabAlign) {
+	t.tabAlign = a
+	t.Update()
+}
+
+// tabRunOffset is how far into the strip the run of tabs begins.
+//
+// Only a strip whose tabs ALL fit has anything to place: one that scrolls
+// spends its slack on the overflow marks, and shifting the run there would
+// move tabs out from under the very buttons that scroll them.
+func (t *TabTrinket) tabRunOffset() core.Unit {
+	if t.tabAlign == TabsAlignNatural {
+		return 0
+	}
+	// Slack is what is left of the strip once the tabs have had their room,
+	// so a strip with none of it is exactly a strip that has to scroll --
+	// which is the case that must not move, since shifting the run there
+	// would carry tabs out from under the buttons that scroll them.
+	slack := t.Bounds().Width - t.calculateTotalTabsWidth()
+	if slack <= 0 {
+		return 0
+	}
+	if t.tabAlign == TabsAlignCenter {
+		return slack / 2
+	}
+	return slack
+}
 
 // TabEdge is a tab strip's position with the direction already SPENT: which
 // edge of the box it actually stands on.
@@ -1586,7 +1636,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	//   - " \_ " (4 chars) if current tab is selected
 	//   - " _/ " (4 chars) if next tab is selected
 	//   - "  " (2 chars) otherwise
-	x := leftEllipseWidth
+	// Where the run BEGINS: past any overflow mark, and past whatever
+	// slack the alignment put in front of it (see tabRunOffset).
+	x := leftEllipseWidth + t.tabRunOffset()
+	// The bar in front of the run carries the strip's edge like the
+	// filler behind it does, so the line runs unbroken across.
+	for at := leftEllipseWidth; at < x; at += metrics.UnitsPerCellWidth {
+		tape.cell(at, 0, ' ', tabBarUnderlined)
+	}
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
@@ -2351,7 +2408,14 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	//   - "_/ " (3 chars) if current tab is selected
 	//   - " \_" (3 chars) if next tab is selected
 	//   - "  " (2 chars) otherwise
-	x := leftEllipseWidth
+	// Where the run BEGINS: past any overflow mark, and past whatever
+	// slack the alignment put in front of it (see tabRunOffset).
+	x := leftEllipseWidth + t.tabRunOffset()
+	// The bar in front of the run carries the strip's edge like the
+	// filler behind it does, so the line runs unbroken across.
+	for at := leftEllipseWidth; at < x; at += metrics.UnitsPerCellWidth {
+		tape.cell(at, tabY, ' ', tabBarOverlined)
+	}
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
@@ -3500,7 +3564,7 @@ func (t *TabTrinket) handleTabBarClick(x core.Unit) {
 	// Bottom tabs: prefix 3 chars if selected, else 2; separator 3 chars if adjacent to selected, else 2
 	isBottomTabs := t.tabEdge() == TabEdgeBottom
 
-	tabX := leftEllipseWidth
+	tabX := leftEllipseWidth + t.tabRunOffset()
 	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
 		tab := t.tabs[i]
 		isFirstVisible := i == t.tabScrollOffset
