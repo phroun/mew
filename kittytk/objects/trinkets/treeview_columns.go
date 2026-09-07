@@ -1815,6 +1815,7 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 		avail = 0
 	}
 	text = ellipsizeText(font, t.EffectiveCellMetrics(), text, avail)
+	text = t.CellRun(text)
 	p.DrawText(t.treeRunX(sp, at, t.MeasureText(text)), itemY, text, textStyle, font)
 }
 
@@ -1859,6 +1860,11 @@ func ellipsizeText(font *core.Font, m core.CellMetrics, text string, avail core.
 
 // drawAligned draws one cell value inside a span with the column's
 // alignment, ellipsized to fit.
+//
+// The value is cut to fit FIRST and prepared for the cell target afterwards:
+// what is trimmed is the text, and what is drawn is the run made from what is
+// left. It is prepared in the COLUMN's direction, which is what says how the
+// values under that heading read.
 func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.Unit, s style.CellStyle, font *core.Font, side core.HSide) {
 	metrics := t.EffectiveCellMetrics()
 	pad := metrics.UnitsPerCellWidth / 2
@@ -1867,6 +1873,7 @@ func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.
 		avail = 0
 	}
 	text = ellipsizeText(font, metrics, text, avail)
+	text = core.CellRun(text, t.colDirection(sp.col))
 	tw := t.MeasureText(text)
 	x := sp.x
 	switch side {

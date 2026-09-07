@@ -371,7 +371,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		if at > 0 {
 			at -= cw
 		}
-		w := 2*cw + t.MeasureText(item.Text)
+		w := 2*cw + t.MeasureText(t.CellRun(item.Text))
 		if room := sp.w - at; w > room {
 			w = room
 		}
