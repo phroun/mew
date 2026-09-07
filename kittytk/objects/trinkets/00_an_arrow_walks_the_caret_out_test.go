@@ -288,3 +288,91 @@ func TestShiftOnAnArrowExtendsTheSelection(t *testing.T) {
 		t.Error("a plain press on the arrow kept the selection")
 	}
 }
+
+// A drag past the edge walks the TEXT, and which way through it the pointer
+// reaches is settled at the press.
+//
+// In a right-to-left run the text further left is the text further ON, so the
+// two directions are opposites there. Settling it once is what keeps a drag
+// from giving back what it has already taken: the range only ever grows, even
+// as the caret crosses into a run that reads the other way.
+func TestADragKeepsTheDirectionItStartedIn(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	// Long enough to scroll, and reading right to left throughout.
+	hebrew := strings.Repeat("שלום", 20)
+	ti := scrolledField(t, hebrew, 40)
+	roomLo, roomHi := ti.room()
+
+	ti.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: (roomLo + roomHi) / 2})
+	if !ti.dragTurned {
+		t.Fatal("a drag begun in a right-to-left run did not turn over")
+	}
+	at := ti.cursorPos
+	ti.HandleMouseMove(core.MouseMoveEvent{X: roomLo - 1, Buttons: core.LeftButton})
+	if ti.cursorPos <= at {
+		t.Errorf("dragging LEFT in a right-to-left run took the caret to %d, want past "+
+			"%d -- the text further left is the text further on", ti.cursorPos, at)
+	}
+	ti.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+
+	// The other way about, in English.
+	english := strings.Repeat("abcdefghij", 8)
+	ti = scrolledField(t, english, 40)
+	roomLo, roomHi = ti.room()
+	ti.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: (roomLo + roomHi) / 2})
+	if ti.dragTurned {
+		t.Fatal("a drag begun in a left-to-right run turned over")
+	}
+	at = ti.cursorPos
+	ti.HandleMouseMove(core.MouseMoveEvent{X: roomLo - 1, Buttons: core.LeftButton})
+	if ti.cursorPos >= at {
+		t.Errorf("dragging LEFT in a left-to-right run took the caret to %d, want before %d",
+			ti.cursorPos, at)
+	}
+	ti.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+
+	// Crossing into a run that reads the other way does not turn the drag over
+	// mid-way: the range keeps growing rather than starting to shrink.
+	//
+	// Begun in the Hebrew and dragged RIGHT, which in a right-to-left run walks
+	// BACK through the text -- out of the Hebrew and into the English before it,
+	// where left and right mean the opposite things.
+	mixed := strings.Repeat("abcde ", 6) + strings.Repeat("שלום ", 8)
+	ti = scrolledField(t, mixed, 50)
+	roomLo, roomHi = ti.room()
+	ti.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: (roomLo + roomHi) / 2})
+	if !ti.dragTurned {
+		t.Fatal("the drag did not begin in the Hebrew")
+	}
+	turned := ti.dragTurned
+	anchor := ti.selStart
+	span := 0
+	crossed := false
+	for i := 0; i < 30; i++ {
+		ti.HandleMouseMove(core.MouseMoveEvent{X: roomHi, Buttons: core.LeftButton})
+		if ti.cursorPos < 36 {
+			crossed = true // out of the Hebrew and into the English
+		}
+		if ti.dragTurned != turned {
+			t.Fatalf("the drag turned over at step %d", i)
+		}
+		lo, hi := anchor, ti.cursorPos
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		if hi-lo < span {
+			t.Fatalf("at step %d the chosen range shrank from %d to %d characters",
+				i, span, hi-lo)
+		}
+		span = hi - lo
+	}
+	if span == 0 {
+		t.Error("thirty steps of dragging chose nothing")
+	}
+	if !crossed {
+		t.Error("the drag never reached the English, so it never crossed a turn")
+	}
+	ti.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+}

@@ -102,6 +102,16 @@ type TextInput struct {
 	scrollDir   int
 	scrollOverX core.Unit
 
+	// dragTurned says the drag began inside a RIGHT-TO-LEFT run, where the
+	// text further left is the text that comes LATER -- so the walk past the
+	// edge runs the other way through the content.
+	//
+	// Settled once, at the press, and not looked at again. A drag that changed
+	// its mind on crossing into a run of the other direction would start giving
+	// back what it had already taken while the reader is still dragging the
+	// same way; fixed, the chosen range only ever grows.
+	dragTurned bool
+
 	// Held on an end-of-run arrow: which one (-1 left, +1 right), and the
 	// timer walking the caret that way while the button stays down. Separate
 	// from the drag autoscroll above, which is a SELECTION being dragged; this
@@ -1940,6 +1950,7 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 			t.cursorPos = pos
 			t.selEnd = pos
 			t.selecting = true
+			t.dragTurned = t.readsRightToLeftAt(pos)
 			t.clickStreak = 0 // shift-click isn't part of a multi-click run
 		} else {
 			// Count consecutive fast clicks: 2 selects the word under the
@@ -1964,6 +1975,7 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 				t.selStart = pos
 				t.selEnd = pos
 				t.selecting = true
+				t.dragTurned = t.readsRightToLeftAt(pos)
 			}
 		}
 		t.SetFocus()
@@ -2021,6 +2033,24 @@ func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
 	return true
 }
 
+// readsRightToLeftAt reports whether the run holding position p reads right to
+// left. Past the end of the text the last character answers, which is the same
+// rule the caret's own last position follows.
+func (t *TextInput) readsRightToLeftAt(p int) bool {
+	displayText, _, _, _ := t.composedText()
+	g := t.runGeometry(displayText, t.EffectiveFont(), t.shapesText(), t.markersShown(), 0)
+	if len(g.rtl) == 0 {
+		return false
+	}
+	if p >= len(g.rtl) {
+		p = len(g.rtl) - 1
+	}
+	if p < 0 {
+		p = 0
+	}
+	return g.rtl[p]
+}
+
 // startAutoScroll begins (or redirects) the edge autoscroll in direction
 // dir (-1 left, +1 right). It steps once immediately so a drag past the edge
 // reacts at once, then a repeating timer continues while the pointer stays
@@ -2048,17 +2078,28 @@ func (t *TextInput) stopAutoScroll() {
 	t.scrollDir = 0
 }
 
-// autoScrollStep walks the caret in the autoscroll direction, extending the
+// autoScrollStep walks the caret the way the pointer is reaching, extending the
 // selection and scrolling to keep it visible. The step size grows with how
 // far the pointer is past the edge - a nudge crawls, a big overshoot races -
 // and it stops itself at either end of the text.
+//
+// It walks the TEXT, one character at a time, so the chosen range only ever
+// grows. Which way through the text the pointer's direction reaches was settled
+// at the press (see dragTurned).
 func (t *TextInput) autoScrollStep() {
 	if t.scrollDir == 0 {
 		return
 	}
+	// Which way through the TEXT the pointer's direction reaches. In a
+	// right-to-left run the text further left is the text further on, so the
+	// two are opposites -- and which it is was settled at the press.
+	through := t.scrollDir
+	if t.dragTurned {
+		through = -through
+	}
 	moved := false
 	for i := 0; i < t.autoScrollSpeed(); i++ {
-		if t.scrollDir < 0 {
+		if through < 0 {
 			if t.cursorPos <= 0 {
 				break
 			}
