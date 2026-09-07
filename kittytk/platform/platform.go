@@ -316,7 +316,15 @@ func ApplyTextCaret(s Surface, f TextInputFrame) {
 			setter.SetTextInputArea(0, 0, false)
 		}
 	}
-	if !f.Caret.Visible {
+	// Focus overrules the request. A trinket asks for the caret from its own
+	// paint, where all it knows is its own state -- and a trinket that goes on
+	// believing itself focused, or one painted below whatever now holds focus,
+	// asks anyway. The answer to "is there an insertion point on this surface
+	// at all" is a question about FOCUS, and it has already been asked: if what
+	// holds focus does not type, there is no insertion point for anything to
+	// have asked for, and a caret left standing points at where typing used to
+	// go.
+	if !f.Caret.Visible || f.Sink == core.TextSinkAbsent {
 		// Same evidence, same rule: a partial frame that drew no caret is
 		// not a surface being told to stop drawing one.
 		if f.Complete || f.Sink == core.TextSinkAbsent {

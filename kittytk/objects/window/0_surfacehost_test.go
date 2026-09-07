@@ -172,6 +172,8 @@ type caretTrinket struct {
 func newCaretTrinket(style int, x, y core.Unit) *caretTrinket {
 	c := &caretTrinket{style: style, localX: x, localY: y}
 	c.TrinketBase = *core.NewTrinketBase()
+	c.Init(c) // so focus and the text-sink question reach this type
+	c.SetFocusPolicy(core.StrongFocus)
 	return c
 }
 
@@ -181,6 +183,11 @@ func (c *caretTrinket) Paint(p *core.Painter) {
 	}
 }
 
+// A trinket that asks for the platform caret is a trinket that types: the
+// caret is where typing goes, and the surface withdraws it when what holds
+// focus does not.
+func (c *caretTrinket) AcceptsTextInput() bool { return true }
+
 // A focused trinket's caret request reaches the surface, translated into
 // surface coordinates, with its DECSCUSR shape.
 func TestSurfaceHostAppliesTextCaret(t *testing.T) {
@@ -188,6 +195,7 @@ func TestSurfaceHostAppliesTextCaret(t *testing.T) {
 	caret := newCaretTrinket(5, 24, 32)
 	caret.focused = true
 	win.SetContent(caret)
+	win.FocusManager().SetFocusedTrinket(caret)
 
 	surface := &fakeSurface{size: core.UnitSize{Width: 8 * 50, Height: 16 * 12}}
 	host := NewSurfaceHost(win, surface)
