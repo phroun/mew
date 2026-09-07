@@ -185,7 +185,7 @@ func TestEveryDirectionSwitchReachesItsOwnTab(t *testing.T) {
 				t.Errorf("ticked, the content reads %v, want %v", got, core.DirRTL)
 			}
 			if got := core.FindEffectiveDirection(box); got != core.DirLTR {
-				t.Errorf("the switch turned over with what it switches; it sits outside that")
+				t.Errorf("the switch turned over with what it switches; a control stays where the reader left it, by sitting outside what turns or by naming its own direction")
 			}
 
 			box.Toggle()

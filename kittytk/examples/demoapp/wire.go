@@ -159,9 +159,18 @@ func (a *app) wireDirection() {
 	// where the reader left them. The Tags column names its own direction and
 	// keeps it either way round.
 	ui.Checkbox("drtl").OnToggle(turn(ui.Object("dtree")))
-	// The splitter holding the two tab strips: its panes turn, and each strip
-	// resolves side and sideopposite against the direction it now inherits.
+	// One switch for every tab strip in the demo, so all three kinds can be
+	// read against each other: the two side strips move to the other edge
+	// while the window's own strip and the bottom one run the other way.
+	// Written out rather than looped, for the reason above.
+	//
+	// The window's own strip HOLDS this switch, so turning it would turn the
+	// switch too. The checkbox names its own direction to stay put -- which is
+	// the other way a control keeps its place, and the one available when it
+	// cannot sit outside what it controls.
 	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("vtc")))
+	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("tabs")))
+	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("btabs")))
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and

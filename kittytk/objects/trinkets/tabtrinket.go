@@ -762,9 +762,23 @@ func tabSilhouetteRadii(cw, rowH core.Unit) (rSmallX, rBigX, rSmallY, rBigY core
 // fill ends abruptly at endX and the edge line drops straight down
 // there. With no selected tab in view the edge is a single straight
 // line across the strip.
-func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX, endX core.Unit, tab, bar style.CellStyle, top bool) {
+func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX, endX core.Unit, tab, bar style.CellStyle, top, mirror bool) {
 	metrics := t.EffectiveCellMetrics()
 	cw := metrics.UnitsPerCellWidth
+	// The anchors arrive in the strip's RUN coordinates, like every other mark
+	// the strip made. Reflecting them turns the silhouette over with the tape:
+	// the run's lead foot is the screen's trailing one once the run is, so the
+	// pair swaps as well as moves, and the shape below is drawn from left to
+	// right either way without knowing which it is.
+	if mirror {
+		lead, trail := leadX, trailX
+		if trail >= 0 {
+			leadX, trailX = stripW-trail-cw, stripW-lead-cw
+		} else {
+			leadX = stripW - lead - cw
+		}
+		endX = stripW - endX
+	}
 	rowH := metrics.UnitsPerCellHeight
 	line := bar.WithBg(bar.Fg)
 	// The whole tab outline - the arc strokes AND the straight edge lines - is
@@ -897,6 +911,12 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	}
 	// Partial tab cut off before its trailing slash: sudden color
 	// transition, with the edge line dropping straight down the cut.
+	//
+	// Reflected, the cut lands on the near side of the body rather than the
+	// far one, so bodyRight comes out behind bodyLeft and the guard above has
+	// already drawn the plain edge line: a selected tab clipped mid-way in a
+	// turned-over strip shows no silhouette. It keeps its colours and its
+	// place; what it loses is the shaped foot on the side it was cut.
 	hline(bodyLeft+rBigX, endX, tabEdgeY, tabEdgeUp)
 	p.FillRect(core.UnitRect{X: endX - hairW, Y: rowY, Width: hairW, Height: rowH}, ' ', line)
 	hline(endX, stripW, barEdgeY, barEdgeUp)
@@ -1386,16 +1406,54 @@ func (tp *stripTape) fill(r core.UnitRect, ch rune, s style.CellStyle) {
 	tp.marks = append(tp.marks, stripMark{kind: markFill, rect: r, ch: ch, style: s})
 }
 
+// mirroredGlyph is what a glyph becomes when the run it stands in is turned
+// over. A reflection is not only a move: a mark that points along the run has
+// to point the other way once the run does, and one that pairs with another
+// has to become its partner. The rest of the strip's marks -- the underscore,
+// the dots, the labels -- read the same in a mirror and are left alone.
+//
+// A LABEL is not reversed either. Turning the run over reorders the tabs and
+// moves each label to where its tab now stands; which way the letters inside
+// it run is the script's business, not the strip's.
+func mirroredGlyph(ch rune) rune {
+	switch ch {
+	case '/':
+		return '\\'
+	case '\\':
+		return '/'
+	case '<':
+		return '>'
+	case '>':
+		return '<'
+	case '[':
+		return ']'
+	case ']':
+		return '['
+	}
+	return ch
+}
+
 // replay draws the tape in the order it was made.
-func (tp *stripTape) replay(p *core.Painter) {
+//
+// mirror reflects every mark within a bar barW wide: a mark is placed by the
+// edge the run reaches FIRST, which is its left edge one way round and its
+// right edge the other, so reflecting means measuring its own width back from
+// the far side. This is the one place the strip's run becomes places on the
+// screen, which is why the hundred marks that made it never had to ask.
+func (tp *stripTape) replay(p *core.Painter, barW core.Unit, mirror bool) {
 	for _, m := range tp.marks {
+		r, ch := m.rect, m.ch
+		if mirror {
+			r.X = barW - r.X - r.Width
+			ch = mirroredGlyph(ch)
+		}
 		switch m.kind {
 		case markCell:
-			p.DrawCell(m.rect.X, m.rect.Y, m.ch, m.style)
+			p.DrawCell(r.X, r.Y, ch, m.style)
 		case markText:
-			p.DrawText(m.rect.X, m.rect.Y, m.text, m.style, m.font)
+			p.DrawText(r.X, r.Y, m.text, m.style, m.font)
 		case markFill:
-			p.FillRect(m.rect, m.ch, m.style)
+			p.FillRect(r, ch, m.style)
 		}
 	}
 }
@@ -2129,12 +2187,12 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	// Everything above worked out WHERE, in the strip's own run. Here it
 	// becomes places on the screen -- before the silhouette, which paints
 	// over the finished strip.
-	tape.replay(p)
+	tape.replay(p, bounds.Width, core.ChromeMirrored(t))
 
 	// Selected-tab silhouette and the strip's continuous edge line,
 	// drawn over the finished cell material.
 	if p.Graphical() {
-		t.paintTabShape(p, 0, bounds.Width, selLeadX, selTrailX, selEndX, selShapeStyle, tabBarStyle, true)
+		t.paintTabShape(p, 0, bounds.Width, selLeadX, selTrailX, selEndX, selShapeStyle, tabBarStyle, true, core.ChromeMirrored(t))
 	}
 
 	// Draw separator row if enabled (in active tab color)
@@ -2739,12 +2797,12 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	// Everything above worked out WHERE, in the strip's own run. Here it
 	// becomes places on the screen -- before the silhouette, which paints
 	// over the finished strip.
-	tape.replay(p)
+	tape.replay(p, bounds.Width, core.ChromeMirrored(t))
 
 	// Selected-tab silhouette and the strip's continuous edge line,
 	// drawn over the finished cell material.
 	if p.Graphical() {
-		t.paintTabShape(p, tabY, bounds.Width, selLeadX, selTrailX, selEndX, selShapeStyle, tabBarStyle, false)
+		t.paintTabShape(p, tabY, bounds.Width, selLeadX, selTrailX, selEndX, selShapeStyle, tabBarStyle, false, core.ChromeMirrored(t))
 	}
 
 	// Draw separator row if enabled (in active tab color, above the tab bar)

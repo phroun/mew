@@ -460,8 +460,8 @@ pg=new tab caption="Progress" children={
 	}
 }
 
-new tab caption="Bottom Tabs" children={
-	new tabs position=bottom children={
+bt=new tab caption="Bottom Tabs" children={
+	btabs=new tabs position=bottom children={
 		new tab caption="First" children={
 			new panel layout=vbox children={
 				new label caption="This TabTrinket has tabs at the bottom."
@@ -487,7 +487,7 @@ new tab caption="Bottom Tabs" children={
 
 vt=new tab caption="Vertical Tabs" children={
 	vtv=new panel layout=vbox spacing=8 children={
-		vtrtl=new checkbox caption="direction=rtl -- side takes the edge the form reads from, sideopposite the far one, and the splitter's panes turn with them" halign=textnatural fill=none
+		vtrtl=new checkbox direction=ltr caption="direction=rtl -- turns these two side strips, the window's own tab strip, and the Bottom Tabs screen: a side strip moves to the other edge, a top or bottom one runs the other way" halign=textnatural fill=none
 		vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		new tabs position=side children={
 			new tab caption="First" children={
@@ -743,6 +743,7 @@ dlines=w.t.det.dbox.drow.dlines
 drtl=w.t.det.dbox.drow.drtl
 vtrtl=w.t.vt.vtv.vtrtl
 vtc=w.t.vt.vtv.vtc
+btabs=w.t.bt.btabs
 tfwatch=w.t.tf.tfp.tfrow.tfr.tfwatch
 tfecho=w.t.tf.tfp.tfrow.tfr.tfecho
 tfmask=w.t.tf.tfp.tfrow.tfr.tfmask
