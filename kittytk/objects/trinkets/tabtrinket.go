@@ -1311,8 +1311,89 @@ func (t *TabTrinket) Paint(p *core.Painter) {
 	t.paintContent(p)
 }
 
+// --- the strip's display list -------------------------------------------
+//
+// A horizontal tab strip works its layout out as it goes: a prefix, a label, a
+// separator, the next label, and a hundred small marks between them, each
+// placed by advancing along the bar. Where that run STARTS, and which way it
+// travels, is one question -- and asking it at every one of those marks is how
+// a strip ends up half turned over.
+//
+// So the strip records what it paints, in its own RUN coordinates, and the
+// tape is replayed in one go. Where the run lands is settled there, once.
+
+type stripMarkKind int
+
+const (
+	markCell stripMarkKind = iota
+	markText
+	markFill
+)
+
+// stripMark is one thing a strip paints, and the room it occupies. The room is
+// what a reflection needs: a mark is placed by the edge the run reaches first,
+// which is its left edge one way round and its right edge the other.
+type stripMark struct {
+	kind  stripMarkKind
+	rect  core.UnitRect
+	ch    rune
+	text  string
+	style style.CellStyle
+	font  *core.Font
+}
+
+// stripTape collects a strip's marks in the order they are made.
+type stripTape struct {
+	marks   []stripMark
+	cw      core.Unit
+	measure func(string) core.Unit
+}
+
+func (tp *stripTape) cell(x, y core.Unit, ch rune, s style.CellStyle) {
+	tp.marks = append(tp.marks, stripMark{
+		kind: markCell,
+		rect: core.UnitRect{X: x, Y: y, Width: tp.cw},
+		ch:   ch, style: s,
+	})
+}
+
+func (tp *stripTape) text(x, y core.Unit, text string, s style.CellStyle, f *core.Font) {
+	tp.marks = append(tp.marks, stripMark{
+		kind: markText,
+		rect: core.UnitRect{X: x, Y: y, Width: tp.measure(text)},
+		text: text, style: s, font: f,
+	})
+}
+
+func (tp *stripTape) fill(r core.UnitRect, ch rune, s style.CellStyle) {
+	tp.marks = append(tp.marks, stripMark{kind: markFill, rect: r, ch: ch, style: s})
+}
+
+// replay draws the tape in the order it was made.
+func (tp *stripTape) replay(p *core.Painter) {
+	for _, m := range tp.marks {
+		switch m.kind {
+		case markCell:
+			p.DrawCell(m.rect.X, m.rect.Y, m.ch, m.style)
+		case markText:
+			p.DrawText(m.rect.X, m.rect.Y, m.text, m.style, m.font)
+		case markFill:
+			p.FillRect(m.rect, m.ch, m.style)
+		}
+	}
+}
+
+// newStripTape starts a tape denominated the way this trinket is.
+func (t *TabTrinket) newStripTape() *stripTape {
+	return &stripTape{
+		cw:      t.EffectiveCellMetrics().UnitsPerCellWidth,
+		measure: t.MeasureText,
+	}
+}
+
 func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabHeight := t.tabBarHeight()
+	tape := t.newStripTape()
 	hasFocus := t.HasFocus()
 	font := t.EffectiveFont()
 
@@ -1346,7 +1427,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	disabledStyle := tabBarUnderlined.WithFg(scheme.GetDisabledTextFG())
 
 	// Draw tab bar background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
+	tape.fill(core.UnitRect{Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
 
 	// Calculate if we need scroll buttons
 	needsScrolling := t.tabsNeedScrolling()
@@ -1362,10 +1443,10 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		// Draw the left ellipse (underlined; proportional on pixel
 		// surfaces - the reserve width stays cell-based)
 		if p.Graphical() {
-			p.DrawText(0, 0, "...", tabBarUnderlined, font)
+			tape.text(0, 0, "...", tabBarUnderlined, font)
 		} else {
 			for i := 0; i < 3; i++ {
-				p.DrawCell(metrics.CellToUnitsX(i), 0, '.', tabBarUnderlined)
+				tape.cell(metrics.CellToUnitsX(i), 0, '.', tabBarUnderlined)
 			}
 		}
 	}
@@ -1500,36 +1581,36 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					if isSelected {
 						if hasLeftEllipsis {
 							// "/<" (2 chars) - tighter when ellipsis showing
-							p.DrawCell(x, 0, slashCh, tabBarStyle)
+							tape.cell(x, 0, slashCh, tabBarStyle)
 							selLeadX = x
 							selShapeStyle = s
 							if hasFocus {
-								p.DrawCell(x+metrics.UnitsPerCellWidth, 0, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth, 0, '<', focusedSelectedStyle)
 							} else {
-								p.DrawCell(x+metrics.UnitsPerCellWidth, 0, ' ', s)
+								tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', s)
 							}
 							x += metrics.UnitsPerCellWidth * 2
 						} else {
-							p.DrawCell(x, 0, ' ', tabBarUnderlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle)
+							tape.cell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
+							tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle)
 							selLeadX = x + metrics.UnitsPerCellWidth*2
 							selShapeStyle = s
 							if hasFocus {
-								p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
 							} else {
-								p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
+								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
 							}
 							x += metrics.UnitsPerCellWidth * 4
 						}
 					} else {
 						if hasLeftEllipsis {
 							// " " (1 char) - single space when ellipsis showing
-							p.DrawCell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x, 0, ' ', tabBarUnderlined)
 							x += metrics.UnitsPerCellWidth
 						} else {
-							p.DrawCell(x, 0, ' ', tabBarUnderlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
+							tape.cell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
 							x += metrics.UnitsPerCellWidth * 2
 						}
 					}
@@ -1541,10 +1622,10 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				// normal path below).
 				graceStyle := s
 				if p.Graphical() && isSelected {
-					p.FillRect(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
+					tape.fill(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 					graceStyle = s.WithBg(style.ColorTransparent)
 				}
-				p.DrawText(x, 0, tab.Text, graceStyle, font)
+				tape.text(x, 0, tab.Text, graceStyle, font)
 				x += t.MeasureText(tab.Text)
 				lastTextEndX = x // Track where text ends
 				lastSlashX = -1  // Reset slash tracking
@@ -1554,14 +1635,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					// ">\_ " or " \_ " - backslash is essential, underscore+space are not
 					if x < availableWidth {
 						if hasFocus {
-							p.DrawCell(x, 0, '>', focusedSelectedStyle)
+							tape.cell(x, 0, '>', focusedSelectedStyle)
 						} else {
-							p.DrawCell(x, 0, ' ', s)
+							tape.cell(x, 0, ' ', s)
 						}
 						x += metrics.UnitsPerCellWidth
 					}
 					if x < availableWidth {
-						p.DrawCell(x, 0, backslashCh, tabBarStyle)
+						tape.cell(x, 0, backslashCh, tabBarStyle)
 						lastSlashX = x // Track backslash position
 						selTrailX = x
 						x += metrics.UnitsPerCellWidth
@@ -1569,21 +1650,21 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 						selEndX = x
 					}
 					if x < availableWidth {
-						p.DrawCell(x, 0, underscoreCh, tabBarUnderlined)
+						tape.cell(x, 0, underscoreCh, tabBarUnderlined)
 						x += metrics.UnitsPerCellWidth
 					}
 					if x < availableWidth {
-						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						tape.cell(x, 0, ' ', tabBarUnderlined)
 						x += metrics.UnitsPerCellWidth
 					}
 				} else {
 					// "  " - both are non-essential filler
 					if x < availableWidth {
-						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						tape.cell(x, 0, ' ', tabBarUnderlined)
 						x += metrics.UnitsPerCellWidth
 					}
 					if x < availableWidth {
-						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						tape.cell(x, 0, ' ', tabBarUnderlined)
 						x += metrics.UnitsPerCellWidth
 					}
 				}
@@ -1600,36 +1681,36 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					if isSelected {
 						if hasLeftEllipsis {
 							// "/<" (2 chars) - tighter when ellipsis showing
-							p.DrawCell(x, 0, slashCh, tabBarStyle)
+							tape.cell(x, 0, slashCh, tabBarStyle)
 							selLeadX = x
 							selShapeStyle = s
 							if hasFocus {
-								p.DrawCell(x+metrics.UnitsPerCellWidth, 0, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth, 0, '<', focusedSelectedStyle)
 							} else {
-								p.DrawCell(x+metrics.UnitsPerCellWidth, 0, ' ', s)
+								tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', s)
 							}
 							x += metrics.UnitsPerCellWidth * 2
 						} else {
-							p.DrawCell(x, 0, ' ', tabBarUnderlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle)
+							tape.cell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
+							tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle)
 							selLeadX = x + metrics.UnitsPerCellWidth*2
 							selShapeStyle = s
 							if hasFocus {
-								p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
 							} else {
-								p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
+								tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
 							}
 							x += metrics.UnitsPerCellWidth * 4
 						}
 					} else {
 						if hasLeftEllipsis {
 							// " " (1 char) - single space when ellipsis showing
-							p.DrawCell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x, 0, ' ', tabBarUnderlined)
 							x += metrics.UnitsPerCellWidth
 						} else {
-							p.DrawCell(x, 0, ' ', tabBarUnderlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
+							tape.cell(x, 0, ' ', tabBarUnderlined)
+							tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
 							x += metrics.UnitsPerCellWidth * 2
 						}
 					}
@@ -1685,10 +1766,10 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					// ellipsis/separator can't leak the bar color (pixel surfaces).
 					partStyle := s
 					if p.Graphical() && isSelected {
-						p.FillRect(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(partialText) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
+						tape.fill(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(partialText) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 						partStyle = s.WithBg(style.ColorTransparent)
 					}
-					p.DrawText(x, 0, partialText, partStyle, font)
+					tape.text(x, 0, partialText, partStyle, font)
 					x += t.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
@@ -1702,11 +1783,11 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 							// Paint the whole reserved slot: the measured
 							// dots can be narrower than the reserve, and
 							// the gap must stay in the tab's color.
-							p.FillRect(core.UnitRect{X: x, Width: t.overflowEllipsisWidth(), Height: metrics.UnitsPerCellHeight}, ' ', s)
-							p.DrawText(x, 0, "...", s, font)
+							tape.fill(core.UnitRect{X: x, Width: t.overflowEllipsisWidth(), Height: metrics.UnitsPerCellHeight}, ' ', s)
+							tape.text(x, 0, "...", s, font)
 						} else {
 							for i := 0; i < 3; i++ {
-								p.DrawCell(x+core.Unit(i)*metrics.UnitsPerCellWidth, 0, '.', s)
+								tape.cell(x+core.Unit(i)*metrics.UnitsPerCellWidth, 0, '.', s)
 							}
 						}
 						x += t.overflowEllipsisWidth()
@@ -1747,38 +1828,38 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if isSelected {
 				if hasLeftEllipsis {
 					// "/<" (2 chars) - tighter when ellipsis showing
-					p.DrawCell(x, 0, slashCh, tabBarStyle) // slash not underlined
+					tape.cell(x, 0, slashCh, tabBarStyle) // slash not underlined
 					selLeadX = x
 					selShapeStyle = s
 					if hasFocus {
-						p.DrawCell(x+metrics.UnitsPerCellWidth, 0, '<', focusedSelectedStyle)
+						tape.cell(x+metrics.UnitsPerCellWidth, 0, '<', focusedSelectedStyle)
 					} else {
-						p.DrawCell(x+metrics.UnitsPerCellWidth, 0, ' ', s)
+						tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', s)
 					}
 					x += metrics.UnitsPerCellWidth * 2
 				} else {
 					// " _/<" (4 chars) when focused, " _/ " when not focused
-					p.DrawCell(x, 0, ' ', tabBarUnderlined)
-					p.DrawCell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-					p.DrawCell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle) // slash not underlined
+					tape.cell(x, 0, ' ', tabBarUnderlined)
+					tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
+					tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle) // slash not underlined
 					selLeadX = x + metrics.UnitsPerCellWidth*2
 					selShapeStyle = s
 					if hasFocus {
-						p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+						tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
 					} else {
-						p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
+						tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', s)
 					}
 					x += metrics.UnitsPerCellWidth * 4
 				}
 			} else {
 				if hasLeftEllipsis {
 					// " " (1 char) - single space when ellipsis showing
-					p.DrawCell(x, 0, ' ', tabBarUnderlined)
+					tape.cell(x, 0, ' ', tabBarUnderlined)
 					x += metrics.UnitsPerCellWidth
 				} else {
 					// "  " (2 chars) - double space when no ellipsis
-					p.DrawCell(x, 0, ' ', tabBarUnderlined)
-					p.DrawCell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
+					tape.cell(x, 0, ' ', tabBarUnderlined)
+					tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
 					x += metrics.UnitsPerCellWidth * 2
 				}
 			}
@@ -1795,10 +1876,10 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		// (a line-height raster) can't nibble the edge stripe above or below.
 		textStyle := s
 		if p.Graphical() && isSelected {
-			p.FillRect(core.UnitRect{X: x, Y: 0, Width: textWidth + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
+			tape.fill(core.UnitRect{X: x, Y: 0, Width: textWidth + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 			textStyle = s.WithBg(style.ColorTransparent)
 		}
-		p.DrawText(x, 0, tab.Text, textStyle, font)
+		tape.text(x, 0, tab.Text, textStyle, font)
 		x += textWidth
 
 		// Draw close button if closable (at end of text, before separator)
@@ -1808,7 +1889,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if closeX < textStartX {
 				closeX = textStartX
 			}
-			p.DrawCell(closeX, 0, '×', s)
+			tape.cell(closeX, 0, '×', s)
 		}
 		_ = textStartX // May use later for close button positioning
 
@@ -1823,23 +1904,23 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			// ">\_ " (4 chars) when focused, " \_ " when not focused
 			// Space/bracket adjacent to label not underlined, rest underlined except slash (none here)
 			if hasFocus {
-				p.DrawCell(x, 0, '>', focusedSelectedStyle)
+				tape.cell(x, 0, '>', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x, 0, ' ', s)
+				tape.cell(x, 0, ' ', s)
 			}
-			p.DrawCell(x+metrics.UnitsPerCellWidth, 0, backslashCh, tabBarStyle) // backslash not underlined (like slash)
-			lastSlashX = x + metrics.UnitsPerCellWidth                           // Track backslash position
+			tape.cell(x+metrics.UnitsPerCellWidth, 0, backslashCh, tabBarStyle) // backslash not underlined (like slash)
+			lastSlashX = x + metrics.UnitsPerCellWidth                          // Track backslash position
 			selTrailX = x + metrics.UnitsPerCellWidth
-			p.DrawCell(x+metrics.UnitsPerCellWidth*2, 0, underscoreCh, tabBarUnderlined)
-			p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, ' ', tabBarUnderlined)
+			tape.cell(x+metrics.UnitsPerCellWidth*2, 0, underscoreCh, tabBarUnderlined)
+			tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', tabBarUnderlined)
 			x += metrics.UnitsPerCellWidth * 4
 		} else if nextIsSelected {
 			// " _/<" (4 chars) when focused, " _/ " when not focused
 			// Underlined except slash and space/bracket adjacent to selected label
-			p.DrawCell(x, 0, ' ', tabBarUnderlined)
-			p.DrawCell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
-			p.DrawCell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle) // slash not underlined
-			lastSlashX = x + metrics.UnitsPerCellWidth*2                       // Track slash position
+			tape.cell(x, 0, ' ', tabBarUnderlined)
+			tape.cell(x+metrics.UnitsPerCellWidth, 0, underscoreCh, tabBarUnderlined)
+			tape.cell(x+metrics.UnitsPerCellWidth*2, 0, slashCh, tabBarStyle) // slash not underlined
+			lastSlashX = x + metrics.UnitsPerCellWidth*2                      // Track slash position
 			selLeadX = x + metrics.UnitsPerCellWidth*2
 			if hasFocus {
 				selShapeStyle = focusedSelectedStyle
@@ -1847,15 +1928,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				selShapeStyle = selectedStyle
 			}
 			if hasFocus {
-				p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
+				tape.cell(x+metrics.UnitsPerCellWidth*3, 0, '<', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x+metrics.UnitsPerCellWidth*3, 0, ' ', selectedStyle)
+				tape.cell(x+metrics.UnitsPerCellWidth*3, 0, ' ', selectedStyle)
 			}
 			x += metrics.UnitsPerCellWidth * 4
 		} else {
 			// "  " (2 chars) regular separator - underlined
-			p.DrawCell(x, 0, ' ', tabBarUnderlined)
-			p.DrawCell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
+			tape.cell(x, 0, ' ', tabBarUnderlined)
+			tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
 			x += metrics.UnitsPerCellWidth * 2
 		}
 	}
@@ -1881,7 +1962,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			// of the run, never two: the tab's dots already say the run is cut
 			// short, and the [>] button says whether there is more to reach.
 			for x < scrollAreaStart {
-				p.DrawCell(x, 0, ' ', tabBarUnderlined)
+				tape.cell(x, 0, ' ', tabBarUnderlined)
 				x += metrics.UnitsPerCellWidth
 			}
 		} else {
@@ -1920,7 +2001,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
 			gapStart := x
 			for x < ellipsisX {
-				p.DrawCell(x, 0, ' ', tabBarUnderlined)
+				tape.cell(x, 0, ' ', tabBarUnderlined)
 				x += metrics.UnitsPerCellWidth
 			}
 
@@ -1928,15 +2009,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			dotsDrawn := 0
 			if p.Graphical() {
 				if ellipsisX+ellipsisWidth <= scrollAreaStart {
-					p.FillRect(core.UnitRect{X: ellipsisX, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', ellipsisStyle)
-					p.DrawText(ellipsisX, 0, "...", ellipsisStyle, font)
+					tape.fill(core.UnitRect{X: ellipsisX, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', ellipsisStyle)
+					tape.text(ellipsisX, 0, "...", ellipsisStyle, font)
 					dotsDrawn = 3
 				}
 			} else {
 				for i := 0; i < 3; i++ {
 					dotX := ellipsisX + core.Unit(i)*metrics.UnitsPerCellWidth
 					if dotX+metrics.UnitsPerCellWidth <= scrollAreaStart {
-						p.DrawCell(dotX, 0, '.', ellipsisStyle)
+						tape.cell(dotX, 0, '.', ellipsisStyle)
 						dotsDrawn++
 					}
 				}
@@ -1972,18 +2053,18 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				// stopping exactly at the dots, so the whole-cell steps of
 				// that fill cannot reach across them.
 				if gapStart < ellipsisX {
-					p.FillRect(core.UnitRect{X: gapStart, Y: 0, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
+					tape.fill(core.UnitRect{X: gapStart, Y: 0, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
 				}
 			}
 			for fillX < scrollAreaStart {
-				p.DrawCell(fillX, 0, ' ', tabBarUnderlined)
+				tape.cell(fillX, 0, ' ', tabBarUnderlined)
 				fillX += metrics.UnitsPerCellWidth
 			}
 		}
 	} else {
 		// No ellipsis needed - just fill to scroll area
 		for x < scrollAreaStart {
-			p.DrawCell(x, 0, ' ', tabBarUnderlined)
+			tape.cell(x, 0, ' ', tabBarUnderlined)
 			x += metrics.UnitsPerCellWidth
 		}
 	}
@@ -2000,14 +2081,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if t.scrollButtonPressed == -1 && t.scrollLeftHovered {
 				leftStyle = pressedStyle
 			}
-			p.DrawCell(buttonX, 0, '[', leftStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth, 0, '<', leftStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*2, 0, ']', leftStyle)
+			tape.cell(buttonX, 0, '[', leftStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth, 0, '<', leftStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*2, 0, ']', leftStyle)
 		} else {
 			// Disabled: " < " (no brackets, grayed out)
-			p.DrawCell(buttonX, 0, ' ', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth, 0, '<', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*2, 0, ' ', disabledStyle)
+			tape.cell(buttonX, 0, ' ', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth, 0, '<', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*2, 0, ' ', disabledStyle)
 		}
 
 		// [>] button - disabled when can't scroll right
@@ -2017,16 +2098,21 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if t.scrollButtonPressed == 1 && t.scrollRightHovered {
 				rightStyle = pressedStyle
 			}
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*3, 0, '[', rightStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*4, 0, '>', rightStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*5, 0, ']', rightStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*3, 0, '[', rightStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*4, 0, '>', rightStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*5, 0, ']', rightStyle)
 		} else {
 			// Disabled: " > " (no brackets, grayed out)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*3, 0, ' ', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*4, 0, '>', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*5, 0, ' ', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*3, 0, ' ', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*4, 0, '>', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*5, 0, ' ', disabledStyle)
 		}
 	}
+
+	// Everything above worked out WHERE, in the strip's own run. Here it
+	// becomes places on the screen -- before the silhouette, which paints
+	// over the finished strip.
+	tape.replay(p)
 
 	// Selected-tab silhouette and the strip's continuous edge line,
 	// drawn over the finished cell material.
@@ -2049,6 +2135,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabHeight := t.tabBarHeight()
 	tabY := bounds.Height - tabHeight
+	tape := t.newStripTape()
 	hasFocus := t.HasFocus()
 	font := t.EffectiveFont()
 
@@ -2082,7 +2169,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	disabledStyle := tabBarOverlined.WithFg(scheme.GetDisabledTextFG())
 
 	// Draw tab bar background with overline (will be overwritten by active tab area without overline)
-	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarOverlined)
+	tape.fill(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarOverlined)
 
 	// Calculate if we need scroll buttons
 	needsScrolling := t.tabsNeedScrolling()
@@ -2097,10 +2184,10 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		leftEllipseWidth = t.overflowEllipsisWidth() // "..."
 		// Draw the left ellipse (with overline)
 		if p.Graphical() {
-			p.DrawText(0, tabY, "...", tabBarOverlined, font)
+			tape.text(0, tabY, "...", tabBarOverlined, font)
 		} else {
 			for i := 0; i < 3; i++ {
-				p.DrawCell(metrics.CellToUnitsX(i), tabY, '.', tabBarOverlined)
+				tape.cell(metrics.CellToUnitsX(i), tabY, '.', tabBarOverlined)
 			}
 		}
 	}
@@ -2217,35 +2304,35 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 					if isSelected {
 						if hasLeftEllipsis {
 							// "\_" or "<" (2 chars) - tighter when ellipsis showing
-							p.DrawCell(x, tabY, backslashCh, tabBarStyle)
+							tape.cell(x, tabY, backslashCh, tabBarStyle)
 							selLeadX = x
 							selShapeStyle = s
 							if hasFocus {
-								p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth, tabY, '<', focusedSelectedStyle)
 							} else {
-								p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, underscoreCh, s)
+								tape.cell(x+metrics.UnitsPerCellWidth, tabY, underscoreCh, s)
 							}
 							x += metrics.UnitsPerCellWidth * 2
 						} else {
-							p.DrawCell(x, tabY, ' ', tabBarOverlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, backslashCh, tabBarStyle)
+							tape.cell(x, tabY, ' ', tabBarOverlined)
+							tape.cell(x+metrics.UnitsPerCellWidth, tabY, backslashCh, tabBarStyle)
 							selLeadX = x + metrics.UnitsPerCellWidth
 							selShapeStyle = s
 							if hasFocus {
-								p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, '<', focusedSelectedStyle)
+								tape.cell(x+metrics.UnitsPerCellWidth*2, tabY, '<', focusedSelectedStyle)
 							} else {
-								p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, underscoreCh, s)
+								tape.cell(x+metrics.UnitsPerCellWidth*2, tabY, underscoreCh, s)
 							}
 							x += metrics.UnitsPerCellWidth * 3
 						}
 					} else {
 						if hasLeftEllipsis {
 							// " " (1 char) - single space when ellipsis showing
-							p.DrawCell(x, tabY, ' ', tabBarOverlined)
+							tape.cell(x, tabY, ' ', tabBarOverlined)
 							x += metrics.UnitsPerCellWidth
 						} else {
-							p.DrawCell(x, tabY, ' ', tabBarOverlined)
-							p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, ' ', tabBarOverlined)
+							tape.cell(x, tabY, ' ', tabBarOverlined)
+							tape.cell(x+metrics.UnitsPerCellWidth, tabY, ' ', tabBarOverlined)
 							x += metrics.UnitsPerCellWidth * 2
 						}
 					}
@@ -2300,10 +2387,10 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 					partialText := string(textRunes[:charsToShow])
 					bpartStyle := s
 					if p.Graphical() && isSelected {
-						p.FillRect(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(partialText) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
+						tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(partialText) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 						bpartStyle = s.WithBg(style.ColorTransparent)
 					}
-					p.DrawText(x, tabY, partialText, bpartStyle, font)
+					tape.text(x, tabY, partialText, bpartStyle, font)
 					x += t.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
@@ -2318,11 +2405,11 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 							// Paint the whole reserved slot: the measured
 							// dots can be narrower than the reserve, and
 							// the gap must stay in the tab's color.
-							p.FillRect(core.UnitRect{X: x, Y: tabY, Width: t.overflowEllipsisWidth(), Height: metrics.UnitsPerCellHeight}, ' ', s)
-							p.DrawText(x, tabY, "...", s, font)
+							tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.overflowEllipsisWidth(), Height: metrics.UnitsPerCellHeight}, ' ', s)
+							tape.text(x, tabY, "...", s, font)
 						} else {
 							for i := 0; i < 3; i++ {
-								p.DrawCell(x+core.Unit(i)*metrics.UnitsPerCellWidth, tabY, '.', s)
+								tape.cell(x+core.Unit(i)*metrics.UnitsPerCellWidth, tabY, '.', s)
 							}
 						}
 						x += t.overflowEllipsisWidth()
@@ -2364,38 +2451,38 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			if isSelected {
 				if hasLeftEllipsis {
 					// "\_" or "<" (2 chars) - tighter when ellipsis showing
-					p.DrawCell(x, tabY, backslashCh, tabBarStyle)
+					tape.cell(x, tabY, backslashCh, tabBarStyle)
 					selLeadX = x
 					selShapeStyle = s
 					if hasFocus {
-						p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, '<', focusedSelectedStyle)
+						tape.cell(x+metrics.UnitsPerCellWidth, tabY, '<', focusedSelectedStyle)
 					} else {
-						p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, underscoreCh, s)
+						tape.cell(x+metrics.UnitsPerCellWidth, tabY, underscoreCh, s)
 					}
 					x += metrics.UnitsPerCellWidth * 2
 				} else {
 					// " \_" (3 chars) when first tab is selected
 					// Space before \ gets overline (outside active tab)
-					p.DrawCell(x, tabY, ' ', tabBarOverlined)
-					p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, backslashCh, tabBarStyle)
+					tape.cell(x, tabY, ' ', tabBarOverlined)
+					tape.cell(x+metrics.UnitsPerCellWidth, tabY, backslashCh, tabBarStyle)
 					selLeadX = x + metrics.UnitsPerCellWidth
 					selShapeStyle = s
 					if hasFocus {
-						p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, '<', focusedSelectedStyle)
+						tape.cell(x+metrics.UnitsPerCellWidth*2, tabY, '<', focusedSelectedStyle)
 					} else {
-						p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, underscoreCh, s)
+						tape.cell(x+metrics.UnitsPerCellWidth*2, tabY, underscoreCh, s)
 					}
 					x += metrics.UnitsPerCellWidth * 3
 				}
 			} else {
 				if hasLeftEllipsis {
 					// " " (1 char) - single space when ellipsis showing
-					p.DrawCell(x, tabY, ' ', tabBarOverlined)
+					tape.cell(x, tabY, ' ', tabBarOverlined)
 					x += metrics.UnitsPerCellWidth
 				} else {
 					// "  " (2 chars) - both get overline
-					p.DrawCell(x, tabY, ' ', tabBarOverlined)
-					p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, ' ', tabBarOverlined)
+					tape.cell(x, tabY, ' ', tabBarOverlined)
+					tape.cell(x+metrics.UnitsPerCellWidth, tabY, ' ', tabBarOverlined)
 					x += metrics.UnitsPerCellWidth * 2
 				}
 			}
@@ -2407,10 +2494,10 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		// size (mirrors the top-tab path).
 		btextStyle := s
 		if p.Graphical() && isSelected {
-			p.FillRect(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
+			tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 			btextStyle = s.WithBg(style.ColorTransparent)
 		}
-		p.DrawText(x, tabY, tab.Text, btextStyle, font)
+		tape.text(x, tabY, tab.Text, btextStyle, font)
 		x += t.MeasureText(tab.Text)
 		lastTextEndX = x // Track where text ends
 		lastSlashX = -1  // Reset slash tracking
@@ -2423,21 +2510,21 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			// "_/ " (3 chars) after selected tab
 			// Space after / gets overline (outside active tab)
 			if hasFocus {
-				p.DrawCell(x, tabY, '>', focusedSelectedStyle)
+				tape.cell(x, tabY, '>', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x, tabY, underscoreCh, s)
+				tape.cell(x, tabY, underscoreCh, s)
 			}
-			p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, slashCh, tabBarStyle)
+			tape.cell(x+metrics.UnitsPerCellWidth, tabY, slashCh, tabBarStyle)
 			lastSlashX = x + metrics.UnitsPerCellWidth // Track slash position - marks end of active tab's inside
 			selTrailX = x + metrics.UnitsPerCellWidth
 			lastTabWasSelected = true // Slash for selected tab - ellipsis goes after it
-			p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, ' ', tabBarOverlined)
+			tape.cell(x+metrics.UnitsPerCellWidth*2, tabY, ' ', tabBarOverlined)
 			x += metrics.UnitsPerCellWidth * 3
 		} else if nextIsSelected {
 			// " \_" (3 chars) before selected tab
 			// Space before \ gets overline (outside active tab)
-			p.DrawCell(x, tabY, ' ', tabBarOverlined)
-			p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, backslashCh, tabBarStyle)
+			tape.cell(x, tabY, ' ', tabBarOverlined)
+			tape.cell(x+metrics.UnitsPerCellWidth, tabY, backslashCh, tabBarStyle)
 			lastSlashX = x + metrics.UnitsPerCellWidth // Track backslash position - marks start of next tab's inside
 			selLeadX = x + metrics.UnitsPerCellWidth
 			if hasFocus {
@@ -2447,15 +2534,15 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			}
 			lastTabWasSelected = false // Backslash for nextIsSelected - ellipsis goes before it
 			if hasFocus {
-				p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, '<', focusedSelectedStyle)
+				tape.cell(x+metrics.UnitsPerCellWidth*2, tabY, '<', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x+metrics.UnitsPerCellWidth*2, tabY, underscoreCh, selectedStyle)
+				tape.cell(x+metrics.UnitsPerCellWidth*2, tabY, underscoreCh, selectedStyle)
 			}
 			x += metrics.UnitsPerCellWidth * 3
 		} else {
 			// "  " (2 chars) regular separator - both get overline
-			p.DrawCell(x, tabY, ' ', tabBarOverlined)
-			p.DrawCell(x+metrics.UnitsPerCellWidth, tabY, ' ', tabBarOverlined)
+			tape.cell(x, tabY, ' ', tabBarOverlined)
+			tape.cell(x+metrics.UnitsPerCellWidth, tabY, ' ', tabBarOverlined)
 			x += metrics.UnitsPerCellWidth * 2
 		}
 	}
@@ -2481,7 +2568,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			// of the run, never two: the tab's dots already say the run is cut
 			// short, and the [>] button says whether there is more to reach.
 			for x < scrollAreaStart {
-				p.DrawCell(x, tabY, ' ', tabBarOverlined)
+				tape.cell(x, tabY, ' ', tabBarOverlined)
 				x += metrics.UnitsPerCellWidth
 			}
 		} else {
@@ -2524,7 +2611,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
 			gapStart := x
 			for x < ellipsisX {
-				p.DrawCell(x, tabY, ' ', tabBarOverlined)
+				tape.cell(x, tabY, ' ', tabBarOverlined)
 				x += metrics.UnitsPerCellWidth
 			}
 
@@ -2532,15 +2619,15 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			dotsDrawn := 0
 			if p.Graphical() {
 				if ellipsisX+ellipsisWidth <= scrollAreaStart {
-					p.FillRect(core.UnitRect{X: ellipsisX, Y: tabY, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', ellipsisStyle)
-					p.DrawText(ellipsisX, tabY, "...", ellipsisStyle, font)
+					tape.fill(core.UnitRect{X: ellipsisX, Y: tabY, Width: ellipsisWidth, Height: metrics.UnitsPerCellHeight}, ' ', ellipsisStyle)
+					tape.text(ellipsisX, tabY, "...", ellipsisStyle, font)
 					dotsDrawn = 3
 				}
 			} else {
 				for i := 0; i < 3; i++ {
 					dotX := ellipsisX + core.Unit(i)*metrics.UnitsPerCellWidth
 					if dotX+metrics.UnitsPerCellWidth <= scrollAreaStart {
-						p.DrawCell(dotX, tabY, '.', ellipsisStyle)
+						tape.cell(dotX, tabY, '.', ellipsisStyle)
 						dotsDrawn++
 					}
 				}
@@ -2576,18 +2663,18 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				// stopping exactly at the dots, so the whole-cell steps of
 				// that fill cannot reach across them.
 				if gapStart < ellipsisX {
-					p.FillRect(core.UnitRect{X: gapStart, Y: tabY, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
+					tape.fill(core.UnitRect{X: gapStart, Y: tabY, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
 				}
 			}
 			for fillX < scrollAreaStart {
-				p.DrawCell(fillX, tabY, ' ', tabBarOverlined)
+				tape.cell(fillX, tabY, ' ', tabBarOverlined)
 				fillX += metrics.UnitsPerCellWidth
 			}
 		}
 	} else {
 		// No ellipsis needed - just fill to scroll area
 		for x < scrollAreaStart {
-			p.DrawCell(x, tabY, ' ', tabBarOverlined)
+			tape.cell(x, tabY, ' ', tabBarOverlined)
 			x += metrics.UnitsPerCellWidth
 		}
 	}
@@ -2604,14 +2691,14 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			if t.scrollButtonPressed == -1 && t.scrollLeftHovered {
 				leftStyle = pressedStyle
 			}
-			p.DrawCell(buttonX, tabY, '[', leftStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth, tabY, '<', leftStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*2, tabY, ']', leftStyle)
+			tape.cell(buttonX, tabY, '[', leftStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth, tabY, '<', leftStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*2, tabY, ']', leftStyle)
 		} else {
 			// Disabled: " < " (no brackets, grayed out)
-			p.DrawCell(buttonX, tabY, ' ', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth, tabY, '<', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*2, tabY, ' ', disabledStyle)
+			tape.cell(buttonX, tabY, ' ', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth, tabY, '<', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*2, tabY, ' ', disabledStyle)
 		}
 
 		// [>] button - disabled when can't scroll right
@@ -2621,16 +2708,21 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			if t.scrollButtonPressed == 1 && t.scrollRightHovered {
 				rightStyle = pressedStyle
 			}
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*3, tabY, '[', rightStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*4, tabY, '>', rightStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*5, tabY, ']', rightStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*3, tabY, '[', rightStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*4, tabY, '>', rightStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*5, tabY, ']', rightStyle)
 		} else {
 			// Disabled: " > " (no brackets, grayed out)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*3, tabY, ' ', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*4, tabY, '>', disabledStyle)
-			p.DrawCell(buttonX+metrics.UnitsPerCellWidth*5, tabY, ' ', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*3, tabY, ' ', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*4, tabY, '>', disabledStyle)
+			tape.cell(buttonX+metrics.UnitsPerCellWidth*5, tabY, ' ', disabledStyle)
 		}
 	}
+
+	// Everything above worked out WHERE, in the strip's own run. Here it
+	// becomes places on the screen -- before the silhouette, which paints
+	// over the finished strip.
+	tape.replay(p)
 
 	// Selected-tab silhouette and the strip's continuous edge line,
 	// drawn over the finished cell material.
