@@ -142,11 +142,20 @@ const (
 	// editable grid, where the plain arrows walk the edit-target column. The
 	// shifted arrows keep the classic movement there, and needed a name of
 	// their own to say so.
-	CmdTrinketCollapseOrEnclosing = "trinket_collapse_or_enclosing"
-	CmdTrinketExpandOrDescend     = "trinket_expand_or_descend"
-	CmdTrinketExpandAll           = "trinket_expand_all"
-	CmdTrinketCollapseAll         = "trinket_collapse_all"
-	CmdTrinketEnclosing           = "trinket_enclosing"
+	//
+	// Each act is named on BOTH sides because a tree grows away from the edge
+	// it reads from: a leftward push collapses one reading left to right and
+	// expands one reading the other way. The named side is the side of the
+	// PUSH, so both meanings of a key are bound to it and the trinket declares
+	// only the pair its own direction answers to -- which is what decides
+	// which one that key resolves to at all.
+	CmdTrinketCollapseLeftOrEnclosing  = "trinket_collapse_left_or_enclosing"
+	CmdTrinketCollapseRightOrEnclosing = "trinket_collapse_right_or_enclosing"
+	CmdTrinketExpandLeftOrDescend      = "trinket_expand_left_or_descend"
+	CmdTrinketExpandRightOrDescend     = "trinket_expand_right_or_descend"
+	CmdTrinketExpandAll                = "trinket_expand_all"
+	CmdTrinketCollapseAll              = "trinket_collapse_all"
+	CmdTrinketEnclosing                = "trinket_enclosing"
 
 	// Editing, where a trinket holds text.
 	CmdTrinketDelPrior = "trinket_del_prior"

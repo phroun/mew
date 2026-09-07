@@ -48,26 +48,56 @@ func TestAnArrowOpensTheWayTheTreeGrows(t *testing.T) {
 	}
 }
 
-// The SHIFTED arrows arrive as their own commands, which name the act rather
-// than a side of the screen -- so they mean the same thing in either tree.
-func TestTheNamedCommandsMeanTheSameEitherWay(t *testing.T) {
-	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
-		tv := nestedTree(t, dir, false)
+// The SHIFTED arrows carry the classic tree walk, so an editable grid can
+// spend its plain arrows on the edit-target column. Both meanings of each push
+// are bound to the key, and a tree declares only the pair its own direction
+// answers to -- so the shifted arrows turn over exactly like the plain ones.
+func TestTheShiftedArrowsTurnOverTheSameWay(t *testing.T) {
+	for _, tc := range []struct {
+		dir      core.Direction
+		on, back string
+	}{
+		{core.DirLTR, "S-Right", "S-Left"},
+		{core.DirRTL, "S-Left", "S-Right"},
+	} {
+		tv := nestedTree(t, tc.dir, false)
 		root := tv.rootItems[0]
 		root.Expanded = false
 		tv.rebuildFlatList()
 		tv.SetCurrentIndex(0)
 
-		// S-Right and S-Left carry expand_or_descend and
-		// collapse_or_enclosing, whichever way the tree reads.
-		tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Right"})
+		key := func(k string) {
+			tv.AbandonKeySequence()
+			tv.HandleKeyPress(core.KeyPressEvent{Key: k})
+		}
+		key(tc.on)
 		if !root.Expanded {
-			t.Errorf("%v: expand_or_descend did not open the root", dir)
+			t.Errorf("%v: %s did not open the root", tc.dir, tc.on)
 		}
-		tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Left"})
+		key(tc.back)
 		if root.Expanded {
-			t.Errorf("%v: collapse_or_enclosing did not close the root", dir)
+			t.Errorf("%v: %s did not close the root", tc.dir, tc.back)
 		}
+	}
+}
+
+// A tree declares one meaning of each shifted arrow, and turning it over
+// swaps which: the key it reaches is the direction's answer, settled before
+// the keystroke ever arrives at the switch.
+func TestTurningATreeOverRedeclaresItsShiftedArrows(t *testing.T) {
+	tv := NewTreeView()
+	if got := tv.KeyCommand("S-Left"); got != core.CmdTrinketCollapseLeftOrEnclosing {
+		t.Errorf("reading left to right, S-Left is %q, want the leftward collapse", got)
+	}
+	tv.AbandonKeySequence()
+	tv.SetDirection(core.DirRTL)
+	if got := tv.KeyCommand("S-Left"); got != core.CmdTrinketExpandLeftOrDescend {
+		t.Errorf("reading right to left, S-Left is %q, want the leftward expand", got)
+	}
+	tv.AbandonKeySequence()
+	tv.SetDirection(core.DirLTR)
+	if got := tv.KeyCommand("S-Left"); got != core.CmdTrinketCollapseLeftOrEnclosing {
+		t.Errorf("turned back, S-Left is %q, want the leftward collapse again", got)
 	}
 }
 

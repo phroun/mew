@@ -352,9 +352,10 @@ func TestTreeArrowRotationEnsuresVisible(t *testing.T) {
 
 // Shift+Left/Right keep the classic expand/collapse on an editable grid,
 // where the plain arrows rotate the Enter-target instead. They are a
-// different COMMAND there (trinket_expand_or_descend /
-// trinket_collapse_or_enclosing), which is what tells the two apart now that
-// nothing reads the Shift bit out of the event.
+// different COMMAND there (trinket_expand_right_or_descend /
+// trinket_collapse_left_or_enclosing in a tree reading left to right), which
+// is what tells the two apart now that nothing reads the Shift bit out of the
+// event.
 func TestTreeShiftArrowsExpandCollapse(t *testing.T) {
 	tv := newEditableTree()
 	alpha := tv.RootItems()[0]

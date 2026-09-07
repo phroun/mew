@@ -155,8 +155,8 @@ var referenceDefaultBindings = []Binding{
 
 	{"S-Up", []string{CmdWindowSizeFineUp, CmdTrinketSelUp, CmdTerminalScrollUp}},
 	{"S-Down", []string{CmdWindowSizeFineDown, CmdTrinketSelDown, CmdTerminalScrollDown}},
-	{"S-Left", []string{CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketCollapseOrEnclosing, CmdTrinketItemLeft}},
-	{"S-Right", []string{CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketExpandOrDescend, CmdTrinketItemRight}},
+	{"S-Left", []string{CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketCollapseLeftOrEnclosing, CmdTrinketExpandLeftOrDescend, CmdTrinketItemLeft}},
+	{"S-Right", []string{CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketCollapseRightOrEnclosing, CmdTrinketExpandRightOrDescend, CmdTrinketItemRight}},
 
 	{"Home", []string{CmdTrinketBeg}},
 	{"End", []string{CmdTrinketEnd}},

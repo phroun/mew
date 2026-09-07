@@ -215,6 +215,25 @@ func NewTreeView() *TreeView {
 		fitWidth:       true,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
+	t.declareCommands()
+	t.Init(t) // Enable polymorphic focus handling
+	t.SetFocusPolicy(core.StrongFocus)
+	t.SetAccessibleRole(core.RoleTree)
+	return t
+}
+
+// declareCommands says what this tree can carry out. It is asked again
+// whenever the direction changes, because the pair of tree-walk commands it
+// answers to is one of the things the direction settles: both meanings of a
+// shifted arrow are bound to the key, and declaring one of them is what
+// decides which the key reaches (see core.CmdTrinketCollapseLeftOrEnclosing).
+func (t *TreeView) declareCommands() {
+	// The push that steps ON into the tree, and the one that steps back out:
+	// leftward and rightward swap where the tree reads right to left.
+	back, on := core.CmdTrinketCollapseLeftOrEnclosing, core.CmdTrinketExpandRightOrDescend
+	if core.ChromeMirrored(t) {
+		back, on = core.CmdTrinketCollapseRightOrEnclosing, core.CmdTrinketExpandLeftOrDescend
+	}
 	t.SetCommands(
 		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
 		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
@@ -243,17 +262,20 @@ func NewTreeView() *TreeView {
 		// The classic arrow movement under its own name, which is what the
 		// SHIFTED arrows keep doing in an editable grid -- there the plain
 		// ones walk the edit-target column instead.
-		core.CmdTrinketCollapseOrEnclosing, core.CmdTrinketExpandOrDescend,
+		back, on,
 		// The header focus zones and the row editor: Tab walks between the
 		// header stops (and between the editor's columns), Escape backs out
 		// of whichever of them is up. Neither reaches the content switch,
 		// which has no case for either.
 		core.CmdFocusNext, core.CmdFocusPrior, core.CmdTrinketCancel,
 	)
-	t.Init(t) // Enable polymorphic focus handling
-	t.SetFocusPolicy(core.StrongFocus)
-	t.SetAccessibleRole(core.RoleTree)
-	return t
+}
+
+// SetDirection turns the tree over, which changes which of the shifted
+// arrows' two meanings this tree answers to, so it says what it can do again.
+func (t *TreeView) SetDirection(d core.Direction) {
+	t.TrinketBase.SetDirection(d)
+	t.declareCommands()
 }
 
 // AddRootItem adds a root item to the tree.
@@ -1050,10 +1072,10 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	// arrow asks for is the direction's answer. item_left and item_right are
 	// also the grid's column walk, which handleEditTargetKey took above; what
 	// reaches here is the classic movement.
-	case core.CmdTrinketCollapseOrEnclosing:
+	case core.CmdTrinketCollapseLeftOrEnclosing, core.CmdTrinketCollapseRightOrEnclosing:
 		return t.collapseOrEnclosing(current)
 
-	case core.CmdTrinketExpandOrDescend:
+	case core.CmdTrinketExpandLeftOrDescend, core.CmdTrinketExpandRightOrDescend:
 		return t.expandOrDescend(current)
 
 	case core.CmdTrinketItemLeft:
