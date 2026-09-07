@@ -511,9 +511,9 @@ func (t *TreeView) stepEditRow(delta int) {
 // arrows belong to this; expand/collapse keeps Shift+Left/Right,
 // +/-, Space, and the mouse. Returns handled.
 //
-// The shifted arrows are simply a different COMMAND now
-// (trinket_collapse_or_enclosing / trinket_expand_or_descend), which is what
-// this used to decide by reading the Shift bit out of the event.
+// The shifted arrows arrive as their own COMMAND
+// (trinket_collapse_or_enclosing / trinket_expand_or_descend), so nothing
+// here reads the Shift bit out of the event.
 func (t *TreeView) handleEditTargetKey(cmd string) bool {
 	delta := 0
 	switch cmd {
