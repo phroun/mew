@@ -1,6 +1,9 @@
 package core
 
-import "sync"
+import (
+	"sync"
+	"unicode"
+)
 
 // The cell-width rule: how many terminal cells one rune takes. A cell backend
 // installs its own, so that what a layout MEASURES is what the emitter will
@@ -38,6 +41,20 @@ func CellWidth(r rune) int {
 	cellWidthMu.RUnlock()
 	if fn != nil {
 		return fn(r)
+	}
+	return builtinCellWidth(r)
+}
+
+// builtinCellWidth is the answer with no backend to ask: a non-spacing or
+// enclosing mark paints into the cell before it and advances nothing, the
+// ideograph blocks core knows about take two, everything else takes one.
+//
+// A real cell backend knows more than this -- its tables cover the wide runes
+// outside those blocks, and the runes that take no cell without being marks at
+// all -- which is why it installs its own.
+func builtinCellWidth(r rune) int {
+	if unicode.In(r, unicode.Mn, unicode.Me) {
+		return 0
 	}
 	if isWideChar(r) {
 		return 2

@@ -196,7 +196,7 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 
 		p.DrawTextAligned(
 			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
-			line,
+			l.CellRun(line),
 			l.textSide(),
 			core.AlignTop,
 			s,
@@ -225,7 +225,7 @@ func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.Cell
 
 		p.DrawTextAligned(
 			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
-			line,
+			l.CellRun(line),
 			l.textSide(),
 			core.AlignTop,
 			s,
