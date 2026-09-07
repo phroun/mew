@@ -132,3 +132,69 @@ func TestAnEmbeddedCombosDropDownStaysOnTheGridInTheTUI(t *testing.T) {
 		t.Errorf("the drop-down opened at (%d,%d), which is not on a cell", got.X, got.Y)
 	}
 }
+
+// scrollingChoiceTree puts the choice column past the right edge, so reaching
+// it scrolls the region and the cell the editor lands in is not the cell that
+// was there when the key was pressed.
+func scrollingChoiceTree(pc core.PopupController) *TreeView {
+	tv := NewTreeView()
+	tv.SetShowHeader(true)
+	ids := []string{"a", "b", "c", "far"}
+	for i, id := range ids {
+		col := NewTreeColumn(id, id, 20*cell)
+		if i == len(ids)-1 {
+			col.Editable = true
+			col.Enum = []TreeEnumOption{{Key: "x", Value: "Ex"}, {Key: "y", Value: "Why"}}
+		}
+		tv.AddColumn(col)
+	}
+	for _, n := range []string{"one", "two"} {
+		it := NewTreeItem(n)
+		for _, id := range ids {
+			it.SetValue(id, "v")
+		}
+		tv.AddRootItem(it)
+	}
+	parent := NewPanel()
+	parent.SetPopupController(pc)
+	tv.SetParent(parent)
+	tv.SetBounds(core.UnitRect{Width: 40 * 8, Height: 10 * 16})
+	tv.SetCurrentIndex(0)
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(20 * cell)
+	return tv
+}
+
+// A drop-down opened the moment its editor is mounted is measured against the
+// cell the editor actually stands in.
+//
+// Reaching a choice column off the right edge scrolls the region to reveal it,
+// and the editor is mounted into the cell that scroll produced. The editor's
+// own size was set only while PAINTING, though -- so the box the drop-down was
+// measured against still held whatever the last frame left it, which for a box
+// just built is nothing at all.
+func TestADropDownOpenedOnMountIsMeasuredAfterTheScroll(t *testing.T) {
+	host := &offsetPopupController{}
+	tv := scrollingChoiceTree(host)
+	if tv.columnLayout().maxHScroll <= 0 {
+		t.Fatal("the columns fit; reaching the choice one scrolls nothing")
+	}
+
+	cell := openChoiceEditor(t, tv)
+	if tv.hScroll == 0 {
+		t.Fatal("reaching the choice column did not scroll the region")
+	}
+	if !tv.editCombo.IsOpen() {
+		t.Fatal("entering a choice cell did not open its drop-down")
+	}
+	if host.popup == nil {
+		t.Fatal("no drop-down was registered")
+	}
+
+	if got := host.popup.Bounds.Width; got != cell.Width {
+		t.Errorf("the drop-down is %d wide against the cell's %d", got, cell.Width)
+	}
+	if got := host.popup.Bounds.X; got != cell.X {
+		t.Errorf("the drop-down opened at x=%d against the cell's %d", got, cell.X)
+	}
+}

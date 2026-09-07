@@ -299,7 +299,30 @@ func (t *TreeView) mountEditor(col *TreeColumn) {
 		t.editBox = ed
 	}
 	t.ensureEditColVisible()
+	t.syncEditorBounds()
 	t.Update()
+}
+
+// syncEditorBounds gives the mounted editor the size of the cell it stands in.
+//
+// Painting was the only thing that did this, so an editor asked about its own
+// size before the first frame after it was mounted answered with whatever the
+// last one left -- nothing at all, for one just built. A choice cell opens its
+// drop-down the moment it is mounted, and a drop-down is measured against the
+// box it drops from; the column it stands in has just been scrolled into view
+// by then, so the answer has to be the cell's CURRENT size and not a stale one.
+func (t *TreeView) syncEditorBounds() {
+	r, ok := t.editorRect()
+	if !ok {
+		return
+	}
+	size := core.UnitRect{Width: r.Width, Height: r.Height}
+	switch {
+	case t.editBox != nil:
+		t.editBox.SetBounds(size)
+	case t.editCombo != nil:
+		t.editCombo.SetBounds(size)
+	}
 }
 
 // dropEditorTrinkets dismisses whichever editor trinket is mounted.
@@ -647,12 +670,11 @@ func (t *TreeView) paintRowEditor(p *core.Painter) {
 	if !ok {
 		return
 	}
+	t.syncEditorBounds()
 	switch {
 	case t.editBox != nil:
-		t.editBox.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
 		t.editBox.Paint(p.WithOffset(r.X, r.Y))
 	case t.editCombo != nil:
-		t.editCombo.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
 		t.editCombo.Paint(p.WithOffset(r.X, r.Y))
 	}
 }
