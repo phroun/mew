@@ -1,6 +1,8 @@
 package text
 
 import (
+	"math"
+
 	"golang.org/x/image/math/fixed"
 
 	"github.com/phroun/kittytk/core"
@@ -85,6 +87,76 @@ func (l *Line) CaretX(idx int) core.Unit {
 		}
 	}
 	return core.Unit(x.Round())
+}
+
+// CaretXPx is CaretX in device pixels at ppu pixels per unit, measured from
+// the line's unrounded pen.
+//
+// Both exist for the reason Line.AdvancePx does: CaretX answers in whole
+// units, which is the denomination a field is LAID OUT in and the wrong one
+// for a position INSIDE a run. The glyphs rasterize at the unsnapped
+// pixels-per-unit, so a caret placed from the rounded answer drifts by up to
+// half a unit against the very glyphs it stands between -- visible at a large
+// font size as a caret leaning into its neighbour.
+func (l *Line) CaretXPx(idx int, ppu float64) int {
+	if len(l.Runs) == 0 {
+		return 0
+	}
+	run := l.runFor(idx)
+	if run == nil {
+		if idx <= l.Runes.Start {
+			return pxOfFixed(l.edgeFixed(l.Runes.Start), ppu)
+		}
+		return pxOfFixed(l.edgeFixed(l.Runes.End), ppu)
+	}
+	x := run.x
+	if run.RTL {
+		for _, c := range run.clusters() {
+			if c.runes.Start >= idx {
+				x += c.width
+			}
+		}
+	} else {
+		for _, c := range run.clusters() {
+			if c.runes.End <= idx {
+				x += c.width
+			}
+		}
+	}
+	return pxOfFixed(x, ppu)
+}
+
+// edgeFixed is edgeX from the unrounded pen.
+func (l *Line) edgeFixed(idx int) fixed.Int26_6 {
+	for i := range l.Runs {
+		r := &l.Runs[i]
+		if r.Runes.Start == idx && !r.RTL {
+			return r.x
+		}
+		if r.Runes.End == idx && r.RTL {
+			return r.x
+		}
+		if r.Runes.End == idx && !r.RTL {
+			return r.x + r.advanceOf()
+		}
+		if r.Runes.Start == idx && r.RTL {
+			return r.x + r.advanceOf()
+		}
+	}
+	return 0
+}
+
+// advanceOf is the run's own advance, unrounded: what its clusters add up to.
+func (r *Run) advanceOf() fixed.Int26_6 {
+	var w fixed.Int26_6
+	for _, g := range r.raw.Glyphs {
+		w += g.Advance
+	}
+	return w
+}
+
+func pxOfFixed(v fixed.Int26_6, ppu float64) int {
+	return int(math.Round(float64(v) / 64 * ppu))
 }
 
 // runFor picks the run owning caret index idx: the run containing it,

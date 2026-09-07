@@ -2189,31 +2189,9 @@ func (sr *ScreenRenderer) getTabWidth(visualColumn int, w *viewport.Viewport) in
 	return tabSize - (visualColumn % tabSize)
 }
 
-// runeToHexOrCtrl converts a control character to ^X format or hex.
-// Directly translated from TypeScript runeToHexOrCtrl
-func runeToHexOrCtrl(r rune) string {
-	value := int(r)
-	if value <= 27 {
-		switch value {
-		case 0:
-			return "^@"
-		case 27:
-			return "^["
-		default:
-			return "^" + string(rune(value+64))
-		}
-	} else if value <= 0xFF {
-		// One byte of hex reads unambiguously on its own: FE.
-		return fmt.Sprintf("%02X", value)
-	}
-	// Past one byte the digits need a boundary, or a run of substituted
-	// codepoints reads as one long number: (0123). Wider planes keep whole
-	// byte pairs.
-	if value <= 0xFFFF {
-		return fmt.Sprintf("(%04X)", value)
-	}
-	return fmt.Sprintf("(%06X)", value)
-}
+// runeToHexOrCtrl is the visible stand-in for a rune that must not reach the
+// terminal as itself: ^X for the caret forms, hex otherwise.
+func runeToHexOrCtrl(r rune) string { return khatool.Substitute(r) }
 
 // substituteWidth is the column count of a substitute string — always plain
 // ASCII, one column per rune. The renderer measures every substitute this way
@@ -2238,7 +2216,7 @@ func defectiveMarkForm(prev, r rune) (string, int) {
 		// non-spacing mark (Mn/Me), but Mc marks are SPACING combining marks
 		// and take a cell of their own, so the pair's width is the circle plus
 		// whatever the mark itself advances.
-		return string(textwidth.MarkAnchor) + string(r), 1 + textwidth.Rune(r)
+		return khatool.MarkForm(r), 1 + textwidth.Rune(r)
 	}
 	s := runeToHexOrCtrl(r)
 	return s, substituteWidth(s)

@@ -25,10 +25,33 @@ type TextInput struct {
 	readOnly    bool
 
 	// Cursor and selection
-	cursorPos    int
-	selStart     int
-	selEnd       int
-	scrollOffset int
+	cursorPos int
+	selStart  int
+	selEnd    int
+
+	// scroll is how far into the field's RUN its own left edge falls -- a
+	// place on the line as drawn, not a count of characters. A count cannot
+	// say what a field shows once any of its content reads right to left: the
+	// characters after the tenth are not the part of the line past the tenth
+	// cell, and the two answers are different halves of the word.
+	scroll core.Unit
+
+	// moreLeft and moreRight say whether the run continues past the field's
+	// edges, which is what the arrows at those edges are drawn for. They are
+	// settled with the scroll -- the arrows take room, so whether one shows
+	// changes how much run fits, and both answers have to come out of the
+	// same reckoning.
+	moreLeft, moreRight bool
+
+	// showAhead is how much of the run stays visible past the caret, counted
+	// in blanks (see showAheadUnits).
+	showAhead int
+
+	// showBidiControls turns the direction markers on: where a run turns, and
+	// where an author's own direction control sits. They show while the field
+	// is FOCUSED -- they are for working on the text, and a field being read
+	// wants the plain picture.
+	showBidiControls bool
 
 	// Callbacks
 	onTextChanged func(text string)
@@ -111,6 +134,7 @@ func NewTextInput() *TextInput {
 	t := &TextInput{
 		echoMode:  EchoNormal,
 		maxLength: -1, // No limit
+		showAhead: defaultShowAhead,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
 	t.SetCommands(
@@ -164,7 +188,7 @@ func (t *TextInput) SetText(text string) {
 	t.cursorPos = len(t.text)
 	t.selStart = 0
 	t.selEnd = 0
-	t.scrollOffset = 0
+	t.scroll = 0
 	t.Update()
 
 	if t.onTextChanged != nil {
@@ -247,6 +271,44 @@ func (t *TextInput) AcceptsTextInput() bool {
 // SetReadOnly sets the read-only state.
 func (t *TextInput) SetReadOnly(readOnly bool) {
 	t.readOnly = readOnly
+	t.Update()
+}
+
+// ShowBidiControls reports whether the direction markers are asked for.
+func (t *TextInput) ShowBidiControls() bool {
+	return t.showBidiControls
+}
+
+// SetShowBidiControls turns the direction markers on: a mark where each
+// fragment of the line begins and which way it reads, and the author's own
+// direction controls shown as themselves rather than spent invisibly.
+//
+// They appear only while the field is FOCUSED. Marks take room and change what
+// the line looks like, which is worth it while the text is being worked on and
+// noise while it is being read, so a field that loses focus falls back to the
+// plain picture of the same text.
+func (t *TextInput) SetShowBidiControls(show bool) {
+	if t.showBidiControls == show {
+		return
+	}
+	t.showBidiControls = show
+	t.ensureCursorVisible()
+	t.Update()
+}
+
+// ShowAhead is how much of the run stays visible past the caret, in characters.
+func (t *TextInput) ShowAhead() int {
+	return t.showAhead
+}
+
+// SetShowAhead sets how much of the run stays visible past the caret, counted
+// in characters. Zero pins the caret to the edge it is scrolling toward.
+func (t *TextInput) SetShowAhead(chars int) {
+	if chars < 0 {
+		chars = 0
+	}
+	t.showAhead = chars
+	t.ensureCursorVisible()
 	t.Update()
 }
 
@@ -495,58 +557,45 @@ func (t *TextInput) textChanged() {
 // ensureCursorVisible scrolls to make the cursor visible.
 func (t *TextInput) ensureCursorVisible() {
 	bounds := t.Bounds()
-	metrics := t.EffectiveCellMetrics()
-
 	if bounds.Width <= 0 {
 		return
 	}
-
-	// Scroll left if cursor is before visible area
-	if t.cursorPos < t.scrollOffset {
-		t.scrollOffset = t.cursorPos
-	}
-
-	// Scroll right if cursor is after visible area. Measured against the
-	// COMPOSED run, so a growing input-method composition pushes the view
-	// along instead of running off the right edge: the caret being chased
-	// is the one inside the composition.
+	// Measured against the COMPOSED run, so a growing input-method
+	// composition pushes the view along instead of running off the edge: the
+	// caret being chased is the one inside the composition.
 	displayText, _, _, caret := t.composedText()
+	g := t.runGeometry(displayText, t.EffectiveFont(), t.shapesText(), t.markersShown(), 0)
+	t.scroll, _, t.moreLeft, t.moreRight = t.window(g, caret, bounds.Width,
+		t.blankWidth(), t.scroll, t.scrollQuantum())
+}
 
-	// Room the caret needs to stay visible past the text before it. At the
-	// end of the text only the thin caret bar shows, so reserve a sliver,
-	// not a whole cell - reserving a full cell made the field scroll a
-	// character early, looking full while a cell of space still remained.
-	// Mid-text, keep the character the caret sits on visible.
-	var cursorWidth core.Unit
-	if caret < len(displayText) {
-		cursorWidth = t.MeasureText(string(displayText[caret]))
-	} else {
-		cursorWidth = metrics.UnitsPerCellWidth / 4
-		if cursorWidth < 1 {
-			cursorWidth = 1
-		}
+// shapesText reports whether the run is laid out by a shaper -- proportional
+// glyphs, ordered and joined by the engine -- rather than by the cell rule.
+func (t *TextInput) shapesText() bool { return core.HasTextMeasurer() }
+
+// scrollQuantum is what the field's own left edge is allowed to land on
+// multiples of: one cell where the target draws cells, and nothing at all
+// where the run can slide smoothly under it.
+func (t *TextInput) scrollQuantum() core.Unit {
+	if t.shapesText() {
+		return 0
 	}
+	return t.EffectiveCellMetrics().UnitsPerCellWidth
+}
 
-	for caret > t.scrollOffset {
-		// Calculate width from scrollOffset to the caret
-		start := t.scrollOffset
-		end := caret
-		if end > len(displayText) {
-			end = len(displayText)
-		}
-		if start >= len(displayText) {
-			break
-		}
-		visibleText := string(displayText[start:end])
-		textWidth := t.MeasureText(visibleText)
-
-		// Need room for text before cursor PLUS the cursor character itself
-		if textWidth+cursorWidth <= bounds.Width {
-			break
-		}
-		// Scroll right by one character
-		t.scrollOffset++
+// blankWidth is one blank's worth of room: what the caret takes where there is
+// no character under it, and the unit the show-ahead margin is counted in.
+func (t *TextInput) blankWidth() core.Unit {
+	if w := t.MeasureText(" "); w > 0 {
+		return w
 	}
+	return t.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
+// markersShown reports whether the direction markers are on the run: asked
+// for, and the field focused. A field being read wants the plain picture.
+func (t *TextInput) markersShown() bool {
+	return t.showBidiControls && t.HasFocus()
 }
 
 // SizeHint returns the preferred size.
@@ -634,22 +683,6 @@ func (t *TextInput) Paint(p *core.Painter) {
 		displayText, preLo, preHi, caretIdx = t.composedText()
 	}
 
-	// Apply scroll offset
-	if t.scrollOffset > 0 && t.scrollOffset < len(displayText) {
-		displayText = displayText[t.scrollOffset:]
-	} else if t.scrollOffset >= len(displayText) {
-		displayText = nil
-	}
-	if t.scrollOffset > 0 {
-		preLo -= t.scrollOffset
-		preHi -= t.scrollOffset
-		caretIdx -= t.scrollOffset
-	}
-
-	// Truncate to visible width using font metrics
-	visibleText := t.truncateToWidth(displayText, bounds.Width, font)
-	displayText = []rune(visibleText)
-
 	// Everything is measured from - and drawn as - the WHOLE text in one
 	// shaped run, never split at the caret or the selection edges. Splitting
 	// re-shapes the material at the split each time it moves (a substring
@@ -691,18 +724,13 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// cell surface (no TextPixelDrawer) fall back to the whole-unit DrawText.
 	_, usePx := p.DrawTextOffset(0, 0, 0, 0, "", s, font)
 
-	// prefixWidth is the width, in units and device pixels, of the visible
-	// text before display index d - measured against the whole stable run.
-	//
-	// The pixel answer is measured in PIXELS, not measured in units and
-	// scaled. MeasureText rounds to whole units, which is the denomination
-	// the field is laid out in and the wrong one for a position inside the
-	// run: the glyphs rasterize at the unsnapped pixels-per-unit, so rounding
-	// at the unit and again at the pixel drifts by up to half a unit against
-	// the very glyphs the caret sits between. It shows wherever a rune's
-	// advance is a fraction of a unit - a space beside CJK text is about two
-	// and a half - where the caret after a second space landed short of the
-	// space it was meant to follow.
+	// runPx is a run's width in PIXELS, not its width in units scaled.
+	// MeasureText rounds to whole units, which is the denomination the field is
+	// laid out in and the wrong one for a position inside the run: the glyphs
+	// rasterize at the unsnapped pixels-per-unit, so rounding at the unit and
+	// again at the pixel drifts by up to half a unit against the very glyphs the
+	// caret sits between. It shows wherever a rune's advance is a fraction of a
+	// unit - a space beside CJK text is about two and a half.
 	//
 	// Where the painter cannot measure in pixels, the fallback maps the LOCAL
 	// width onto the device grid. UnitsToPx cannot: it converts from the
@@ -715,16 +743,82 @@ func (t *TextInput) Paint(p *core.Painter) {
 		}
 		return p.UnitSpanPxX(0, w)
 	}
-	prefixWidth := func(d int) (core.Unit, int) {
-		if d < 0 {
-			d = 0
+
+	// Where the run went: the box every logical rune was drawn in, worked out
+	// the way the target that will draw it works. Everything below is asked of
+	// this - the caret, the selection, the composition's clause - because a
+	// prefix measurement answers a different question on a line that turns over
+	// (see fieldGeometry).
+	ppu := 0.0
+	if usePx {
+		ppu = p.PxPerUnitF()
+	}
+	marked := t.markersShown() && !isPlaceholder
+	g := t.runGeometry(displayText, font, t.shapesText(), marked, ppu)
+
+	// And where the field sits on it. The scroll is a place on the RUN, so a
+	// field showing the middle of a line shows the middle of it as drawn.
+	blank := t.blankWidth()
+	var usable core.Unit
+	t.scroll, usable, t.moreLeft, t.moreRight = t.window(g, cursorDisp,
+		bounds.Width, blank, t.scroll, t.scrollQuantum())
+
+	// The arrows are drawn INSIDE the field and the run gives up that much
+	// room, so the text and the chrome describing it never overlap. roomLo and
+	// roomHi are what is left for the run.
+	mark := t.markWidth()
+	fieldPx := p.UnitSpanPxX(0, bounds.Width)
+	markPx := p.UnitSpanPxX(0, mark)
+	roomLo := core.Unit(0)
+	roomLoPx := 0
+	if t.moreLeft {
+		roomLo, roomLoPx = mark, markPx
+	}
+	roomHi, roomHiPx := roomLo+usable, roomLoPx+p.UnitSpanPxX(0, usable)
+	if roomHi > bounds.Width {
+		roomHi, roomHiPx = bounds.Width, fieldPx
+	}
+
+	// originX is where the run's own zero falls in the field, which is what
+	// every box below is shifted by.
+	originX := roomLo - t.scroll
+	originPx := roomLoPx - runPx("", 0)
+	if usePx {
+		originPx = roomLoPx - p.UnitsToPx(t.scroll)
+	} else {
+		originPx = roomLoPx - p.UnitSpanPxX(0, t.scroll)
+	}
+
+	// A span of the run, clipped to the room the run has. Off-field pieces of a
+	// selection or a composition are not drawn short - they are not drawn.
+	clipUnits := func(lo, hi core.Unit) (core.Unit, core.Unit, bool) {
+		lo, hi = lo+originX, hi+originX
+		if lo < roomLo {
+			lo = roomLo
 		}
-		if d > n {
-			d = n
+		if hi > roomHi {
+			hi = roomHi
 		}
-		run := string(displayText[:d])
-		w := t.MeasureText(run)
-		return w, runPx(run, w)
+		return lo, hi, hi > lo
+	}
+	clipPx := func(lo, hi int) (int, int, bool) {
+		lo, hi = lo+originPx, hi+originPx
+		if lo < roomLoPx {
+			lo = roomLoPx
+		}
+		if hi > roomHiPx {
+			hi = roomHiPx
+		}
+		return lo, hi, hi > lo
+	}
+	unitPx := func(u core.Unit) int { return p.UnitSpanPxX(0, u) }
+
+	// The run to hand the painter. A pixel target orders and shapes whole
+	// paragraphs itself, so it gets the text (with substitutes spliced in where
+	// there are any); a cell target gets the run already turned over.
+	runStr := g.draw
+	if runStr == "" {
+		runStr = string(displayText)
 	}
 
 	// Selection span (display indices) and the fixed anchor - the selection
@@ -733,66 +827,57 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// the COMMITTED text, which the composition has displaced, and the
 	// selection is about to be replaced by whatever commits anyway.
 	selLo, selHi := -1, -1
-	anchorDisp := cursorDisp
 	if t.HasSelection() && !isPlaceholder && !composing {
-		anchorDisp = t.selStart - t.scrollOffset
-		if anchorDisp < 0 {
-			anchorDisp = 0
-		}
-		if anchorDisp > n {
-			anchorDisp = n
-		}
-		selLo, selHi = anchorDisp, cursorDisp
+		selLo, selHi = clampIdx(t.selStart), cursorDisp
 		if selLo > selHi {
 			selLo, selHi = selHi, selLo
 		}
 	}
 
-	// 1. Draw the whole text once - stable regardless of caret/selection.
+	// 1. Draw the whole run once - stable regardless of caret/selection.
 	if usePx {
-		p.DrawTextOffset(0, 0, 0, 0, string(displayText), s, font)
+		p.DrawTextOffsetClipped(0, 0, originPx, roomLoPx, roomHiPx, runStr, s, font)
 	} else {
-		p.DrawText(0, 0, string(displayText), s, font)
+		cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+		vis, at := g.cellSlice(t.scroll, t.scroll+usable, cw)
+		p.DrawText(originX+at, 0, vis, s, font)
 	}
 
-	caretX, caretXPx := prefixWidth(cursorDisp)
-
-	// 2. Overstrike the selection: a highlight over the whole span, then the
+	// 2. Overstrike the selection: a highlight over each span, then the
 	// selected text re-colored. On a pixel surface the re-color draws the SAME
 	// whole run (identical glyph rasters as the base text) and reveals only
 	// the selected columns with a pixel-precise clip, so the selected glyphs
 	// never move - only the clip edge does - and neither the fixed anchor end
 	// nor the interior jitters as the caret end grows the span. (Re-drawing a
 	// re-shaped substring, right-aligned to the anchor, still jittered: the
-	// substring re-shapes and its rounded left edge shifts every glyph.) On a
-	// cell surface the substring path is exact (cell-aligned) and used as-is.
+	// substring re-shapes and its rounded left edge shifts every glyph.)
+	//
+	// SPANS, plural: a logical range that crosses a direction change sits in
+	// two places on the line with unselected text between them, and one
+	// rectangle over the pair would highlight what was not chosen.
 	if selLo >= 0 && selHi > selLo {
-		loX, loPx := prefixWidth(selLo)
-		hiX, hiPx := prefixWidth(selHi)
-		// When the selection's far end is scrolled off the right of the box,
-		// its highlight must reach the box's own right edge, not stop at the
-		// last visible glyph - otherwise the trailing sliver draws in the
-		// normal color even though the selection continues off-screen.
-		selHiAbs := t.selStart
-		if t.selEnd > selHiAbs {
-			selHiAbs = t.selEnd
-		}
-		if selHiAbs > t.scrollOffset+n {
-			if usePx {
-				if edge := p.UnitSpanPxX(0, bounds.Width); edge > hiPx {
-					hiPx = edge
-				}
-			} else if bounds.Width > hiX {
-				hiX = bounds.Width
-			}
-		}
+		selFg := selStyle.WithBg(style.ColorTransparent) // glyphs over the highlight
 		if usePx {
-			p.FillRectPixels(0, 0, loPx, 0, hiPx-loPx, rowHPx, selStyle)
-			selFg := selStyle.WithBg(style.ColorTransparent) // glyphs over the highlight
-			p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText), selFg, font)
+			for _, sp := range g.spansPx(selLo, selHi, unitPx) {
+				lo, hi, ok := clipPx(sp[0], sp[1])
+				if !ok {
+					continue
+				}
+				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, selStyle)
+				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr, selFg, font)
+			}
 		} else {
-			p.FillRect(core.UnitRect{X: loX, Width: hiX - loX, Height: bounds.Height}, ' ', selStyle)
-			p.DrawText(loX, 0, string(displayText[selLo:selHi]), selStyle, font)
+			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+			for _, sp := range g.spans(selLo, selHi) {
+				lo, hi, ok := clipUnits(sp[0], sp[1])
+				if !ok {
+					continue
+				}
+				p.FillRect(core.UnitRect{X: lo, Width: hi - lo,
+					Height: bounds.Height}, ' ', selStyle)
+				vis, at := g.cellSlice(lo-originX, hi-originX, cw)
+				p.DrawText(originX+at, 0, vis, selStyle, font)
+			}
 		}
 	}
 
@@ -813,8 +898,6 @@ func (t *TextInput) Paint(p *core.Painter) {
 		rule := func(c style.Color) style.CellStyle {
 			return style.DefaultStyle().WithBg(c)
 		}
-		loX, loPx := prefixWidth(preLo)
-		_, hiPx := prefixWidth(preHi)
 
 		// The ACTIVE span: the clause the input method is converting right
 		// now, in the active color and underscored twice as thick, against
@@ -850,148 +933,253 @@ func (t *TextInput) Paint(p *core.Painter) {
 				ruleY = 0
 			}
 			if hasInactive {
-				p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText),
-					preStyle, font)
-				p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin,
-					rule(inactiveStyle.Fg))
+				for _, sp := range g.spansPx(preLo, preHi, unitPx) {
+					lo, hi, ok := clipPx(sp[0], sp[1])
+					if !ok {
+						continue
+					}
+					p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr, preStyle, font)
+					p.FillRectPixels(0, 0, lo, ruleY, hi-lo, thin, rule(inactiveStyle.Fg))
+				}
 			}
-			if clauseHi > clauseLo {
-				_, cLoPx := prefixWidth(clauseLo)
-				_, cHiPx := prefixWidth(clauseHi)
-				// Clipped from the WHOLE composition rather than drawn as
-				// its own run, so the active span changes color without
-				// being re-shaped - a substring shapes differently than the
-				// same characters mid-run, and it would jitter as the
-				// candidate list is walked.
-				p.DrawTextOffsetClipped(0, 0, 0, cLoPx, cHiPx, string(displayText),
-					s.WithFg(clauseStyle.Fg).WithBg(style.ColorTransparent), font)
-				p.FillRectPixels(0, 0, cLoPx, ruleY, cHiPx-cLoPx, thin, rule(clauseStyle.Fg))
+			// Clipped from the WHOLE composition rather than drawn as its own
+			// run, so the active span changes color without being re-shaped -
+			// a substring shapes differently than the same characters mid-run,
+			// and it would jitter as the candidate list is walked.
+			activeFg := s.WithFg(clauseStyle.Fg).WithBg(style.ColorTransparent)
+			for _, sp := range g.spansPx(clauseLo, clauseHi, unitPx) {
+				lo, hi, ok := clipPx(sp[0], sp[1])
+				if !ok {
+					continue
+				}
+				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr, activeFg, font)
+				p.FillRectPixels(0, 0, lo, ruleY, hi-lo, thin, rule(clauseStyle.Fg))
 				if y := ruleY - thin; y >= 0 {
-					p.FillRectPixels(0, 0, cLoPx, y, cHiPx-cLoPx, thin, rule(clauseStyle.Fg))
+					p.FillRectPixels(0, 0, lo, y, hi-lo, thin, rule(clauseStyle.Fg))
 				}
 			}
 		} else {
 			// Cell surfaces have no sub-cell rule to draw, so the
 			// underline is the attribute and the active span carries its
 			// color and bold weight instead of a thicker rule.
+			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 			cellStyle := preStyle.WithAttrs(style.StyleUnderline)
+			paint := func(lo, hi int, st style.CellStyle) {
+				for _, sp := range g.spans(lo, hi) {
+					a, b, ok := clipUnits(sp[0], sp[1])
+					if !ok {
+						continue
+					}
+					vis, at := g.cellSlice(a-originX, b-originX, cw)
+					p.DrawText(originX+at, 0, vis, st, font)
+				}
+			}
 			if hasInactive {
-				p.DrawText(loX, 0, string(displayText[preLo:preHi]), cellStyle, font)
+				paint(preLo, preHi, cellStyle)
 			}
-			if clauseHi > clauseLo {
-				cLoX, _ := prefixWidth(clauseLo)
-				p.DrawText(cLoX, 0, string(displayText[clauseLo:clauseHi]),
-					cellStyle.WithFg(clauseStyle.Fg).
-						WithAttrs(style.StyleUnderline|style.StyleBold), font)
+			paint(clauseLo, clauseHi, cellStyle.WithFg(clauseStyle.Fg).
+				WithAttrs(style.StyleUnderline|style.StyleBold))
+		}
+	}
+
+	// 4. The field's own notation: the direction markers, and the substitutes
+	// standing in for characters that must not be drawn as themselves. Both in
+	// the input method's active color, because both are the field speaking
+	// about the text rather than showing it.
+	if len(g.marks) > 0 {
+		noteStyle := scheme.GetFocusedEditBoxIMEActiveClause()
+		cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+		for _, m := range g.marks {
+			if usePx {
+				lo, hi, ok := clipPx(unitPx(m.x), unitPx(m.x+m.w))
+				if !ok {
+					continue
+				}
+				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, noteStyle)
+				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr,
+					noteStyle.WithBg(style.ColorTransparent), font)
+				continue
 			}
+			lo, hi, ok := clipUnits(m.x, m.x+m.w)
+			if !ok {
+				continue
+			}
+			p.FillRect(core.UnitRect{X: lo, Width: hi - lo,
+				Height: bounds.Height}, ' ', noteStyle)
+			vis, at := g.cellSlice(lo-originX, hi-originX, cw)
+			p.DrawText(originX+at, 0, vis, noteStyle, font)
+		}
+	}
+
+	// 5. The more-arrows, pinned to the field's own extreme edges: the run
+	// continues that way past what is shown. They are drawn whether or not the
+	// field is focused - the fact that there is text out of sight belongs to
+	// the text, not to who is editing it - in the inverse of the active input
+	// method color, which is the one pair in the scheme nothing else in a field
+	// wears.
+	if t.moreLeft || t.moreRight {
+		active := scheme.GetFocusedEditBoxIMEActiveClause()
+		arrow := active.WithFg(active.Bg).WithBg(active.Fg)
+		if t.moreLeft {
+			t.paintMoreArrow(p, moreLeftGlyph, 0, 0, mark, markPx, rowHPx, arrow, font, usePx)
+		}
+		if t.moreRight {
+			t.paintMoreArrow(p, moreRightGlyph, bounds.Width-mark, fieldPx-markPx,
+				mark, markPx, rowHPx, arrow, font, usePx)
 		}
 	}
 
 	// Draw cursor - only in the active window chain: a trinket keeps local
 	// focus while its window is in the background, but showing the caret
 	// there would put two carets on screen.
-	if showCaret {
-		if caretX >= 0 && caretX < bounds.Width {
-			// The graphical bar caret uses a brighter white than the cell
-			// block cursor, for contrast; the block fallback keeps the
-			// regular (silver) white.
-			cursorStyle := scheme.GetFocusedEditBoxCursor()
-			barStyle := scheme.GetFocusedEditBoxBarCursor()
-			// The graphical bar caret blinks (keystrokes restart the
-			// phase); a block stays steady, on a cell surface and on a
-			// read-only field alike. A blink says "type here" and paces
-			// itself to a keystroke that is not coming.
-			if p.Graphical() && !blockCaret {
-				t.ensureCaretTimer()
+	if !showCaret {
+		return
+	}
+	caretLo, caretHi := g.caretBox(cursorDisp, blank)
+	caretLoPx, caretHiPx := g.caretBoxPx(cursorDisp, runPx(" ", blank), unitPx)
+	// The caret LEAVES its box by the leading edge of the direction the
+	// character it sits on reads in, which is where a bar belongs and where an
+	// input method's candidate window is anchored.
+	caretX, caretXPx := caretLo+originX, caretLoPx+originPx
+	if cursorDisp < n && g.rtl[cursorDisp] {
+		caretX, caretXPx = caretHi+originX, caretHiPx+originPx
+	} else if cursorDisp >= n && n > 0 && g.rtl[n-1] {
+		caretX, caretXPx = caretHi+originX, caretHiPx+originPx
+	}
+
+	// The graphical bar caret uses a brighter white than the cell
+	// block cursor, for contrast; the block fallback keeps the
+	// regular (silver) white.
+	cursorStyle := scheme.GetFocusedEditBoxCursor()
+	barStyle := scheme.GetFocusedEditBoxBarCursor()
+	// The graphical bar caret blinks (keystrokes restart the
+	// phase); a block stays steady, on a cell surface and on a
+	// read-only field alike. A blink says "type here" and paces
+	// itself to a keystroke that is not coming.
+	if p.Graphical() && !blockCaret {
+		t.ensureCaretTimer()
+	}
+	// Tell the platform where the insertion point is, without
+	// asking it to DRAW a caret — this trinket paints its own
+	// just below, and a platform caret on top would be a second
+	// one. What the OS does with it is place an input method's
+	// candidate window: the CJK candidate list, macOS's
+	// press-and-hold accent picker, the emoji picker. Reported
+	// every frame while focused, so the blink never withdraws it.
+	//
+	// While composing, report the START of the composition rather
+	// than the caret inside it: the candidate list belongs under
+	// the text it is offering candidates FOR, and anchoring it to
+	// the caret would walk it rightward with every keystroke.
+	areaX := caretX
+	if composing {
+		if lo, _, ok := g.boxOf(preLo); ok {
+			areaX = lo + originX
+		}
+	}
+	// Only where text can actually arrive: this is what an input
+	// method anchors its candidate window to, and a field that
+	// accepts nothing has nothing to compose for.
+	if t.AcceptsTextInput() {
+		p.RequestTextInputArea(areaX, 0)
+	}
+
+	if blockCaret {
+		// The block covers the character the caret sits BEFORE -- the one it
+		// is "at" -- painted in that text's own colours reversed: the field's
+		// background becomes the ink and the ink becomes the ground. At the
+		// end of the text there is no character to cover, so it takes one
+		// blank's worth of the interior instead and comes out the same size
+		// either way.
+		//
+		// Same two steps the selection uses: fill the span, then redraw the
+		// glyphs clipped into it, so the block sits on the same pixel advance
+		// the text was laid out at.
+		//
+		// The caret is always at one EDGE of a selection (the span runs anchor
+		// to cursor), so the block covers a SELECTED character exactly when
+		// the caret is at the left edge, which is what selecting backwards
+		// leaves.
+		overSel := selLo >= 0 && cursorDisp >= selLo && cursorDisp < selHi
+		block := blockCaretStyle(s, selStyle, fillStyle.Bg, overSel)
+		if usePx {
+			if lo, hi, ok := clipPx(caretLoPx, caretHiPx); ok {
+				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, block)
+				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr,
+					block.WithBg(style.ColorTransparent), font)
 			}
-			// Tell the platform where the insertion point is, without
-			// asking it to DRAW a caret — this trinket paints its own
-			// just below, and a platform caret on top would be a second
-			// one. What the OS does with it is place an input method's
-			// candidate window: the CJK candidate list, macOS's
-			// press-and-hold accent picker, the emoji picker. Reported
-			// every frame while focused, so the blink never withdraws it.
-			//
-			// While composing, report the START of the composition rather
-			// than the caret inside it: the candidate list belongs under
-			// the text it is offering candidates FOR, and anchoring it to
-			// the caret would walk it rightward with every keystroke.
-			areaX := caretX
-			if composing {
-				areaX, _ = prefixWidth(preLo)
+		} else if lo, hi, ok := clipUnits(caretLo, caretHi); ok {
+			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+			p.FillRect(core.UnitRect{X: lo, Width: hi - lo,
+				Height: bounds.Height}, ' ', block)
+			vis, at := g.cellSlice(lo-originX, hi-originX, cw)
+			p.DrawText(originX+at, 0, vis, block, font)
+		}
+		return
+	}
+	if p.Graphical() && !t.caretVisible() {
+		return
+	}
+	if caretX < roomLo || caretX > roomHi {
+		return
+	}
+	drawn := false
+	if usePx {
+		// Site the bar at the same accumulated pixel advance the glyphs
+		// painted at, so it sits exactly on the boundary before the cursor's
+		// character.
+		bar := p.DeviceScale()
+		x := caretXPx
+		if x+bar > roomHiPx {
+			x = roomHiPx - bar
+		}
+		drawn = p.FillRectPixels(0, 0, x, 0, bar, rowHPx, barStyle)
+		// A second bar where the reading turns. The insertion point there is
+		// one place in the text and two places on the line - what is typed
+		// next lands at whichever end matches its own direction - and a single
+		// bar would name one of them and hide the other. The half-height mark
+		// is the subordinate one: it shows where the text on the other side
+		// of the turn continues.
+		if drawn && cursorDisp > 0 && cursorDisp < n && g.rtl[cursorDisp] != g.rtl[cursorDisp-1] {
+			second := g.loPx[cursorDisp-1]
+			if !g.rtl[cursorDisp-1] {
+				second = g.hiPx[cursorDisp-1]
 			}
-			// Only where text can actually arrive: this is what an input
-			// method anchors its candidate window to, and a field that
-			// accepts nothing has nothing to compose for.
-			if t.AcceptsTextInput() {
-				p.RequestTextInputArea(areaX, 0)
-			}
-			if blockCaret {
-				// The block covers the character the caret sits BEFORE --
-				// the one it is "at" -- painted in that text's own colours
-				// reversed: the field's background becomes the ink and the
-				// ink becomes the ground. At the end of the text there is no
-				// character to cover, so it takes one space's worth of the
-				// interior instead and comes out the same size either way.
-				//
-				// Same two steps the selection uses: fill the span, then
-				// redraw the glyphs clipped into it, so the block sits on the
-				// same pixel advance the text was laid out at.
-				endX, endPx := prefixWidth(cursorDisp + 1)
-				if cursorDisp >= n {
-					blank := t.MeasureText(" ")
-					endX = caretX + blank
-					endPx = caretXPx + runPx(" ", blank)
-				}
-				// The caret is always at one EDGE of a selection (the span
-				// runs anchor to cursor), so the block covers a SELECTED
-				// character exactly when the caret is at the left edge, which
-				// is what selecting backwards leaves.
-				overSel := selLo >= 0 && cursorDisp >= selLo && cursorDisp < selHi
-				block := blockCaretStyle(s, selStyle, fillStyle.Bg, overSel)
-				if usePx {
-					p.FillRectPixels(0, 0, caretXPx, 0, endPx-caretXPx,
-						rowHPx, block)
-					p.DrawTextOffsetClipped(0, 0, 0, caretXPx, endPx,
-						string(displayText), block.WithBg(style.ColorTransparent), font)
-				} else {
-					p.FillRect(core.UnitRect{X: caretX, Width: endX - caretX,
-						Height: bounds.Height}, ' ', block)
-					if cursorDisp < n {
-						p.DrawText(caretX, 0, string(displayText[cursorDisp]), block, font)
-					}
-				}
-			} else if !p.Graphical() || t.caretVisible() {
-				drawn := false
-				if usePx {
-					// Site the bar at the same accumulated pixel advance the
-					// glyphs painted at, so it sits exactly on the boundary
-					// before the cursor's character.
-					drawn = p.FillRectPixels(0, 0, caretXPx, 0,
-						p.DeviceScale(), rowHPx, barStyle)
-				}
-				if !drawn {
-					// Cell surfaces fall back to the reverse-video block.
-					if !p.DrawCaret(caretX, 0, t.EffectiveCellMetrics().UnitsPerCellHeight, barStyle) {
-						// The character under the block comes from the run
-						// actually on screen. Indexing the COMMITTED text
-						// by cursorPos agreed with this for as long as the
-						// two runs held the same characters - the scroll
-						// offset cancels, since caretX is measured over the
-						// scrolled run from that same character. A
-						// composition breaks that: it is spliced into the
-						// painted run and absent from the committed one, so
-						// cursorPos lands on the wrong side of it.
-						var cursorChar rune = ' '
-						if cursorDisp < len(displayText) {
-							cursorChar = displayText[cursorDisp]
-						}
-						p.DrawText(caretX, 0, string(cursorChar), cursorStyle, font)
-					}
-				}
+			if x, _, ok := clipPx(second, second+1); ok {
+				p.FillRectPixels(0, 0, x, rowHPx/2, bar, rowHPx-rowHPx/2, barStyle)
 			}
 		}
 	}
+	if !drawn {
+		// Cell surfaces fall back to the reverse-video block.
+		if !p.DrawCaret(caretX, 0, t.EffectiveCellMetrics().UnitsPerCellHeight, barStyle) {
+			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+			lo, hi, ok := clipUnits(caretLo, caretHi)
+			if !ok {
+				return
+			}
+			p.FillRect(core.UnitRect{X: lo, Width: hi - lo,
+				Height: bounds.Height}, ' ', cursorStyle)
+			vis, at := g.cellSlice(lo-originX, hi-originX, cw)
+			p.DrawText(originX+at, 0, vis, cursorStyle, font)
+		}
+	}
+}
+
+// paintMoreArrow draws one end-of-run arrow at a fixed place in the field:
+// unit x on a cell surface, device pixel xPx on a pixel one, so it sits
+// exactly on the field's own edge rather than a rounding of it.
+func (t *TextInput) paintMoreArrow(p *core.Painter, glyph rune, x core.Unit, xPx int,
+	w core.Unit, wPx, rowHPx int, s style.CellStyle, font *core.Font, usePx bool) {
+	if usePx {
+		p.FillRectPixels(0, 0, xPx, 0, wPx, rowHPx, s)
+		p.DrawTextOffsetClipped(0, 0, xPx, xPx, xPx+wPx, string(glyph),
+			s.WithBg(style.ColorTransparent), font)
+		return
+	}
+	p.FillRect(core.UnitRect{X: x, Width: w,
+		Height: t.EffectiveCellMetrics().UnitsPerCellHeight}, ' ', s)
+	p.DrawText(x, 0, string(glyph), s, font)
 }
 
 // blockCaretStyle is the pair the read-only block inverts.
@@ -1174,62 +1362,68 @@ func (t *TextInput) composedText() (runes []rune, preLo, preHi, caret int) {
 	return out, from, from + len(pre), caret
 }
 
-// truncateToWidth truncates text to fit within the given width using font metrics.
-func (t *TextInput) truncateToWidth(text []rune, maxWidth core.Unit, font *core.Font) string {
-	if len(text) == 0 {
-		return ""
-	}
-
-	// Find how many characters fit within maxWidth
-	result := make([]rune, 0, len(text))
-	var totalWidth core.Unit
-	for _, r := range text {
-		charWidth := t.MeasureText(string(r))
-		if totalWidth+charWidth > maxWidth {
-			break
-		}
-		result = append(result, r)
-		totalWidth += charWidth
-	}
-	return string(result)
-}
-
-// findCharAtX finds the character index at the given X position using font
-// metrics.
+// findCharAtX is the insertion point a click at x asks for.
 //
-// x arrives in this field's own denomination, so the prefixes it is compared
-// against have to be measured in that same denomination. Font.MeasureText
-// answers at the DEFAULT one, so inside a re-denominated window a click
-// resolved against prefixes of the wrong size and the caret landed several
-// characters from the pointer.
+// It is resolved through the run's own geometry, not by measuring prefixes:
+// on a line that turns over, the character drawn under the pointer is not the
+// one a prefix of that width ends at, and the two answers are at opposite ends
+// of a word. The box the click landed in names the character; which HALF of
+// that box it landed in says whether the caret goes before or after it, read in
+// that character's own direction, so clicking the right half of a Hebrew letter
+// puts the caret on the letter's left the way it does everywhere else - after
+// it, in the direction the word is read.
 func (t *TextInput) findCharAtX(x core.Unit, font *core.Font) int {
 	displayText := t.getDisplayText()
-	if t.scrollOffset > 0 && t.scrollOffset < len(displayText) {
-		displayText = displayText[t.scrollOffset:]
-	} else if t.scrollOffset >= len(displayText) {
-		return t.scrollOffset
+	if len(displayText) == 0 {
+		return 0
+	}
+	g := t.runGeometry(displayText, font, t.shapesText(), t.markersShown(), 0)
+
+	// Into the run's own coordinates: x arrives in the field's space, where
+	// the run sits shifted by the scroll and by whatever room the left arrow
+	// took.
+	at := x + t.scroll
+	if t.moreLeft {
+		at -= t.markWidth()
 	}
 
-	// Measured as PREFIXES of the run, which is how the caret is placed
-	// (prefixWidth), so a click puts the caret where the click was.
-	//
-	// Summing each rune's width on its own rounds every one of them to a whole
-	// unit and the error compounds along the line - a space is about two and a
-	// half units beside CJK text, so every one of them was over-counted by
-	// half - and a rune measured alone is not the width it has in the run
-	// anyway.
-	var before core.Unit
+	best, bestGap := -1, core.Unit(0)
 	for i := range displayText {
-		after := t.MeasureText(string(displayText[:i+1]))
-		// The nearer edge wins: past the middle of a character is the position
-		// after it.
-		if x < (before+after)/2 {
-			return t.scrollOffset + i
+		lo, hi, ok := g.boxOf(i)
+		if !ok || hi <= lo {
+			continue
 		}
-		before = after
+		// Inside the box the half decides; outside it the nearer edge does,
+		// which is what answers a click past an end of the run or in the gap a
+		// turn leaves.
+		var gap core.Unit
+		var after bool
+		switch {
+		case at < lo:
+			gap, after = lo-at, g.rtl[i]
+		case at >= hi:
+			gap, after = at-hi, !g.rtl[i]
+		default:
+			mid := lo + (hi-lo)/2
+			after = at >= mid
+			if g.rtl[i] {
+				after = at < mid
+			}
+		}
+		if best < 0 || gap < bestGap {
+			best, bestGap = i, gap
+			if after {
+				best = i + 1
+			}
+		}
+		if gap == 0 {
+			break
+		}
 	}
-	// x is past all characters
-	return t.scrollOffset + len(displayText)
+	if best < 0 {
+		return len(displayText)
+	}
+	return best
 }
 
 // HandleKeyPress handles keyboard input.
@@ -1375,7 +1569,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.cursorPos = 0
 		t.selStart = 0
 		t.selEnd = 0
-		t.scrollOffset = 0
+		t.scroll = 0
 		t.textChanged()
 		return true
 

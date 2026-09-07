@@ -33,7 +33,7 @@ func TestAFieldKnowsWhereItsRunesWent(t *testing.T) {
 		form.AddChild(ti)
 		ti.SetText(shalom)
 		ti.SetBounds(core.UnitRect{Width: 30 * 8, Height: 16})
-		return ti, ti.runGeometry([]rune(shalom), ti.EffectiveFont(), graphical, false)
+		return ti, ti.runGeometry([]rune(shalom), ti.EffectiveFont(), graphical, false, 0)
 	}
 
 	for _, graphical := range []bool{false, true} {
@@ -100,7 +100,7 @@ func TestAChosenStretchCanSitInTwoPlaces(t *testing.T) {
 	form.AddChild(ti)
 	ti.SetText(mixed)
 	ti.SetBounds(core.UnitRect{Width: 40 * 8, Height: 16})
-	g := ti.runGeometry([]rune(mixed), ti.EffectiveFont(), false, false)
+	g := ti.runGeometry([]rune(mixed), ti.EffectiveFont(), false, false, 0)
 
 	// "b שלו" -- the b, the space and three Hebrew letters: one piece of the
 	// English and part of the Hebrew, which land apart.
