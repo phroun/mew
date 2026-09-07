@@ -275,7 +275,7 @@ func (b *Button) SizeHint() core.UnitSize {
 	// fixed physical size and need no adjusting; the caption was measured at
 	// the DEFAULT denomination, so inside a re-denominated window the button
 	// sized itself around a caption counted in units of the wrong size.
-	textWidth := b.MeasureText(b.text)
+	textWidth := b.MeasureText(b.CellRun(b.text))
 
 	// Add icon width if present (icons use fixed width)
 	iconWidth := core.Unit(0)
@@ -391,7 +391,7 @@ func (b *Button) Paint(p *core.Painter) {
 		rightBracket = '>'
 	}
 	bracketWidth := metrics.UnitsPerCellWidth * 2 // Each bracket is 1 cell
-	textWidth := b.MeasureText(b.text)
+	textWidth := b.MeasureText(b.CellRun(b.text))
 
 	// Icon handling
 	iconWidth := core.Unit(0)
@@ -498,7 +498,7 @@ func (b *Button) Paint(p *core.Painter) {
 	// Draw text using font
 	if b.text != "" {
 		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
-		p.DrawText(textX, yOffset, b.text, s, font)
+		p.DrawText(textX, yOffset, b.CellRun(b.text), s, font)
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)

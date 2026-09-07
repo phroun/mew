@@ -155,7 +155,7 @@ func (c *Checkbox) SizeHint() core.UnitSize {
 	// Indicator is decorative (3 cells), space is 1 cell, text is measured
 	indicatorWidth := metrics.UnitsPerCellWidth * 3 // "[ ]" = 3 cells
 	spaceWidth := metrics.UnitsPerCellWidth         // " " = 1 cell
-	textWidth := c.MeasureText(c.text)
+	textWidth := c.MeasureText(c.CellRun(c.text))
 	return core.UnitSize{
 		Width:  indicatorWidth + spaceWidth + textWidth,
 		Height: metrics.TextHeight(1),
@@ -244,7 +244,8 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	x := metrics.UnitsPerCellWidth * 4 // After indicator + space (4 cells)
 
 	if !c.wordWrap {
-		p.DrawText(core.LeadingX(c, box, x, c.MeasureText(c.text)), 0, c.text, labelStyle, font)
+		run := c.CellRun(c.text)
+		p.DrawText(core.LeadingX(c, box, x, c.MeasureText(run)), 0, run, labelStyle, font)
 		return
 	}
 
@@ -253,7 +254,8 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	textWidth := box - x
 	y := core.Unit(0)
 	for _, line := range wrapText(c.text, textWidth, font, metrics) {
-		p.DrawText(core.LeadingX(c, box, x, c.MeasureText(line)), y, line, labelStyle, font)
+		run := c.CellRun(line)
+		p.DrawText(core.LeadingX(c, box, x, c.MeasureText(run)), y, run, labelStyle, font)
 		y += metrics.UnitsPerCellHeight
 	}
 }

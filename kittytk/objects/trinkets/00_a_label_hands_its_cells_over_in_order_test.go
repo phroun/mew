@@ -82,3 +82,45 @@ func TestALabelHandsItsCellsOverInOrder(t *testing.T) {
 			strings.Join(got, "|"))
 	}
 }
+
+// The same for every trinket whose whole job is to show a caption. Each one
+// prepares its own, because each one knows which way its own text reads.
+func TestACaptionedTrinketHandsItsCellsOverInOrder(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	const shalom = "שלום"
+	turned := string([]rune{'ם', 'ו', 'ל', 'ש'})
+
+	draw := func(name string, make func() core.Trinket) {
+		t.Helper()
+		for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+			px, err := raster.New(600, 200)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ink := &cellInk{RenderBackend: px}
+			form := NewPanel()
+			form.SetDirection(dir)
+			w := make()
+			form.AddChild(w)
+			w.SetBounds(core.UnitRect{Width: 40 * 8, Height: 16})
+			w.Paint(core.NewPainter(ink))
+
+			found := false
+			for _, s := range ink.texts {
+				if s == turned {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s %v: handed over %q, want the turned-over caption %q",
+					name, dir, ink.texts, turned)
+			}
+		}
+	}
+
+	draw("button", func() core.Trinket { return NewButton(shalom) })
+	draw("checkbox", func() core.Trinket { return NewCheckbox(shalom) })
+	draw("radio button", func() core.Trinket { return NewRadioButton(shalom) })
+}

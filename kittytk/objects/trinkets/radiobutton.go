@@ -107,7 +107,7 @@ func (r *RadioButton) SizeHint() core.UnitSize {
 	// Indicator is decorative (3 cells), space is 1 cell, text is measured
 	indicatorWidth := metrics.UnitsPerCellWidth * 3 // "( )" = 3 cells
 	spaceWidth := metrics.UnitsPerCellWidth         // " " = 1 cell
-	textWidth := r.MeasureText(r.text)
+	textWidth := r.MeasureText(r.CellRun(r.text))
 	return core.UnitSize{
 		Width:  indicatorWidth + spaceWidth + textWidth,
 		Height: metrics.TextHeight(1),
@@ -192,7 +192,8 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	x := metrics.UnitsPerCellWidth * 4 // After indicator + space (4 cells)
 
 	if !r.wordWrap {
-		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(r.text)), 0, r.text, labelStyle, font)
+		run := r.CellRun(r.text)
+		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(run)), 0, run, labelStyle, font)
 		return
 	}
 
@@ -201,7 +202,8 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	textWidth := box - x
 	y := core.Unit(0)
 	for _, line := range wrapText(r.text, textWidth, font, metrics) {
-		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(line)), y, line, labelStyle, font)
+		run := r.CellRun(line)
+		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(run)), y, run, labelStyle, font)
 		y += metrics.UnitsPerCellHeight
 	}
 }
