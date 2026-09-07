@@ -376,3 +376,72 @@ func TestADragKeepsTheDirectionItStartedIn(t *testing.T) {
 	}
 	ti.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
 }
+
+// A held arrow that reaches the end of the run STOPS there.
+//
+// The step that goes "as far as the field already shows" has to be the same
+// answer twice running, or the hold has two places to alternate between and the
+// caret twinkles for as long as the button is down. At the end of the run the
+// caret stands inside the look-ahead margin -- there is nothing beyond it to
+// look ahead at -- so a margin subtracted from the room refuses that position
+// and sends the caret back, and the next step brings it forward again.
+func TestAHeldArrowStopsAtTheEnd(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	long := strings.Repeat("abcdefghij", 8)
+	n := len([]rune(long))
+
+	for _, c := range []struct {
+		name string
+		dir  int
+		want int
+	}{
+		{"the left end", -1, 0},
+		{"the right end", 1, n},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ti := scrolledField(t, long, n/2)
+			// Hold it until it arrives, then keep holding.
+			for i := 0; i < 400 && ti.cursorPos != c.want; i++ {
+				ti.arrowStep(c.dir, false, false)
+			}
+			if ti.cursorPos != c.want {
+				t.Fatalf("holding never reached %d; stopped at %d", c.want, ti.cursorPos)
+			}
+			at, scroll := ti.cursorPos, ti.scroll
+			for i := 0; i < 20; i++ {
+				ti.arrowStep(c.dir, false, false)
+				if ti.cursorPos != at {
+					t.Fatalf("held at the end, step %d moved the caret from %d to %d",
+						i, at, ti.cursorPos)
+				}
+				if ti.scroll != scroll {
+					t.Fatalf("held at the end, step %d moved the view from %d to %d",
+						i, scroll, ti.scroll)
+				}
+			}
+		})
+	}
+}
+
+// And a press at the end is the same: pressing an arrow that has nowhere left
+// to go changes nothing rather than shuffling the caret about.
+func TestAPressAtTheEndChangesNothing(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	long := strings.Repeat("abcdefghij", 8)
+	ti := scrolledField(t, long, len([]rune(long)))
+	if ti.moreRight {
+		t.Fatal("a caret at the very end still hides text to its right")
+	}
+	at, scroll := ti.cursorPos, ti.scroll
+	for i := 0; i < 5; i++ {
+		ti.arrowStep(1, true, false)
+	}
+	if ti.cursorPos != at || ti.scroll != scroll {
+		t.Errorf("pressing at the end moved the caret to %d and the view to %d, "+
+			"want %d and %d", ti.cursorPos, ti.scroll, at, scroll)
+	}
+}

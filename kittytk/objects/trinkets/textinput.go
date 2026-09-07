@@ -685,33 +685,39 @@ func (t *TextInput) arrowStep(dir int, reach, extend bool) {
 	usable := hi - lo
 	left := dir < 0
 
-	// The span a caret can stand in without the view moving. It is the room
-	// less the LOOK-AHEAD margin on the side being approached: the caret is
-	// never allowed that close to the edge it is walking toward, so a caret put
-	// right on it would be pushed off again by the window and the press would
-	// scroll after all -- which is exactly what the first press must not do.
-	ahead, _ := t.showAheadUnits(blank)
-	still := func(at core.Unit) (core.Unit, core.Unit) {
-		if left {
-			return at + ahead, at + usable
-		}
-		return at, at + usable - ahead
+	// Whether the caret can stand at p without the view moving. It is the
+	// WINDOW's own answer, asked directly, rather than a margin subtracted from
+	// the room: the caret is normally kept clear of the edge it is walking
+	// toward, but at the END of the run it legitimately stands inside that
+	// margin, because there is nothing beyond it to look ahead at. Subtracting
+	// the margin blindly refuses the last position and walks the caret back off
+	// the end -- and the next step walks it forward again, which is a caret
+	// twinkling between two places for as long as the arrow is held.
+	stays := func(p int) bool {
+		at, _, _, _ := t.window(g, p, t.Bounds().Width, blank, t.scroll, t.scrollQuantum())
+		return at == t.scroll
 	}
 
-	from, to := still(t.scroll)
-	if p, ok := g.outermostIn(from, to, blank, left); ok && p != t.cursorPos {
+	// As far that way as the field already shows: the outermost position in the
+	// room, walked back in until the view would sit still for it. The caret's
+	// own position always would, so this ends.
+	p, ok := g.outermostIn(t.scroll, t.scroll+usable, blank, left)
+	for ok && !stays(p) {
+		p, ok = g.nextVisual(p, blank, !left)
+	}
+	if ok && p != t.cursorPos {
 		t.carryCaretTo(p, extend)
 		return
 	}
 	if reach {
-		// Half a room, ceiled so it is never a step of nothing.
+		// Half a room, ceiled so it is never a step of nothing. The view is
+		// meant to move here, so the whole room is in play.
 		step := (usable + 1) / 2
 		at := t.scroll + step
 		if left {
 			at = t.scroll - step
 		}
-		from, to = still(at)
-		if p, ok := g.outermostIn(from, to, blank, left); ok && p != t.cursorPos {
+		if p, ok := g.outermostIn(at, at+usable, blank, left); ok && p != t.cursorPos {
 			t.carryCaretTo(p, extend)
 			return
 		}
