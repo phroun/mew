@@ -342,3 +342,66 @@ func TestASideTabsLabelSitsWhereItsScriptReadsFrom(t *testing.T) {
 		}
 	}
 }
+
+// The mouse finds a tab where the painter put it. A turned-over strip draws
+// its tabs reflected, so a press lands on the tab whose reflection covers it:
+// sweeping the bar across gives the same sequence of tabs, in reverse.
+func TestAPressFindsTheTabItWasDrawnOn(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	const wCells = 40
+	// A fresh strip for every probe: pressing the overflow mark scrolls, which
+	// would otherwise leave the next probe looking at a different strip.
+	press := func(dir core.Direction, pos TabPosition, n, scroll int, x core.Unit) int {
+		px, err := raster.New(600, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		form.AddChild(tt)
+		for i := 0; i < n; i++ {
+			tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
+		}
+		tt.tabScrollOffset = scroll
+		tt.SetBounds(core.UnitRect{Width: wCells * 8, Height: 10 * 16})
+		tt.currentIndex = -1 // so anything the press selects is visible as one
+		tt.handleTabBarClick(x)
+		return tt.currentIndex
+	}
+	sweep := func(dir core.Direction, pos TabPosition, n, scroll int) []int {
+		out := make([]int, 0, wCells*8)
+		for x := core.Unit(0); x < wCells*8; x++ {
+			out = append(out, press(dir, pos, n, scroll, x))
+		}
+		return out
+	}
+
+	for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+		for _, c := range []struct{ n, scroll int }{{3, 0}, {5, 0}, {9, 0}, {9, 2}} {
+			straight := sweep(core.DirLTR, pos, c.n, c.scroll)
+			turned := sweep(core.DirRTL, pos, c.n, c.scroll)
+			if len(straight) != len(turned) {
+				t.Fatalf("%v n=%d: swept %d against %d", pos, c.n, len(straight), len(turned))
+			}
+			hits := 0
+			for i := range straight {
+				want := straight[len(straight)-1-i]
+				if turned[i] != want {
+					t.Errorf("%v n=%d scroll=%d: at x=%d the turned strip hits tab %d; "+
+						"reflected, the straight one hits %d", pos, c.n, c.scroll, i, turned[i], want)
+					break
+				}
+				if want >= 0 {
+					hits++
+				}
+			}
+			if hits == 0 {
+				t.Errorf("%v n=%d scroll=%d: the sweep hit no tab at all", pos, c.n, c.scroll)
+			}
+		}
+	}
+}

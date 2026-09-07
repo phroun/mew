@@ -3430,6 +3430,21 @@ func (t *TabTrinket) handleTabBarClick(x core.Unit) {
 	metrics := t.EffectiveCellMetrics()
 	bounds := t.Bounds()
 
+	// Everything below works in the strip's RUN coordinates -- the same ones
+	// the tape's marks are made in, and for the same reason: what a tab is
+	// worth, which prefix it carries and where the ellipsis falls are settled
+	// by the order the tabs come in, not by which side of the screen they end
+	// up on. So a press is turned back into the run once, here, and the run
+	// then answers as it always did.
+	//
+	// A press is a POINT and a tab is a span, so the reflection takes the unit
+	// the press landed on rather than the boundary in front of it: the last
+	// unit of a span reflects to the first unit of its mirror image, and a
+	// press on the far edge of a tab stays inside that tab.
+	if core.ChromeMirrored(t) {
+		x = bounds.Width - x - 1
+	}
+
 	// Check if clicking on left ellipse (scroll left by one and select that tab)
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth := metrics.TextWidth(3)
