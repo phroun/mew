@@ -53,7 +53,13 @@ func (r *stripeRecorder) tallStripeXs() []int {
 // a boundary between what moves and what does not.
 func frozenTree(t *testing.T, graphical bool) *TreeView {
 	t.Helper()
+	return frozenTreeReading(t, graphical, core.DirLTR)
+}
+
+func frozenTreeReading(t *testing.T, graphical bool, dir core.Direction) *TreeView {
+	t.Helper()
 	tv := newColumnsTree(30, 10)
+	tv.SetDirection(dir)
 	if graphical {
 		parent := &gfxSurface{smooth: true}
 		parent.Panel = *NewPanel()
@@ -167,5 +173,54 @@ func TestAFrozenBoundaryIsTwoHairlinesOnAPixelSurface(t *testing.T) {
 	}
 	if got := pairs(loose); got != 0 {
 		t.Errorf("a tree with nothing pinned already has %d paired hairlines", got)
+	}
+}
+
+// The companion stands one step ALONG THE RUN from the boundary, so the pair
+// sits the same way about it however the columns are ordered -- and never
+// steps off the tree at the edge the run ends against.
+func TestTheCompanionHairlineStandsAlongTheRun(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	for _, tc := range []struct {
+		dir  core.Direction
+		step int
+	}{
+		{core.DirLTR, 2},
+		{core.DirRTL, -2},
+	} {
+		stripes := func(pinned int) []int {
+			px, err := raster.New(400, 200)
+			if err != nil {
+				t.Fatal(err)
+			}
+			core.SetTextMeasurer(px)
+			rec := &stripeRecorder{RenderBackend: px}
+			tv := frozenTreeReading(t, true, tc.dir)
+			tv.SetFixedColumns(pinned, 0)
+			tv.Paint(core.NewPainter(rec))
+			return rec.tallStripeXs()
+		}
+
+		// Pinning adds exactly the companion, so whatever is new is it,
+		// and whatever it stands beside is the boundary.
+		was := map[int]bool{}
+		for _, x := range stripes(0) {
+			was[x] = true
+		}
+		var added []int
+		for _, x := range stripes(1) {
+			if !was[x] {
+				added = append(added, x)
+			}
+		}
+		if len(added) != 1 {
+			t.Fatalf("%v: pinning a column added %d hairlines, want the one companion",
+				tc.dir, len(added))
+		}
+		if !was[added[0]-tc.step] {
+			t.Errorf("%v: the companion at %d stands beside no boundary %d pixels back along the run",
+				tc.dir, added[0], tc.step)
+		}
 	}
 }

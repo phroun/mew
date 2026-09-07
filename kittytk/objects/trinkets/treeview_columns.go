@@ -1551,7 +1551,14 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				h := p.UnitSpanPxY(0, divBottom)
 				p.FillRectPixelsAlpha(sp.divX, 0, 0, 0, 1, h, fr, fg, fb, 0.35)
 				if sp.divFrozen {
-					p.FillRectPixelsAlpha(sp.divX, 0, 2, 0, 1, h, fr, fg, fb, 0.35)
+					// The companion stands one step along the run, so
+					// the pair sits the same way about the boundary
+					// however the columns are ordered.
+					companion := 2
+					if core.ChromeMirrored(t) {
+						companion = -2
+					}
+					p.FillRectPixelsAlpha(sp.divX, 0, companion, 0, 1, h, fr, fg, fb, 0.35)
 				}
 			} else {
 				rule := '│'
@@ -1867,8 +1874,10 @@ func (t *TreeView) chooserButtonRect() (core.UnitRect, bool) {
 	if core.FindGraphicalFrames(t.Self()) {
 		w *= 2
 	}
+	// Above the scrollbar's lane, which stands at the trailing edge.
+	box := t.Bounds().Width
 	return core.UnitRect{
-		X: t.Bounds().Width - w, Y: 0,
+		X: core.LeadingX(t, box, box-w, w), Y: 0,
 		Width: w, Height: t.headerHeight(),
 	}, true
 }
@@ -2069,7 +2078,15 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 		Width: at.X - btnOrigin.X, Height: at.Y - btnOrigin.Y,
 	}
 	screen := pc.ScreenBounds()
+	// The menu hangs from the button's leading corner, so it opens across
+	// the header rather than off the edge the button stands against.
 	x := at.X - size.Width
+	if core.ChromeMirrored(t) {
+		x = btnOrigin.X
+	}
+	if right := screen.X + screen.Width; x+size.Width > right {
+		x = right - size.Width
+	}
 	if x < screen.X {
 		x = screen.X
 	}
