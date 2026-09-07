@@ -119,6 +119,18 @@ func (a *app) wireMainWindow() {
 	ui.Object("tfmh").On("toggle", setMask(`echo=password mask="#"`))
 	ui.Object("tfmn").On("toggle", setMask(`echo=normal`))
 
+	// The direction marks, on the field beside the switch. They are an editing
+	// aid, so they appear while that field is focused and the plain text comes
+	// back when it is not.
+	tfbidi := ui.Object("tfbidi")
+	ui.Object("tfbidic").On("toggle", func(ev *protocol.Event) {
+		if ev.Flag("checked") == protocol.FlagTrue {
+			_ = tfbidi.Set("show_bidi_controls")
+			return
+		}
+		_ = tfbidi.Set("!show_bidi_controls")
+	})
+
 	a.wireDenomination(win)
 	a.wireLimits()
 	a.wireDirection()

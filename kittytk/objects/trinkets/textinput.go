@@ -820,6 +820,23 @@ func (t *TextInput) Paint(p *core.Painter) {
 	if runStr == "" {
 		runStr = string(displayText)
 	}
+	// drawRun stamps the whole run and reveals only [lo, hi), both device-pixel
+	// positions in the FIELD. A marked run is laid out piece by piece, each
+	// piece moved right of where the shaper put it to leave room for the marks,
+	// so the offset the run is stamped at is the offset of the piece the span
+	// falls in.
+	drawRun := func(lo, hi int, st style.CellStyle) {
+		_, shiftPx := g.shiftAt(core.Unit(0))
+		if len(g.pieces) > 0 {
+			for i := range g.pieces {
+				if lo-originPx >= g.pieces[i].loPx && lo-originPx < g.pieces[i].hiPx {
+					shiftPx = g.pieces[i].shiftPx
+					break
+				}
+			}
+		}
+		p.DrawTextOffsetClipped(0, 0, originPx+shiftPx, lo, hi, runStr, st, font)
+	}
 
 	// Selection span (display indices) and the fixed anchor - the selection
 	// end opposite the caret (selStart is the anchor; the caret is selEnd).
@@ -834,9 +851,21 @@ func (t *TextInput) Paint(p *core.Painter) {
 		}
 	}
 
-	// 1. Draw the whole run once - stable regardless of caret/selection.
+	// 1. Draw the run once - stable regardless of caret/selection. Once per
+	// PIECE where the direction marks have spread it apart, each piece being
+	// the shaper's own glyphs moved along rather than glyphs re-shaped.
 	if usePx {
-		p.DrawTextOffsetClipped(0, 0, originPx, roomLoPx, roomHiPx, runStr, s, font)
+		if len(g.pieces) == 0 {
+			p.DrawTextOffsetClipped(0, 0, originPx, roomLoPx, roomHiPx, runStr, s, font)
+		} else {
+			for _, pc := range g.pieces {
+				lo, hi, ok := clipPx(pc.loPx, pc.hiPx)
+				if !ok {
+					continue
+				}
+				p.DrawTextOffsetClipped(0, 0, originPx+pc.shiftPx, lo, hi, runStr, s, font)
+			}
+		}
 	} else {
 		cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 		vis, at := g.cellSlice(t.scroll, t.scroll+usable, cw)
@@ -864,7 +893,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 					continue
 				}
 				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, selStyle)
-				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr, selFg, font)
+				drawRun(lo, hi, selFg)
 			}
 		} else {
 			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
@@ -938,7 +967,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 					if !ok {
 						continue
 					}
-					p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr, preStyle, font)
+					drawRun(lo, hi, preStyle)
 					p.FillRectPixels(0, 0, lo, ruleY, hi-lo, thin, rule(inactiveStyle.Fg))
 				}
 			}
@@ -952,7 +981,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 				if !ok {
 					continue
 				}
-				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr, activeFg, font)
+				drawRun(lo, hi, activeFg)
 				p.FillRectPixels(0, 0, lo, ruleY, hi-lo, thin, rule(clauseStyle.Fg))
 				if y := ruleY - thin; y >= 0 {
 					p.FillRectPixels(0, 0, lo, y, hi-lo, thin, rule(clauseStyle.Fg))
@@ -991,13 +1020,25 @@ func (t *TextInput) Paint(p *core.Painter) {
 		cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 		for _, m := range g.marks {
 			if usePx {
-				lo, hi, ok := clipPx(unitPx(m.x), unitPx(m.x+m.w))
+				mLoPx, mHiPx := m.xPx, m.xPx+m.wPx
+				if !g.havePx {
+					mLoPx, mHiPx = unitPx(m.x), unitPx(m.x+m.w)
+				}
+				lo, hi, ok := clipPx(mLoPx, mHiPx)
 				if !ok {
 					continue
 				}
 				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, noteStyle)
-				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr,
-					noteStyle.WithBg(style.ColorTransparent), font)
+				fg := noteStyle.WithBg(style.ColorTransparent)
+				if m.inRun {
+					drawRun(lo, hi, fg)
+				} else {
+					// A direction mark is not part of the line the shaper laid
+					// out -- it is what the field has to say about that line --
+					// so it is stamped on its own, in the room the pieces were
+					// spread apart to leave.
+					p.DrawTextOffsetClipped(0, 0, mLoPx+originPx, lo, hi, m.text, fg, font)
+				}
 				continue
 			}
 			lo, hi, ok := clipUnits(m.x, m.x+m.w)
@@ -1105,8 +1146,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 		if usePx {
 			if lo, hi, ok := clipPx(caretLoPx, caretHiPx); ok {
 				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, block)
-				p.DrawTextOffsetClipped(0, 0, originPx, lo, hi, runStr,
-					block.WithBg(style.ColorTransparent), font)
+				drawRun(lo, hi, block.WithBg(style.ColorTransparent))
 			}
 		} else if lo, hi, ok := clipUnits(caretLo, caretHi); ok {
 			cw := t.EffectiveCellMetrics().UnitsPerCellWidth

@@ -47,9 +47,39 @@ type fieldGeometry struct {
 	// total is the whole run's width.
 	total core.Unit
 
+	// head is empty room kept at the run's LEFT end, and the run starts after
+	// it. A line whose reading ENDS on the left -- a right-to-left word at the
+	// end of the text -- has its final caret position out there, past the
+	// leftmost letter, and with nothing reserved it would stand off the edge of
+	// the field and not be drawn at all. The room is left empty: it is not a
+	// place in the text, so it shows as the field's own ground.
+	head   core.Unit
+	headPx int
+
 	// marks are the direction-marker slots, present only when the run was laid
 	// out with them (see SetShowBidiControls).
 	marks []fieldMark
+
+	// pieces are the stretches of the shaped run that are drawn apart from one
+	// another, present when markers were pushed in between them. Each carries
+	// how far right of where the shaper put it the piece now sits.
+	//
+	// A shaper orders and joins a whole line at once, and a marker is not part
+	// of that line. So the line is shaped once, whole, and then TRANSLATED
+	// piece by piece: every glyph is the raster the shaper made, in the place
+	// the shaper's ordering put it, moved along to leave room. Re-shaping each
+	// fragment as its own string instead would re-resolve the neutrals inside
+	// it, which is how a bracket in a right-to-left region comes to face the
+	// wrong way when it is measured alone.
+	pieces []fieldPiece
+}
+
+// fieldPiece is one stretch of the shaped run in its final place.
+type fieldPiece struct {
+	lo, hi     core.Unit
+	loPx, hiPx int
+	shift      core.Unit
+	shiftPx    int
 }
 
 // fieldMark is one stretch of the run that is not the author's own glyph:
@@ -60,9 +90,27 @@ type fieldGeometry struct {
 // They share a colour because they are the same kind of thing to a reader:
 // the field telling them about the text rather than showing it.
 type fieldMark struct {
-	x    core.Unit
-	w    core.Unit
-	text string
+	x     core.Unit
+	w     core.Unit
+	xPx   int
+	wPx   int
+	text  string
+	inRun bool // the run already carries this glyph; recolour it rather than draw it
+}
+
+// shiftAt is how far the piece holding final position x was moved from where
+// the shaper put it, which is what a redraw clipped out of the whole run has to
+// be offset by to land back on the same glyphs.
+func (g *fieldGeometry) shiftAt(x core.Unit) (core.Unit, int) {
+	if g == nil {
+		return 0, 0
+	}
+	for i := range g.pieces {
+		if x >= g.pieces[i].lo && x < g.pieces[i].hi {
+			return g.pieces[i].shift, g.pieces[i].shiftPx
+		}
+	}
+	return 0, 0
 }
 
 // substituteFor is what the field draws in place of a rune it must not hand
@@ -129,6 +177,12 @@ func (g *fieldGeometry) caretBox(p int, blank core.Unit) (lo, hi core.Unit) {
 		return lo, g.lo[last]
 	}
 	return g.hi[last], g.hi[last] + blank
+}
+
+// readsToTheLeft reports whether the run's reading ENDS at its left edge,
+// which is what puts the last caret position out past the leftmost letter.
+func readsToTheLeft(rtl []bool) bool {
+	return len(rtl) > 0 && rtl[len(rtl)-1]
 }
 
 // spans is the stretches of the drawn run that logical runes [from, to) were
@@ -271,7 +325,7 @@ func sortSpans(s [][2]core.Unit) {
 // press.
 func (t *TextInput) runGeometry(runes []rune, font *core.Font, graphical, marked bool, ppu float64) *fieldGeometry {
 	if graphical {
-		return t.shapedGeometry(runes, font, ppu)
+		return t.shapedGeometry(runes, font, marked, ppu)
 	}
 	return t.cellGeometry(runes, marked)
 }
@@ -283,7 +337,7 @@ func (t *TextInput) runGeometry(runes []rune, font *core.Font, graphical, marked
 // and the ink have to be the same layout. Shaping here with the field's
 // declared direction instead would put the caret on a line the painter never
 // drew.
-func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, ppu float64) *fieldGeometry {
+func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, marked bool, ppu float64) *fieldGeometry {
 	e := text.Shared()
 	if e == nil {
 		// A pixel target publishes its engine the first time it is asked to
@@ -311,6 +365,15 @@ func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, ppu float64) *
 		rtl:   make([]bool, len(runes)),
 		total: l.Width,
 	}
+	if l.RTLAt(span[len(runes)-1][0]) {
+		g.head = t.blankWidth()
+		if ppu > 0 {
+			if bl := e.ShapeRun(font, " "); bl != nil && len(bl.Lines) > 0 {
+				g.headPx = bl.Lines[0].AdvancePx(ppu)
+			}
+		}
+		g.total += g.head
+	}
 	if substituted {
 		g.draw = string(shaped)
 	}
@@ -318,26 +381,216 @@ func (t *TextInput) shapedGeometry(runes []rune, font *core.Font, ppu float64) *
 		g.loPx, g.hiPx, g.havePx = make([]int, len(runes)), make([]int, len(runes)), true
 	}
 	for i := range runes {
-		a, b := l.CaretX(span[i][0]), l.CaretX(span[i][1])
-		rtl := a > b
-		if rtl {
-			a, b = b, a
-		}
-		g.rtl[i] = rtl
-		g.lo[i], g.hi[i] = a, b
-		if g.havePx {
-			c, d := l.CaretXPx(span[i][0], ppu), l.CaretXPx(span[i][1], ppu)
-			if c > d {
-				c, d = d, c
+		// The box of the FIRST shaped rune the logical one became, widened to
+		// take in the rest: a substitute is several characters of notation
+		// standing for one, and the field treats it as one.
+		a, b, ok := l.BoxOf(span[i][0])
+		for j := span[i][0] + 1; ok && j < span[i][1]; j++ {
+			if c, d, ok2 := l.BoxOf(j); ok2 {
+				if c < a {
+					a = c
+				}
+				if d > b {
+					b = d
+				}
 			}
-			g.loPx[i], g.hiPx[i] = c, d
+		}
+		g.rtl[i] = l.RTLAt(span[i][0])
+		g.lo[i], g.hi[i] = a+g.head, b+g.head
+		if g.havePx {
+			c, d, _ := l.BoxOfPx(span[i][0], ppu)
+			for j := span[i][0] + 1; j < span[i][1]; j++ {
+				if e, f, ok2 := l.BoxOfPx(j, ppu); ok2 {
+					if e < c {
+						c = e
+					}
+					if f > d {
+						d = f
+					}
+				}
+			}
+			g.loPx[i], g.hiPx[i] = c+g.headPx, d+g.headPx
 		}
 		if substituted && span[i][1] > span[i][0]+1 {
-			g.marks = append(g.marks, fieldMark{x: a, w: b - a,
-				text: string(shaped[span[i][0]:span[i][1]])})
+			m := fieldMark{x: a + g.head, w: b - a, text: string(shaped[span[i][0]:span[i][1]]), inRun: true}
+			if g.havePx {
+				m.xPx, m.wPx = g.loPx[i], g.hiPx[i]-g.loPx[i]
+			}
+			g.marks = append(g.marks, m)
 		}
 	}
+	if marked {
+		t.markShapedRun(g, e, font, l, span, ppu)
+	}
 	return g
+}
+
+// markShapedRun spreads the shaped line apart to make room for the direction
+// markers, and records where they go.
+//
+// The line is already laid out; what this adds is the notation. A FRAGMENT is a
+// maximal stretch of one direction, and every fragment gets two marks: the
+// arrow it reads AWAY from at its reading start, and a bar at its reading end.
+// So a right-to-left fragment carries "<" on its right and "|" on its left, and
+// a left-to-right one the mirror of that.
+//
+// One fragment is left bare -- the first one in READING order, when it reads
+// the way the line as a whole does. The line's own direction already says which
+// way that piece is read, and an arrow at the very place a reader starts would
+// be telling them what they can see.
+//
+// Nothing is re-shaped. Each fragment keeps the glyphs and the order the shaper
+// gave the whole line and is simply moved along, so the marks cost room and
+// change nothing else about the picture.
+func (t *TextInput) markShapedRun(g *fieldGeometry, e *text.Engine, font *core.Font,
+	l *text.Line, span [][2]int, ppu float64) {
+	frags := shapedFragments(l, ppu)
+	if len(frags) == 0 {
+		return
+	}
+	// The fragments come off the shaper's own line; the boxes have already been
+	// moved past whatever room the run reserves at its left end, so the
+	// fragments are moved to match before anything is measured against them.
+	for i := range frags {
+		frags[i].lo, frags[i].hi = frags[i].lo+g.head, frags[i].hi+g.head
+		frags[i].loPx, frags[i].hiPx = frags[i].loPx+g.headPx, frags[i].hiPx+g.headPx
+	}
+	// The first fragment in reading order is the one holding the line's first
+	// rune, and the line's base direction is that fragment's: everything ahead
+	// of the first strong character is neutral, and neutrals take the base.
+	bare := 0
+	for i := range frags {
+		if frags[i].start < frags[bare].start {
+			bare = i
+		}
+	}
+
+	width := func(glyph rune) (core.Unit, int) {
+		sp := e.ShapeRun(font, string(glyph))
+		if sp == nil || len(sp.Lines) == 0 {
+			return 0, 0
+		}
+		w := sp.Lines[0].Width
+		if ppu > 0 {
+			return w, sp.Lines[0].AdvancePx(ppu)
+		}
+		return w, 0
+	}
+
+	// Walk the fragments left to right, laying each one down after whatever
+	// mark stands at its left edge and before whatever stands at its right.
+	shift := make([]core.Unit, len(frags))
+	shiftPx := make([]int, len(frags))
+	x, xPx := g.head, g.headPx
+	put := func(glyph rune) {
+		w, wPx := width(glyph)
+		g.marks = append(g.marks, fieldMark{x: x, w: w, xPx: xPx, wPx: wPx, text: string(glyph)})
+		x, xPx = x+w, xPx+wPx
+	}
+	for i := range frags {
+		f := &frags[i]
+		if i != bare {
+			put(markerAt(f.rtl, true))
+		}
+		shift[i], shiftPx[i] = x-f.lo, xPx-f.loPx
+		g.pieces = append(g.pieces, fieldPiece{
+			lo: x, hi: x + (f.hi - f.lo), shift: shift[i],
+			loPx: xPx, hiPx: xPx + (f.hiPx - f.loPx), shiftPx: shiftPx[i],
+		})
+		x, xPx = x+(f.hi-f.lo), xPx+(f.hiPx-f.loPx)
+		if i != bare {
+			put(markerAt(f.rtl, false))
+		}
+	}
+	g.total = x
+
+	// Everything already measured moves with the piece it sits in.
+	for i := range g.lo {
+		for j := range frags {
+			if span[i][0] >= frags[j].start && span[i][0] < frags[j].end {
+				g.lo[i], g.hi[i] = g.lo[i]+shift[j], g.hi[i]+shift[j]
+				if g.havePx {
+					g.loPx[i], g.hiPx[i] = g.loPx[i]+shiftPx[j], g.hiPx[i]+shiftPx[j]
+				}
+				break
+			}
+		}
+	}
+	for i := range g.marks {
+		if !g.marks[i].inRun {
+			continue
+		}
+		s, sPx := core.Unit(0), 0
+		for j := range frags {
+			if g.marks[i].x >= frags[j].lo && g.marks[i].x < frags[j].hi {
+				s, sPx = shift[j], shiftPx[j]
+				break
+			}
+		}
+		g.marks[i].x, g.marks[i].xPx = g.marks[i].x+s, g.marks[i].xPx+sPx
+	}
+}
+
+// markerAt is the mark for one end of a fragment: the arrow the reading runs
+// away from where it BEGINS, and the bar where it stops.
+func markerAt(rtl, leftEdge bool) rune {
+	if rtl == leftEdge {
+		return markerEndGlyph // the left of a left-to-right piece, the right of a right-to-left one
+	}
+	if rtl {
+		return markerRTLGlyph
+	}
+	return markerLTRGlyph
+}
+
+// shapedFragment is a maximal stretch of one direction in a shaped line: the
+// logical runes it covers, and where it sits.
+type shapedFragment struct {
+	start, end int
+	rtl        bool
+	lo, hi     core.Unit
+	loPx, hiPx int
+}
+
+// edgesPx is a run's left and right edges in device pixels, read from the
+// line's own unrounded pen so they sit on the glyphs rather than near them.
+func edgesPx(l *text.Line, r *text.Run, ppu float64) (lo, hi int) {
+	lo, hi = l.CaretXPx(r.Runes.Start, ppu), l.CaretXPx(r.Runes.End, ppu)
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	return lo, hi
+}
+
+// shapedFragments merges the shaper's runs into the stretches a reader sees as
+// one piece. A shaper splits a run wherever the FACE changes as well as
+// wherever the direction does, and a change of face is not a change of reading.
+func shapedFragments(l *text.Line, ppu float64) []shapedFragment {
+	var out []shapedFragment
+	for i := range l.Runs {
+		r := &l.Runs[i]
+		if n := len(out); n > 0 && out[n-1].rtl == r.RTL && out[n-1].hi == r.X {
+			f := &out[n-1]
+			f.hi = r.X + r.Width
+			if _, hiPx := edgesPx(l, r, ppu); hiPx > f.hiPx {
+				f.hiPx = hiPx
+			}
+			if r.Runes.Start < f.start {
+				f.start = r.Runes.Start
+			}
+			if r.Runes.End > f.end {
+				f.end = r.Runes.End
+			}
+			continue
+		}
+		f := shapedFragment{
+			start: r.Runes.Start, end: r.Runes.End, rtl: r.RTL,
+			lo: r.X, hi: r.X + r.Width,
+		}
+		f.loPx, f.hiPx = edgesPx(l, r, ppu)
+		out = append(out, f)
+	}
+	return out
 }
 
 // substituteRun is the text with every character that must not be drawn as
@@ -377,7 +630,10 @@ func (t *TextInput) cellGeometry(runes []rune, marked bool) *fieldGeometry {
 		hi:  make([]core.Unit, len(runes)),
 		rtl: make([]bool, len(runes)),
 	}
-	x := core.Unit(0)
+	if lay != nil && readsToTheLeft(lay.RTL) {
+		g.head = cw
+	}
+	x := g.head
 	var b []rune
 
 	// put lays one logical rune down at x and moves on. A substitute takes the
@@ -461,7 +717,7 @@ func (g *fieldGeometry) cellSlice(from, to, cw core.Unit) (string, core.Unit) {
 	if g == nil || cw <= 0 {
 		return "", 0
 	}
-	x, at := core.Unit(0), core.Unit(-1)
+	x, at := g.head, core.Unit(-1)
 	var out []rune
 	for _, r := range g.draw {
 		w := core.Unit(core.CellWidth(r)) * cw
@@ -487,16 +743,24 @@ func emptyGeometry(n int) *fieldGeometry {
 	}
 }
 
+// The direction markers: which way a fragment of the line begins reading, and
+// where its reading stops.
+const (
+	markerLTRGlyph = '>'
+	markerRTLGlyph = '<'
+	markerEndGlyph = '|'
+)
+
 // markerGlyph is what a marker slot shows: the direction a fragment begins
 // reading in, or the end of one.
 func markerGlyph(slot int) rune {
 	switch slot {
 	case khatool.MarkerLTR:
-		return '>'
+		return markerLTRGlyph
 	case khatool.MarkerRTL:
-		return '<'
+		return markerRTLGlyph
 	}
-	return '|'
+	return markerEndGlyph
 }
 
 // controlGlyph is what an explicit direction control shows under the markers:
@@ -504,9 +768,9 @@ func markerGlyph(slot int) rune {
 // would have meant there.
 func controlGlyph(rtl bool) rune {
 	if rtl {
-		return '<'
+		return markerRTLGlyph
 	}
-	return '>'
+	return markerLTRGlyph
 }
 
 // The more-markers: a single glyph pinned to each end of the field saying

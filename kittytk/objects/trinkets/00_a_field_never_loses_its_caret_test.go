@@ -140,3 +140,60 @@ func TestACellFieldScrollsWholeCells(t *testing.T) {
 		}
 	}
 }
+
+// A line whose reading ENDS on the left -- a right-to-left word finishing the
+// text -- has its last caret position out past the leftmost letter. The run
+// keeps room there for it, so the caret has somewhere to be drawn instead of
+// standing off the edge of the field.
+func TestTheCaretPastAWordThatReadsLeftHasSomewhereToGo(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	const shalom = "שלום"
+	runes := []rune(shalom)
+
+	for _, graphical := range []bool{false, true} {
+		if graphical {
+			px, err := raster.New(600, 200)
+			if err != nil {
+				t.Fatal(err)
+			}
+			core.SetTextMeasurer(px)
+		} else {
+			core.SetTextMeasurer(nil)
+		}
+		ti := NewTextInput()
+		ti.SetText(shalom)
+		ti.SetBounds(core.UnitRect{Width: 30 * 8, Height: 16})
+		blank := ti.blankWidth()
+		g := ti.runGeometry(runes, ti.EffectiveFont(), graphical, false, 0)
+
+		if g.head <= 0 {
+			t.Errorf("graphical=%v: the run reserved %d at its left end", graphical, g.head)
+		}
+		lo, hi := g.caretBox(len(runes), blank)
+		if lo < 0 || hi <= lo {
+			t.Errorf("graphical=%v: the last caret box is [%d,%d)", graphical, lo, hi)
+		}
+		// It sits in the reserved room, not on the last letter.
+		if last, _, _ := g.boxOf(len(runes) - 1); hi > last {
+			t.Errorf("graphical=%v: the last caret box [%d,%d) runs into the leftmost "+
+				"letter at %d", graphical, lo, hi, last)
+		}
+
+		// And the window keeps it: scrolled to 0, the caret is on screen.
+		scroll, usable, _, _ := ti.window(g, len(runes), ti.Bounds().Width, blank, 0,
+			ti.scrollQuantum())
+		if lo-scroll < 0 || hi-scroll > usable {
+			t.Errorf("graphical=%v: the last caret box [%d,%d) at scroll %d falls outside "+
+				"the %d of room", graphical, lo, hi, scroll, usable)
+		}
+
+		// A line that reads to the RIGHT wants nothing reserved: its last caret
+		// position is past the last letter, where the field already has room.
+		plain := ti.runGeometry([]rune("abc"), ti.EffectiveFont(), graphical, false, 0)
+		if plain.head != 0 {
+			t.Errorf("graphical=%v: a left-to-right line reserved %d it does not use",
+				graphical, plain.head)
+		}
+	}
+}

@@ -126,6 +126,60 @@ func (l *Line) CaretXPx(idx int, ppu float64) int {
 	return pxOfFixed(x, ppu)
 }
 
+// BoxOf is the stretch of the line the rune at idx was DRAWN in: the cluster
+// carrying it, from its left edge to its right. ok is false for an index the
+// line does not cover.
+//
+// It is not the pair of caret positions either side of idx. Those are two
+// separate answers, and at a run boundary they belong to different runs: the
+// caret after the last rune of a left-to-right run and the caret before the
+// first rune of the right-to-left run that follows sit at opposite ends of that
+// second run. Asking for the box asks one question of one run, so a rune at a
+// direction change comes back the width it was actually painted.
+func (l *Line) BoxOf(idx int) (lo, hi core.Unit, ok bool) {
+	a, b, ok := l.boxFixed(idx)
+	if !ok {
+		return 0, 0, false
+	}
+	return core.Unit(a.Round()), core.Unit(b.Round()), true
+}
+
+// BoxOfPx is BoxOf in device pixels at ppu pixels per unit, measured from the
+// line's unrounded pen.
+func (l *Line) BoxOfPx(idx int, ppu float64) (lo, hi int, ok bool) {
+	a, b, ok := l.boxFixed(idx)
+	if !ok {
+		return 0, 0, false
+	}
+	return pxOfFixed(a, ppu), pxOfFixed(b, ppu), true
+}
+
+// boxFixed is BoxOf from the unrounded pen.
+func (l *Line) boxFixed(idx int) (lo, hi fixed.Int26_6, ok bool) {
+	for i := range l.Runs {
+		r := &l.Runs[i]
+		if idx < r.Runes.Start || idx >= r.Runes.End {
+			continue
+		}
+		cs := r.clusters()
+		for _, c := range cs {
+			if idx < c.runes.Start || idx >= c.runes.End {
+				continue
+			}
+			x := r.x
+			for _, d := range cs {
+				if r.RTL && d.runes.Start >= c.runes.End {
+					x += d.width
+				} else if !r.RTL && d.runes.End <= c.runes.Start {
+					x += d.width
+				}
+			}
+			return x, x + c.width, true
+		}
+	}
+	return 0, 0, false
+}
+
 // edgeFixed is edgeX from the unrounded pen.
 func (l *Line) edgeFixed(idx int) fixed.Int26_6 {
 	for i := range l.Runs {
@@ -239,4 +293,15 @@ func (l *Line) RuneForX(x core.Unit) int {
 		return last.Runes.Start
 	}
 	return last.Runes.End
+}
+
+// RTLAt reports whether the rune at idx was drawn in a right-to-left run,
+// which is what says which edge of its box the reading leaves by.
+func (l *Line) RTLAt(idx int) bool {
+	for i := range l.Runs {
+		if r := &l.Runs[i]; idx >= r.Runes.Start && idx < r.Runes.End {
+			return r.RTL
+		}
+	}
+	return false
 }

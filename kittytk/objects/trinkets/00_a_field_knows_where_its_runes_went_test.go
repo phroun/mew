@@ -55,9 +55,12 @@ func TestAFieldKnowsWhereItsRunesWent(t *testing.T) {
 					"in a right-to-left run the first letter is the rightmost",
 					graphical, dir, firstLo, lastLo)
 			}
-			if lastLo != 0 {
-				t.Errorf("graphical=%v %v: the last letter sits at %d, want the run's left edge",
-					graphical, dir, lastLo)
+			// The run starts after the room reserved for the caret's last
+			// position, which on a line that reads to the left is out past the
+			// leftmost letter.
+			if lastLo != g.head {
+				t.Errorf("graphical=%v %v: the last letter sits at %d, want the run's "+
+					"left edge at %d", graphical, dir, lastLo, g.head)
 			}
 
 			// The caret covers the box of the rune it precedes, so a caret at
@@ -79,8 +82,15 @@ func TestAFieldKnowsWhereItsRunesWent(t *testing.T) {
 				t.Errorf("graphical=%v %v: the caret past the end runs to %d, want the "+
 					"reading end of the run at %d", graphical, dir, hi, lastLo)
 			}
-			if lo != 0 && lastLo != 0 {
-				t.Errorf("graphical=%v %v: the caret past the end starts at %d", graphical, dir, lo)
+			// And it lands INSIDE the run, in the room reserved for it: a caret
+			// off the left edge is a caret nobody sees.
+			if lo < 0 {
+				t.Errorf("graphical=%v %v: the caret past the end starts at %d, off the "+
+					"left edge", graphical, dir, lo)
+			}
+			if hi <= lo {
+				t.Errorf("graphical=%v %v: the caret past the end is %d wide",
+					graphical, dir, hi-lo)
 			}
 		}
 	}

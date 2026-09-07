@@ -303,6 +303,13 @@ tf=new tab caption="Text Fields" children={
 					tfmh=new radiobutton caption="hash" group=tfmaskg
 					tfmn=new radiobutton caption="show" group=tfmaskg
 				}
+
+				new label caption="Mixed directions. Walk the caret through it:"
+				tfbidi=new textinput min_width=160 text="abc שלום xyz"
+				tfbidic=new checkbox caption="show_bidi_controls -- where the reading turns, while focused" halign=textnatural fill=none
+
+				new label caption="show_ahead - how much stays in sight past the caret:"
+				tfahead=new textinput min_width=160 text="the quick brown fox jumps over the lazy dog" show_ahead=6
 			}
 		}
 	}
@@ -751,6 +758,8 @@ tfmb=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmb
 tfms=w.t.tf.tfp.tfrow.tfr.tfmrow.tfms
 tfmh=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmh
 tfmn=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmn
+tfbidi=w.t.tf.tfp.tfrow.tfr.tfbidi
+tfbidic=w.t.tf.tfp.tfrow.tfr.tfbidic
 dnx=w.t.dn.dnp.dnrow.dnx
 dny=w.t.dn.dnp.dnrow.dny
 dnap=w.t.dn.dnp.dnrow.dnap
