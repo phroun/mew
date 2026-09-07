@@ -179,7 +179,9 @@ func (d *Desktop) hostTitleMetrics() window.TitleBarMetrics {
 	if f == nil {
 		f = core.DefaultFont()
 	}
-	return window.TitleBarMetricsFor(d.EffectiveCellMetrics(), f, d.graphicalFrames)
+	tm := window.TitleBarMetricsFor(d.EffectiveCellMetrics(), f, d.graphicalFrames)
+	tm.Dir = core.FindEffectiveDirection(d.Self())
+	return tm
 }
 
 // TitleBarHeight is the height of the desktop's own themed title bar row:

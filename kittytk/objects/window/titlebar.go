@@ -44,7 +44,19 @@ type TitleBarMetrics struct {
 
 	Graphical bool
 
+	// Dir is which way this bar's title READS. A caller that leaves it unset
+	// gets its title drawn in the order it was handed over, which is right for
+	// a title with no direction of its own to speak of and wrong for any other.
+	Dir core.Direction
+
 	base core.CellMetrics
+}
+
+// CellRun prepares a title for a cell target in this bar's direction, and is
+// what every title here is drawn from. TitleWidth measures whatever it is
+// given, so a caller centring a title measures the run this returns.
+func (tm TitleBarMetrics) CellRun(text string) string {
+	return core.CellRun(text, tm.Dir)
 }
 
 // TitleBarMetricsFor resolves the title-bar geometry for one bar, in the
@@ -280,8 +292,11 @@ func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts sty
 		if display == "" {
 			return
 		}
-		titleW = tm.TitleWidth(display)
 	}
+	// Cut to fit first, prepared for the cell target after, and measured as
+	// it is drawn: what is centred is the run, not the text behind it.
+	display = tm.CellRun(display)
+	titleW = tm.TitleWidth(display)
 	x := (barWidth - titleW) / 2
 	if x < leftEdge {
 		x = leftEdge
@@ -303,7 +318,7 @@ func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts sty
 // Window.paintFocusedTitleDecoration, verbatim at scale 1.0; every title
 // bar's focused title — a window's or the desktop's — draws through it.)
 func PaintFocusedTitleDecoration(p *core.Painter, tm TitleBarMetrics, innerWidth core.Unit, title string, s style.CellStyle) {
-	decorated := "< " + title + " >"
+	decorated := "< " + tm.CellRun(title) + " >"
 	totalWidth := tm.TitleWidth(decorated)
 	startX := (innerWidth - totalWidth) / 2
 	if startX < 0 {
