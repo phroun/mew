@@ -3,6 +3,7 @@ package trinkets
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/phroun/kittytk/backend/raster"
@@ -1020,4 +1021,95 @@ func TestAJoinCarriesItsLineOnTheSideThatLineRunsAlong(t *testing.T) {
 		t.Errorf("a bottom strip put an underscore on the bar beside its tab, at %q and %q; "+
 			"the bar's line there runs along the top of the row", beforeIn, afterOut)
 	}
+}
+
+// A tab's caption reaches a cell target the way every other caption does: cut
+// to fit first, prepared after, and the run that is drawn is the one the strip
+// measures and places. A strip trims by CHARACTER, so preparing before the
+// trim would cut a turned-over run at the wrong end.
+func TestATabHandsItsCaptionOverInOrder(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+
+	const shalom = "שלום"
+	turned := string([]rune{'ם', 'ו', 'ל', 'ש'})
+
+	drawn := func(dir core.Direction, pos TabPosition, caption string) []string {
+		px, err := raster.New(900, 400)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ink := &cellInk{RenderBackend: px}
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(pos)
+		form.AddChild(tt)
+		tt.AddTab(caption, NewPanel())
+		tt.AddTab("Beta", NewPanel())
+		tt.SetBounds(core.UnitRect{Width: 40 * cell, Height: 10 * 16})
+		tt.Paint(core.NewPainter(ink))
+		return ink.texts
+	}
+
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		for _, pos := range []TabPosition{TabsTop, TabsBottom, TabsSide, TabsSideOpposite} {
+			if !handedOver(drawn(dir, pos, shalom), turned) {
+				t.Errorf("%v %v: the strip handed over %q, want the turned-over caption %q",
+					dir, pos, drawn(dir, pos, shalom), turned)
+			}
+		}
+	}
+
+	// Trimmed, the fragment drawn is the turned-over form of what the strip
+	// kept -- the FRONT of the caption. Prepared before the trim, the strip
+	// would have cut the turned-over run instead and kept its far end: the
+	// letters the reader reaches last, standing in for the ones it dropped.
+	const long = "אבגדהוזחטי"
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		var fragments []string
+		for _, got := range narrowDraw(t, dir, long) {
+			if r := []rune(got); len(r) > 0 && strings.ContainsRune(long, r[0]) {
+				fragments = append(fragments, got)
+			}
+		}
+		if len(fragments) == 0 {
+			t.Fatalf("%v: the narrow strip drew none of the caption", dir)
+		}
+		for _, f := range fragments {
+			kept := reverseRunes(f)
+			if !strings.HasPrefix(long, kept) {
+				t.Errorf("%v: the strip drew %q, which turned back reads %q -- not the front "+
+					"of the caption it kept", dir, f, kept)
+			}
+		}
+	}
+}
+
+// narrowDraw paints a strip too narrow for its first caption, so the strip has
+// to trim it.
+func narrowDraw(t *testing.T, dir core.Direction, caption string) []string {
+	t.Helper()
+	px, err := raster.New(900, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ink := &cellInk{RenderBackend: px}
+	form := NewPanel()
+	form.SetDirection(dir)
+	tt := NewTabTrinket()
+	form.AddChild(tt)
+	tt.AddTab(caption, NewPanel())
+	tt.AddTab("Beta", NewPanel())
+	tt.SetBounds(core.UnitRect{Width: 14 * cell, Height: 10 * 16})
+	tt.Paint(core.NewPainter(ink))
+	return ink.texts
+}
+
+func reverseRunes(s string) string {
+	r := []rune(s)
+	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
+	return string(r)
 }

@@ -1900,12 +1900,13 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				// label/separator seam can't show the bar color - see the
 				// normal path below).
 				graceStyle := s
+				graceRun := t.CellRun(tab.Text)
 				if p.Graphical() && isSelected {
-					tape.fill(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
+					tape.fill(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(graceRun) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 					graceStyle = s.WithBg(style.ColorTransparent)
 				}
-				label(x, 0, tab.Text, graceStyle)
-				x += t.MeasureText(tab.Text)
+				label(x, 0, graceRun, graceStyle)
+				x += t.MeasureText(graceRun)
 				lastTextEndX = x // Track where text ends
 				lastSlashX = -1  // Reset slash tracking
 
@@ -2035,7 +2036,10 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 				// Draw partial text using font-aware rendering
 				if charsToShow > 0 {
-					partialText := string(textRunes[:charsToShow])
+					// Cut to fit first, prepared after: what is trimmed is the
+					// caption, and what is drawn is the run made from what is
+					// left of it.
+					partialText := t.CellRun(string(textRunes[:charsToShow]))
 					// Tab-color foundation + transparent glyphs so the seam to the
 					// ellipsis/separator can't leak the bar color (pixel surfaces).
 					partStyle := s
@@ -2146,9 +2150,13 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			}
 		}
 
-		// Draw tab text using font-aware rendering
+		// Draw tab text using font-aware rendering. What goes down is the
+		// caption prepared for this target, so the foundation under it, the pen
+		// after it and the close button on its last cell all measure the run
+		// that is drawn.
 		textStartX := x
-		textWidth := t.MeasureText(tab.Text)
+		labelRun := t.CellRun(tab.Text)
+		textWidth := t.MeasureText(labelRun)
 		// Solid tab-color foundation under the label and its trailing cell, so
 		// the sub-pixel seam between the proportional label (unsnapped rate)
 		// and the cell-based separator (cell rate) can't show the bar color
@@ -2160,7 +2168,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			tape.fill(core.UnitRect{X: x, Y: 0, Width: textWidth + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 			textStyle = s.WithBg(style.ColorTransparent)
 		}
-		label(x, 0, tab.Text, textStyle)
+		label(x, 0, labelRun, textStyle)
 		x += textWidth
 
 		// Draw close button if closable (at end of text, before separator)
@@ -2703,7 +2711,10 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				// Draw partial text using font-aware rendering (tab-color
 				// foundation + transparent glyphs on pixel surfaces).
 				if charsToShow > 0 {
-					partialText := string(textRunes[:charsToShow])
+					// Cut to fit first, prepared after: what is trimmed is the
+					// caption, and what is drawn is the run made from what is
+					// left of it.
+					partialText := t.CellRun(string(textRunes[:charsToShow]))
 					bpartStyle := s
 					if p.Graphical() && isSelected {
 						tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(partialText) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
@@ -2820,12 +2831,13 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		// label/separator seam can't leak the bar color at a fractional font
 		// size (mirrors the top-tab path).
 		btextStyle := s
+		labelRun := t.CellRun(tab.Text)
 		if p.Graphical() && isSelected {
-			tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
+			tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(labelRun) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 			btextStyle = s.WithBg(style.ColorTransparent)
 		}
-		label(x, tabY, tab.Text, btextStyle)
-		x += t.MeasureText(tab.Text)
+		label(x, tabY, labelRun, btextStyle)
+		x += t.MeasureText(labelRun)
 		lastTextEndX = x // Track where text ends
 		lastSlashX = -1  // Reset slash tracking
 		lastTabWasSelected = false
@@ -3171,7 +3183,10 @@ func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme
 				currentWidth += charWidth
 			}
 		}
-		p.DrawText(t.sideTabTextX(contentX, tabWidth, displayText), y, displayText, s, font)
+		// Cut to fit first, prepared after: the run that is drawn is the run
+		// the slot places.
+		displayRun := t.CellRun(displayText)
+		p.DrawText(t.sideTabTextX(contentX, tabWidth, displayRun), y, displayRun, s, font)
 
 		y += metrics.UnitsPerCellHeight
 	}
@@ -3255,7 +3270,8 @@ func (t *TabTrinket) paintRightTabs(p *core.Painter, bounds core.UnitRect, schem
 				currentWidth += charWidth
 			}
 		}
-		p.DrawText(t.sideTabTextX(tabX, tabWidth, displayText), y, displayText, s, font)
+		displayRun := t.CellRun(displayText)
+		p.DrawText(t.sideTabTextX(tabX, tabWidth, displayRun), y, displayRun, s, font)
 
 		y += metrics.UnitsPerCellHeight
 	}
