@@ -47,6 +47,10 @@ func (r *markTape) FillRect(rect core.UnitRect, ch rune, s style.CellStyle) {
 // its own width back from the far side, and the marks that point along the run
 // -- the slashes that shape a tab, the scroll arrows and their brackets --
 // become their partners.
+//
+// The captions here are DIGITS, which name no direction of their own, so every
+// mark on the strip is the strip's. A word that reads the other way is the one
+// exception to a plain reflection and has its own test below.
 func TestATurnedOverStripIsTheStripReflected(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
@@ -66,7 +70,7 @@ func TestATurnedOverStripIsTheStripReflected(t *testing.T) {
 		tt.SetTabPosition(pos)
 		form.AddChild(tt)
 		for i := 0; i < n; i++ {
-			tt.AddTab(fmt.Sprintf("Tab%d", i), NewPanel())
+			tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
 		}
 		tt.SetCurrentIndex(sel)
 		tt.tabScrollOffset = scroll
@@ -140,7 +144,8 @@ func (r *shapeTape) DrawArcWedge(rect core.UnitRect, centerRight, centerBottom b
 }
 
 // The selected tab's silhouette turns over with the run it stands in: the same
-// arcs, the same strokes, the same edge line, reflected. A tab with no
+// arcs, the same strokes, the same edge line, reflected. The captions are
+// digits, which name no direction, so nothing here is tied. A tab with no
 // trailing foot -- the last in the strip, or one cut short by its end -- turns
 // over like any other.
 func TestATurnedOverSilhouetteIsTheSilhouetteReflected(t *testing.T) {
@@ -163,7 +168,7 @@ func TestATurnedOverSilhouetteIsTheSilhouetteReflected(t *testing.T) {
 		tt.SetTabPosition(pos)
 		form.AddChild(tt)
 		for i := 0; i < n; i++ {
-			tt.AddTab(fmt.Sprintf("Tab%d", i), NewPanel())
+			tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
 		}
 		tt.SetCurrentIndex(sel)
 		tt.tabScrollOffset = scroll
@@ -209,5 +214,74 @@ func TestATurnedOverSilhouetteIsTheSilhouetteReflected(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A word and the dots that stand for what was cut off it read together. In a
+// strip turned over, an English label still runs left to right, so its dots
+// belong on its RIGHT -- the end the word ends at, not the end the strip does.
+// Reflecting them separately puts the dots in front of the word.
+func TestTheDotsStayOnTheEndTheWordEndsAt(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	// A label wide enough that the strip runs out of room and the tab has to
+	// carry its own overflow mark.
+	place := func(dir core.Direction, caption string) (word, dots core.Unit, ok bool) {
+		px, err := raster.New(900, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := &markTape{RenderBackend: px, graphical: true}
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		form.AddChild(tt)
+		tt.AddTab(caption, NewPanel())
+		tt.AddTab("Second", NewPanel())
+		tt.AddTab("Third", NewPanel())
+		tt.SetCurrentIndex(0)
+		tt.SetBounds(core.UnitRect{Width: 18 * 8, Height: 10 * 16})
+		tt.Paint(core.NewPainter(ink))
+
+		word, dots = -1, -1
+		for _, m := range ink.marks {
+			var x, w core.Unit
+			var what string
+			if _, err := fmt.Sscanf(m, "%d+%d %s", &x, &w, &what); err != nil {
+				continue
+			}
+			switch {
+			case what == "«...»":
+				if dots < 0 {
+					dots = x
+				}
+			case len(what) > 2 && what[:len("«")] == "«":
+				// The label, whether it was trimmed or not.
+				word = x
+			}
+		}
+		return word, dots, word >= 0 && dots >= 0
+	}
+
+	const caption = "Default"
+	straightWord, straightDots, ok := place(core.DirLTR, caption)
+	if !ok {
+		t.Fatalf("the straight strip drew word=%d dots=%d; the case needs both",
+			straightWord, straightDots)
+	}
+	if straightDots < straightWord {
+		t.Fatalf("even straight, the dots at %d come before the word at %d",
+			straightDots, straightWord)
+	}
+
+	turnedWord, turnedDots, ok := place(core.DirRTL, caption)
+	if !ok {
+		t.Fatalf("the turned strip drew word=%d dots=%d; the case needs both",
+			turnedWord, turnedDots)
+	}
+	if turnedDots < turnedWord {
+		t.Errorf("turned over, the dots at %d come before the word at %d; an English "+
+			"word keeps its dots on its own end", turnedDots, turnedWord)
 	}
 }

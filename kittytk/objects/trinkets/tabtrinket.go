@@ -8,6 +8,7 @@ import (
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/text"
 )
 
 // TabTrinket displays multiple pages with tabs.
@@ -1373,8 +1374,14 @@ const (
 // what a reflection needs: a mark is placed by the edge the run reaches first,
 // which is its left edge one way round and its right edge the other.
 type stripMark struct {
-	kind  stripMarkKind
-	rect  core.UnitRect
+	kind stripMarkKind
+	rect core.UnitRect
+	// group ties a mark to the ones beside it. A tied block reflects WHOLE:
+	// the space it takes turns over, and inside it the marks keep the order
+	// and the spacing they were made with. That is what a run reading the
+	// other way from the strip needs -- a word and the dots that stand for
+	// what was cut off it belong together and read their own way.
+	group int
 	ch    rune
 	text  string
 	style style.CellStyle
@@ -1384,8 +1391,23 @@ type stripMark struct {
 // stripTape collects a strip's marks in the order they are made.
 type stripTape struct {
 	marks   []stripMark
+	groups  int
 	cw      core.Unit
 	measure func(string) core.Unit
+}
+
+// at is where the next mark will go, for a caller meaning to tie from here.
+func (tp *stripTape) at() int { return len(tp.marks) }
+
+// tie makes everything recorded since `from` one block (see stripMark.group).
+func (tp *stripTape) tie(from int) {
+	if from < 0 || from >= len(tp.marks) {
+		return
+	}
+	tp.groups++
+	for i := from; i < len(tp.marks); i++ {
+		tp.marks[i].group = tp.groups
+	}
 }
 
 func (tp *stripTape) cell(x, y core.Unit, ch rune, s style.CellStyle) {
@@ -1443,11 +1465,36 @@ func mirroredGlyph(ch rune) rune {
 // the far side. This is the one place the strip's run becomes places on the
 // screen, which is why the hundred marks that made it never had to ask.
 func (tp *stripTape) replay(p *core.Painter, barW core.Unit, mirror bool) {
+	// A tied block turns over as one, so work out how far each has to move
+	// before placing anything: its parts then keep their places within it.
+	shift := map[int]core.Unit{}
+	if mirror {
+		lo, hi := map[int]core.Unit{}, map[int]core.Unit{}
+		for _, m := range tp.marks {
+			g := m.group
+			if g == 0 {
+				continue
+			}
+			if _, seen := lo[g]; !seen || m.rect.X < lo[g] {
+				lo[g] = m.rect.X
+			}
+			if end := m.rect.X + m.rect.Width; end > hi[g] {
+				hi[g] = end
+			}
+		}
+		for g := range lo {
+			shift[g] = barW - hi[g] - lo[g]
+		}
+	}
 	for _, m := range tp.marks {
 		r, ch := m.rect, m.ch
 		if mirror {
-			r.X = barW - r.X - r.Width
-			ch = mirroredGlyph(ch)
+			if m.group != 0 {
+				r.X += shift[m.group]
+			} else {
+				r.X = barW - r.X - r.Width
+				ch = mirroredGlyph(ch)
+			}
 		}
 		switch m.kind {
 		case markCell:
@@ -1543,6 +1590,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
+	// Where the last visible tab's label went onto the tape, and what it read:
+	// the dots that stand for what was cut off it belong to that word, so the
+	// two are tied when the word reads the other way from the strip.
+	lastLabelMark, lastLabelText := -1, ""
+	label := func(x, y core.Unit, text string, st style.CellStyle) {
+		lastLabelMark, lastLabelText = tape.at(), text
+		tape.text(x, y, text, st, font)
+	}
 	tabWasTruncated := false
 	// zeroCharTab records that the last visible tab was clipped so hard that
 	// not one character of its label was drawn. The trailing dots then stand
@@ -1702,7 +1757,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					tape.fill(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 					graceStyle = s.WithBg(style.ColorTransparent)
 				}
-				tape.text(x, 0, tab.Text, graceStyle, font)
+				label(x, 0, tab.Text, graceStyle)
 				x += t.MeasureText(tab.Text)
 				lastTextEndX = x // Track where text ends
 				lastSlashX = -1  // Reset slash tracking
@@ -1846,7 +1901,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 						tape.fill(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(partialText) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 						partStyle = s.WithBg(style.ColorTransparent)
 					}
-					tape.text(x, 0, partialText, partStyle, font)
+					label(x, 0, partialText, partStyle)
 					x += t.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
@@ -1869,6 +1924,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 						}
 						x += t.overflowEllipsisWidth()
 						tabWasTruncated = true
+						// These dots stand for what was cut off THIS WORD, so
+						// they belong to it: when the word reads the other way
+						// from the strip the two are tied and turn over as one,
+						// and the word keeps its dots on the end it ends at.
+						if d := text.FirstStrongDirection(lastLabelText); d != core.DirInherit &&
+							d != core.FindEffectiveDirection(t) {
+							tape.tie(lastLabelMark)
+						}
 					}
 					drewAnyText = true
 				} else {
@@ -1956,7 +2019,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			tape.fill(core.UnitRect{X: x, Y: 0, Width: textWidth + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 			textStyle = s.WithBg(style.ColorTransparent)
 		}
-		tape.text(x, 0, tab.Text, textStyle, font)
+		label(x, 0, tab.Text, textStyle)
 		x += textWidth
 
 		// Draw close button if closable (at end of text, before separator)
@@ -2132,6 +2195,16 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				if gapStart < ellipsisX {
 					tape.fill(core.UnitRect{X: gapStart, Y: 0, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
 				}
+				// The dots belong to that tab's WORD, so when the word reads
+				// the other way from the strip the two are tied and turn over
+				// as one: the word keeps its dots on the end the word ends at,
+				// not the end the strip does.
+				if useInternalStyle && lastLabelMark >= 0 {
+					if d := text.FirstStrongDirection(lastLabelText); d != core.DirInherit &&
+						d != core.FindEffectiveDirection(t) {
+						tape.tie(lastLabelMark)
+					}
+				}
 			}
 			for fillX < scrollAreaStart {
 				tape.cell(fillX, 0, ' ', tabBarUnderlined)
@@ -2282,6 +2355,14 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
 	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
+	// Where the last visible tab's label went onto the tape, and what it read:
+	// the dots that stand for what was cut off it belong to that word, so the
+	// two are tied when the word reads the other way from the strip.
+	lastLabelMark, lastLabelText := -1, ""
+	label := func(x, y core.Unit, text string, st style.CellStyle) {
+		lastLabelMark, lastLabelText = tape.at(), text
+		tape.text(x, y, text, st, font)
+	}
 	tabWasTruncated := false
 	// zeroCharTab records that the last visible tab was clipped so hard that
 	// not one character of its label was drawn. The trailing dots then stand
@@ -2467,7 +2548,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 						tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(partialText) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 						bpartStyle = s.WithBg(style.ColorTransparent)
 					}
-					tape.text(x, tabY, partialText, bpartStyle, font)
+					label(x, tabY, partialText, bpartStyle)
 					x += t.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
@@ -2491,6 +2572,14 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 						}
 						x += t.overflowEllipsisWidth()
 						tabWasTruncated = true
+						// These dots stand for what was cut off THIS WORD, so
+						// they belong to it: when the word reads the other way
+						// from the strip the two are tied and turn over as one,
+						// and the word keeps its dots on the end it ends at.
+						if d := text.FirstStrongDirection(lastLabelText); d != core.DirInherit &&
+							d != core.FindEffectiveDirection(t) {
+							tape.tie(lastLabelMark)
+						}
 					}
 					drewAnyText = true
 				} else {
@@ -2574,7 +2663,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			tape.fill(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(tab.Text) + metrics.UnitsPerCellWidth, Height: tabHeight}, ' ', s)
 			btextStyle = s.WithBg(style.ColorTransparent)
 		}
-		tape.text(x, tabY, tab.Text, btextStyle, font)
+		label(x, tabY, tab.Text, btextStyle)
 		x += t.MeasureText(tab.Text)
 		lastTextEndX = x // Track where text ends
 		lastSlashX = -1  // Reset slash tracking
@@ -2741,6 +2830,16 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				// that fill cannot reach across them.
 				if gapStart < ellipsisX {
 					tape.fill(core.UnitRect{X: gapStart, Y: tabY, Width: ellipsisX - gapStart, Height: tabHeight}, ' ', ellipsisStyle)
+				}
+				// The dots belong to that tab's WORD, so when the word reads
+				// the other way from the strip the two are tied and turn over
+				// as one: the word keeps its dots on the end the word ends at,
+				// not the end the strip does.
+				if useInternalStyle && lastLabelMark >= 0 {
+					if d := text.FirstStrongDirection(lastLabelText); d != core.DirInherit &&
+						d != core.FindEffectiveDirection(t) {
+						tape.tie(lastLabelMark)
+					}
 				}
 			}
 			for fillX < scrollAreaStart {
