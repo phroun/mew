@@ -123,3 +123,29 @@ func Override(k Kind) {
 // DetectFrom classifies from an arbitrary environment lookup without caching —
 // for tests and callers that need to evaluate a synthetic environment.
 func DetectFrom(getenv func(string) string) Kind { return detect(getenv) }
+
+// BidiProfile reports whether a terminal runs its OWN bidirectional reordering
+// over what it is sent, how it segments when it does, and whether this package
+// knows the answer for that terminal at all.
+//
+// It matters to anything that has already ORDERED a line. A renderer holding a
+// line in visual order -- right-to-left words turned over, ready to be stamped
+// left to right -- has its work undone by a terminal that orders it again, so
+// on such a host each right-to-left run has to go out turned back for the
+// terminal's own pass to turn forward. Sent to a terminal that leaves what it
+// is given alone, that turning-back is itself the bug; so the answer has to be
+// per-terminal, and unknown is its own answer rather than a guess.
+//
+// macOS Terminal.app is the one in common use that reorders. It reverses a
+// whole parsed span, attributes and all, so wordwise is off for it.
+func BidiProfile(k Kind) (applies, wordwise, known bool) {
+	switch k {
+	case TerminalAppleTerminal:
+		return true, false, true
+	case TerminalITerm2, TerminalGhostty, TerminalAlacritty, TerminalKitty,
+		TerminalCoolRetroTerm, TerminalPurfecterm, TerminalSDL:
+		// Stream order: what is sent is what appears.
+		return false, false, true
+	}
+	return false, false, false
+}

@@ -12,6 +12,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/phroun/khatool"
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
@@ -392,6 +393,7 @@ func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 		sr.frame.flipBidi = flip
 		sr.frame.forceRedraw()
 	}
+	sr.publishHostBidi()
 }
 
 // SetFlipWordwise selects the flip's run segmentation (see backBuffer.flipWordwise):
@@ -405,6 +407,20 @@ func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 		sr.frame.flipWordwise = wordwise
 		sr.frame.forceRedraw()
 	}
+	sr.publishHostBidi()
+}
+
+// publishHostBidi tells KittyTK what mew has worked out about this terminal.
+//
+// mew emits its own backbuffer and KittyTK's cell backend emits its own, and
+// both hold visually ordered lines -- so a host that reorders what it is sent
+// needs the same turning-back from each. mew is the one that KNOWS: it sniffs
+// the terminal and probes it. Without this the chrome around mew's own text
+// comes out the wrong way round on the very terminal mew is getting right.
+//
+// Called with renderMu held.
+func (sr *ScreenRenderer) publishHostBidi() {
+	core.SetHostAppliesBidi(sr.frame.flipBidi, sr.frame.flipWordwise)
 }
 
 // SetFlipRideSafeSelection marks a flip host whose background selection fill

@@ -702,54 +702,13 @@ func (b *backBuffer) rowVisualCells(y int) []rowCell {
 //     reversed glyph settles on, not its mirror. The block marks are untouched;
 //     only where the paint lands changes.
 func flipEmitPlan(cells []rowCell, wordwise bool) (order, styleOrder []int, mirror []bool) {
-	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
-	isStrongLTR := func(c bbCell) bool {
-		if len(c.runes) == 0 {
-			return false
+	bases := make([]rune, len(cells))
+	for i, c := range cells {
+		if len(c.cell.runes) > 0 {
+			bases[i] = c.cell.runes[0]
 		}
-		r := c.runes[0]
-		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
 	}
-	order = make([]int, 0, len(cells))
-	styleOrder = make([]int, 0, len(cells))
-	mirror = make([]bool, 0, len(cells))
-	for i := 0; i < len(cells); {
-		if !isRTL(cells[i].cell) {
-			order = append(order, i)
-			styleOrder = append(styleOrder, i)
-			mirror = append(mirror, false)
-			i++
-			continue
-		}
-		// Extend the run. Word-wise stops at the first non-RTL cell (each word
-		// reverses in place); otherwise absorb interior neutrals as long as
-		// another RTL cell follows before any strong LTR content.
-		end := i
-		for j := i + 1; j < len(cells); j++ {
-			if isRTL(cells[j].cell) {
-				end = j
-				continue
-			}
-			if wordwise || isStrongLTR(cells[j].cell) {
-				break
-			}
-		}
-		for j := end; j >= i; j-- {
-			order = append(order, j)
-			mirror = append(mirror, true)
-		}
-		if wordwise {
-			for j := i; j <= end; j++ { // attributes at the physical column
-				styleOrder = append(styleOrder, j)
-			}
-		} else {
-			for j := end; j >= i; j-- { // attributes reverse with the glyph
-				styleOrder = append(styleOrder, j)
-			}
-		}
-		i = end + 1
-	}
-	return order, styleOrder, mirror
+	return khatool.FlipRuns(bases, wordwise)
 }
 
 // emitRow writes one full row's cells into sb (left to right) and syncs disp.

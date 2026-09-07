@@ -19,6 +19,7 @@ import (
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/platform"
 )
 
@@ -270,6 +271,13 @@ type timerEntry struct {
 // New creates an SDL platform with the specified renderer backend.
 // rendererType should be "software" or "webgpu".
 func New(title string, widthPx, heightPx int, rendererType string) (*Platform, error) {
+	// This host draws natively, so it reports itself rather than the terminal it
+	// happened to be LAUNCHED from -- whose quirks are about what that terminal
+	// does with what it is sent, and nothing reaches it. Left unpinned, an app
+	// started from a terminal that reorders its input would turn its own
+	// right-to-left text back for a reordering that is never going to happen.
+	hostterm.Override(hostterm.TerminalSDL)
+
 	// Create renderer
 	renderer, err := NewRenderer(rendererType, true) // vsync default true
 	if err != nil {

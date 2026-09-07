@@ -15,6 +15,7 @@ import (
 	"github.com/phroun/direct-key-handler/keyboard"
 	"github.com/phroun/khatool"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/style"
 	"github.com/phroun/purfecterm"
 	"golang.org/x/term"
@@ -358,6 +359,14 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		// a trinket asking for black go unwritten.
 		cursorColor:     style.ColorDefault,
 		cursorColorSent: style.ColorDefault,
+	}
+	// What this terminal does with what it is sent. Recognising it here is what
+	// lets a row of right-to-left text come out right without an application
+	// having to know, or having to tell us; one that has PROBED the terminal --
+	// and so can answer for a terminal no name recognises -- says so through
+	// core.SetHostAppliesBidi, and that answer stands over this one.
+	if applies, wordwise, known := hostterm.BidiProfile(hostterm.Detect()); known {
+		core.SetSniffedHostBidi(applies, wordwise)
 	}
 	return t
 }
@@ -828,6 +837,18 @@ func (t *TUIBackend) EndFrame() {
 			termY, termX = y, 0
 		}
 
+		// A host that runs its own bidi over what it is sent reorders a row
+		// this backend has already ordered, so each right-to-left run goes out
+		// turned BACK and the host's own pass turns it forward again. That is a
+		// whole-ROW job -- a run cannot be reversed by re-emitting only the
+		// cells inside it that changed -- so a row with any right-to-left
+		// content on such a host escalates out of the diff.
+		if t.emitFlippedRow(&sb, y, lineCleared) {
+			penStyle = ""
+			termX, termY = -1, -1
+			continue
+		}
+
 		for x := 0; x < t.cols; {
 			cell := t.backBuffer[y][x]
 
@@ -1093,6 +1114,94 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	}
 
 	return t.metrics.TextWidth(col - startCol)
+}
+
+// emitFlippedRow writes row y turned back for a host that applies its own bidi,
+// and reports whether it did.
+//
+// It does nothing at all unless the host reorders and the row holds something
+// right-to-left: a flip sent to a terminal that leaves what it is given alone
+// is itself the bug, and a row with nothing to turn is the same row either way.
+//
+// The whole row goes out, and the STYLE goes out per glyph rather than coalesced
+// on a pen. A host that reorders re-processes each parsed line, and run-level
+// attributes do not survive that reordering -- the colours vanish -- while
+// per-glyph ones do.
+func (t *TUIBackend) emitFlippedRow(sb *strings.Builder, y int, lineCleared bool) bool {
+	applies, wordwise := core.HostAppliesBidi()
+	if !applies {
+		return false
+	}
+
+	// The row as SLOTS: one per base cell, a wide glyph's continuation folded
+	// into the base that wrote both columns.
+	type slot struct {
+		x    int
+		cell Cell
+		w    int
+	}
+	var slots []slot
+	anyRTL, changed := false, lineCleared
+	for x := 0; x < t.cols; {
+		cell := t.backBuffer[y][x]
+		if cell.Char == 0 && x > 0 && cellRuneWidth(t.backBuffer[y][x-1].Char) == 2 {
+			x++
+			continue // continuation: its base wrote it
+		}
+		w := 1
+		if cell.Char != 0 && cellRuneWidth(cell.Char) == 2 {
+			w = 2
+		}
+		cell.Char, cell.Combining = t.driftEmit(y, x, cell)
+		if cell.Char != 0 && khatool.IsStrongRTL(cell.Char) {
+			anyRTL = true
+		}
+		if cell != t.frontBuffer[y][x] {
+			changed = true
+		}
+		slots = append(slots, slot{x: x, cell: cell, w: w})
+		x += w
+	}
+	if !anyRTL {
+		return false
+	}
+	if !changed {
+		return true // nothing to say, but the row is still this backend's to skip
+	}
+
+	bases := make([]rune, len(slots))
+	for i, s := range slots {
+		bases[i] = s.cell.Char
+	}
+	order, styleOf, mirror := khatool.FlipRuns(bases, wordwise)
+
+	t.markDamage(y, 0, t.cols-1)
+	sb.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[2K", y+1))
+	for k, i := range order {
+		st := slots[styleOf[k]].cell.Style.CodeDepth(t.colorDepth)
+		if st == "" {
+			st = "\033[0m"
+		}
+		sb.WriteString(st)
+		c := slots[i].cell
+		if c.Char == 0 {
+			sb.WriteByte(' ')
+			continue
+		}
+		r := c.Char
+		if mirror[k] {
+			r = khatool.Mirror(r)
+		}
+		sb.WriteRune(r)
+		sb.WriteString(c.Combining)
+	}
+	for _, s := range slots {
+		t.frontBuffer[y][s.x] = s.cell
+		if s.w == 2 && s.x+1 < t.cols {
+			t.frontBuffer[y][s.x+1] = t.backBuffer[y][s.x+1]
+		}
+	}
+	return true
 }
 
 // driftEmit returns the base rune and the combining marks to emit for the cell
