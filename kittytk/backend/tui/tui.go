@@ -13,8 +13,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
+	"github.com/phroun/khatool"
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/hebrew"
 	"github.com/phroun/kittytk/style"
 	"github.com/phroun/purfecterm"
 	"golang.org/x/term"
@@ -1098,7 +1098,7 @@ func (t *TUIBackend) driftEmit(y, x int, cell Cell) (rune, string) {
 	}
 	base := cell.Char
 	var b strings.Builder
-	if folded, ok := hebrew.PrecomposeCluster(own); ok {
+	if folded, ok := khatool.PrecomposeCluster(own); ok {
 		base = folded[0]
 		b.WriteString(string(folded[1:])) // non-folding non-drifting marks (LTR)
 	} else {

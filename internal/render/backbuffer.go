@@ -8,7 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/phroun/kittytk/hebrew"
+	"github.com/phroun/khatool"
 
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/textwidth"
@@ -801,7 +801,7 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		// its point back out as a free-standing mark.
 		runes := glyphCell.runes
 		if modeFoldsMarks(b.rtlMarkMode) {
-			if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+			if folded, ok := khatool.PrecomposeCluster(runes); ok {
 				runes = folded
 			}
 		}
@@ -856,7 +856,7 @@ func (b *backBuffer) frameHasUncomposedNiqqud() bool {
 				continue
 			}
 			if folds {
-				if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+				if folded, ok := khatool.PrecomposeCluster(runes); ok {
 					runes = folded
 				}
 			}
@@ -945,13 +945,13 @@ func modeFoldsMarks(mode string) bool {
 }
 
 // precomposeCell folds a Hebrew cell into a single presentation-form glyph where
-// one exists (delegating to the shared kittytk/hebrew package), so no
+// one exists (delegating to khatool), so no
 // free-standing point is left for a terminal to drift. It covers well-formed
 // clusters and the anchored points that render poorly on a dotted circle (an
 // isolated shin dot, sin dot, or holam-haser is shown on its faux base). The
 // cell keeps whatever colour it already carries.
 func precomposeCell(c bbCell) (string, bool) {
-	if folded, ok := hebrew.PrecomposeCluster(c.runes); ok {
+	if folded, ok := khatool.PrecomposeCluster(c.runes); ok {
 		return string(folded), true
 	}
 	return "", false

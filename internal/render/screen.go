@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/phroun/kittytk/hebrew"
+	"github.com/phroun/khatool"
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
@@ -1979,7 +1979,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// folds into its base's presentation form is NOT dropped — it folds
 			// into the base glyph (backbuffer emitCellText) instead, so composable
 			// points render while the non-composable marks stay omitted.
-			if suppress && modeFoldsMarks(sr.frame.rtlMarkMode) && hebrew.Folds(r) {
+			if suppress && modeFoldsMarks(sr.frame.rtlMarkMode) && khatool.Folds(r) {
 				suppress = false
 			}
 			if !suppress && currentVisualColumn > viewOffsetX && outputVisualColumn > 0 {
@@ -3151,7 +3151,7 @@ func lineHasZeroWidthAfterFold(s string, folding bool) bool {
 		for j < len(runes) && isZeroWidthMark(runes[j]) {
 			j++
 		}
-		folded, ok := hebrew.PrecomposeCluster(runes[i:j])
+		folded, ok := khatool.PrecomposeCluster(runes[i:j])
 		if !ok {
 			folded = runes[i:j] // nothing folds: the cluster stands as written
 		}
