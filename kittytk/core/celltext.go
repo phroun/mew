@@ -25,15 +25,42 @@ import "github.com/phroun/khatool"
 // run to measure: a ligature takes one cell where its two letters took two, so
 // measuring the text this was made from would count a cell that never appears.
 func CellRun(text string, dir Direction) string {
-	if text == "" || dir == DirInherit || HasTextMeasurer() {
-		return text
-	}
+	run, _ := CellRunMapped(text, dir)
+	return string(run)
+}
+
+// CellRunMapped is CellRun with the cell each rune of the original landed in:
+// where[i] is the index in run of the cell logical rune i is drawn in, or -1
+// for a rune that took no cell of its own -- the second letter of a ligature,
+// which the glyph before it is already showing.
+//
+// It is what a caller needs to style ONE character of a run it did not order
+// itself, or to put a caret on one: an accelerator's underline, a selection, a
+// cursor. Splitting the ORIGINAL text and preparing the pieces separately does
+// not answer the same question -- the pieces of a run that reads right to left
+// are not the pieces of the text that made it, and each piece would be ordered
+// and shaped on its own, three runs that never join, in the wrong order.
+func CellRunMapped(text string, dir Direction) (run []rune, where []int) {
 	runes := []rune(text)
+	identity := func() ([]rune, []int) {
+		where := make([]int, len(runes))
+		for i := range where {
+			where[i] = i
+		}
+		return runes, where
+	}
+	if text == "" || dir == DirInherit || HasTextMeasurer() {
+		return identity()
+	}
 	lay := khatool.Order(runes, dir == DirRTL, ridesCell)
 	if lay == nil {
-		return text // visual order is logical order, and nothing to shape
+		return identity() // visual order is logical order, and nothing to shape
 	}
 	out := make([]rune, 0, len(lay.Perm))
+	where = make([]int, len(runes))
+	for i := range where {
+		where[i] = -1
+	}
 	for _, i := range lay.Perm {
 		r := runes[i]
 		if lay.Glyph != nil {
@@ -46,9 +73,10 @@ func CellRun(text string, dir Direction) string {
 		if lay.RTL[i] {
 			r = khatool.Mirror(r)
 		}
+		where[i] = len(out)
 		out = append(out, r)
 	}
-	return string(out)
+	return out, where
 }
 
 // ridesCell is the cluster rule for a cell target, and it asks the same
