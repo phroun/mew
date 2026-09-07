@@ -351,7 +351,9 @@ func TestAPressFindsTheTabItWasDrawnOn(t *testing.T) {
 
 	const wCells = 40
 	// A fresh strip for every probe: pressing the overflow mark scrolls, which
-	// would otherwise leave the next probe looking at a different strip.
+	// would otherwise leave the next probe looking at a different strip. Each
+	// one is PAINTED before it is pressed, because where the painter put things
+	// is what the press reads.
 	press := func(dir core.Direction, pos TabPosition, n, scroll int, x core.Unit) int {
 		px, err := raster.New(600, 300)
 		if err != nil {
@@ -369,7 +371,8 @@ func TestAPressFindsTheTabItWasDrawnOn(t *testing.T) {
 		tt.tabScrollOffset = scroll
 		tt.SetBounds(core.UnitRect{Width: wCells * 8, Height: 10 * 16})
 		tt.currentIndex = -1 // so anything the press selects is visible as one
-		tt.handleTabBarClick(x)
+		tt.Paint(core.NewPainter(px))
+		tt.handleTabBarPress(x)
 		return tt.currentIndex
 	}
 	sweep := func(dir core.Direction, pos TabPosition, n, scroll int) []int {
@@ -482,10 +485,11 @@ func TestASlackStripPutsItsTabsWhereItIsTold(t *testing.T) {
 		}
 		tt.SetTabAlign(TabsAlignOpposite)
 		tt.SetBounds(core.UnitRect{Width: 60 * 8, Height: 10 * 16})
+		tt.Paint(core.NewPainter(px))
 
 		hit := func(x core.Unit) int {
 			tt.currentIndex = -1
-			tt.handleTabBarClick(x)
+			tt.handleTabBarPress(x)
 			return tt.currentIndex
 		}
 		into := tt.tabRunOffset()
@@ -513,6 +517,196 @@ func TestASlackStripPutsItsTabsWhereItIsTold(t *testing.T) {
 		if got != packed {
 			t.Errorf("a scrolling strip moved its run to %d for align %d; it has no slack to place",
 				got, a)
+		}
+	}
+}
+
+// A strip is made of more than its tabs, and a press has to tell the parts
+// apart: the mark standing for the tabs that fell off the front, the two
+// scroll buttons, a tab the strip's end cut short, and the close button on a
+// tab's last cell. Each is found where the painter put it, so each turns over
+// with the strip.
+func TestAPressFindsThePartOfTheStripItLandedOn(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	const wCells = core.Unit(40)
+	const tabs = 9
+
+	type strip struct {
+		tt     *TabTrinket
+		ink    *inkRecorder
+		closed int
+	}
+	build := func(dir core.Direction, pos TabPosition, scroll int, closable bool) *strip {
+		px, err := raster.New(600, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		s := &strip{ink: &inkRecorder{RenderBackend: px}, closed: -1}
+		form := NewPanel()
+		form.SetDirection(dir)
+		s.tt = NewTabTrinket()
+		s.tt.SetTabPosition(pos)
+		s.tt.SetClosable(closable)
+		s.tt.SetOnTabCloseRequested(func(i int) { s.closed = i })
+		form.AddChild(s.tt)
+		for i := 0; i < tabs; i++ {
+			s.tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
+		}
+		s.tt.SetBounds(core.UnitRect{Width: wCells * cell, Height: 10 * 16})
+		s.tt.tabScrollOffset = scroll
+		s.tt.currentIndex = -1 // so anything the press selects is visible as one
+		s.tt.Paint(core.NewPainter(s.ink))
+		return s
+	}
+	// A place in the RUN, pressed where the strip put it on the screen.
+	press := func(s *strip, runX core.Unit) {
+		x := runX
+		if core.ChromeMirrored(s.tt) {
+			x = s.tt.Bounds().Width - runX - 1
+		}
+		s.tt.handleTabBarPress(x)
+	}
+
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+			// The overflow mark stands for the tabs scrolled off the front of
+			// the run, so pressing it brings the nearest of them back.
+			s := build(dir, pos, 2, false)
+			press(s, cell/2)
+			if s.tt.tabScrollOffset != 1 || s.tt.currentIndex != 1 {
+				t.Errorf("%v %v: a press on the overflow mark left the run at %d showing tab %d, "+
+					"want the tab in front of it back", dir, pos, s.tt.tabScrollOffset, s.tt.currentIndex)
+			}
+
+			// The two scroll buttons stand at the far end of the run, three
+			// cells each. They arm the strip's scrolling; they select nothing.
+			s = build(dir, pos, 2, false)
+			press(s, (wCells-6)*cell+cell/2)
+			if s.tt.scrollButtonPressed != -1 || s.tt.currentIndex != -1 {
+				t.Errorf("%v %v: a press on [<] armed %d and selected tab %d, want the strip to scroll back",
+					dir, pos, s.tt.scrollButtonPressed, s.tt.currentIndex)
+			}
+			s = build(dir, pos, 2, false)
+			press(s, (wCells-3)*cell+cell/2)
+			if s.tt.scrollButtonPressed != 1 || s.tt.currentIndex != -1 {
+				t.Errorf("%v %v: a press on [>] armed %d and selected tab %d, want the strip to scroll on",
+					dir, pos, s.tt.scrollButtonPressed, s.tt.currentIndex)
+			}
+
+			// The buttons are painted over the strip, and a label measured in
+			// proportional glyphs leaves the pen off the cell grid, so the
+			// tab beside them can have its last cell hanging into their first.
+			// What the eye finds there is the button.
+			s = build(dir, pos, 0, false)
+			press(s, (wCells-6)*cell)
+			if s.tt.currentIndex != -1 || s.tt.tabScrollOffset != 0 {
+				t.Errorf("%v %v: a press on the first unit of [<] selected tab %d and left the run at %d, "+
+					"want the button the strip drew over the tab there",
+					dir, pos, s.tt.currentIndex, s.tt.tabScrollOffset)
+			}
+
+			// The last thing on the run is a tab the strip had no room to draw
+			// whole. Pressing what there is of it, or the dots that stand for
+			// the rest, brings the whole of it into view.
+			s = build(dir, pos, 0, false)
+			press(s, (wCells-6)*cell-cell/2)
+			cut := s.tt.currentIndex
+			if cut <= 0 {
+				t.Fatalf("%v %v: a press at the end of the run found tab %d", dir, pos, cut)
+			}
+			if s.tt.tabScrollOffset == 0 {
+				t.Errorf("%v %v: a press on the tab the run was cut short at selected tab %d "+
+					"and left the run where it was", dir, pos, cut)
+			}
+			s.ink.texts = nil
+			s.tt.Paint(core.NewPainter(s.ink))
+			if _, ok := s.ink.textAt(fmt.Sprintf("%04d", cut)); !ok {
+				t.Errorf("%v %v: the strip selected tab %d without bringing it into view",
+					dir, pos, cut)
+			}
+
+			// The close button is the label's last cell -- the cell the label
+			// ENDS at, which is the one the eye reaches last, whichever way the
+			// strip runs. The other end of the label selects, as any tab does.
+			s = build(dir, pos, 0, true)
+			lx, ok := s.ink.textAt("0000")
+			if !ok {
+				t.Fatalf("%v %v: the strip drew no first tab", dir, pos)
+			}
+			lw := s.tt.MeasureText("0000")
+			last, first := lx+lw-cell/2, lx+cell/2
+			if core.ChromeMirrored(s.tt) {
+				last, first = first, last
+			}
+			s.tt.handleTabBarPress(last)
+			if s.closed != 0 {
+				t.Errorf("%v %v: a press on the first tab's close button closed tab %d",
+					dir, pos, s.closed)
+			}
+			s = build(dir, pos, 0, true)
+			s.tt.handleTabBarPress(first)
+			if s.closed != -1 || s.tt.currentIndex != 0 {
+				t.Errorf("%v %v: a press on the far side of the first tab's label closed %d and selected %d, "+
+					"want it selected and nothing closed", dir, pos, s.closed, s.tt.currentIndex)
+			}
+		}
+	}
+}
+
+// The run between two tabs belongs to both of them, and where the press falls
+// in it says which. An even separator divides in half. The three-cell one a
+// bottom strip draws beside its selected tab has a middle cell all of its own,
+// carrying the slash: that cell goes to whichever of the two is selected
+// already, so a press on the slash never tips the selection over.
+func TestTheSlashBetweenTwoBottomTabsKeepsTheSelection(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	// A press so many units past the end of tab 1's label, wherever the strip
+	// put that label.
+	after := func(dir core.Direction, into core.Unit) int {
+		px, err := raster.New(600, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		ink := &inkRecorder{RenderBackend: px}
+		form := NewPanel()
+		form.SetDirection(dir)
+		tt := NewTabTrinket()
+		tt.SetTabPosition(TabsBottom)
+		form.AddChild(tt)
+		for i := 0; i < 4; i++ {
+			tt.AddTab(fmt.Sprintf("%04d", i), NewPanel())
+		}
+		tt.SetBounds(core.UnitRect{Width: 40 * cell, Height: 10 * 16})
+		tt.SetCurrentIndex(1)
+		tt.Paint(core.NewPainter(ink))
+		lx, ok := ink.textAt("0001")
+		if !ok {
+			t.Fatalf("%v: the strip drew no second tab", dir)
+		}
+		// The separator follows the label along the RUN, so it stands on the
+		// far side of it from where the run travels.
+		x := lx + tt.MeasureText("0001") + into
+		if core.ChromeMirrored(tt) {
+			x = lx - into - 1
+		}
+		tt.handleTabBarPress(x)
+		return tt.currentIndex
+	}
+
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		if got := after(dir, cell/2); got != 1 {
+			t.Errorf("%v: a press on the first cell of the separator selected tab %d, want the tab in front of it", dir, got)
+		}
+		if got := after(dir, cell+cell/2); got != 1 {
+			t.Errorf("%v: a press on the slash between tabs 1 and 2 selected tab %d, "+
+				"want the selection to stay on the tab the slash leans into", dir, got)
+		}
+		if got := after(dir, 2*cell+cell/2); got != 2 {
+			t.Errorf("%v: a press on the last cell of the separator selected tab %d, want the tab behind it", dir, got)
 		}
 	}
 }

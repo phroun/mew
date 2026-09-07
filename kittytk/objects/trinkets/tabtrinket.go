@@ -50,6 +50,11 @@ type TabTrinket struct {
 	vertSbGrabOff    float64
 	vertSbThumbPos   float64
 
+	// Where the parts of the horizontal strip landed the last time it was
+	// painted, in the strip's RUN coordinates (see the display list below).
+	// The mouse reads it, so a press finds a tab where the painter put it.
+	stripSpans []stripSpan
+
 	// Callbacks
 	onCurrentChanged    func(index int)
 	onTabCloseRequested func(index int)
@@ -1426,6 +1431,11 @@ const (
 type stripMark struct {
 	kind stripMarkKind
 	rect core.UnitRect
+	// owner is whose mark this is: a tab by its index, or one of the strip's
+	// own parts below. It is what lets the mouse find a part of the strip
+	// where the painter put it rather than by working the layout out a
+	// second time.
+	owner int
 	// group ties a mark to the ones beside it. A tied block reflects WHOLE:
 	// the space it takes turns over, and inside it the marks keep the order
 	// and the spacing they were made with. That is what a run reading the
@@ -1438,12 +1448,92 @@ type stripMark struct {
 	font  *core.Font
 }
 
+// The parts of a strip that are not a tab. A tab owns its marks by its own
+// index, so these are negative.
+const (
+	stripSelf     = -1 // the background, the filler, the strip's own edge
+	stripOverflow = -2 // the mark standing for the tabs scrolled off the front
+	stripScrollLo = -3 // the [<] button
+	stripScrollHi = -4 // the [>] button
+)
+
 // stripTape collects a strip's marks in the order they are made.
 type stripTape struct {
 	marks   []stripMark
 	groups  int
+	owner   int // whose marks are being made just now
+	clipped int // the tab the run was cut short at, if it reached one
 	cw      core.Unit
 	measure func(string) core.Unit
+}
+
+// owned says whose marks follow.
+func (tp *stripTape) owned(by int) { tp.owner = by }
+
+// pastTheTabs hands the strip back its own marks once the run of tabs is
+// over -- unless the run was cut short, in which case what follows still
+// belongs to the tab it was cut short at (see cutShortAt).
+func (tp *stripTape) pastTheTabs() {
+	if tp.clipped < 0 {
+		tp.owned(stripSelf)
+	}
+}
+
+// cutShortAt records that the run had no room to draw this tab whole. What
+// follows it on the strip -- the dots that stand for what was left out, and
+// the run of filler to the scroll buttons -- is that tab's, because a press
+// anywhere in it means the same thing: bring this tab into view.
+func (tp *stripTape) cutShortAt(tab int) {
+	tp.clipped = tab
+	tp.owned(tab)
+}
+
+// spans is the room each part of the strip took, in RUN coordinates, in the
+// order the run made them. This is what the painter learned and the mouse asks.
+func (tp *stripTape) spans() []stripSpan {
+	var out []stripSpan
+	for _, m := range tp.marks {
+		if m.owner == stripSelf || m.rect.Width <= 0 {
+			continue
+		}
+		cur := len(out) - 1
+		if cur < 0 || out[cur].owner != m.owner {
+			out = append(out, stripSpan{
+				owner:    m.owner,
+				x:        m.rect.X,
+				w:        m.rect.Width,
+				labelEnd: m.rect.X,
+				clipped:  m.owner >= 0 && m.owner == tp.clipped,
+			})
+			cur = len(out) - 1
+		} else {
+			if m.rect.X < out[cur].x {
+				out[cur].w += out[cur].x - m.rect.X
+				out[cur].x = m.rect.X
+			}
+			if end := m.rect.X + m.rect.Width; end > out[cur].x+out[cur].w {
+				out[cur].w = end - out[cur].x
+			}
+		}
+		// A tab's label is the first text it puts down: its prefix is cells and
+		// its ground is a fill, and anything it writes afterwards is the dots
+		// for what would not fit.
+		if m.kind == markText && out[cur].labelEnd == out[cur].x {
+			out[cur].labelEnd = m.rect.X + m.rect.Width
+		}
+	}
+	return out
+}
+
+// stripSpan is the room one part of a strip took along the run.
+type stripSpan struct {
+	owner int
+	x, w  core.Unit
+	// labelEnd is where this tab's label ended, and so where its separator
+	// begins. It is the span's own start for a part that wrote no text.
+	labelEnd core.Unit
+	// clipped says the run was cut short at this tab (see cutShortAt).
+	clipped bool
 }
 
 // at is where the next mark will go, for a caller meaning to tie from here.
@@ -1462,22 +1552,24 @@ func (tp *stripTape) tie(from int) {
 
 func (tp *stripTape) cell(x, y core.Unit, ch rune, s style.CellStyle) {
 	tp.marks = append(tp.marks, stripMark{
-		kind: markCell,
-		rect: core.UnitRect{X: x, Y: y, Width: tp.cw},
-		ch:   ch, style: s,
+		kind:  markCell,
+		rect:  core.UnitRect{X: x, Y: y, Width: tp.cw},
+		owner: tp.owner,
+		ch:    ch, style: s,
 	})
 }
 
 func (tp *stripTape) text(x, y core.Unit, text string, s style.CellStyle, f *core.Font) {
 	tp.marks = append(tp.marks, stripMark{
-		kind: markText,
-		rect: core.UnitRect{X: x, Y: y, Width: tp.measure(text)},
-		text: text, style: s, font: f,
+		kind:  markText,
+		rect:  core.UnitRect{X: x, Y: y, Width: tp.measure(text)},
+		owner: tp.owner,
+		text:  text, style: s, font: f,
 	})
 }
 
 func (tp *stripTape) fill(r core.UnitRect, ch rune, s style.CellStyle) {
-	tp.marks = append(tp.marks, stripMark{kind: markFill, rect: r, ch: ch, style: s})
+	tp.marks = append(tp.marks, stripMark{kind: markFill, rect: r, owner: tp.owner, ch: ch, style: s})
 }
 
 // mirroredGlyph is what a glyph becomes when the run it stands in is turned
@@ -1560,6 +1652,8 @@ func (tp *stripTape) replay(p *core.Painter, barW core.Unit, mirror bool) {
 // newStripTape starts a tape denominated the way this trinket is.
 func (t *TabTrinket) newStripTape() *stripTape {
 	return &stripTape{
+		owner:   stripSelf,
+		clipped: -1,
 		cw:      t.EffectiveCellMetrics().UnitsPerCellWidth,
 		measure: t.MeasureText,
 	}
@@ -1616,6 +1710,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		leftEllipseWidth = t.overflowEllipsisWidth() // "..."
 		// Draw the left ellipse (underlined; proportional on pixel
 		// surfaces - the reserve width stays cell-based)
+		tape.owned(stripOverflow)
 		if p.Graphical() {
 			tape.text(0, 0, "...", tabBarUnderlined, font)
 		} else {
@@ -1623,6 +1718,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				tape.cell(metrics.CellToUnitsX(i), 0, '.', tabBarUnderlined)
 			}
 		}
+		tape.owned(stripSelf)
 	}
 
 	// Don't reserve space for right ellipsis upfront - we'll only need it if tabs don't fit
@@ -1677,6 +1773,9 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	for i := 0; i < len(visibleTabs); i++ {
 		tabIndex := t.tabScrollOffset + i
 		tab := visibleTabs[i]
+		// Everything from here to the next tab is this tab's, so the mouse can
+		// find it later without working the layout out a second time.
+		tape.owned(tabIndex)
 		isSelected := tabIndex == t.currentIndex
 		isFirstVisible := i == 0
 		isLastVisible := tabIndex == len(t.tabs)-1
@@ -1729,6 +1828,9 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 		// Check if this tab fits (or if we need to force internal ellipsis)
 		if forceInternalEllipsis || x+tabSlotWidth > availableWidth {
+			// The run stops here, whether or not any of this tab gets drawn.
+			tape.cutShortAt(tabIndex)
+
 			// Check if we're in the "grace margin" - ONLY if all essential content fits
 			// and we're not forcing internal ellipsis.
 			// Essential = prefix + text + (space/bracket + backslash for selected)
@@ -2137,6 +2239,8 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			x += metrics.UnitsPerCellWidth * 2
 		}
 	}
+	// Past the tabs, the marks are the strip's own again.
+	tape.pastTheTabs()
 
 	// Fill any gap between last tab and scroll buttons/edge
 	// When ellipsis is needed, ensure we leave room for it by trimming fill spaces
@@ -2282,6 +2386,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		disabledStyle := tabBarUnderlined.WithFg(style.ColorBrightBlack)
 
 		// [<] button - disabled when can't scroll left
+		tape.owned(stripScrollLo)
 		canLeft := t.canScrollLeft()
 		if canLeft {
 			leftStyle := tabBarUnderlined
@@ -2299,6 +2404,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 
 		// [>] button - disabled when can't scroll right
+		tape.owned(stripScrollHi)
 		canRight := t.canScrollRight()
 		if canRight {
 			rightStyle := tabBarUnderlined
@@ -2315,6 +2421,9 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			tape.cell(buttonX+metrics.UnitsPerCellWidth*5, 0, ' ', disabledStyle)
 		}
 	}
+
+	// What the run made is also what the mouse will read.
+	t.stripSpans = tape.spans()
 
 	// Everything above worked out WHERE, in the strip's own run. Here it
 	// becomes places on the screen -- before the silhouette, which paints
@@ -2390,6 +2499,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth = t.overflowEllipsisWidth() // "..."
 		// Draw the left ellipse (with overline)
+		tape.owned(stripOverflow)
 		if p.Graphical() {
 			tape.text(0, tabY, "...", tabBarOverlined, font)
 		} else {
@@ -2397,6 +2507,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				tape.cell(metrics.CellToUnitsX(i), tabY, '.', tabBarOverlined)
 			}
 		}
+		tape.owned(stripSelf)
 	}
 
 	// Available width is the absolute position where tabs must stop (before scroll buttons)
@@ -2452,6 +2563,9 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	for i := 0; i < len(visibleTabs); i++ {
 		tabIndex := t.tabScrollOffset + i
 		tab := visibleTabs[i]
+		// Everything from here to the next tab is this tab's, so the mouse can
+		// find it later without working the layout out a second time.
+		tape.owned(tabIndex)
 		isSelected := tabIndex == t.currentIndex
 		isFirstVisible := i == 0
 		isLastVisible := tabIndex == len(t.tabs)-1
@@ -2504,6 +2618,9 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 
 		// Check if this tab fits (or if we need to force internal ellipsis)
 		if forceInternalEllipsis || x+tabSlotWidth > availableWidth {
+			// The run stops here, whether or not any of this tab gets drawn.
+			tape.cutShortAt(tabIndex)
+
 			// Try to draw partial tab (ellipsis is drawn separately after the loop)
 			remainingSpace := availableWidth - x
 			minPartialWidth := metrics.TextWidth(prefixWidth) // just prefix needed
@@ -2776,6 +2893,8 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			x += metrics.UnitsPerCellWidth * 2
 		}
 	}
+	// Past the tabs, the marks are the strip's own again.
+	tape.pastTheTabs()
 
 	// Fill any gap between last tab and scroll buttons/edge
 	// When ellipsis is needed, ensure we leave room for it by trimming fill spaces
@@ -2925,6 +3044,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		disabledStyle := tabBarOverlined.WithFg(style.ColorBrightBlack)
 
 		// [<] button - disabled when can't scroll left
+		tape.owned(stripScrollLo)
 		canLeft := t.canScrollLeft()
 		if canLeft {
 			leftStyle := tabBarOverlined
@@ -2942,6 +3062,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		}
 
 		// [>] button - disabled when can't scroll right
+		tape.owned(stripScrollHi)
 		canRight := t.canScrollRight()
 		if canRight {
 			rightStyle := tabBarOverlined
@@ -2958,6 +3079,9 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			tape.cell(buttonX+metrics.UnitsPerCellWidth*5, tabY, ' ', disabledStyle)
 		}
 	}
+
+	// What the run made is also what the mouse will read.
+	t.stripSpans = tape.spans()
 
 	// Everything above worked out WHERE, in the strip's own run. Here it
 	// becomes places on the screen -- before the silhouette, which paints
@@ -3420,13 +3544,13 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 	switch t.tabEdge() {
 	case TabEdgeTop:
 		if event.Y < tabHeight {
-			t.handleTabBarClick(event.X)
+			t.handleTabBarPress(event.X)
 			return true
 		}
 	case TabEdgeBottom:
 		bounds := t.Bounds()
 		if event.Y >= bounds.Height-tabHeight {
-			t.handleTabBarClick(event.X)
+			t.handleTabBarPress(event.X)
 			return true
 		}
 	case TabEdgeLeft:
@@ -3490,237 +3614,135 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 	return true
 }
 
-func (t *TabTrinket) handleTabBarClick(x core.Unit) {
-	metrics := t.EffectiveCellMetrics()
+// stripPartAt is the part of the strip a press in RUN coordinates landed on,
+// and whether it landed on one at all: the bar's own background belongs to
+// nothing, and neither does the slack an alignment left in front of the run.
+//
+// The parts are searched from the end of the run backwards, because that is
+// the order they were painted in: a proportional label leaves the pen off the
+// cell grid, so a tab's last cell can hang a few units into the scroll buttons
+// beside it, and what the eye finds there is the button drawn over the top.
+func (t *TabTrinket) stripPartAt(x core.Unit) (stripSpan, bool) {
+	for i := len(t.stripSpans) - 1; i >= 0; i-- {
+		if sp := t.stripSpans[i]; x >= sp.x && x < sp.x+sp.w {
+			return sp, true
+		}
+	}
+	return stripSpan{}, false
+}
+
+func (t *TabTrinket) handleTabBarPress(x core.Unit) {
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	bounds := t.Bounds()
 
-	// Everything below works in the strip's RUN coordinates -- the same ones
-	// the tape's marks are made in, and for the same reason: what a tab is
-	// worth, which prefix it carries and where the ellipsis falls are settled
-	// by the order the tabs come in, not by which side of the screen they end
-	// up on. So a press is turned back into the run once, here, and the run
-	// then answers as it always did.
+	// A press is turned back into the strip's RUN coordinates once, here,
+	// because that is what the strip recorded itself in.
 	//
-	// A press is a POINT and a tab is a span, so the reflection takes the unit
-	// the press landed on rather than the boundary in front of it: the last
-	// unit of a span reflects to the first unit of its mirror image, and a
-	// press on the far edge of a tab stays inside that tab.
+	// A press is a POINT and a part of the strip is a span, so the reflection
+	// takes the unit the press landed on rather than the boundary in front of
+	// it: the last unit of a span reflects to the first unit of its mirror
+	// image, and a press on the far edge of a tab stays inside that tab.
 	if core.ChromeMirrored(t) {
 		x = bounds.Width - x - 1
 	}
 
-	// Check if clicking on left ellipse (scroll left by one and select that tab)
-	if t.tabScrollOffset > 0 {
-		leftEllipseWidth := metrics.TextWidth(3)
-		if x < leftEllipseWidth {
-			// Select the tab that was just out of view (the one the ellipse replaced)
-			t.SetCurrentIndex(t.tabScrollOffset - 1)
-			t.tabScrollOffset--
+	sp, ok := t.stripPartAt(x)
+	if !ok {
+		return
+	}
+	switch sp.owner {
+	case stripOverflow:
+		// The mark stands for the tabs that fell off the front of the run, so
+		// pressing it brings the nearest of them back and selects it.
+		t.SetCurrentIndex(t.tabScrollOffset - 1)
+		t.tabScrollOffset--
+		t.Update()
+		return
+	case stripScrollLo:
+		if t.canScrollLeft() {
+			t.scrollButtonPressed = -1
+			t.scrollLeftHovered = true
 			t.Update()
-			return
 		}
+		return
+	case stripScrollHi:
+		if t.canScrollRight() {
+			t.scrollButtonPressed = 1
+			t.scrollRightHovered = true
+			t.Update()
+		}
+		return
+	}
+	if sp.owner < 0 || sp.owner >= len(t.tabs) {
+		return
+	}
+	i := sp.owner
+	tab := t.tabs[i]
+
+	// A tab the run was cut short at is only part drawn, and everything from
+	// where it starts to where the strip gives out is its own: a press
+	// anywhere in that means bring this tab into view.
+	if sp.clipped {
+		if tab.Enabled {
+			t.SetCurrentIndex(i)
+			t.ensureTabFullyVisible(i)
+		}
+		return
 	}
 
-	// Check if clicking on scroll buttons
-	if t.tabsNeedScrolling() {
-		scrollButtonsWidth := metrics.TextWidth(6)
-		buttonX := bounds.Width - scrollButtonsWidth
-
-		// [<] button (3 chars wide) - only active if can scroll left
-		if x >= buttonX && x < buttonX+metrics.TextWidth(3) {
-			if t.canScrollLeft() {
-				t.scrollButtonPressed = -1
-				t.scrollLeftHovered = true
-				t.Update()
-			}
-			return
+	// The close button sits on the last cell of the label.
+	if (t.closable || tab.Closable) && x >= sp.labelEnd-cw && x < sp.labelEnd {
+		if t.onTabCloseRequested != nil {
+			t.onTabCloseRequested(i)
 		}
-
-		// [>] button (3 chars wide) - only active if can scroll right
-		if x >= buttonX+metrics.TextWidth(3) && x < buttonX+scrollButtonsWidth {
-			if t.canScrollRight() {
-				t.scrollButtonPressed = 1
-				t.scrollRightHovered = true
-				t.Update()
-			}
-			return
-		}
+		return
 	}
 
-	// Calculate available width for tabs
-	scrollButtonsWidth := core.Unit(0)
-	if t.tabsNeedScrolling() {
-		scrollButtonsWidth = metrics.TextWidth(6)
-	}
-	leftEllipseWidth := core.Unit(0)
-	if t.tabScrollOffset > 0 {
-		leftEllipseWidth = t.overflowEllipsisWidth()
-	}
-	// Available width is the absolute position where tabs must stop (before scroll buttons)
-	availableWidth := bounds.Width - scrollButtonsWidth
-
-	// Tab format varies by position:
-	// Top tabs: prefix 4 chars if selected, else 2; separator 4 chars if adjacent to selected, else 2
-	// Bottom tabs: prefix 3 chars if selected, else 2; separator 3 chars if adjacent to selected, else 2
-	isBottomTabs := t.tabEdge() == TabEdgeBottom
-
-	tabX := leftEllipseWidth + t.tabRunOffset()
-	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
-		tab := t.tabs[i]
-		isFirstVisible := i == t.tabScrollOffset
-		isSelected := i == t.currentIndex
-		isLastVisible := i == len(t.tabs)-1
-		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
-
-		// Calculate this tab's width based on tab position
-		// When left ellipsis is showing, omit leading underscore/space from prefix
-		hasLeftEllipsis := t.tabScrollOffset > 0
-		prefixWidth := 0
-		if isFirstVisible {
-			if isBottomTabs {
-				if hasLeftEllipsis {
-					// Tighter: "\_" (2) or " " (1)
-					if isSelected {
-						prefixWidth = 2 // "\_"
-					} else {
-						prefixWidth = 1 // " "
-					}
-				} else {
-					if isSelected {
-						prefixWidth = 3 // " \_"
-					} else {
-						prefixWidth = 2 // "  "
-					}
-				}
-			} else {
-				if hasLeftEllipsis {
-					// Tighter: "/<" (2) or " " (1)
-					if isSelected {
-						prefixWidth = 2 // "/<"
-					} else {
-						prefixWidth = 1 // " "
-					}
-				} else {
-					if isSelected {
-						prefixWidth = 4 // " _/<"
-					} else {
-						prefixWidth = 2 // "  "
-					}
-				}
-			}
-		}
-		sepWidth := 2 // Default "  "
-		if isSelected || nextIsSelected {
-			if isBottomTabs {
-				sepWidth = 3 // "_/ " or " \_"
-			} else {
-				sepWidth = 4 // " \_ " or " _/ "
-			}
-		}
-		// Prefix and separator are decorative (cell-based), text is font-based
-		textWidth := t.MeasureText(tab.Text)
-		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.UnitsPerCellWidth + textWidth
-
-		// Check if this tab doesn't fully fit (partial tab with ellipsis)
-		if tabX+tabSlotWidth > availableWidth {
-			// Click is in the partial tab area - select this tab and scroll to show it
-			if x >= tabX && x < availableWidth {
+	// Past the label is the separator, which leads into the next tab: which of
+	// the two the press names is settled by where in it the press fell.
+	if x >= sp.labelEnd && i < len(t.tabs)-1 {
+		sepWidth := sp.x + sp.w - sp.labelEnd
+		into := x - sp.labelEnd
+		next := t.tabs[i+1]
+		if sepWidth == 3*cw {
+			// Three cells, so the slash between the two tabs has a cell of its
+			// own: it goes to whichever of them is already selected, and stays
+			// where it is when neither is.
+			third := sepWidth / 3
+			switch {
+			case into < third:
 				if tab.Enabled {
 					t.SetCurrentIndex(i)
-					t.ensureTabFullyVisible(i)
+				}
+			case into < third*2:
+				if i+1 == t.currentIndex {
+					if next.Enabled {
+						t.SetCurrentIndex(i + 1)
+					}
+				} else if tab.Enabled {
+					t.SetCurrentIndex(i)
+				}
+			default:
+				if next.Enabled {
+					t.SetCurrentIndex(i + 1)
 				}
 			}
 			return
 		}
-
-		if x >= tabX && x < tabX+tabSlotWidth {
-			// Calculate where text starts and ends
-			textStartX := tabX + core.Unit(prefixWidth)*metrics.UnitsPerCellWidth
-			textEndX := textStartX + textWidth
-
-			// Check for close button (at end of text)
-			if (t.closable || tab.Closable) && x >= textEndX-metrics.UnitsPerCellWidth && x < textEndX {
-				if t.onTabCloseRequested != nil {
-					t.onTabCloseRequested(i)
-				}
-				return
-			}
-
-			// Check if click is in separator area and there's a next tab
-			separatorStartX := textEndX
-			hasNextTab := i < len(t.tabs)-1
-
-			if x >= separatorStartX && hasNextTab {
-				// Click is in separator area - determine which tab to select
-				// based on which half of the separator was clicked
-				separatorWidth := core.Unit(sepWidth) * metrics.UnitsPerCellWidth
-				clickOffsetInSep := x - separatorStartX
-
-				// For even separators (2 or 4 chars): first half → this tab, second half → next tab
-				// For odd separators (3 chars, bottom tabs): middle char → active tab
-				if sepWidth == 3 {
-					// 3-char separator: divide into thirds
-					thirdWidth := separatorWidth / 3
-					if clickOffsetInSep < thirdWidth {
-						// First third → this tab
-						if tab.Enabled {
-							t.SetCurrentIndex(i)
-						}
-					} else if clickOffsetInSep < thirdWidth*2 {
-						// Middle third (the slash) → go to active tab (tie-breaker)
-						// If this tab is active, stay. If next tab is active, go there.
-						// Otherwise, stay on current selection.
-						nextTab := t.tabs[i+1]
-						if i == t.currentIndex {
-							// This tab is already active, keep it
-							if tab.Enabled {
-								t.SetCurrentIndex(i)
-							}
-						} else if i+1 == t.currentIndex {
-							// Next tab is active, select it
-							if nextTab.Enabled {
-								t.SetCurrentIndex(i + 1)
-							}
-						} else {
-							// Neither is active - stay on this tab
-							if tab.Enabled {
-								t.SetCurrentIndex(i)
-							}
-						}
-					} else {
-						// Last third → next tab
-						nextTab := t.tabs[i+1]
-						if nextTab.Enabled {
-							t.SetCurrentIndex(i + 1)
-						}
-					}
-				} else {
-					// 2 or 4-char separator: split in half
-					halfWidth := separatorWidth / 2
-					if clickOffsetInSep < halfWidth {
-						// First half → this tab
-						if tab.Enabled {
-							t.SetCurrentIndex(i)
-						}
-					} else {
-						// Second half → next tab
-						nextTab := t.tabs[i+1]
-						if nextTab.Enabled {
-							t.SetCurrentIndex(i + 1)
-						}
-					}
-				}
-				return
-			}
-
-			// Click is on prefix or text area, or separator with no next tab
+		// An even separator divides in half, each tab taking the side of it
+		// that it stands on.
+		if into < sepWidth/2 {
 			if tab.Enabled {
 				t.SetCurrentIndex(i)
 			}
-			return
+		} else if next.Enabled {
+			t.SetCurrentIndex(i + 1)
 		}
+		return
+	}
 
-		tabX += tabSlotWidth
+	if tab.Enabled {
+		t.SetCurrentIndex(i)
 	}
 }
 
