@@ -41,6 +41,46 @@ type DirectionProvider interface {
 	Direction() Direction
 }
 
+// DirectionObserver is implemented by a trinket that DERIVES something from
+// the direction in force and holds on to the answer, rather than asking again
+// each time it needs it. Everything a trinket resolves on demand -- where its
+// chrome goes, which way a run travels -- needs none of this; what needs it is
+// state settled once and kept, and the standing example is the set of commands
+// a trinket declares it can carry out, which is read at the moment a key is
+// resolved and cannot be re-derived from the keystroke.
+//
+// DirectionChanged says the direction this trinket inherits may now be a
+// different one. Anything derived from it is stale.
+type DirectionObserver interface {
+	DirectionChanged()
+}
+
+// NotifyDirectionChanged tells w and the subtree under it that the direction
+// they inherit has changed.
+//
+// The walk stops at any DESCENDANT that names a direction of its own: it and
+// everything below it read exactly what they read before, so there is nothing
+// there to be stale. w itself is always told, because it is where the change
+// happened.
+func NotifyDirectionChanged(w Trinket) {
+	if w == nil {
+		return
+	}
+	if o, ok := w.(DirectionObserver); ok {
+		o.DirectionChanged()
+	}
+	c, ok := w.(Container)
+	if !ok {
+		return
+	}
+	for _, kid := range c.Children() {
+		if dp, ok := kid.(DirectionProvider); ok && dp.Direction() != DirInherit {
+			continue
+		}
+		NotifyDirectionChanged(kid)
+	}
+}
+
 // FindEffectiveDirection walks up the trinket tree to the first ancestor that
 // names a direction, mirroring FindEffectiveFont and FindEffectiveCellMetrics.
 // It checks the trinket, then its ancestors (window, MDI pane, desktop).

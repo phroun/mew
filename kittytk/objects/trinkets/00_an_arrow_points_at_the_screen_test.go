@@ -81,6 +81,54 @@ func TestTheShiftedArrowsTurnOverTheSameWay(t *testing.T) {
 	}
 }
 
+// A tree inherits its direction, so the turn it has to answer to is often not
+// one it was told about directly: a panel above it turns and the tree reads
+// the other way from that moment. What the tree derived from the direction --
+// which meaning of each shifted arrow it declares -- is stale at exactly that
+// moment, so the turn reaches down to it.
+func TestATreeInheritsTheTurnAboveIt(t *testing.T) {
+	room := NewPanel()
+	tv := NewTreeView()
+	room.AddChild(tv)
+
+	if got := tv.KeyCommand("S-Left"); got != core.CmdTrinketCollapseLeftOrEnclosing {
+		t.Fatalf("in a room reading left to right, S-Left is %q, want the leftward collapse", got)
+	}
+	tv.AbandonKeySequence()
+
+	room.SetDirection(core.DirRTL)
+	if got := tv.KeyCommand("S-Left"); got != core.CmdTrinketExpandLeftOrDescend {
+		t.Errorf("after the room turned, S-Left is %q, want the leftward expand", got)
+	}
+
+	// And it walks: a tree further down answers the same turn.
+	inner := NewPanel()
+	deep := NewTreeView()
+	room.AddChild(inner)
+	inner.AddChild(deep)
+	room.SetDirection(core.DirLTR)
+	room.SetDirection(core.DirRTL)
+	deep.AbandonKeySequence()
+	if got := deep.KeyCommand("S-Left"); got != core.CmdTrinketExpandLeftOrDescend {
+		t.Errorf("a tree two rooms down reads S-Left as %q, want the leftward expand", got)
+	}
+}
+
+// A tree that names its own direction is not moved by a room turning around
+// it, so what it declares does not move either.
+func TestATreeKeepsTheDirectionItNamed(t *testing.T) {
+	room := NewPanel()
+	tv := NewTreeView()
+	room.AddChild(tv)
+	tv.SetDirection(core.DirLTR)
+
+	room.SetDirection(core.DirRTL)
+	tv.AbandonKeySequence()
+	if got := tv.KeyCommand("S-Left"); got != core.CmdTrinketCollapseLeftOrEnclosing {
+		t.Errorf("a tree naming its own direction read S-Left as %q after the room turned", got)
+	}
+}
+
 // A tree declares one meaning of each shifted arrow, and turning it over
 // swaps which: the key it reaches is the direction's answer, settled before
 // the keystroke ever arrives at the switch.

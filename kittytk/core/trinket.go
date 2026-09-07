@@ -661,13 +661,16 @@ func (w *TrinketBase) Direction() Direction {
 // SetDirection names the side text begins on for this trinket and everything
 // below it; DirInherit hands the question back to the ancestors.
 //
-// Everything under it is placed against this, so the tree below repaints.
+// Everything under it is placed against this, so the tree below repaints -- and
+// anything down there holding an answer it derived from the direction is told,
+// because what it derived that answer from has just moved.
 func (w *TrinketBase) SetDirection(d Direction) {
 	w.mu.Lock()
 	w.direction = d
 	w.needsRepaint = true
 	w.mu.Unlock()
 
+	NotifyDirectionChanged(w.Self())
 	w.notifyAncestorsOfRepaint()
 }
 

@@ -271,10 +271,11 @@ func (t *TreeView) declareCommands() {
 	)
 }
 
-// SetDirection turns the tree over, which changes which of the shifted
-// arrows' two meanings this tree answers to, so it says what it can do again.
-func (t *TreeView) SetDirection(d core.Direction) {
-	t.TrinketBase.SetDirection(d)
+// DirectionChanged is core.DirectionObserver: the direction this tree reads
+// has moved, whether it was set here or on something above. Which of the
+// shifted arrows' two meanings the tree answers to is derived from it, so it
+// says what it can do again.
+func (t *TreeView) DirectionChanged() {
 	t.declareCommands()
 }
 
