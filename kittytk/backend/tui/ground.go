@@ -48,8 +48,11 @@ func dropGround(s style.CellStyle) style.CellStyle {
 // groundAsInk returns the style a blank cell wears to draw its own background
 // instead of being given one, and whether there was anything to draw.
 func groundAsInk(s style.CellStyle) (style.CellStyle, bool) {
-	if s.Bg == style.ColorDefault || s.Bg == style.ColorTransparent ||
-		s.Bg == style.ColorBlack {
+	// Named black is not the only black. A theme reaches the same colour as an
+	// index, as a palette entry or in channels, and a near-black rather than the
+	// pure one is the usual choice -- so the question is whether there is enough
+	// light in it to tell from the ground, not which of its spellings was used.
+	if s.Bg.NearBlack() {
 		return dropGround(s), false
 	}
 	ink := dropGround(s)
