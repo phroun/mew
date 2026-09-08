@@ -87,6 +87,11 @@ func main() {
 	// configure the app without the command line. Env vars still override.
 	cfg := hostcfg.Load()
 
+	// [options] rtlMarkMode / rtlCombining. Both are answered only where a cell
+	// target is drawing, so applying them here costs the graphical host nothing
+	// and keeps one place that reads the file.
+	hostcfg.ApplyText(cfg)
+
 	// The [mappings] section and [window] accelerator_chord overlay the
 	// toolkit's own keymap: the file says what it changes rather than
 	// restating the whole table.

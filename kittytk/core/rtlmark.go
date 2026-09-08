@@ -28,6 +28,36 @@ func RtlMarkMode() string {
 	return rtlMarkModeVal
 }
 
+// Whether the combining marks that ride a right-to-left letter are SHOWN.
+//
+// They are what a terminal that reorders miscounts, and on such a host they are
+// the only thing a line can give up: a display that wants its selection bars,
+// its highlights and its gutter more than its vowels turns this off, and
+// pointed Hebrew renders one codepoint per cell the way pre-shaped Arabic does.
+// A folding rtl-mark mode keeps the points even so, folded into their letters.
+//
+// On by default, and answered only where a cell target is drawing -- a pixel
+// one composes the marks properly and has no terminal to disagree with.
+var (
+	rtlCombiningMu   sync.RWMutex
+	rtlCombiningShow = true
+)
+
+// SetRtlCombining stores whether the marks riding a right-to-left letter are
+// shown. Off gives up the marks to keep the fill.
+func SetRtlCombining(show bool) {
+	rtlCombiningMu.Lock()
+	rtlCombiningShow = show
+	rtlCombiningMu.Unlock()
+}
+
+// RtlCombining reports whether those marks are shown (the default).
+func RtlCombining() bool {
+	rtlCombiningMu.RLock()
+	defer rtlCombiningMu.RUnlock()
+	return rtlCombiningShow
+}
+
 // RtlMarkFolds reports whether the active hint folds a cluster's points into
 // its base's presentation form, leaving nothing free-standing for a renderer to
 // misplace. It is what decides whether a pointed line comes out even.

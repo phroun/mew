@@ -49,6 +49,10 @@ func main() {
 	// VT100 fraktur request (separate concern).
 	tui.ConfigurePseudoFonts(cfg.TUIPseudoFontsDisabled, cfg.TUIFrakturMode)
 
+	// [options] rtlMarkMode / rtlCombining: how the marks that ride a
+	// right-to-left letter are prepared for a cell target.
+	hostcfg.ApplyText(cfg)
+
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tuiBackend) // seeds root metrics from the cell grid
 

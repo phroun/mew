@@ -168,6 +168,25 @@ type Config struct {
 	// enabled.
 	TUIPseudoFontsDisabled map[string]bool
 
+	// RtlMarkMode ([options] rtlMarkMode) is how a cell target emits the
+	// combining marks that ride a right-to-left letter, mirroring mew's option
+	// of the same name: "compose" folds a cluster's points into their letter's
+	// presentation form so nothing is left free-standing for a terminal to
+	// misplace, "" leaves them as written. Empty = leave them.
+	RtlMarkMode string
+
+	// RtlCombining ([options] rtlCombining) is whether those marks are SHOWN at
+	// all, again mirroring mew's. They are what a reordering terminal miscounts
+	// a background fill over, and the only part of such a line that can be given
+	// up -- so a display that wants its selection bars, its highlights and its
+	// gutter more than its vowels turns this off, and pointed Hebrew renders one
+	// codepoint per cell the way pre-shaped Arabic does. Under a folding
+	// RtlMarkMode the points survive even so, folded into their letters.
+	//
+	// Only a cell target is affected; the graphical one composes marks properly
+	// and has no terminal to disagree with. Absent = shown.
+	RtlCombining *bool
+
 	// TUIFrakturMode ([tui] fraktur_mode) is a SEPARATE concern: how a
 	// terminal's VT100 fraktur REQUEST (font 20 / SGR 20) is handled — "native"
 	// forwards the VT fraktur escape to the enclosing terminal, "pseudo" renders
@@ -446,6 +465,21 @@ func apply(data []byte, cfg *Config) {
 				delete(cfg.FontAliases, alias)
 			}
 			continue
+		}
+		// [options] mirrors mew's section of the same name, for the two knobs
+		// that mean the same thing on either side of the wire. Both spellings
+		// are taken -- mew writes rtlMarkMode, this file's own keys are
+		// underscored -- since a reader has one of them in mind already.
+		if section == "options" {
+			switch key {
+			case "rtlmarkmode", "rtl_mark_mode":
+				cfg.RtlMarkMode = strings.ToLower(val)
+				continue
+			case "rtlcombining", "rtl_combining":
+				show := !isFalsey(val)
+				cfg.RtlCombining = &show
+				continue
+			}
 		}
 		// [tui] font knobs (two separate things): pseudofont_<group> = off
 		// disables a by-name cipher pseudo-font; fraktur_mode = native|pseudo|off
@@ -746,5 +780,17 @@ func (c Config) UseTUIOSC52Paste() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// ApplyText pushes the settings that govern how TEXT is prepared into the
+// toolkit, so every host applies them the same way and a trinket never has to
+// ask. Both are answered only where a cell target is drawing: the graphical one
+// composes marks properly and has no terminal to disagree with, so calling this
+// from either host is right.
+func ApplyText(cfg Config) {
+	core.SetRtlMarkMode(cfg.RtlMarkMode)
+	if cfg.RtlCombining != nil {
+		core.SetRtlCombining(*cfg.RtlCombining)
 	}
 }

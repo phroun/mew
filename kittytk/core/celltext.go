@@ -56,6 +56,15 @@ func CellRunMapped(text string, dir Direction) (run []rune, where []int) {
 	if lay == nil {
 		return identity() // visual order is logical order, and nothing to shape
 	}
+	// Giving up the marks that ride a right-to-left letter, for a display that
+	// wants its fill back (see RtlCombining). One answer per rune, so the
+	// ordering worked out above still indexes it.
+	var drawn []rune
+	if !RtlCombining() {
+		drawn = khatool.FoldRidingMarks(runes, RtlMarkFolds(), func(r rune) bool {
+			return CellWidth(r) == 0
+		})
+	}
 	out := make([]rune, 0, len(lay.Perm))
 	where = make([]int, len(runes))
 	for i := range where {
@@ -63,12 +72,20 @@ func CellRunMapped(text string, dir Direction) (run []rune, where []int) {
 	}
 	for _, i := range lay.Perm {
 		r := runes[i]
+		if drawn != nil {
+			if drawn[i] == khatool.MarkDropped {
+				continue // a mark this display has given up
+			}
+			r = drawn[i]
+		}
 		if lay.Glyph != nil {
 			g := lay.Glyph[i]
 			if g == khatool.LigatureAbsorbed {
 				continue // the pair before it took one cell for both
 			}
-			r = g
+			if r == runes[i] {
+				r = g // shaping applies where folding did not
+			}
 		}
 		if lay.RTL[i] {
 			r = khatool.Mirror(r)
