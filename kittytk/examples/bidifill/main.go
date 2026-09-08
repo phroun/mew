@@ -16,9 +16,12 @@
 //     past the run's left edge is lost -- it bleeds one column onto the
 //     neighbour and no further. A mark on the first cluster sent costs nothing,
 //     so the drift is the marks consumed before the fill's origin is set.
+//
 //   - Foreground colour and weight ride each glyph through untouched.
+//
 //   - A point that folds into its base leaves the count, so a line written with
 //     presentation forms is placed correctly and only surviving vowels drift.
+//
 //   - An attribute is consumed only by a character the terminal gives a cell
 //     to. U+200D and U+200B are consumed and cancel the drift exactly, by
 //     splitting each cluster so that its mark stands in a cell of its own --
