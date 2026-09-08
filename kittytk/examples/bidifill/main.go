@@ -60,6 +60,15 @@ var sequence = []struct {
 type specimen struct {
 	label string
 	cells []string
+	// solid wears one colour across all six cells instead of the sequence. It
+	// asks a different question: whether a fill that comes up short has been
+	// displaced off the end of the block, or has genuinely run out.
+	solid bool
+	// control marks the ones the INK block repeats. Ink rides a glyph through
+	// the reorder, so the point of repeating it is to show that it still does
+	// in whatever terminal this is being run in -- a few rows prove that as
+	// well as all of them, and the rows saved go to the fill.
+	control bool
 }
 
 // Hebrew letters, and two marks that behave differently under folding: the
@@ -75,54 +84,84 @@ const (
 // right-to-left -- the leftmost cell first, which is how a line reaches the
 // terminal.
 var specimens = []specimen{
-	// The control. Nothing turns over, nothing has a mark: any terminal places
-	// this correctly, so a row that fails HERE means something else is wrong.
-	{"ascii, no marks", []string{"a", "b", "c", "d", "e", "f"}},
+	// Nothing turns over, nothing has a mark: any terminal places this
+	// correctly, so a row that fails HERE means something else is wrong.
+	{label: "ascii, no marks", control: true,
+		cells: []string{"a", "b", "c", "d", "e", "f"}},
 
 	// Right-to-left, but every cell one plain letter: this separates the
 	// REORDERING from the marks. Failing here and not above means the fault is
 	// in the turn; failing only below means it is the marks.
-	{"hebrew, no marks", []string{"ו", "ה", "ד", "ג", "ב", "א"}},
+	{label: "hebrew, no marks",
+		cells: []string{"ו", "ה", "ד", "ג", "ב", "א"}},
+
+	// ONE mark, at the left end of the block, and nothing else on the row. This
+	// is the smallest step away from the row above, so whatever moves between
+	// the two is what one mark costs.
+	{label: "hebrew, mark on cell 0",
+		cells: []string{"ו" + qamats, "ה", "ד", "ג", "ב", "א"}},
+
+	// The same single mark at the RIGHT end. Together with the row above it
+	// says whether the displacement reaches back towards the start of the row
+	// or only forwards from the mark.
+	{label: "hebrew, mark on cell 5",
+		cells: []string{"ו", "ה", "ד", "ג", "ב", "א" + qamats}},
 
 	// One mark on every letter: six cells, twelve codepoints. If the terminal
 	// counts codepoints where the screen counts cells, this is where it starts.
-	{"hebrew, 1 mark each", []string{
-		"ו" + qamats, "ה" + qamats, "ד" + qamats,
-		"ג" + qamats, "ב" + qamats, "א" + qamats}},
+	{label: "hebrew, 1 mark each", control: true,
+		cells: []string{
+			"ו" + qamats, "ה" + qamats, "ד" + qamats,
+			"ג" + qamats, "ב" + qamats, "א" + qamats}},
+
+	// Every cell of that same row in ONE colour. A fill that comes up short
+	// against the sequence has either been pushed off the end of the block or
+	// has run out partway; those look alike under six colours and quite
+	// different under one, where a displacement still paints the whole block.
+	{label: "hebrew, all six red", solid: true,
+		cells: []string{
+			"ו" + qamats, "ה" + qamats, "ד" + qamats,
+			"ג" + qamats, "ב" + qamats, "א" + qamats}},
 
 	// Marks on the LEFT half only. A displacement that grows per mark shows
 	// here as colours correct on the right and wrong on the left, or the
 	// reverse -- which says which end it accumulates from.
-	{"hebrew, marks left half", []string{
-		"ו" + qamats, "ה" + qamats, "ד" + qamats, "ג", "ב", "א"}},
+	{label: "hebrew, marks left half",
+		cells: []string{
+			"ו" + qamats, "ה" + qamats, "ד" + qamats, "ג", "ב", "א"}},
 
 	// And on the RIGHT half only, the same question from the other side.
-	{"hebrew, marks right half", []string{
-		"ו", "ה", "ד", "ג" + qamats, "ב" + qamats, "א" + qamats}},
+	{label: "hebrew, marks right half",
+		cells: []string{
+			"ו", "ה", "ד", "ג" + qamats, "ב" + qamats, "א" + qamats}},
 
 	// Cluster sizes that differ across the row: none, one, two. A uniform shift
 	// and a per-mark shift disagree about this row and agree about the others.
-	{"hebrew, 0/1/2 marks", []string{
-		"ו", "ה", "ד" + qamats, "ג" + qamats,
-		"ב" + qamats + dagesh, "א" + qamats + dagesh}},
+	{label: "hebrew, 0/1/2 marks", control: true,
+		cells: []string{
+			"ו", "ה", "ד" + qamats, "ג" + qamats,
+			"ב" + qamats + dagesh, "א" + qamats + dagesh}},
 
 	// A point that FOLDS into its letter rather than a vowel that does not. If
 	// this row is placed correctly and the vowel rows are not, folding is
 	// enough on its own and the compensation need only cover what survives it.
-	{"hebrew, folding point", []string{
-		"ו" + dagesh, "ה" + dagesh, "ד" + dagesh,
-		"ג" + dagesh, "ב" + dagesh, "א" + dagesh}},
+	{label: "hebrew, folding point", control: true,
+		cells: []string{
+			"ו" + dagesh, "ה" + dagesh, "ד" + dagesh,
+			"ג" + dagesh, "ב" + dagesh, "א" + dagesh}},
 
 	// Both directions in one row: two English letters, then four Hebrew ones.
 	// The Hebrew is turned over within itself; the English is not.
-	{"mixed, marked hebrew", []string{
-		"a", "b", "ד" + qamats, "ג" + qamats, "ב" + qamats, "א" + qamats}},
+	{label: "mixed, marked hebrew",
+		cells: []string{
+			"a", "b", "ד" + qamats, "ג" + qamats, "ב" + qamats, "א" + qamats}},
 
 	// Marks with nothing right-to-left about them. If this row is displaced
 	// too, the fault is about MARKS and not about the turn at all.
-	{"ascii, combining marks", []string{
-		"e" + acute, "e" + acute, "e" + acute,
-		"e" + acute, "e" + acute, "e" + acute}},
+	{label: "ascii, combining marks",
+		cells: []string{
+			"e" + acute, "e" + acute, "e" + acute,
+			"e" + acute, "e" + acute, "e" + acute}},
 }
 
 const (
@@ -139,6 +178,11 @@ const (
 	leftAnchor  = "L"
 	rightAnchor = "R"
 )
+
+// A name for every column a colour can land in, the anchors included -- a fill
+// displaced off the block lands on one of those, and it needs a name too. It
+// sits in each block's heading row, so naming the columns costs no rows.
+const ruler = "<012345>"
 
 func main() {
 	opts := tui.DefaultTUIOptions()
@@ -183,12 +227,22 @@ func draw(b *tui.TUIBackend) {
 	applies, wordwise := core.HostAppliesBidi()
 	say(fmt.Sprintf("bidifill -- %q reorders=%v wordwise=%v fill=%v",
 		hostterm.Detect(), applies, wordwise, core.HostMiscountsFill()), plain)
-	say("the six cells between L and R are red green yellow blue magenta cyan,", dim)
-	say("left to right. any other order is the fault. press a key to quit.", dim)
+	say("cells 0..5 are red green yellow blue magenta cyan, left to right. read a", dim)
+	say("wrong row off the ruler, colour by colour. press a key to quit.", dim)
 	row++
 
+	// Each block's heading carries the ruler, so every column a colour can land
+	// in has a name without spending a row on it.
+	heading := func(text string) {
+		x, y := at(labelCol, row)
+		b.DrawText(x, y, text, plain, nil)
+		x, y = at(anchorCol, row)
+		b.DrawText(x, y, ruler, dim, nil)
+		row++
+	}
+
 	// Fill block: the sequence in the background.
-	say("FILL -- the sequence is the background", plain)
+	heading("FILL (background)")
 	for _, sp := range specimens {
 		drawSpecimen(b, at, row, sp, func(c style.Color) style.CellStyle {
 			return style.DefaultStyle().WithFg(style.ColorBlack).WithBg(c)
@@ -197,8 +251,11 @@ func draw(b *tui.TUIBackend) {
 	}
 
 	// Ink block: the sequence in the foreground, on one ground throughout.
-	say("INK -- the sequence is the foreground", plain)
+	heading("INK (foreground)")
 	for _, sp := range specimens {
+		if !sp.control {
+			continue
+		}
 		drawSpecimen(b, at, row, sp, func(c style.Color) style.CellStyle {
 			return style.DefaultStyle().WithFg(c).WithBg(style.ColorBlack)
 		})
@@ -220,8 +277,12 @@ func drawSpecimen(b *tui.TUIBackend, at func(col, row int) (core.Unit, core.Unit
 		if i >= len(sequence) {
 			break
 		}
+		colour := sequence[i].color
+		if sp.solid {
+			colour = sequence[0].color
+		}
 		x, y := at(specimenCol+i, row)
-		b.DrawText(x, y, cell, wear(sequence[i].color), nil)
+		b.DrawText(x, y, cell, wear(colour), nil)
 	}
 	x, y = at(specimenCol+len(sequence), row)
 	b.DrawText(x, y, rightAnchor, plain, nil)
