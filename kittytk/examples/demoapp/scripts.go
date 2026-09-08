@@ -1093,10 +1093,6 @@ bwclose=mdi.b%d.p.bp.cl
 `, n, n, (offset*2+3)*8, (offset+2)*16, n, n)
 }
 
-// detailsValuesScript fills the Details tab's cell values column-major
-// (each column owns its data, keyed by item), per the two-batch
-// pattern: items build first so their IDs exist, then the values
-// reference them. id resolves a surfaced correlation key to its wire ID.
 // tagValues fills the Tags column, which declares itself right to left
 // whatever the tree around it reads. Its cells hold both scripts, so
 // textnatural is asked of each cell's own text -- and the column's own
@@ -1109,6 +1105,10 @@ var tagValues = map[string]string{
 	"dold": "old", "darj": "ארכיון",
 }
 
+// detailsValuesScript fills the Details tab's cell values column-major
+// (each column owns its data, keyed by item), per the two-batch
+// pattern: items build first so their IDs exist, then the values
+// reference them. id resolves a surfaced correlation key to its wire ID.
 func detailsValuesScript(id func(name string) uint64) string {
 	col := func(colKey string, vals map[string]string) string {
 		var b strings.Builder
