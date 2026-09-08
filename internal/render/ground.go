@@ -94,6 +94,21 @@ type sgrParam struct {
 	cellPainted bool
 }
 
+// isBlackGround reports whether an extended background names the colour a
+// terminal shows where nothing has been painted. Black has four spellings and a
+// theme is free to use any of them: the basic 40, the system palette's 0, the
+// 6x6x6 cube's own black at 16, and a direct colour with no light in it. Reading
+// only two of them left a theme written the other way with a ground that
+// answered as a colour, and every blank in the content area past the drift stood
+// a shade where a space belonged.
+func isBlackGround(text string) bool {
+	switch text {
+	case "48;5;0", "48;5;16", "48;2;0;0;0":
+		return true
+	}
+	return false
+}
+
 // filterSGR rewrites every SGR sequence in style through keep, which returns
 // the text to emit for a parameter and whether to emit it at all. Anything that
 // is not an SGR sequence is passed through untouched.
@@ -158,7 +173,7 @@ func sgrParams(body string) []sgrParam {
 			if n == 48 {
 				p.cellPainted = true
 				p.background = "38" + strings.TrimPrefix(text, "48")
-				p.blackGround = text == "48;5;0" || text == "48;2;0;0;0"
+				p.blackGround = isBlackGround(text)
 			}
 			out = append(out, p)
 			i += take - 1
@@ -174,6 +189,13 @@ func sgrParams(body string) []sgrParam {
 			// Underline, reverse, strike, double underline, overline: all drawn
 			// at the cell, all misplaced by the same reordering.
 			out = append(out, sgrParam{text: fields[i], cellPainted: true})
+		case n == 49:
+			// The terminal's own background: nothing has been painted, so there
+			// is nothing here to draw in its place. It still goes, since asking
+			// for it past the drift would clear whatever cell it lands on.
+			out = append(out, sgrParam{
+				text: fields[i], cellPainted: true, blackGround: true,
+			})
 		case n == 0:
 			out = append(out, sgrParam{text: fields[i], reset: true})
 		default:

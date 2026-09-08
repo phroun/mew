@@ -22,6 +22,9 @@ func TestOnlyWhatIsPaintedAtTheCellIsDropped(t *testing.T) {
 		{"a direct-colour background goes", "\x1b[0;48;2;1;2;3;32m", "\x1b[0;32m"},
 		{"several sequences at once", "\x1b[0;92;44m\x1b[1;96;44m", "\x1b[0;92m\x1b[1;96m"},
 		{"nothing to drop is left alone", "\x1b[0;32m", "\x1b[0;32m"},
+		// Asking for the terminal's own background is still asking, and past the
+		// drift it arrives at a cell it was not meant for and clears it.
+		{"so does the default background", "\x1b[0;32;49m", "\x1b[0;32m"},
 	} {
 		if got := dropGround(c.style); got != c.want {
 			t.Errorf("%s: dropGround(%q) = %q, want %q", c.name, c.style, got, c.want)
