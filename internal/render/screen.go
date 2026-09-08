@@ -1366,15 +1366,38 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		}
 
 		// RTL: the mirrored line-number gutter, between content and right margin.
+		//
+		// Emitted AFTER the content, which on a row this host cannot count puts
+		// it past the drift -- and the gutter's own blue then reaches the screen
+		// somewhere inside the text. So it draws its ground instead of asking
+		// for one: shaded cells in the colour it would have been given, and the
+		// number itself in its own ink on no ground at all. Nothing is left for
+		// a fill to misplace.
+		//
+		// Its own shade rather than the emitter's fallback, so an affected
+		// gutter is recognisable at a glance as the gutter (see the shades).
 		if w.LineNumbersVisible() && rtl {
-			sr.Write(lineNumbersColor)
+			numColor, shade := lineNumbersColor, ""
+			if sr.lineDriftsFill(w, lineContent) {
+				if ink, ok := groundAsInk(lineNumbersColor); ok {
+					numColor, shade = dropGround(lineNumbersColor), ink+gutterBlank
+				}
+			}
+			pad := func(n int) string {
+				if shade == "" {
+					return strings.Repeat(" ", n)
+				}
+				return strings.Repeat(shade, n)
+			}
 			switch {
 			case doubleWide:
-				sr.Write(strings.Repeat(" ", lineNumWidth/2))
+				sr.Write(pad(lineNumWidth / 2))
 			case haveContent:
-				sr.Write(fmt.Sprintf(" %-*d", lineNumWidth-1, docLine+1))
+				sr.Write(pad(1) + numColor +
+					fmt.Sprintf("%-*d", lineNumWidth-1, docLine+1))
 			default:
-				sr.Write(fmt.Sprintf(" %-*s", lineNumWidth-1, sr.indicators.GutterEmpty))
+				sr.Write(pad(1) + numColor +
+					fmt.Sprintf("%-*s", lineNumWidth-1, sr.indicators.GutterEmpty))
 			}
 		}
 
@@ -3270,13 +3293,3 @@ func calculateAnsiAwareLength(s string) int {
 	}
 	return length
 }
-
-// selectedBlank is what the riding selection stands in place of a space: a
-// light-shaded cell, drawn in the selection's own ink.
-//
-// The riding style exists because a terminal that reorders what it is sent
-// misplaces a background fill, so it says "selected" with colour and weight
-// instead -- and a space has neither. Without this a selected run of
-// whitespace, and a selected end of line, would be indistinguishable from
-// unselected space. The shade is ink, so it lands where its cell lands.
-const selectedBlank = "░"
