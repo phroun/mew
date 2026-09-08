@@ -1143,10 +1143,7 @@ func New(cfg Config) (*Editor, error) {
 	// decides (triggered by the first frame containing RTL content). The
 	// segmentation and ride-safe-selection axes ride the same sniff.
 	flip, wordwise, rideSafe, _ := flipSettings(cfg.FlipBidiForHost)
-	// Kitty applies its own bidi only while force_ltr is off; when the user has
-	// set force_ltr yes, mew must own the bidi and not flip. Sniff kitty.conf to
-	// pick the right path (there is no in-band way to detect force_ltr).
-	flip, wordwise, rideSafe, kittyFlipActive := adjustFlipForKitty(cfg.FlipBidiForHost, flip, wordwise, rideSafe)
+	kittyFlipActive := flippingForKitty(flip)
 	renderer.SetFlipBidiForHost(flip)
 	renderer.SetFlipWordwise(wordwise)
 	renderer.SetFlipRideSafeSelection(rideSafe)
@@ -3980,64 +3977,17 @@ func flipSettings(mode string) (flip, wordwise, rideSafe, known bool) {
 	case "false":
 		return false, false, false, true
 	case "auto":
-		p := hostBidiProfileFor(hostterm.Detect())
-		return p.flip, p.wordwise, p.rideSafe, p.known
+		return hostterm.BidiProfile(hostterm.Detect())
 	}
 	return false, false, false, false
 }
 
-// adjustFlipForKitty overrides the flip axes when the host is Kitty and the
-// mode is "auto": Kitty applies its own bidi only while force_ltr is off, so if
-// the user's kitty.conf sets force_ltr yes, mew must own the bidi and NOT flip.
-// Nothing over the wire reveals force_ltr (see kittyconf.go), so this is the
-// one place the sniff feeds the renderer. Returns the (possibly adjusted) axes
-// and whether the flip is on afterwards (the imperfect path that the force_ltr
-// nudge watches for).
-func adjustFlipForKitty(mode string, flip, wordwise, rideSafe bool) (fl, ww, rs, flipOnKitty bool) {
-	if hostterm.Detect() != hostterm.TerminalKitty {
-		return flip, wordwise, rideSafe, false
-	}
-	if mode == "auto" {
-		if ltr, ok := kittyForceLTR(); ok && ltr {
-			flip, wordwise, rideSafe = false, false, false
-		}
-	}
-	return flip, wordwise, rideSafe, flip
-}
-
-// hostBidiProfile describes how a sniffed host handles RTL, so mew's emission
-// and selection match it.
-type hostBidiProfile struct {
-	flip     bool // emit RTL runs in logical order for the host's own bidi
-	wordwise bool // per-word run segmentation (Kitty) vs whole-run (Terminal.app)
-	rideSafe bool // host's bidi miscounts a background selection fill -> use fg+bold
-	known    bool // sniffing recognised the host (skip the DSR probe)
-}
-
-// hostBidiProfileFor classifies a sniffed host. A host it does not recognise
-// (known=false) falls to the runtime DSR probe.
-//
-//   - Apple Terminal applies its own bidi, keeps inter-word spaces inside the
-//     RTL run (whole-run), AND miscounts the selection fill (ride-safe).
-//   - Kitty reorders too but reverses each whitespace-separated word in place
-//     (word-wise); its selection fill is assumed to track the glyphs, so it
-//     keeps the real bar (ride-safe off) — pending confirmation.
-//   - iTerm2, Alacritty and Ghostty are stream-order: they render mew's visual
-//     output verbatim, so nothing flips.
-func hostBidiProfileFor(k hostterm.Kind) hostBidiProfile {
-	switch k {
-	case hostterm.TerminalAppleTerminal:
-		return hostBidiProfile{flip: true, wordwise: false, rideSafe: true, known: true}
-	case hostterm.TerminalKitty:
-		return hostBidiProfile{flip: true, wordwise: true, rideSafe: false, known: true}
-	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
-		return hostBidiProfile{known: true}
-	case hostterm.TerminalSDL:
-		// Native graphical rendering: mew emits visual order and the host draws
-		// it directly (its own shaper does the joining), so nothing flips.
-		return hostBidiProfile{known: true}
-	}
-	return hostBidiProfile{}
+// flippingForKitty reports whether mew is turning right-to-left runs back for
+// kitty -- the one path where kitty may drop niqqud, and so the condition the
+// force_ltr nudge watches for. hostterm.BidiProfile already reads the config to
+// decide whether kitty is reordering at all; this only asks which host it is.
+func flippingForKitty(flip bool) bool {
+	return flip && hostterm.Detect() == hostterm.TerminalKitty
 }
 
 // setOption sets a named editor option. Per-viewport options (tabSize,
@@ -4412,7 +4362,7 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		}
 		e.Config.FlipBidiForHost = v
 		flip, wordwise, rideSafe, known := flipSettings(v)
-		flip, wordwise, rideSafe, e.kittyFlipActive = adjustFlipForKitty(v, flip, wordwise, rideSafe)
+		e.kittyFlipActive = flippingForKitty(flip)
 		e.Renderer.SetFlipBidiForHost(flip)
 		e.Renderer.SetFlipWordwise(wordwise)
 		e.Renderer.SetFlipRideSafeSelection(rideSafe)

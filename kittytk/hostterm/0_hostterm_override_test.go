@@ -38,7 +38,7 @@ func TestABidiProfileIsPerTerminal(t *testing.T) {
 			applies, wordwise, rideSafe, known)
 	}
 	for _, k := range []Kind{
-		TerminalITerm2, TerminalGhostty, TerminalKitty, TerminalAlacritty,
+		TerminalITerm2, TerminalGhostty, TerminalAlacritty,
 		TerminalCoolRetroTerm, TerminalPurfecterm,
 	} {
 		if applies, _, rideSafe, known := BidiProfile(k); !known || applies || rideSafe {
@@ -48,6 +48,42 @@ func TestABidiProfileIsPerTerminal(t *testing.T) {
 	}
 	if _, _, _, known := BidiProfile(TerminalUnknown); known {
 		t.Error("an unrecognised terminal was answered for rather than left unknown")
+	}
+}
+
+// kitty reorders too, and not the way Apple Terminal does: it reverses each
+// whitespace-separated word in place and paints attributes at the physical
+// column, so the glyphs turn while the attributes stay put. Its fill is placed
+// correctly even over pointed text, so it keeps the ordinary bar.
+//
+// And it does none of it while force_ltr is on, which is why the profile has to
+// consult the config file to answer at all.
+func TestKittyIsReadOutOfItsConfig(t *testing.T) {
+	t.Cleanup(func() { OverrideKittyForceLTR(nil) })
+
+	// force_ltr off -- its default, and the state all three measurements were
+	// taken in.
+	OverrideKittyForceLTR(func() (bool, bool) { return false, true })
+	applies, wordwise, rideSafe, known := BidiProfile(TerminalKitty)
+	if !known || !applies || !wordwise || rideSafe {
+		t.Errorf("force_ltr off: applies=%v wordwise=%v rideSafe=%v known=%v, want a "+
+			"known word-wise reorderer that places its fill",
+			applies, wordwise, rideSafe, known)
+	}
+
+	// force_ltr on: its bidi is turned off, and turning a run back for it would
+	// itself be the bug.
+	OverrideKittyForceLTR(func() (bool, bool) { return true, true })
+	if applies, _, _, known := BidiProfile(TerminalKitty); !known || applies {
+		t.Errorf("force_ltr on: applies=%v known=%v, want a known stream-order terminal",
+			applies, known)
+	}
+
+	// No kitty.conf to read leaves it on kitty's own default, which is off.
+	OverrideKittyForceLTR(func() (bool, bool) { return false, false })
+	if applies, _, _, _ := BidiProfile(TerminalKitty); !applies {
+		t.Error("with no config to read, kitty was taken for a stream-order terminal " +
+			"rather than left on its own default")
 	}
 }
 

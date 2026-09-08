@@ -136,19 +136,38 @@ func DetectFrom(getenv func(string) string) Kind { return detect(getenv) }
 // is given alone, that turning-back is itself the bug; so the answer has to be
 // per-terminal, and unknown is its own answer rather than a guess.
 //
-// macOS Terminal.app is the one in common use that reorders. It reverses a
-// whole parsed span, attributes and all, so wordwise is off for it.
+// Two of them reorder, and they do it differently.
 //
-// rideSafe marks a reordering host whose own pass MISCOUNTS a background fill:
-// it counts codepoints where the grid counts cells, so a highlight or a
-// selection bar over a line holding combining marks lands on the wrong cells
-// and half-vanishes. A caller with such a line reaches for foreground colour
-// and weight instead, which ride each glyph through the reordering intact.
+// macOS Terminal.app reverses a whole parsed span, attributes and all, so
+// wordwise is off for it; and its pass MISCOUNTS a background fill, which is
+// what rideSafe marks. It counts codepoints where the grid counts cells, so a
+// highlight or a selection bar over a line holding combining marks slides off
+// the cells it was meant for. A caller with such a line reaches for foreground
+// colour and weight instead, which ride each glyph through the reordering
+// intact.
+//
+// kitty reverses each whitespace-separated word IN PLACE, leaving the word
+// order alone, and paints cell attributes at the physical column -- so the
+// glyphs reverse while the attributes stay put and each one lands on whichever
+// letter settled there. Its fill is placed correctly even over pointed text, so
+// it keeps the ordinary bar. All three were read off the screen: two Hebrew
+// words came back with their letters turned and their order kept, six coloured
+// letters came back reversed under an unmoved sequence of colours, and the same
+// six with a vowel apiece came back with every colour still on its own cell.
+//
+// And kitty only does any of it while force_ltr is off, its default. Nothing
+// over the wire says which way that is set, so the answer comes from the config
+// file (see KittyForceLTR); with it on, kitty leaves what it is sent alone.
 func BidiProfile(k Kind) (applies, wordwise, rideSafe, known bool) {
 	switch k {
 	case TerminalAppleTerminal:
 		return true, false, true, true
-	case TerminalITerm2, TerminalGhostty, TerminalAlacritty, TerminalKitty,
+	case TerminalKitty:
+		if ltr, ok := KittyForceLTR(); ok && ltr {
+			return false, false, false, true // its bidi is turned off
+		}
+		return true, true, false, true
+	case TerminalITerm2, TerminalGhostty, TerminalAlacritty,
 		TerminalCoolRetroTerm, TerminalPurfecterm, TerminalSDL:
 		// Stream order: what is sent is what appears.
 		return false, false, false, true

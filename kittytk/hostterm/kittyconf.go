@@ -1,19 +1,52 @@
-package editor
+package hostterm
 
 import (
 	"bufio"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
-// Kitty's bidi is render-only: with force_ltr off (its default) it reorders RTL
+// kitty's bidi is render-only: with force_ltr off (its default) it reorders RTL
 // text at the pixel stage while keeping its line buffer in logical order, and
 // with force_ltr on it leaves logical order alone. Nothing over the wire reveals
 // which way it is set — CPR reports the logical cursor column either way, and
 // get-text / any rectangular checksum reads the logical buffer — so the config
-// file is the only reliable signal for whether mew must flip its RTL emission
-// for the host (force_ltr off) or own the bidi and NOT flip (force_ltr on).
+// file is the only reliable signal for whether a renderer must turn its RTL
+// runs back for the host (force_ltr off) or own the bidi and NOT turn them
+// (force_ltr on).
+//
+// It lives here because BidiProfile cannot answer for kitty without it, and
+// every caller of that -- this toolkit's own backend as much as an application
+// on top of it -- needs the same answer. Held in one place, an application that
+// never heard of kitty still gets its right-to-left runs the right way round.
+
+// kittyForceLTRResult is the sniff, taken once. Reading a file per frame would
+// be absurd, and the answer cannot change without restarting kitty.
+var (
+	kittyOnce        sync.Once
+	kittyForceLTRVal bool
+	kittyForceLTRSet bool
+	kittyOverride    func() (bool, bool)
+)
+
+// KittyForceLTR reports the effective force_ltr from the user's kitty.conf, and
+// whether any such file could be read -- false leaves the caller on its own
+// default. The answer is taken once and kept.
+func KittyForceLTR() (forceLTR, found bool) {
+	if f := kittyOverride; f != nil {
+		return f()
+	}
+	kittyOnce.Do(func() {
+		kittyForceLTRVal, kittyForceLTRSet = kittyForceLTR()
+	})
+	return kittyForceLTRVal, kittyForceLTRSet
+}
+
+// OverrideKittyForceLTR answers for the sniff instead of the filesystem, the
+// way Override answers for Detect. nil restores the real one.
+func OverrideKittyForceLTR(f func() (forceLTR, found bool)) { kittyOverride = f }
 
 // kittyForceLTR reads the user's kitty.conf and reports the effective force_ltr
 // value (last assignment wins; `include` directives are followed). found is
@@ -26,8 +59,8 @@ func kittyForceLTR() (forceLTR bool, found bool) {
 	return scanKittyForceLTR(filepath.Join(dir, "kitty.conf"), dir, 0)
 }
 
-// kittyConfigDir resolves the directory Kitty loads kitty.conf from, mirroring
-// Kitty's own precedence: $KITTY_CONFIG_DIRECTORY, else $XDG_CONFIG_HOME/kitty,
+// kittyConfigDir resolves the directory kitty loads kitty.conf from, mirroring
+// kitty's own precedence: $KITTY_CONFIG_DIRECTORY, else $XDG_CONFIG_HOME/kitty,
 // else ~/.config/kitty (the default on both Linux and macOS).
 func kittyConfigDir() string {
 	if d := os.Getenv("KITTY_CONFIG_DIRECTORY"); d != "" {
