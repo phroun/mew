@@ -978,6 +978,23 @@ func (s *Scheme) GetEditBoxSelection(focused bool, pane PaneType) CellStyle {
 		WithBg(orColor(s.RestingEditBoxSelectionBG, ColorBlack))
 }
 
+// GetEditBoxSelectionRiding returns the selection colours for a line a
+// background fill cannot be trusted on: the ordinary selection's own ground
+// worn as INK, and bold.
+//
+// A terminal that reorders what it is sent counts codepoints where the grid
+// counts cells, so a fill over a line holding combining marks lands on the
+// wrong cells and half-vanishes. Foreground colour and weight ride each glyph
+// through that reordering intact -- and nothing else does, so this uses no
+// background, no reverse and no underline, each of which drifts the same way.
+//
+// It takes the ordinary selection's background as its foreground, so a scheme
+// that says what a selection looks like has said what this looks like too.
+func (s *Scheme) GetEditBoxSelectionRiding(focused bool, pane PaneType) CellStyle {
+	sel := s.GetEditBoxSelection(focused, pane)
+	return DefaultStyle().WithFg(sel.Bg).WithAttrs(StyleBold)
+}
+
 // --- ComboBox Colors ---
 
 func (s *Scheme) GetComboBox(pane PaneType) CellStyle {

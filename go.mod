@@ -9,7 +9,7 @@ require (
 	github.com/phroun/garland v0.1.11
 	github.com/phroun/ifitfits v0.1.1
 	github.com/phroun/key-sequence-processor v0.1.11
-	github.com/phroun/khatool v0.1.1-0.20260907232716-59d775f69b4f
+	github.com/phroun/khatool v0.1.1-0.20260908000928-6b21ccecffd3
 	github.com/phroun/kittytk v0.1.29-alpha
 	github.com/phroun/pawscript v0.2.12-alpha
 	golang.org/x/term v0.45.0

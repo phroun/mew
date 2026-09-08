@@ -420,7 +420,7 @@ func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 //
 // Called with renderMu held.
 func (sr *ScreenRenderer) publishHostBidi() {
-	core.SetHostAppliesBidi(sr.frame.flipBidi, sr.frame.flipWordwise)
+	core.SetHostAppliesBidi(sr.frame.flipBidi, sr.frame.flipWordwise, sr.frame.flipRideSafe)
 }
 
 // SetFlipRideSafeSelection marks a flip host whose background selection fill
@@ -434,6 +434,7 @@ func (sr *ScreenRenderer) SetFlipRideSafeSelection(rideSafe bool) {
 		sr.frame.flipRideSafe = rideSafe
 		sr.frame.forceRedraw()
 	}
+	sr.publishHostBidi()
 }
 
 // SetRtlMarkMode selects how an isolated RTL combining mark anchored on a dotted
@@ -3130,33 +3131,7 @@ func isZeroWidthMark(r rune) bool {
 // un-formable points — force the ride-safe fill. With folding off it is exactly
 // lineHasZeroWidth.
 func lineHasZeroWidthAfterFold(s string, folding bool) bool {
-	if !folding {
-		return lineHasZeroWidth(s)
-	}
-	runes := []rune(s)
-	for i := 0; i < len(runes); {
-		base := runes[i]
-		// A leading zero-width mark with no base of its own still counts.
-		if isZeroWidthMark(base) {
-			return true
-		}
-		// Gather the zero-width marks riding this base into one cluster.
-		j := i + 1
-		for j < len(runes) && isZeroWidthMark(runes[j]) {
-			j++
-		}
-		folded, ok := khatool.PrecomposeCluster(runes[i:j])
-		if !ok {
-			folded = runes[i:j] // nothing folds: the cluster stands as written
-		}
-		for _, fr := range folded[1:] { // marks that survive after the base
-			if isZeroWidthMark(fr) {
-				return true
-			}
-		}
-		i = j
-	}
-	return false
+	return khatool.HasZeroWidthAfterFold([]rune(s), folding, isZeroWidthMark)
 }
 
 // getTabSize returns the tab size for a viewport.

@@ -28,6 +28,24 @@ func RtlMarkMode() string {
 	return rtlMarkModeVal
 }
 
+// RtlMarkFolds reports whether the active hint folds a cluster's points into
+// its base's presentation form, leaving nothing free-standing for a renderer to
+// misplace. It is what decides whether a pointed line comes out even.
+func RtlMarkFolds() bool {
+	switch RtlMarkMode() {
+	case "iterm2", "compose", "drift":
+		return true
+	}
+	return false
+}
+
+// ZeroWidth reports whether a rune takes no cell of its own under the installed
+// cell-width rule -- a combining mark, a joiner -- and is not a control, which
+// a renderer stands something visible in place of.
+func ZeroWidth(r rune) bool {
+	return r >= 0x20 && r != 0x7F && CellWidth(r) == 0
+}
+
 // Host bidi. A terminal that runs its OWN bidi over what it is sent orders a
 // line the renderer has ALREADY ordered, and the line comes back the wrong way
 // round. A host that knows which terminal it is talking to says so here, and
@@ -45,9 +63,11 @@ var (
 	hostBidiMu       sync.RWMutex
 	hostBidiApplies  bool
 	hostBidiWordwise bool
+	hostBidiRideSafe bool
 	hostBidiSet      bool
 	hostBidiSniffed  bool
 	hostBidiSniffedW bool
+	hostBidiSniffedR bool
 )
 
 // SetHostAppliesBidi records that the host terminal reorders what it is sent.
@@ -55,23 +75,25 @@ var (
 // wordwise says how it segments, which decides where the words land and where
 // the attributes go: off for a host that reverses a whole parsed span colour
 // and all, on for one that turns each whitespace-separated word in place and
-// paints attributes at the physical column.
+// paints attributes at the physical column. rideSafe says its reordering
+// miscounts a background fill (see HostMiscountsFill).
 //
 // This is the answer of something that KNOWS -- an application that probed the
 // terminal rather than recognising its name -- so it stands over whatever the
 // backend worked out for itself.
-func SetHostAppliesBidi(applies, wordwise bool) {
+func SetHostAppliesBidi(applies, wordwise, rideSafe bool) {
 	hostBidiMu.Lock()
-	hostBidiApplies, hostBidiWordwise, hostBidiSet = applies, wordwise, true
+	hostBidiApplies, hostBidiWordwise, hostBidiRideSafe = applies, wordwise, rideSafe
+	hostBidiSet = true
 	hostBidiMu.Unlock()
 }
 
 // SetSniffedHostBidi records what a backend worked out from the terminal it
 // finds itself in. It is the default, and an explicit SetHostAppliesBidi
 // replaces it.
-func SetSniffedHostBidi(applies, wordwise bool) {
+func SetSniffedHostBidi(applies, wordwise, rideSafe bool) {
 	hostBidiMu.Lock()
-	hostBidiSniffed, hostBidiSniffedW = applies, wordwise
+	hostBidiSniffed, hostBidiSniffedW, hostBidiSniffedR = applies, wordwise, rideSafe
 	hostBidiMu.Unlock()
 }
 
@@ -80,8 +102,8 @@ func SetSniffedHostBidi(applies, wordwise bool) {
 // inside settles it again.
 func ForgetHostBidi() {
 	hostBidiMu.Lock()
-	hostBidiApplies, hostBidiWordwise, hostBidiSet = false, false, false
-	hostBidiSniffed, hostBidiSniffedW = false, false
+	hostBidiApplies, hostBidiWordwise, hostBidiRideSafe, hostBidiSet = false, false, false, false
+	hostBidiSniffed, hostBidiSniffedW, hostBidiSniffedR = false, false, false
 	hostBidiMu.Unlock()
 }
 
@@ -89,10 +111,29 @@ func ForgetHostBidi() {
 // segments: what a host has said if one has, and what the backend recognised
 // otherwise.
 func HostAppliesBidi() (applies, wordwise bool) {
+	a, w, _ := hostBidi()
+	return a, w
+}
+
+// HostMiscountsFill reports whether the host's own reordering MISCOUNTS a
+// background fill -- counting codepoints where the grid counts cells, so a
+// highlight over a line holding combining marks lands on the wrong cells and
+// half-vanishes.
+//
+// A caller drawing such a line reaches for foreground colour and weight
+// instead, which ride each glyph through the reordering intact. Whether the
+// line is one of those is khatool.HasZeroWidthAfterFold's question; this is
+// only whether the host has the fault at all.
+func HostMiscountsFill() bool {
+	_, _, r := hostBidi()
+	return r
+}
+
+func hostBidi() (applies, wordwise, rideSafe bool) {
 	hostBidiMu.RLock()
 	defer hostBidiMu.RUnlock()
 	if hostBidiSet {
-		return hostBidiApplies, hostBidiWordwise
+		return hostBidiApplies, hostBidiWordwise, hostBidiRideSafe
 	}
-	return hostBidiSniffed, hostBidiSniffedW
+	return hostBidiSniffed, hostBidiSniffedW, hostBidiSniffedR
 }

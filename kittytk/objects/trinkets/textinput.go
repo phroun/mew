@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/phroun/khatool"
+
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
 )
@@ -917,6 +919,23 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// re-snapping an intermediate unit position through the cell rate. On a
 	// cell surface (no TextPixelDrawer) fall back to the whole-unit DrawText.
 	_, usePx := p.DrawTextOffset(0, 0, 0, 0, "", s, font)
+
+	// A background fill cannot be trusted on every line. A terminal that
+	// reorders what it is sent counts codepoints where the grid counts cells,
+	// so a fill over a line still carrying combining marks lands on the wrong
+	// cells and half-vanishes -- which on a pointed Hebrew line is most of the
+	// selection gone. Foreground colour and weight ride each glyph through that
+	// reordering intact, so such a line wears those instead.
+	//
+	// Per LINE, because folding settles it: a point that folds into its base no
+	// longer inflates the count, so pointed consonants come out even and keep
+	// the ordinary bar. Only marks that survive the fold force the other. And
+	// only on a cell target, since a pixel one paints its own fill and has no
+	// terminal to disagree with.
+	if !usePx && core.HostMiscountsFill() &&
+		khatool.HasZeroWidthAfterFold(displayText, core.RtlMarkFolds(), core.ZeroWidth) {
+		selStyle = scheme.GetEditBoxSelectionRiding(focused && t.IsEnabled(), paneType)
+	}
 
 	// runPx is a run's width in PIXELS, not its width in units scaled.
 	// MeasureText rounds to whole units, which is the denomination the field is

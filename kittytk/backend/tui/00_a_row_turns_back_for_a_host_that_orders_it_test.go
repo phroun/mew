@@ -33,13 +33,13 @@ func TestARowTurnsBackForAHostThatOrdersIt(t *testing.T) {
 	}
 
 	// A terminal that leaves what it is sent alone gets the picture itself.
-	core.SetHostAppliesBidi(false, false)
+	core.SetHostAppliesBidi(false, false, false)
 	if got := frame(); !strings.Contains(got, laidOut) {
 		t.Errorf("a stream-order host was not sent the row as laid out: %q", got)
 	}
 
 	// One that reorders gets it turned back.
-	core.SetHostAppliesBidi(true, false)
+	core.SetHostAppliesBidi(true, false, false)
 	got := frame()
 	if !strings.Contains(got, asRead) {
 		t.Errorf("a reordering host was not sent the row turned back: %q", got)
@@ -53,7 +53,7 @@ func TestARowTurnsBackForAHostThatOrdersIt(t *testing.T) {
 // out through the ordinary diff -- there is nothing to turn.
 func TestARowWithNothingToTurnIsLeftAlone(t *testing.T) {
 	t.Cleanup(core.ForgetHostBidi)
-	core.SetHostAppliesBidi(true, false)
+	core.SetHostAppliesBidi(true, false, false)
 
 	b, out := newTestTUI(20, 2)
 	b.BeginFrame()
@@ -77,7 +77,7 @@ func TestARowWithNothingToTurnIsLeftAlone(t *testing.T) {
 // host mirrors it again on the way in.
 func TestAMirroredBracketIsSentUnmirrored(t *testing.T) {
 	t.Cleanup(core.ForgetHostBidi)
-	core.SetHostAppliesBidi(true, false)
+	core.SetHostAppliesBidi(true, false, false)
 
 	b, out := newTestTUI(20, 2)
 	b.BeginFrame()
@@ -100,7 +100,7 @@ func TestAMirroredBracketIsSentUnmirrored(t *testing.T) {
 // style with every glyph.
 func TestATurnedRowCarriesItsStyleWithEveryGlyph(t *testing.T) {
 	t.Cleanup(core.ForgetHostBidi)
-	core.SetHostAppliesBidi(true, false)
+	core.SetHostAppliesBidi(true, false, false)
 
 	b, out := newTestTUI(20, 2)
 	b.BeginFrame()
@@ -155,7 +155,7 @@ func TestTheBackendRecognisesTheTerminalItself(t *testing.T) {
 
 	// And an application that PROBED the terminal -- which can answer for one no
 	// name recognises -- has the last word.
-	core.SetHostAppliesBidi(false, false)
+	core.SetHostAppliesBidi(false, false, false)
 	if applies, _ := core.HostAppliesBidi(); applies {
 		t.Error("a host that probed the terminal was overruled by the name it goes by")
 	}

@@ -32,20 +32,21 @@ func TestOverridePinsSDL(t *testing.T) {
 // Terminal.app orders such a line again; the stream-order terminals leave it
 // alone, and turning a run back for one of those is itself the bug.
 func TestABidiProfileIsPerTerminal(t *testing.T) {
-	if applies, wordwise, known := BidiProfile(TerminalAppleTerminal); !known || !applies || wordwise {
-		t.Errorf("Apple Terminal: applies=%v wordwise=%v known=%v, want a known "+
-			"whole-span reorderer", applies, wordwise, known)
+	if applies, wordwise, rideSafe, known := BidiProfile(TerminalAppleTerminal); !known || !applies || wordwise || !rideSafe {
+		t.Errorf("Apple Terminal: applies=%v wordwise=%v rideSafe=%v known=%v, want a "+
+			"known whole-span reorderer that miscounts a fill",
+			applies, wordwise, rideSafe, known)
 	}
 	for _, k := range []Kind{
 		TerminalITerm2, TerminalGhostty, TerminalKitty, TerminalAlacritty,
 		TerminalCoolRetroTerm, TerminalPurfecterm,
 	} {
-		if applies, _, known := BidiProfile(k); !known || applies {
-			t.Errorf("%v: applies=%v known=%v, want a known stream-order terminal",
-				k, applies, known)
+		if applies, _, rideSafe, known := BidiProfile(k); !known || applies || rideSafe {
+			t.Errorf("%v: applies=%v rideSafe=%v known=%v, want a known stream-order "+
+				"terminal", k, applies, rideSafe, known)
 		}
 	}
-	if _, _, known := BidiProfile(TerminalUnknown); known {
+	if _, _, _, known := BidiProfile(TerminalUnknown); known {
 		t.Error("an unrecognised terminal was answered for rather than left unknown")
 	}
 }
@@ -54,7 +55,7 @@ func TestABidiProfileIsPerTerminal(t *testing.T) {
 // the quirks of whatever terminal LAUNCHED it are about a journey its pixels
 // never take.
 func TestTheGraphicalHostCarriesNoTerminalsQuirks(t *testing.T) {
-	applies, _, known := BidiProfile(TerminalSDL)
+	applies, _, _, known := BidiProfile(TerminalSDL)
 	if !known {
 		t.Fatal("the graphical host was left unknown")
 	}

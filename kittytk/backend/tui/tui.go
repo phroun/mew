@@ -365,8 +365,8 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 	// having to know, or having to tell us; one that has PROBED the terminal --
 	// and so can answer for a terminal no name recognises -- says so through
 	// core.SetHostAppliesBidi, and that answer stands over this one.
-	if applies, wordwise, known := hostterm.BidiProfile(hostterm.Detect()); known {
-		core.SetSniffedHostBidi(applies, wordwise)
+	if applies, wordwise, rideSafe, known := hostterm.BidiProfile(hostterm.Detect()); known {
+		core.SetSniffedHostBidi(applies, wordwise, rideSafe)
 	}
 	return t
 }

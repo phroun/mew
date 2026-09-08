@@ -138,14 +138,20 @@ func DetectFrom(getenv func(string) string) Kind { return detect(getenv) }
 //
 // macOS Terminal.app is the one in common use that reorders. It reverses a
 // whole parsed span, attributes and all, so wordwise is off for it.
-func BidiProfile(k Kind) (applies, wordwise, known bool) {
+//
+// rideSafe marks a reordering host whose own pass MISCOUNTS a background fill:
+// it counts codepoints where the grid counts cells, so a highlight or a
+// selection bar over a line holding combining marks lands on the wrong cells
+// and half-vanishes. A caller with such a line reaches for foreground colour
+// and weight instead, which ride each glyph through the reordering intact.
+func BidiProfile(k Kind) (applies, wordwise, rideSafe, known bool) {
 	switch k {
 	case TerminalAppleTerminal:
-		return true, false, true
+		return true, false, true, true
 	case TerminalITerm2, TerminalGhostty, TerminalAlacritty, TerminalKitty,
 		TerminalCoolRetroTerm, TerminalPurfecterm, TerminalSDL:
 		// Stream order: what is sent is what appears.
-		return false, false, true
+		return false, false, false, true
 	}
-	return false, false, false
+	return false, false, false, false
 }
