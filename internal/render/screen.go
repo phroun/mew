@@ -1386,8 +1386,12 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 			numColor, blankColor, blankGlyph := "", "", " "
 			if sr.lineDriftsFill(w, lineContent) {
 				if ink, ok := groundAsInk(lineNumbersColor); ok {
-					numColor = dropGround(lineNumbersColor)
-					blankColor, blankGlyph = ink, gutterBlank
+					// Each says the whole of what its cell wears, so the lane
+					// alternates between two styles instead of accumulating a
+					// longer one at every cell -- and on a host that reorders
+					// what it is sent, every SGR is one more thing to misplace.
+					numColor = resetColor + dropGround(lineNumbersColor)
+					blankColor, blankGlyph = resetColor+ink, gutterBlank
 				}
 			}
 			if blankColor == "" {

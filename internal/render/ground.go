@@ -52,6 +52,8 @@ func groundAsInk(style string) (string, bool) {
 	found := false
 	out := filterSGR(style, func(p sgrParam) (string, bool) {
 		switch {
+		case p.reset:
+			return p.text, true
 		case p.blackGround:
 			// Black is what a terminal shows where nothing has been painted, so
 			// there is nothing here to draw and a shaded cell would only be
@@ -61,10 +63,12 @@ func groundAsInk(style string) (string, bool) {
 		case p.background != "":
 			found = true
 			return p.background, true
-		case p.cellPainted, p.foreground:
-			return "", false
 		}
-		return p.text, true
+		// The colour and nothing else. Everything left describes a glyph, and
+		// the cell has none -- weight in particular would not carry the ground's
+		// colour across but change it, drawing a bold blue where the ground was
+		// plain blue.
+		return "", false
 	})
 	return out, found
 }
@@ -77,6 +81,9 @@ type sgrParam struct {
 	// that sets a background; empty otherwise.
 	background string
 	foreground bool // sets the glyph's colour
+	// reset marks the parameter that clears everything, which is what makes a
+	// style self-contained: it is kept whatever else a filter drops.
+	reset bool
 	// blackGround marks a background that IS the ground: what the terminal
 	// shows where nothing was painted. It is dropped like any other, but a
 	// blank wearing it has nothing to draw in its place.
@@ -167,6 +174,8 @@ func sgrParams(body string) []sgrParam {
 			// Underline, reverse, strike, double underline, overline: all drawn
 			// at the cell, all misplaced by the same reordering.
 			out = append(out, sgrParam{text: fields[i], cellPainted: true})
+		case n == 0:
+			out = append(out, sgrParam{text: fields[i], reset: true})
 		default:
 			out = append(out, sgrParam{text: fields[i]})
 		}

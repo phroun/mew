@@ -47,6 +47,11 @@ func TestABlankDrawsItsOwnBackground(t *testing.T) {
 		{"black is the ground itself", "\x1b[0;32;40m", "", false},
 		{"and so is a black said the long way", "\x1b[0;48;5;0m", "", false},
 		{"but bright black is a colour", "\x1b[0;100m", "\x1b[0;90m", true},
+		// Weight and slant described a glyph, and a cell drawing its own ground
+		// has none. Carried across they would not say the ground's colour but a
+		// different one: bold blue is bright blue, which the gutter never was.
+		{"the colour comes across and nothing else", "\x1b[1;96;44m", "\x1b[34m", true},
+		{"nor does slant", "\x1b[0;3;30;47m", "\x1b[0;37m", true},
 	} {
 		got, found := groundAsInk(c.style)
 		if found != c.found {
