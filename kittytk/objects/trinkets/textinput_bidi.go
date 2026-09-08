@@ -998,3 +998,31 @@ func (t *TextInput) window(g *fieldGeometry, caret int, width, blank, from, quan
 	}
 	return scroll, usable, left, right
 }
+
+// fillStretch is a range of logical runes the selection paints in one style.
+type fillStretch struct {
+	from, to int
+	giveUp   bool
+}
+
+// fillStretches splits a logical range into the stretches that wear one style.
+// Where giveUp says a fill cannot be placed, that stretch wears what rides a
+// glyph instead, and the stretches on either side of it keep the ordinary bar.
+// A nil giveUp is one stretch wearing the bar, which is every field on a
+// terminal that places what it is sent where it was put.
+func fillStretches(giveUp []bool, from, to int) []fillStretch {
+	if from < 0 || to <= from {
+		return nil
+	}
+	at := func(i int) bool { return i < len(giveUp) && giveUp[i] }
+	var out []fillStretch
+	for i := from; i < to; {
+		j := i + 1
+		for j < to && at(j) == at(i) {
+			j++
+		}
+		out = append(out, fillStretch{from: i, to: j, giveUp: at(i)})
+		i = j
+	}
+	return out
+}

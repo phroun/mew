@@ -920,22 +920,27 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// cell surface (no TextPixelDrawer) fall back to the whole-unit DrawText.
 	_, usePx := p.DrawTextOffset(0, 0, 0, 0, "", s, font)
 
-	// A background fill cannot be trusted on every line. A terminal that
+	// A background fill cannot be trusted on every RUN. A terminal that
 	// reorders what it is sent counts codepoints where the grid counts cells,
-	// so a fill over a line still carrying combining marks lands on the wrong
-	// cells and half-vanishes -- which on a pointed Hebrew line is most of the
+	// so a fill over a run still carrying combining marks slides off the cells
+	// it was meant for -- which on a pointed word is most of that word's
 	// selection gone. Foreground colour and weight ride each glyph through that
-	// reordering intact, so such a line wears those instead.
+	// reordering intact, so such a run wears those instead.
 	//
-	// Per LINE, because folding settles it: a point that folds into its base no
-	// longer inflates the count, so pointed consonants come out even and keep
-	// the ordinary bar. Only marks that survive the fold force the other. And
-	// only on a cell target, since a pixel one paints its own fill and has no
-	// terminal to disagree with.
-	if !usePx && core.HostMiscountsFill() &&
-		khatool.HasZeroWidthAfterFold(displayText, core.RtlMarkFolds(), core.ZeroWidth) {
-		selStyle = scheme.GetEditBoxSelectionRiding(focused && t.IsEnabled(), paneType)
+	// Per RUN, because that is what the terminal reorders as a unit and so what
+	// it counts wrongly. A field of chrome and English with one pointed word in
+	// it gives up that word and keeps its bar everywhere else; giving up the
+	// whole line for one vowel loses the fill everywhere it would have been
+	// right. Folding settles which runs are in question: a point that folds
+	// into its base no longer inflates the count, so pointed consonants come
+	// out even. And only on a cell target, since a pixel one paints its own
+	// fill and has no terminal to disagree with.
+	var giveUpFill []bool
+	if !usePx && core.HostMiscountsFill() {
+		giveUpFill = khatool.ZeroWidthRunsAfterFold(
+			displayText, core.RtlMarkFolds(), core.ZeroWidth)
 	}
+	ridingStyle := scheme.GetEditBoxSelectionRiding(focused && t.IsEnabled(), paneType)
 
 	// runPx is a run's width in PIXELS, not its width in units scaled.
 	// MeasureText rounds to whole units, which is the denomination the field is
@@ -1096,28 +1101,34 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// SPANS, plural: a logical range that crosses a direction change sits in
 	// two places on the line with unselected text between them, and one
 	// rectangle over the pair would highlight what was not chosen.
-	if selLo >= 0 && selHi > selLo {
-		selFg := selStyle.WithBg(style.ColorTransparent) // glyphs over the highlight
+	// The selection is painted in stretches, so a run that has to give up its
+	// fill gives up only its own: the parts on either side keep the bar.
+	for _, part := range fillStretches(giveUpFill, selLo, selHi) {
+		st := selStyle
+		if part.giveUp {
+			st = ridingStyle
+		}
+		selFg := st.WithBg(style.ColorTransparent) // glyphs over the highlight
 		if usePx {
-			for _, sp := range g.spansPx(selLo, selHi, unitPx) {
+			for _, sp := range g.spansPx(part.from, part.to, unitPx) {
 				lo, hi, ok := clipPx(sp[0], sp[1])
 				if !ok {
 					continue
 				}
-				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, selStyle)
+				p.FillRectPixels(0, 0, lo, 0, hi-lo, rowHPx, st)
 				drawRun(lo, hi, selFg)
 			}
 		} else {
 			cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-			for _, sp := range g.spans(selLo, selHi) {
+			for _, sp := range g.spans(part.from, part.to) {
 				lo, hi, ok := clipUnits(sp[0], sp[1])
 				if !ok {
 					continue
 				}
 				p.FillRect(core.UnitRect{X: lo, Width: hi - lo,
-					Height: bounds.Height}, ' ', selStyle)
+					Height: bounds.Height}, ' ', st)
 				vis, at := g.cellSlice(lo-originX, hi-originX, cw)
-				p.DrawText(originX+at, 0, vis, selStyle, font)
+				p.DrawText(originX+at, 0, vis, st, font)
 			}
 		}
 	}

@@ -186,6 +186,14 @@ var specimens = []specimen{
 		cells: []string{
 			"a", "b", "ד" + qamats, "ג" + qamats, "ב" + qamats, "א" + qamats}},
 
+	// A pointed run in the MIDDLE of a row that is otherwise placed correctly,
+	// with cells of its own on both sides. How far its misplaced fill runs over
+	// them is how far the damage reaches -- whether giving up that run is
+	// enough, or its neighbours go with it.
+	{label: "marks in the middle",
+		cells: []string{
+			"a", "b", "ד" + qamats, "ג" + qamats, "c", "d"}},
+
 	// Marks with nothing right-to-left about them. If this row is displaced
 	// too, the fault is about MARKS and not about the turn at all.
 	{label: "ascii, combining marks",
