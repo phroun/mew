@@ -209,6 +209,11 @@ func main() {
 	}
 
 	probes()
+	if !waitKey(b) {
+		return
+	}
+
+	carriers()
 	waitKey(b)
 }
 
@@ -306,28 +311,30 @@ func drawSpecimen(b *tui.TUIBackend, at func(col, row int) (core.Unit, core.Unit
 	b.DrawText(x, y, rightAnchor, plain, nil)
 }
 
-// A zero-width character carries an attribute without claiming a cell -- which
-// is the whole idea the probe page is built on.
-const zwj = "‍"
+// The raw pages below are written straight to the terminal rather than through
+// the backbuffer. A cell holds one style, and every row here deliberately puts
+// a style on a codepoint that shares its cell with another -- there is no cell
+// grid that can say it. Nothing repaints afterwards, so the rows stand until a
+// key is pressed.
 
-// The probe page asks one question of the row that fails worst: a terminal that
-// runs out of background partway along a line has been given six attributes for
-// twelve codepoints, so what happens if it is given twelve?
-//
-// Six ways of saying the same colours go out, and the row that comes back in
-// the right order names the fix. A BRIGHT colour anywhere is a padding
-// attribute the terminal took, which says the padding was consumed even where
-// it did not help.
-//
-// This is written straight to the terminal rather than through the backbuffer.
-// A cell holds one style, and every row here deliberately puts a style on a
-// codepoint that shares its cell with another -- there is no cell grid that can
-// say it. Nothing repaints afterwards, so the rows stand until a key is
-// pressed.
+// The row that fails worst, and the one every raw page is built from.
 var probeCells = []string{
 	"ו" + qamats, "ה" + qamats, "ד" + qamats,
 	"ג" + qamats, "ב" + qamats, "א" + qamats,
 }
+
+// Characters that claim no cell of their own, as candidates for carrying an
+// attribute into a terminal that wants one per codepoint. Which of them a given
+// terminal agrees is zero-width is the question; a row whose R has moved out
+// from under the ruler's ">" was made longer by its carrier, and that carrier is
+// no use.
+const (
+	zwj    = "\u200D" // zero width joiner
+	zwsp   = "\u200B" // zero width space
+	wj     = "\u2060" // word joiner
+	zwnbsp = "\uFEFF" // zero width no-break space
+	cgj    = "\u034F" // combining grapheme joiner
+)
 
 // paint is the attributes for one of the six sequence colours: black ink on
 // that ground, bright where a padding attribute wants telling apart from a real
@@ -340,22 +347,56 @@ func paint(i int, bright bool) string {
 	return fmt.Sprintf("\033[0m\033[30m\033[%dm", ground)
 }
 
-// The six ways of sending the row. Each takes the emission order and the colour
-// its slot wears, and returns the bytes between the anchors.
-var probeWays = []struct {
+// A way of sending the row: a label, and the bytes that go between the anchors.
+type way struct {
 	label string
 	emit  func(order []int, colour func(k int) string) string
-}{
-	// What the backend sends today: one attribute per CELL, ahead of the base,
-	// with the marks riding along under it.
-	{"as we send it now", func(order []int, colour func(int) string) string {
+}
+
+// perMark sends one attribute per codepoint, the spare ones carried in after
+// each cluster on a character that should claim no cell. This is the shape that
+// moved the fill; which carrier leaves the line its own length is what decides
+// whether it is usable.
+func perMark(carrier string) func([]int, func(int) string) string {
+	return func(order []int, colour func(int) string) string {
 		var b strings.Builder
 		for k, i := range order {
 			b.WriteString(colour(k))
 			b.WriteString(probeCells[i])
+			for range []rune(probeCells[i])[1:] {
+				b.WriteString(colour(k))
+				b.WriteString(carrier)
+			}
 		}
 		return b.String()
-	}},
+	}
+}
+
+// plainRun is what the backend sends today: one attribute per CELL, ahead of
+// the base, with the marks riding along under it.
+func plainRun(order []int, colour func(int) string) string {
+	var b strings.Builder
+	for k, i := range order {
+		b.WriteString(colour(k))
+		b.WriteString(probeCells[i])
+	}
+	return b.String()
+}
+
+// spares is six bright attributes on zero-width carriers, for the ends.
+func spares(order []int, carrier string) string {
+	var b strings.Builder
+	for k := range order {
+		b.WriteString(paint(k, true))
+		b.WriteString(carrier)
+	}
+	return b.String()
+}
+
+// The first raw page: six ways of saying the same colours, to find out what a
+// terminal that misplaces the fill will accept instead.
+var probeWays = []way{
+	{"as we send it now", plainRun},
 
 	// One attribute per CODEPOINT, the mark given its own copy of the colour its
 	// base wears. No extra characters, nothing moved -- if this is enough, the
@@ -371,51 +412,21 @@ var probeWays = []struct {
 		return b.String()
 	}},
 
-	// One attribute per codepoint again, but carried in after the cluster on a
-	// zero-width character rather than put on the mark. Same count, and the
-	// cluster itself is left alone.
-	{"a zwj per mark, same", func(order []int, colour func(int) string) string {
-		var b strings.Builder
-		for k, i := range order {
-			b.WriteString(colour(k))
-			b.WriteString(probeCells[i])
-			for range []rune(probeCells[i])[1:] {
-				b.WriteString(colour(k))
-				b.WriteString(zwj)
-			}
-		}
-		return b.String()
-	}},
+	// The same count again, carried in on a zero-width character rather than put
+	// on the mark, leaving the cluster alone.
+	{"a zwj per mark, same", perMark(zwj)},
 
-	// Six spare attributes at the END of the line, as the question was put: does
-	// the terminal reach past the row for the ones it ran out of?
+	// Six spare attributes at the END of the line: does the terminal reach past
+	// the row for the ones it did not place?
 	{"6 bright zwj at end", func(order []int, colour func(int) string) string {
-		var b strings.Builder
-		for k, i := range order {
-			b.WriteString(colour(k))
-			b.WriteString(probeCells[i])
-		}
-		for k := range order {
-			b.WriteString(paint(k, true))
-			b.WriteString(zwj)
-		}
-		return b.String()
+		return plainRun(order, colour) + spares(order, zwj)
 	}},
 
 	// And six at the START, since what survives on the failing rows is the
 	// LEFTMOST fill -- so the front is where the terminal appears to be counting
 	// from.
 	{"6 bright zwj at start", func(order []int, colour func(int) string) string {
-		var b strings.Builder
-		for k := range order {
-			b.WriteString(paint(k, true))
-			b.WriteString(zwj)
-		}
-		for k, i := range order {
-			b.WriteString(colour(k))
-			b.WriteString(probeCells[i])
-		}
-		return b.String()
+		return spares(order, zwj) + plainRun(order, colour)
 	}},
 
 	// Both together: an attribute for every codepoint AND spares beyond the end.
@@ -427,15 +438,25 @@ var probeWays = []struct {
 				b.WriteRune(r)
 			}
 		}
-		for k := range order {
-			b.WriteString(paint(k, true))
-			b.WriteString(zwj)
-		}
+		b.WriteString(spares(order, zwj))
 		return b.String()
 	}},
 }
 
-func probes() {
+// The second raw page: the shape that worked, tried with every carrier, to find
+// one the terminal will take an attribute from without giving it a cell.
+var carrierWays = []way{
+	{"none (as we send it)", plainRun},
+	{"zwj      U+200D", perMark(zwj)},
+	{"zwsp     U+200B", perMark(zwsp)},
+	{"word joiner U+2060", perMark(wj)},
+	{"zwnbsp   U+FEFF", perMark(zwnbsp)},
+	{"grapheme joiner 034F", perMark(cgj)},
+}
+
+// page writes one raw page: some lines of its own, then every way of sending
+// the row twice -- once wearing the sequence, once all in one colour.
+func page(intro []string, ways []way, footer string) {
 	// The row goes out turned back, exactly as the backend turns it back, so
 	// the host's own pass lands it the right way round.
 	bases := make([]rune, len(probeCells))
@@ -451,37 +472,51 @@ func probes() {
 		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s", row, text)
 		row++
 	}
-	// A row of the probe: the label, the anchors, and one way of sending it.
-	lay := func(label, body string) {
-		pad := strings.Repeat(" ", anchorCol-labelCol-len(label))
-		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s%s%s\033[0m\033[37m%s",
-			row, label, pad, leftAnchor, body, rightAnchor)
-		row++
+	pad := func(text string) string {
+		return text + strings.Repeat(" ", anchorCol-labelCol-len(text))
 	}
 	block := func(heading string, solid bool) {
-		pad := strings.Repeat(" ", anchorCol-labelCol-len(heading))
-		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s\033[90m%s",
-			row, heading, pad, ruler)
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s\033[90m%s",
+			row, pad(heading), ruler)
 		row++
-		for _, way := range probeWays {
-			lay(way.label, way.emit(order, func(k int) string {
+		for _, w := range ways {
+			body := w.emit(order, func(k int) string {
 				if solid {
 					return paint(0, false)
 				}
 				return paint(styleOf[k], false)
-			}))
+			})
+			fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s%s\033[0m\033[37m%s",
+				row, pad(w.label), leftAnchor, body, rightAnchor)
+			row++
 		}
 	}
 
-	say("PROBE -- every row is the same six pointed letters, sent six ways.")
-	say("correct is red green yellow blue magenta cyan across 0..5. a bright")
-	say("colour is a padding attribute the terminal took.")
+	for _, line := range intro {
+		say(line)
+	}
 	row++
 	block("SEQUENCE", false)
 	row++
 	block("ALL RED", true)
 	row++
-	say("press a key to quit.")
+	say(footer)
 
 	os.Stdout.WriteString(out.String())
+}
+
+func probes() {
+	page([]string{
+		"PROBE -- every row is the same six pointed letters, sent six ways.",
+		"correct is red green yellow blue magenta cyan across 0..5. a bright",
+		"colour is a padding attribute the terminal took.",
+	}, probeWays, "press a key for the carriers.")
+}
+
+func carriers() {
+	page([]string{
+		"CARRIERS -- one spare attribute per mark, on a character that should",
+		"claim no cell. correct is red green yellow blue magenta cyan across",
+		"0..5 AND an R still under the ruler's >. an R that moved is no use.",
+	}, carrierWays, "press a key to quit.")
 }
