@@ -8,7 +8,7 @@ module github.com/phroun/mew-app
 go 1.25.0
 
 require (
-	github.com/phroun/kittytk v0.1.29-alpha
+	github.com/phroun/kittytk v0.1.31-alpha
 	github.com/phroun/mew v0.3.1-alpha
 	golang.org/x/sys v0.47.0
 )
@@ -31,6 +31,7 @@ require (
 	github.com/phroun/direct-key-handler v0.3.38 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
 	github.com/phroun/key-sequence-processor v0.1.11 // indirect
+	github.com/phroun/khatool v0.1.1 // indirect
 	github.com/phroun/pawscript v0.2.12-alpha // indirect
 	github.com/phroun/purfecterm v0.2.55 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect

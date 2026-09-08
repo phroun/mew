@@ -1,0 +1,460 @@
+From 263e8d1e659f2fb06ad64f737979917cfe505a45 Mon Sep 17 00:00:00 2001
+From: "Jeffrey R. Day" <phroun@gmail.com>
+Date: Tue, 8 Sep 2026 11:25:54 +0000
+Subject: [PATCH] Catch the wiki up to v0.1.31
+
+The four directional alignment words are natural and opposite now, which
+says what they are opposite TO; a tree column's align takes the same seven
+words and its widths are units, eight to a character cell; a treeview's
+rows and columns are items= and columns=; and fixed_left/fixed_right count
+along the run as fixed_begin/fixed_end.
+
+The list of what direction does not yet reach was written before the
+chrome followed it, and named six things of which four now turn over.
+Tab order and a dock row's entries are what is left.
+---
+ ComboBox.md                |  2 +-
+ Common-Properties.md       | 18 +++++++-------
+ Direction-and-Alignment.md | 48 +++++++++++++++++++++++---------------
+ GridLayout.md              |  6 ++---
+ Label.md                   |  2 +-
+ ListView.md                |  4 ++--
+ TabTrinket.md              |  3 ++-
+ Templates-and-Aliases.md   |  4 ++--
+ TextInput.md               |  2 ++
+ TreeView.md                | 39 ++++++++++++++++++-------------
+ VBoxLayout.md              |  4 ++--
+ 11 files changed, 76 insertions(+), 56 deletions(-)
+
+diff --git a/ComboBox.md b/ComboBox.md
+index 18e9af2..45163ca 100644
+--- a/ComboBox.md
++++ b/ComboBox.md
+@@ -18,8 +18,8 @@ c=new combobox items={
+ <!-- ktkdoc:props combobox -->
+ | Property | Type | Default | Meaning |
+ |---|---|---|---|
+-| `children` | collection | — | The choices in the dropdown. |
+ | `editable` | flag | `false` | Allow typing a custom value. |
++| `items` | collection | — | The choices in the dropdown. |
+ | `max_visible` | int | — | Max dropdown rows shown. |
+ | `placeholder` | string | — | Empty-field hint text. |
+ | `selected` | int | `-1` | Selected index (-1 = none). |
+diff --git a/Common-Properties.md b/Common-Properties.md
+index 3f2e3c3..30c0314 100644
+--- a/Common-Properties.md
++++ b/Common-Properties.md
+@@ -2,7 +2,7 @@ Every non-virtual type accepts these, on top of whatever it defines itself.
+ A trinket page lists only what is particular to that trinket; this is the rest.
+ 
+ ```
+-new label caption="Ready" fg=green stretch=1 halign=textbegin
++new label caption="Ready" fg=green stretch=1 halign=textnatural
+ new button caption="Cancel" !enabled acc_name="Cancel and close"
+ ```
+ 
+@@ -14,14 +14,14 @@ new button caption="Cancel" !enabled acc_name="Cancel and close"
+ | `bg` | color | `inherited` | Background color (named or "#rrggbb"). |
+ | `column` | int | `0` | Grid column this child occupies: an index, or the id of a band. |
+ | `column_span` | int | `1` | How many grid columns this child covers. |
+-| `column_units` | units | `inherited` | Units one grid column spans (denomination override). |
+-| `direction` | `inherit` \| `ltr` \| `rtl` | `inherit` | Side text begins on, here and below; inherit takes it from the container. |
++| `column_units` | units | `inherited` | Horizontal unit divisions within one character cell. |
++| `direction` | `inherit` \| `ltr` \| `rtl` | `inherit` | Side text begins on and a row runs from, here and below; inherit takes it from the container. |
+ | `enabled` | flag | `true` | Whether the trinket accepts input. |
+ | `fg` | color | `inherited` | Text/foreground color (named or "#rrggbb"). |
+ | `fill` | `none` \| `h` \| `v` \| `both` | `both` | Which axes this item grows to fill the space it is given. |
+ | `font` | `ui-text` \| `ui-term` \| `Monday` \| `Tuesday` \| `Black Serif` \| `Double-Struck` \| `Bold Fraktur` \| `Bold Italic` \| `Fraktur` \| `Bold Script` \| `Black Sans` \| `Black Italic` \| `Italic` | `inherited` | Font family for this trinket's text (graphical: a family or the ui-* tree; text backend: Monday, Tuesday, or a cipher style). |
+ | `grow` | float | `0` | Share of a flex line's leftover space this child takes. |
+-| `halign` | `textbegin` \| `textend` \| `layoutbegin` \| `layoutend` \| `center` \| `opticalleft` \| `opticalright` | `center` | Where this item sits horizontally when it does not fill. |
++| `halign` | `textnatural` \| `textopposite` \| `layoutnatural` \| `layoutopposite` \| `center` \| `opticalleft` \| `opticalright` | `center` | Where this item sits horizontally when it does not fill. |
+ | `max_height` | units | `-1` | Tallest this trinket grows, in units. -1 is no limit; 0 collapses it while it keeps its place. |
+ | `max_width` | units | `-1` | Widest this trinket grows, in units. -1 is no limit; 0 collapses it while it keeps its place. |
+ | `min_height` | units | — | Minimum height, in units. |
+@@ -29,7 +29,7 @@ new button caption="Cancel" !enabled acc_name="Cancel and close"
+ | `name` | string | — | Debug/tooling label; not identity. |
+ | `row` | int | `0` | Grid row this child occupies: an index, or the id of a band. |
+ | `row_span` | int | `1` | How many grid rows this child covers. |
+-| `row_units` | units | `inherited` | Units one grid row spans (denomination override). |
++| `row_units` | units | `inherited` | Vertical unit divisions within one character cell. |
+ | `shrink` | float | `1` | Share of a flex line's shortfall this child gives up; never below its minimum. |
+ | `stretch` | int | `0` | Layout stretch factor relative to siblings. |
+ | `valign` | `top` \| `middle` \| `bottom` | `middle` | Where this item sits vertically when it does not fill. |
+@@ -162,7 +162,7 @@ the order written:
+ p=new panel layout=vbox children={
+ 	new label caption="Fixed height"
+ 	new listview stretch=1                          # takes the leftover room
+-	new button caption="OK" halign=textend fill=none
++	new button caption="OK" halign=textopposite fill=none
+ }
+ ```
+ 
+@@ -177,9 +177,9 @@ it sits on an axis it is not filling. They are separate questions because a
+ trinket that fills still needs somewhere to sit when there is nothing to fill.
+ 
+ `halign`'s seven values are stated against a direction unless spelled optically:
+-`textbegin` `textend` follow the trinket's own text, `layoutbegin` `layoutend`
+-follow the container, `center` sits in the middle, and `opticalleft`
+-`opticalright` name a physical side that nothing moves.
++`textnatural` `textopposite` follow the trinket's own text, `layoutnatural`
++`layoutopposite` follow the container, `center` sits in the middle, and
++`opticalleft` `opticalright` name a physical side that nothing moves.
+ 
+ **`direction`** — `ltr`, `rtl` or `inherit` — sets which side text begins on for
+ a trinket and everything below it, and is what those words are resolved against.
+diff --git a/Direction-and-Alignment.md b/Direction-and-Alignment.md
+index d383096..0a7236d 100644
+--- a/Direction-and-Alignment.md
++++ b/Direction-and-Alignment.md
+@@ -1,8 +1,8 @@
+ Three properties place a trinket in the space its layout gives it, and two more
+-say which way "begin" and "end" point.
++say which way "natural" and "opposite" point.
+ 
+ ```
+-new label caption="Name:" halign=textend fill=none
++new label caption="Name:" halign=textopposite fill=none
+ new panel layout=vbox direction=rtl children={ … }
+ ```
+ 
+@@ -21,7 +21,7 @@ is where it goes without it.
+ | Property | Values | Default |
+ |---|---|---|
+ | `fill` | `none` `h` `v` `both` | `both` |
+-| `halign` | `textbegin` `textend` `layoutbegin` `layoutend` `center` `opticalleft` `opticalright` | `center` |
++| `halign` | `textnatural` `textopposite` `layoutnatural` `layoutopposite` `center` `opticalleft` `opticalright` | `center` |
+ | `valign` | `top` `middle` `bottom` | `middle` |
+ 
+ So an item nobody says anything about fills both axes, and centres on either one
+@@ -36,25 +36,30 @@ new button caption="OK" halign=opticalright fill=v
+ new button caption="OK" fill=v halign=opticalright     # the same thing
+ ```
+ 
+-## Where "begin" is
++## Where "natural" is
+ 
+ Four of the seven horizontal values are **logical**: they name a side by which
+ way text runs there, and swap over in a right-to-left context. Two are
+ **optical**: they name a physical side and nothing moves them.
+ 
++NATURAL is the side a direction reads from — where something goes when nothing
++fights the reading. OPPOSITE is the other side of the same box, and what it is
++opposite TO is the natural side named in the same word: the trinket's own text
++for the text pair, the surrounding layout's for the layout pair.
++
+ | `halign` | Left-to-right | Right-to-left | Stated against |
+ |---|---|---|---|
+-| `textbegin` | left | right | the trinket's **own text** |
+-| `textend` | right | left | the trinket's **own text** |
+-| `layoutbegin` | left | right | the **container** it sits in |
+-| `layoutend` | right | left | the **container** it sits in |
++| `textnatural` | left | right | the trinket's **own text** |
++| `textopposite` | right | left | the trinket's **own text** |
++| `layoutnatural` | left | right | the **container** it sits in |
++| `layoutopposite` | right | left | the **container** it sits in |
+ | `center` | centre | centre | nothing |
+ | `opticalleft` | left | left | nothing |
+ | `opticalright` | right | right | nothing |
+ 
+ The two pairs differ only where the two directions disagree — an English caption
+-in a right-to-left form. `textbegin` keeps that caption's left edge; `layoutbegin`
+-puts it on the right with everything else in the form.
++in a right-to-left form. `textnatural` keeps that caption's left edge;
++`layoutnatural` puts it on the right with everything else in the form.
+ 
+ `valign` has no logical values. Rows run top to bottom in every direction.
+ 
+@@ -106,7 +111,7 @@ left, and the first strong character decides even when it is not the majority 
+ **A string with no strongly directional character in it names nothing.**
+ `"1972"`, `"3.14 (%)"` and `""` all have no opinion, which is very common rather
+ than a corner case. A trinket with no opinion takes the direction around it, so
+-`textbegin` on a numeric label lands exactly where `layoutbegin` would.
++`textnatural` on a numeric label lands exactly where `layoutnatural` would.
+ 
+ Set `text_direction` explicitly where the text is not self-describing — a proper
+ name spelled in one script that belongs to prose running the other way.
+@@ -115,10 +120,10 @@ name spelled in one script that belongs to prose running the other way.
+ 
+ ```
+ form=new panel layout=vbox direction=rtl children={
+-	new label caption="שם" halign=textbegin fill=none     # right
+-	new label caption="Address" halign=textbegin fill=none # left  — its own text
+-	new label caption="1972" halign=textbegin fill=none    # right — no opinion
+-	new label caption="Total" halign=layoutbegin fill=none # right — the form's
++	new label caption="שם" halign=textnatural fill=none     # right
++	new label caption="Address" halign=textnatural fill=none # left  — its own text
++	new label caption="1972" halign=textnatural fill=none    # right — no opinion
++	new label caption="Total" halign=layoutnatural fill=none # right — the form's
+ 	new label caption="⌫" halign=opticalleft fill=none     # left  — pinned
+ }
+ ```
+@@ -170,7 +175,7 @@ against the left edge of whichever cell it landed in.
+ ## Text inside a label
+ 
+ [Label](Label)'s `text_align` places the caption inside the label, and takes the
+-same seven words, defaulting to `textbegin`. So a Hebrew caption draws from the
++same seven words, defaulting to `textnatural`. So a Hebrew caption draws from the
+ right without anything being said about it, and `text_align=opticalleft` pins it
+ if that is what you want.
+ 
+@@ -184,9 +189,14 @@ where a caption sits inside it, and which end a layout's run starts from.
+ Shaping and painting of right-to-left text are the text engine's own, and were
+ already handled — a Hebrew caption has always been shaped and ordered correctly.
+ 
+-Not yet reversed by `direction`: tab order, scroll bar sides, tab-strip
+-direction, splitter and dock child order, the side a tree's indent grows from,
+-and the rest of the chrome. Those follow the physical layout for now.
++The chrome follows it too: a checkbox's and a radio button's indicator, a
++combobox's arrow and the lane its popup drops in, a scroll area's bars, a
++horizontal progress bar's fill, a splitter's children, a tab strip's run and
++which edge `side` names, and a tree's indent, apparatus, columns and header.
++
++Not yet reversed by `direction`: **tab order** — keyboard focus still traverses
++in the order trinkets were added — and a **dock row's** entries, which are
++placed across the screen even though its arrow keys read the way it does.
+ 
+ ## See also
+ 
+diff --git a/GridLayout.md b/GridLayout.md
+index 0535238..2103f74 100644
+--- a/GridLayout.md
++++ b/GridLayout.md
+@@ -5,9 +5,9 @@ new panel layout=grid spacing=8 columns={
+ 	new band id=labels
+ 	new band id=fields stretch=1
+ } children={
+-	new label caption="Name:" row=0 column=labels halign=textend fill=none
++	new label caption="Name:" row=0 column=labels halign=textopposite fill=none
+ 	new textinput row=0 column=fields
+-	new label caption="Notes:" row=1 column=labels halign=textend fill=none
++	new label caption="Notes:" row=1 column=labels halign=textopposite fill=none
+ 	new editor row=1 column=fields row_span=2
+ }
+ ```
+@@ -82,7 +82,7 @@ new panel layout=grid direction=rtl columns={
+ 	new band id=labels
+ 	new band id=fields stretch=1
+ } children={
+-	new label caption="שם:" row=0 column=labels halign=textend fill=none
++	new label caption="שם:" row=0 column=labels halign=textopposite fill=none
+ 	new textinput row=0 column=fields
+ }
+ ```
+diff --git a/Label.md b/Label.md
+index add65ed..70b0567 100644
+--- a/Label.md
++++ b/Label.md
+@@ -14,7 +14,7 @@ new label caption="Find what:"
+ | Property | Type | Default | Meaning |
+ |---|---|---|---|
+ | `caption` | string | — | Displayed text (may contain newlines). |
+-| `text_align` | `textbegin` \| `textend` \| `layoutbegin` \| `layoutend` \| `center` \| `opticalleft` \| `opticalright` | `textbegin` | Text alignment within the label. |
++| `text_align` | `textnatural` \| `textopposite` \| `layoutnatural` \| `layoutopposite` \| `center` \| `opticalleft` \| `opticalright` | `textnatural` | Text alignment within the label. |
+ | `text_direction` | `auto` \| `ltr` \| `rtl` | `auto` | Which way this trinket's own text runs (auto reads the text). |
+ | `wrap` | flag | `false` | Word-wrap text (enables height-for-width). |
+ <!-- /ktkdoc -->
+diff --git a/ListView.md b/ListView.md
+index d0d6458..ecc1997 100644
+--- a/ListView.md
++++ b/ListView.md
+@@ -17,7 +17,7 @@ l=new listview items={
+ <!-- ktkdoc:props listview -->
+ | Property | Type | Default | Meaning |
+ |---|---|---|---|
+-| `children` | collection | — | The rows in the list. |
++| `items` | collection | — | The rows in the list. |
+ | `ledger` | flag | `false` | Alternate non-selected rows in the ledger colors. |
+ | `selected` | int | `-1` | Selected row index (-1 = none). |
+ <!-- /ktkdoc -->
+@@ -33,8 +33,8 @@ it.
+ | Property | Type | Default | Meaning |
+ |---|---|---|---|
+ | `caption` | string | — | Row or node display text. |
+-| `children` | collection | — | Nested items, which make this one a tree node. |
+ | `expanded` | flag | `false` | Node expanded (tree nodes). |
++| `items` | collection | — | Nested items, which make this one a tree node. |
+ <!-- /ktkdoc -->
+ 
+ `expanded` is there because the type is shared. It means something to a tree
+diff --git a/TabTrinket.md b/TabTrinket.md
+index 28d9f9a..efc7ac3 100644
+--- a/TabTrinket.md
++++ b/TabTrinket.md
+@@ -19,11 +19,12 @@ t=new tabs children={
+ <!-- ktkdoc:props tabs -->
+ | Property | Type | Default | Meaning |
+ |---|---|---|---|
++| `align` | `natural` \| `center` \| `opposite` | `natural` | Where the tabs sit along a strip with room to spare: packed at the end the run starts from, centred, or packed at the far end. A strip that has to scroll has no slack to place and ignores this. |
+ | `background` | color | — | Tab body background color. |
+ | `children` | collection | — | The tabs on the strip, in order. |
+ | `closable` | flag | `false` | Show per-tab close buttons. |
+ | `movable` | flag | `false` | Allow reordering tabs by drag. |
+-| `position` | `top` \| `bottom` \| `left` \| `right` | — | Tab strip edge. |
++| `position` | `top` \| `bottom` \| `side` \| `sideopposite` \| `opticalleft` \| `opticalright` | — | Which edge the tab strip stands on. side is the edge the direction reads from and sideopposite the far one; the optical pair names a side of the screen outright. |
+ | `selected` | int | `0` | Active tab index. |
+ <!-- /ktkdoc -->
+ 
+diff --git a/Templates-and-Aliases.md b/Templates-and-Aliases.md
+index b8d3c61..7b3b10c 100644
+--- a/Templates-and-Aliases.md
++++ b/Templates-and-Aliases.md
+@@ -26,11 +26,11 @@ before that instance's own properties.
+ ### Instance properties override the template's
+ 
+ ```
+-template MyBtn=button halign=textend caption="Click Me" visible
++template MyBtn=button halign=textopposite caption="Click Me" visible
+ new MyBtn caption="Other" !visible
+ ```
+ 
+-The object receives `halign=textend`, `caption="Click Me"`, `visible`, and then
++The object receives `halign=textopposite`, `caption="Click Me"`, `visible`, and then
+ `caption="Other"`, `!visible`. Later wins, so the instance's caption and its
+ un-set of `visible` are what survive. This is ordinary property ordering, not
+ a special merge rule.
+diff --git a/TextInput.md b/TextInput.md
+index 2992676..de42d12 100644
+--- a/TextInput.md
++++ b/TextInput.md
+@@ -43,6 +43,8 @@ Set at construction, or later with `set`.
+ | `max_length` | int | `-1` | Longest content the field accepts, in runes. -1 is no limit. |
+ | `placeholder` | string | — | Placeholder text shown when empty. |
+ | `readonly` | flag | `false` | Content can be read and selected but not edited. |
++| `show_ahead` | int | `2` | How much of the content stays visible past the caret, in characters, when the field is scrolled. |
++| `show_bidi_controls` | flag | `true` | Mark where the line's reading turns and which way each piece of it goes, while the field is focused. An editing aid: an unfocused field shows the plain text. On unless it is turned off. |
+ | `text` | string | — | Editable content (server-authoritative). |
+ <!-- /ktkdoc -->
+ 
+diff --git a/TreeView.md b/TreeView.md
+index cd08265..11dc50d 100644
+--- a/TreeView.md
++++ b/TreeView.md
+@@ -6,7 +6,7 @@ need indentation, a header, or a second column, this is the trinket.
+ 
+ ```
+ t=new treeview caption="Name" showheader treelines columns={
+-	new column id=size caption="Size" width=10 align=right sortable numeric
++	new column id=size caption="Size" width=80 align=opticalright sortable numeric
+ } items={
+ 	new item caption="Report.txt"
+ 	new item caption="Folder" expanded items={
+@@ -23,14 +23,15 @@ t=new treeview caption="Name" showheader treelines columns={
+ | Property | Type | Default | Meaning |
+ |---|---|---|---|
+ | `caption` | string | — | Header caption over the key (tree) column. |
+-| `children` | collection | — | The rows and the columns they are read across. |
++| `columns` | collection | — | The columns the rows are read across, left to right. |
+ | `descending` | flag | `false` | Sort direction indicator points down. |
+ | `editable` | flag | `false` | The key (tree) column joins the row editor (edits the item caption). |
+ | `fit_width` | flag | `true` | Squeeze columns to the width (no horizontal scrolling). |
+-| `fixed_left` | int | `0` | Visible columns pinned outside horizontal scrolling, from the left. |
+-| `fixed_right` | int | `0` | Visible columns pinned outside horizontal scrolling, from the right. |
++| `fixed_begin` | int | `0` | Visible columns pinned outside horizontal scrolling, counted from where the run begins. |
++| `fixed_end` | int | `0` | Visible columns pinned outside horizontal scrolling, counted from where the run ends. |
+ | `indent_width` | int | — | Indent width per tree level. |
+-| `key_width` | int | `20` | Key column width in text cells (scroll mode). |
++| `items` | collection | — | The rows, top to bottom. A row nests its own under items. |
++| `key_width` | units | `160` | Key column width in units (scroll mode). |
+ | `ledger` | flag | `false` | Alternate non-selected rows in the ledger colors. |
+ | `selected` | int | `-1` | Selected visible-row index. |
+ | `showheader` | flag | `false` | Show the column header row. |
+@@ -160,8 +161,8 @@ A column is a description of a slice of the grid, not a container of values:
+ 
+ ```
+ new treeview showheader columns={
+-	new column id=size caption="Size" width=10 align=right sortable numeric
+-	new column id=kind caption="Kind" width=12
++	new column id=size caption="Size" width=80 align=opticalright sortable numeric
++	new column id=kind caption="Kind" width=96
+ } items={
+ 	new item caption="Report.txt"
+ }
+@@ -170,22 +171,23 @@ new treeview showheader columns={
+ <!-- ktkdoc:props column -->
+ | Property | Type | Default | Meaning |
+ |---|---|---|---|
+-| `align` | `left` \| `center` \| `right` | `left` | Cell text alignment. |
++| `align` | `textnatural` \| `textopposite` \| `layoutnatural` \| `layoutopposite` \| `center` \| `opticalleft` \| `opticalright` | `textnatural` | Where a cell's text sits. textnatural/textopposite follow each cell's own script; layoutnatural/layoutopposite follow the column's direction; the optical pair names a side outright. |
+ | `caption` | string | — | Header caption. |
+ | `children` | collection | — | This column's values, one per item. |
++| `direction` | `inherit` \| `ltr` \| `rtl` | `inherit` | Which way this column's CONTENT reads; inherit takes the treeview's. Where the column sits among the others is the treeview's to settle. |
+ | `editable` | flag | `false` | Cells in this column can be edited in place (Enter opens the row editor). |
+ | `enum` | int | — | Wire ID of a collection of option objects; the cell editor becomes a choice box. |
+ | `enum_store` | `key` \| `value` | `value` | What a chosen option stores in the data field (cells always DISPLAY the option value). |
+ | `hidden` | flag | `false` | Column is not displayed. |
+ | `id` | word | — | Stable key cell values are stored under. Must differ from every other column's on the same treeview, blank included. |
+-| `max_width` | int | `-1` | Widest the column may be dragged, in text cells. -1 is no limit; a maximum below min_width loses to it. |
+-| `min_width` | int | `3` | Minimum width in text cells. |
++| `max_width` | units | `-1` | Widest the column may be dragged, in units. -1 is no limit; a maximum below min_width loses to it. |
++| `min_width` | units | `24` | Minimum width, in units. |
+ | `numeric` | flag | `false` | Sort by each cell's numeric equivalent (parsed once per value). |
+ | `optional` | flag | `true` | Column appears in the [=] show/hide chooser. |
+ | `resizable` | flag | `true` | Header divider drag-resizes this column. |
+ | `sortable` | flag | `false` | Header click requests a sort on this column. |
+ | `sortproxy` | int | `-1` | Column index whose values actually sort when this column is chosen (-1 = itself). |
+-| `width` | int | `8` | Width in text cells. |
++| `width` | units | `64` | Width, in units. |
+ <!-- /ktkdoc -->
+ 
+ `id` is what cells are stored under, so give every column one. Values live on
+@@ -212,7 +214,7 @@ the values:
+ 
+ ```
+ tv=new treeview caption="Name" showheader columns={
+-	sizec=new column id=size caption="Size" width=10 align=right
++	sizec=new column id=size caption="Size" width=80 align=opticalright
+ } items={
+ 	a=new item caption="Report.txt"
+ 	b=new item caption="Folder" expanded items={
+@@ -266,8 +268,8 @@ as though they had been written out directly.
+ ```
+ new treeview columns={
+ 	new collection children={
+-		new column id=a caption="A" width=5
+-		new column id=b caption="B" width=6
++		new column id=a caption="A" width=40
++		new column id=b caption="B" width=48
+ 	}
+ } items={
+ 	new item caption="row"
+@@ -441,8 +443,13 @@ there is no horizontal scrolling. Turn it off and the columns keep the widths
+ they were given, `key_width` applies to the tree column, and the grid scrolls
+ sideways.
+ 
+-`fixed_left` and `fixed_right` pin that many columns outside the scroll, so
+-the name stays put while the rest of the row moves.
++`fixed_begin` and `fixed_end` pin that many columns outside the scroll, so
++the name stays put while the rest of the row moves. They count along the run
++rather than across the screen, so `fixed_begin` pins the columns the reader
++starts at whichever way the tree reads.
++
++Every width here is in **units**, the toolkit's own currency, and there are
++eight of them to a character cell — so a column of ten cells is `width=80`.
+ 
+ ## Appearance
+ 
+diff --git a/VBoxLayout.md b/VBoxLayout.md
+index 186d3b0..864f7d3 100644
+--- a/VBoxLayout.md
++++ b/VBoxLayout.md
+@@ -22,7 +22,7 @@ the rest.
+ ```
+ new panel layout=vbox children={
+ 	new textinput                                   # fills the width
+-	new button caption="OK" halign=textend fill=none # its own width, trailing edge
++	new button caption="OK" halign=textopposite fill=none # its own width, trailing edge
+ }
+ ```
+ 
+@@ -32,7 +32,7 @@ words and which direction each is stated against.
+ **A column does not turn over.** Rows run top to bottom in every direction, so
+ `direction=rtl` has nothing to say about the order of a column's children. It
+ speaks across the column instead, through each child's `halign`: a
+-`halign=layoutbegin` child sits on the right in a right-to-left form and the left
++`halign=layoutnatural` child sits on the right in a right-to-left form and the left
+ in a left-to-right one.
+ 
+ ## Heights
+-- 
+2.43.0
+
