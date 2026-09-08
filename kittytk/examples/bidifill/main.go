@@ -186,10 +186,16 @@ var specimens = []specimen{
 		cells: []string{
 			"a", "b", "ד" + qamats, "ג" + qamats, "ב" + qamats, "א" + qamats}},
 
-	// A pointed run in the MIDDLE of a row that is otherwise placed correctly,
-	// with cells of its own on both sides. How far its misplaced fill runs over
-	// them is how far the damage reaches -- whether giving up that run is
-	// enough, or its neighbours go with it.
+	// A right-to-left run in the MIDDLE of a row, with cells of its own on both
+	// sides, and no marks anywhere. This is the control for the row below it:
+	// whatever these two rows do differently is what the marks did, which is
+	// readable without having to judge a column by eye.
+	{label: "clean in the middle",
+		cells: []string{"a", "b", "ד", "ג", "c", "d"}},
+
+	// The same row with the run pointed. If its neighbours c and d come out as
+	// they do above, giving up that run is enough; if the marks pull the fill
+	// off cells outside the run, it is not.
 	{label: "marks in the middle",
 		cells: []string{
 			"a", "b", "ד" + qamats, "ג" + qamats, "c", "d"}},
@@ -204,23 +210,29 @@ var specimens = []specimen{
 
 const (
 	labelCol    = 2
-	anchorCol   = 28
-	specimenCol = 29
+	anchorCol   = 27
+	specimenCol = 29 // one blank column clear of the anchor
 )
 
 // The six cells sit between two strong left-to-right letters, so a terminal
 // running its own bidi has no neutral to resolve at either end and the block
 // lands where it was put. That separates the two questions: whether the whole
 // specimen moved, and whether the colours inside it came out in order.
+//
+// A blank column stands between each anchor and the block. A fill that runs
+// past the block's edge lands in that gap, where it reads as a colour with
+// black on both sides -- and cannot be mistaken for the first or last cell,
+// which is exactly the mistake a colour touching the anchor invites.
 const (
 	leftAnchor  = "L"
 	rightAnchor = "R"
 )
 
-// A name for every column a colour can land in, the anchors included -- a fill
-// displaced off the block lands on one of those, and it needs a name too. It
-// sits in each block's heading row, so naming the columns costs no rows.
-const ruler = "<012345>"
+// A name for every column a colour can land in, the gaps and the anchors
+// included -- a fill displaced off the block lands on one of those, and it
+// needs a name too. It sits in each block's heading row, so naming the columns
+// costs no rows.
+const ruler = "< 012345 >"
 
 func main() {
 	opts := tui.DefaultTUIOptions()
@@ -338,7 +350,7 @@ func drawSpecimen(b *tui.TUIBackend, at func(col, row int) (core.Unit, core.Unit
 		x, y := at(specimenCol+i, row)
 		b.DrawText(x, y, cell, wear(colour), nil)
 	}
-	x, y = at(specimenCol+len(sequence), row)
+	x, y = at(specimenCol+len(sequence)+1, row) // clear of the block
 	b.DrawText(x, y, rightAnchor, plain, nil)
 }
 
@@ -518,7 +530,7 @@ func page(intro []string, ways []way, footer string) {
 				return paint(styleOf[k], false)
 			})
 			fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s%s\033[0m\033[37m%s",
-				row, pad(w.label), leftAnchor, body, rightAnchor)
+				row, pad(w.label), leftAnchor+" ", body, " "+rightAnchor)
 			row++
 		}
 	}
