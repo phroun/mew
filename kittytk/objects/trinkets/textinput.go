@@ -937,7 +937,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// fill and has no terminal to disagree with.
 	var giveUpFill []bool
 	if !usePx && core.HostMiscountsFill() {
-		giveUpFill = khatool.ZeroWidthRunsAfterFold(
+		giveUpFill = khatool.UnplaceableFillAfterFold(
 			displayText, core.RtlMarkFolds(), core.ZeroWidth)
 	}
 	ridingStyle := scheme.GetEditBoxSelectionRiding(focused && t.IsEnabled(), paneType)

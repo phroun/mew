@@ -226,3 +226,34 @@ func TestTheSelectedEndOfLineGivesUpItsFillToo(t *testing.T) {
 		t.Errorf("a line that can carry its fill lost its padding bar: %q", out)
 	}
 }
+
+// A full stop after a pointed word is in no right-to-left run of its own --
+// nothing strong follows it to pull it in -- so a per-run answer left it
+// holding the ordinary bar. One lone cell of fill on a line whose fill cannot
+// be placed, and it came back behind a letter that was never selected.
+//
+// The damage runs to the end of the line, so it gives up with everything else
+// after the run.
+func TestATrailingStopAfterAPointedRunGivesUpToo(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m"
+		flipSel = "\x1b[0;1;93m"
+	)
+	sr, w := testRenderer()
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true
+	w.ViewState.SuppressRTLCombining = false
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+
+	out := sr.prepareLineForDisplay("abc שָם.", "\n", 40, 0, w, 0, whole, nil, nil)
+	if strings.Contains(out, bar+".") {
+		t.Errorf("the stop after a pointed run kept a fill that lands elsewhere: %q", out)
+	}
+	if !strings.Contains(out, flipSel+".") {
+		t.Errorf("the stop after a pointed run did not take the riding style: %q", out)
+	}
+	// The English BEFORE the run is placed correctly and keeps its bar.
+	if !strings.Contains(out, bar+"a") {
+		t.Errorf("the English before the run lost the fill it can carry: %q", out)
+	}
+}

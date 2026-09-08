@@ -12,7 +12,7 @@ require (
 	github.com/phroun/argwild v0.0.1
 	github.com/phroun/direct-key-handler v0.3.38
 	github.com/phroun/key-sequence-processor v0.1.11
-	github.com/phroun/khatool v0.1.1-0.20260908023732-5225d43a341a
+	github.com/phroun/khatool v0.1.1-0.20260908054559-a670e8a9baa1
 	github.com/phroun/mew v0.3.1-alpha
 	github.com/phroun/purfecterm v0.2.55
 	golang.org/x/image v0.45.0

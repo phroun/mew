@@ -1544,7 +1544,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
 	var giveUpFill []bool
 	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining {
-		giveUpFill = khatool.ZeroWidthRunsAfterFold([]rune(line), folding, isZeroWidthMark)
+		giveUpFill = khatool.UnplaceableFillAfterFold([]rune(line), folding, isZeroWidthMark)
 	}
 	// givesUpFill reports whether the rune at this display position sits in a
 	// run whose fill this host cannot place.
