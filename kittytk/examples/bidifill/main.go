@@ -246,7 +246,7 @@ func draw(b *tui.TUIBackend) {
 	say(fmt.Sprintf("bidifill -- %q reorders=%v wordwise=%v fill=%v",
 		hostterm.Detect(), applies, wordwise, core.HostMiscountsFill()), plain)
 	say("cells 0..5 are red green yellow blue magenta cyan, left to right. read a", dim)
-	say("wrong row off the ruler, colour by colour. press a key to quit.", dim)
+	say("wrong row off the ruler, colour by colour. press a key for the probe.", dim)
 	row++
 
 	// Each block's heading carries the ruler, so every column a colour can land
