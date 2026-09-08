@@ -88,7 +88,16 @@ type ScreenRenderer struct {
 	// wire, and so is the one that turns right-to-left runs back for a host
 	// that reorders -- doing it here as well would turn them back twice and
 	// land every run reversed. See SetTerminal.
-	hosted     bool
+	hosted bool
+
+	// hostFlip is what has been SAID about the terminal: that it applies its
+	// own bidi to whatever reaches it. That is a fact about the far end of the
+	// wire and stays true however many renderers the bytes pass through on the
+	// way, so it is what goes out to the host. Whether THIS renderer turns its
+	// own runs back is a different question, answered by frame.flipBidi, which
+	// is this and not being hosted.
+	hostFlip bool
+
 	nativeStop func() // uninstalls the native watcher, if installed
 
 	// Indicator glyphs/labels used to draw chrome (whitespace markers, gutter,
@@ -320,6 +329,7 @@ func (sr *ScreenRenderer) SetTerminal(out io.Writer, sizeFn func() (int, int, er
 		sr.out = out
 		sr.hosted = true
 		sr.frame.flipBidi = false // the host turns the runs back; see hosted
+		sr.publishHostBidi()      // and has to be told what to turn them back for
 		// Diagnostic: MEW_EMIT_LOG=/path tees every write that carries RTL text
 		// to that file as a Go-quoted line, so the exact bytes mew sends to the
 		// terminal for a Hebrew/Arabic line can be inspected. Off unless set.
@@ -398,17 +408,19 @@ func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *viewport.Viewport
 func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 	sr.renderMu.Lock()
 	defer sr.renderMu.Unlock()
-	if sr.hosted {
-		// The renderer this one feeds turns the runs back itself, from what it
-		// knows of the terminal it is talking to. Turning them back here too
-		// lands every run reversed, which is what a hosted mew showed while a
-		// standalone one on the same terminal was right.
-		flip = false
-	}
-	if sr.frame.flipBidi != flip {
-		sr.frame.flipBidi = flip
+	if sr.hostFlip != flip {
+		sr.hostFlip = flip
+		// Repaint either way. Hosted, this renderer's own emission does not
+		// change -- but the host reads the answer below when IT emits, and
+		// acts on it a whole row at a time, so the rows have to be laid down
+		// again for the change to reach the screen.
 		sr.frame.forceRedraw()
 	}
+	// Turned back HERE only when this renderer owns the wire. Hosted, the one
+	// it feeds does the turning, and doing it in both places lands every run
+	// reversed -- which is what a hosted mew showed while a standalone one on
+	// the same terminal was right.
+	sr.frame.flipBidi = flip && !sr.hosted
 	sr.publishHostBidi()
 }
 
@@ -436,14 +448,11 @@ func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 //
 // Called with renderMu held.
 func (sr *ScreenRenderer) publishHostBidi() {
-	if sr.hosted {
-		// Not this renderer's to answer. Its own flip is off (the host turns
-		// the runs back), and saying so here would tell the host to stop --
-		// which is the one thing that must not happen. The host recognises the
-		// terminal for itself.
-		return
-	}
-	core.SetHostAppliesBidi(sr.frame.flipBidi, sr.frame.flipWordwise, sr.frame.flipRideSafe)
+	// What the TERMINAL does, not what this renderer does about it. Hosted,
+	// those differ: this renderer turns nothing back and the one it feeds turns
+	// everything, so sending its own flip would tell the host to stop -- and
+	// flipBidiForHost would go dead exactly where it has the most to say.
+	core.SetHostAppliesBidi(sr.hostFlip, sr.frame.flipWordwise, sr.frame.flipRideSafe)
 }
 
 // SetFlipRideSafeSelection marks a flip host whose background selection fill

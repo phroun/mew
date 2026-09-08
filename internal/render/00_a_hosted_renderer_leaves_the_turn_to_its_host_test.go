@@ -57,23 +57,62 @@ func TestAHostedRendererLeavesTheTurnToItsHost(t *testing.T) {
 	}
 }
 
-// And it does not tell the host what to do about the terminal. Its own flip is
-// off because the host does the turning; saying so would tell the host to stop,
-// which is the one thing that must not happen.
-func TestAHostedRendererDoesNotAnswerForTheTerminal(t *testing.T) {
+// flipBidiForHost says what the TERMINAL does, and that is one answer for the
+// whole program however many renderers the bytes pass through. So a hosted
+// renderer still passes it on: it is the host that acts on it, and the option
+// would be dead exactly where it has the most to say if it did not.
+func TestAHostedRendererStillSaysWhatTheTerminalDoes(t *testing.T) {
 	t.Cleanup(core.ForgetHostBidi)
-
-	// The host has recognised a reordering terminal for itself.
-	core.SetSniffedHostBidi(true, false, true)
 
 	var out strings.Builder
 	sr := NewScreenRenderer(nil, nil)
 	sr.SetTerminal(&out, func() (int, int, error) { return 20, 1, nil }, false)
-	sr.SetFlipBidiForHost(true)
-	sr.SetFlipWordwise(false)
-	sr.SetFlipRideSafeSelection(true)
 
-	if applies, _ := core.HostAppliesBidi(); !applies {
-		t.Error("a hosted renderer overruled what its host knows about the terminal")
+	for _, want := range []bool{true, false, true} {
+		sr.SetFlipBidiForHost(want)
+		if applies, _ := core.HostAppliesBidi(); applies != want {
+			t.Errorf("flipBidiForHost=%v reached the host as %v", want, applies)
+		}
+		// And it still turns nothing back itself, whichever way it is set.
+		if sr.frame.flipBidi {
+			t.Errorf("flipBidiForHost=%v had a hosted renderer turn its own runs "+
+				"back as well as its host", want)
+		}
+	}
+}
+
+// Setting it takes effect on the screen rather than only in a field: hosted,
+// this renderer's own bytes do not change, so the frame it feeds its host has
+// to be laid down again for the host to turn the runs the new way.
+func TestChangingItRepaintsEvenWhenHosted(t *testing.T) {
+	t.Cleanup(core.ForgetHostBidi)
+
+	var out strings.Builder
+	sr := NewScreenRenderer(nil, nil)
+	sr.SetTerminal(&out, func() (int, int, error) { return 20, 1, nil }, false)
+	sr.SetFlipBidiForHost(false)
+
+	// The same row, painted again and again. Once it is on the display, an
+	// unchanged frame emits none of it.
+	paint := func() string {
+		sr.frame.begin()
+		for i, r := range []rune("םולש") {
+			sr.frame.cur[0][i] = bbCell{runes: []rune{r}, width: 1}
+		}
+		var sb strings.Builder
+		sr.frame.present(&sb)
+		return sb.String()
+	}
+	paint()
+	if got := paint(); strings.Contains(got, "םולש") {
+		t.Fatalf("an unchanged frame emitted the row again, so this test cannot "+
+			"tell a repaint from a diff: %q", got)
+	}
+
+	// Changing the option changes nothing about the cells, and the row still
+	// has to go out again -- the host turns it the other way now.
+	sr.SetFlipBidiForHost(true)
+	if got := paint(); !strings.Contains(got, "םולש") {
+		t.Errorf("the option changed and the row was not laid down again: %q", got)
 	}
 }
