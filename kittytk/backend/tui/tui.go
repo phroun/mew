@@ -1135,12 +1135,7 @@ func (t *TUIBackend) emitFlippedRow(sb *strings.Builder, y int, lineCleared bool
 
 	// The row as SLOTS: one per base cell, a wide glyph's continuation folded
 	// into the base that wrote both columns.
-	type slot struct {
-		x    int
-		cell Cell
-		w    int
-	}
-	var slots []slot
+	var slots []emitSlot
 	anyRTL, changed := false, lineCleared
 	for x := 0; x < t.cols; {
 		cell := t.backBuffer[y][x]
@@ -1159,7 +1154,7 @@ func (t *TUIBackend) emitFlippedRow(sb *strings.Builder, y int, lineCleared bool
 		if cell != t.frontBuffer[y][x] {
 			changed = true
 		}
-		slots = append(slots, slot{x: x, cell: cell, w: w})
+		slots = append(slots, emitSlot{x: x, cell: cell, w: w})
 		x += w
 	}
 	if !anyRTL {
@@ -1175,15 +1170,42 @@ func (t *TUIBackend) emitFlippedRow(sb *strings.Builder, y int, lineCleared bool
 	}
 	order, styleOf, mirror := khatool.FlipRuns(bases, wordwise)
 
+	// Where this host stops placing a background where it was written, in
+	// emission order. Everything from there on is laid down after a run it
+	// cannot count, so anything painted at the cell reaches the screen
+	// somewhere other than the cell it was written for.
+	driftFrom := -1
+	if core.HostMiscountsFill() {
+		driftFrom = driftStart(slots, order, mirror)
+	}
+
 	t.markDamage(y, 0, t.cols-1)
 	sb.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[2K", y+1))
 	for k, i := range order {
-		st := slots[styleOf[k]].cell.Style.CodeDepth(t.colorDepth)
+		cs := slots[styleOf[k]].cell.Style
+		c := slots[i].cell
+		// Past the drift, nothing painted at the cell is trusted. A blank draws
+		// its own background instead of being given one, so a filled region
+		// keeps its shape; anything with a glyph keeps the glyph and its colour
+		// and loses the ground. A cell some other rule has already dealt with
+		// arrives with no ground left, and this finds nothing to do.
+		shade := rune(0)
+		if driftFrom >= 0 && k >= driftFrom {
+			if ink, ok := groundAsInk(cs); ok && (c.Char == 0 || c.Char == ' ') {
+				cs, shade = ink, fallbackBlank
+			} else {
+				cs = dropGround(cs)
+			}
+		}
+		st := cs.CodeDepth(t.colorDepth)
 		if st == "" {
 			st = "\033[0m"
 		}
 		sb.WriteString(st)
-		c := slots[i].cell
+		if shade != 0 {
+			sb.WriteRune(shade)
+			continue
+		}
 		if c.Char == 0 {
 			sb.WriteByte(' ')
 			continue
