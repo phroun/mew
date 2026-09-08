@@ -1769,7 +1769,17 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		if paintPad > width {
 			paintPad = width
 		}
-		displayLine.WriteString(textColor + strings.Repeat(" ", paintPad))
+		// This pad is where an rtl line's own newline sits, the way the trailing
+		// pad is on an ltr one -- so a selection running through that newline
+		// highlights it here, and a selected line break shows on an rtl line at
+		// all. It is drawn BEFORE the content, so nothing has drifted yet and it
+		// takes the ordinary bar even on a line that gives its fill up further
+		// along.
+		padColor := textColor
+		if sel.exists && docLine >= sel.startLine && docLine < sel.endLine {
+			padColor = selectionColor
+		}
+		displayLine.WriteString(padColor + strings.Repeat(" ", paintPad))
 		outputVisualColumn = paintPad
 	}
 	// RTL: content trimmed off the LEFT edge is the line's reading tail

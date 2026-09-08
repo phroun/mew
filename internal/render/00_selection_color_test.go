@@ -307,3 +307,50 @@ func TestTheLostFillFollowsTheScreenNotTheText(t *testing.T) {
 		t.Errorf("rtl: the pointed run kept a fill it cannot place: %q", out)
 	}
 }
+
+// A selection running through a line's newline highlights the padding, so the
+// selected line break can be seen. On a right-to-left line that padding is the
+// right-alignment pad at the LEFT -- the mirror of the trailing pad on a
+// left-to-right one -- and it was drawn in the plain text colour, so a selected
+// line break showed nothing there at all.
+//
+// It is laid down before the content, so nothing has drifted by the time it
+// goes out: it takes the ordinary bar even on a line that gives up its fill
+// further along.
+func TestASelectedLineBreakShowsOnARightToLeftLine(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m"
+		flipSel = "\x1b[0;1;93m"
+	)
+	sr, w := testRenderer()
+	t.Cleanup(func() { w.ViewState.Direction = "" })
+	w.ViewState.Direction = "rtl"
+
+	// A selection whose end is on a LATER line, so this line's newline is in it.
+	through := selectionRange{startLine: 0, endLine: 1, startRune: 0, endRune: 2, exists: true}
+	out := sr.prepareLineForDisplay("abc", "\n", 20, 0, w, 0, through, nil, nil)
+	if !strings.Contains(out, bar+strings.Repeat(" ", 4)) {
+		t.Errorf("the pad holding an rtl line's newline was not highlighted: %q", out)
+	}
+
+	// A selection that ENDS on this line does not reach its newline, so the pad
+	// stays plain -- the same rule the trailing pad follows.
+	stops := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 3, exists: true}
+	out = sr.prepareLineForDisplay("abc", "\n", 20, 0, w, 0, stops, nil, nil)
+	if strings.Contains(out, bar+strings.Repeat(" ", 4)) {
+		t.Errorf("a selection stopping short of the newline highlighted the pad: %q", out)
+	}
+
+	// And on a line that gives up its fill further along, the pad still takes
+	// the bar: it is drawn before anything has drifted.
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true
+	w.ViewState.SuppressRTLCombining = false
+	out = sr.prepareLineForDisplay("abc שָם", "\n", 20, 0, w, 0, through, nil, nil)
+	if !strings.Contains(out, bar+" ") {
+		t.Errorf("the pad gave up a fill it can carry: %q", out)
+	}
+	if !strings.Contains(out, flipSel) {
+		t.Errorf("the pointed run kept a fill it cannot place: %q", out)
+	}
+}
