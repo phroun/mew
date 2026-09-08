@@ -341,7 +341,7 @@ func TestBackBufferFlipBidiUnmirrors(t *testing.T) {
 
 // flipEmitPlan segmentation: two Hebrew words separated by a space. Whole-run
 // (Terminal.app) absorbs the space and reverses the whole span; word-wise
-// (kitty) reverses each word in place, leaving the space — and thus the word
+// (Kitty) reverses each word in place, leaving the space — and thus the word
 // order — untouched.
 func TestFlipEmitPlanWordwise(t *testing.T) {
 	rtl := func(r rune) rowCell { return rowCell{cell: bbCell{runes: []rune{r}}, width: 1} }

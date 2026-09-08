@@ -426,7 +426,7 @@ func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 
 // SetFlipWordwise selects the flip's run segmentation (see backBuffer.flipWordwise):
 // off treats a maximal RTL span as one run (Terminal.app), on reverses each
-// whitespace-separated RTL word in place (kitty). Only takes effect under
+// whitespace-separated RTL word in place (Kitty). Only takes effect under
 // flipBidiForHost. Forces a full repaint so the convention switches at once.
 func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 	sr.renderMu.Lock()
@@ -493,7 +493,7 @@ func (sr *ScreenRenderer) SawRTLContent() bool {
 
 // FrameHasUncomposedNiqqud reports whether the last presented frame contains a
 // Hebrew cluster whose combining marks survive the active rtlMarkMode fold — the
-// content a word-wise-flipping host (kitty with force_ltr off) may mis-render.
+// content a word-wise-flipping host (Kitty with force_ltr off) may mis-render.
 // Condition-driven, not latched like SawRTLContent: it reflects the current
 // frame only, so the editor's force_ltr nudge comes down when the content does.
 func (sr *ScreenRenderer) FrameHasUncomposedNiqqud() bool {
@@ -1525,7 +1525,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// those runs use the flip-safe selection (see the selectionFlip colors).
 	// Mark-free runs (English; Arabic, which mew pre-shapes to single
 	// presentation forms) keep the real bar, as do flip hosts whose fill tracks
-	// the glyphs (kitty).
+	// the glyphs (Kitty).
 	//
 	// Per RUN, because a run is what such a host reorders as a unit and so what
 	// it counts wrongly. A line of chrome and English with one pointed word in

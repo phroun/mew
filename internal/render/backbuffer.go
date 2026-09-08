@@ -92,7 +92,7 @@ type backBuffer struct {
 	// flipWordwise selects the flip's run SEGMENTATION when flipBidi is on. Off
 	// (default, Terminal.app) treats a maximal RTL span — inter-word spaces
 	// absorbed — as one run and reverses it whole, matching a host whose bidi
-	// keeps neutrals between RTL words in the run. On (kitty) reverses each
+	// keeps neutrals between RTL words in the run. On (Kitty) reverses each
 	// whitespace-separated RTL word in place instead, matching a host that
 	// breaks its runs on the space and reverses each word without reordering
 	// them; absorbing there would swap the words. Only consulted under flipBidi.
@@ -103,7 +103,7 @@ type backBuffer struct {
 	// selection bar drifts and half-vanishes — Terminal.app does this. On such a
 	// host a marked RTL line uses the foreground+bold "ride-safe" selection
 	// instead of the real bar (see screen.go). Off (default) keeps the real bar,
-	// for a flip host whose selection fill tracks the glyphs correctly (kitty is
+	// for a flip host whose selection fill tracks the glyphs correctly (Kitty is
 	// assumed to, pending confirmation). Independent of flipWordwise.
 	flipRideSafe bool
 
@@ -694,7 +694,7 @@ func (b *backBuffer) rowVisualCells(y int) []rowCell {
 //     (inter-word spaces) absorbed as long as another RTL cell follows; the
 //     whole span reverses, glyph AND attributes together (styleOrder == order),
 //     because that host reverses the parsed cell — colour and all — as a unit.
-//   - On (kitty): the space is a boundary, so each whitespace-separated RTL word
+//   - On (Kitty): the space is a boundary, so each whitespace-separated RTL word
 //     is its own run and reverses in place. That host reverses the GLYPHS but
 //     paints cell attributes (the selection fill, a syntax colour) at the
 //     physical column, so the glyph order reverses while styleOrder stays in
@@ -794,7 +794,7 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 // isHebrewCombiningMark reports whether r is a Hebrew combining point or
 // cantillation mark (block 0591–05C7, all nonspacing). These are the marks a
 // host must render as real zero-width combining glyphs — the ones a word-wise
-// bidi host (kitty with force_ltr off) can drop — as opposed to a mark folded
+// bidi host (Kitty with force_ltr off) can drop — as opposed to a mark folded
 // into a single presentation-form glyph.
 func isHebrewCombiningMark(r rune) bool {
 	return r >= 0x0591 && r <= 0x05C7 && unicode.Is(unicode.Mn, r)

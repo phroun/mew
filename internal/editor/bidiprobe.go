@@ -40,9 +40,9 @@ func (e *Editor) maybeSendBidiProbe() {
 		return
 	}
 	// Sniffing already settles a recognised host — Apple Terminal flips, the
-	// stream-order terminals (iTerm2, Alacritty, Ghostty, kitty) do not — so its
+	// stream-order terminals (iTerm2, Alacritty, Ghostty, Kitty) do not — so its
 	// flip value is set from startup and no probe is needed. Probing them risks
-	// a false positive: kitty in particular does no bidi but answers the cursor
+	// a false positive: Kitty in particular does no bidi but answers the cursor
 	// query in a way that reads as "applies bidi", which would wrongly flip it.
 	if hostBidiProfileFor(hostterm.Detect()).known {
 		e.bidiProbeState = bidiProbeDone

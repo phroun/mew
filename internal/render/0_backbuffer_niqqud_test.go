@@ -2,7 +2,7 @@ package render
 
 import "testing"
 
-// TestFrameHasUncomposedNiqqud checks the per-frame scan that drives the kitty
+// TestFrameHasUncomposedNiqqud checks the per-frame scan that drives the Kitty
 // force_ltr nudge: it fires on a Hebrew base carrying a real combining mark, and
 // only when that mark survives the active rtlMarkMode fold.
 func TestFrameHasUncomposedNiqqud(t *testing.T) {

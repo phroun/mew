@@ -32,7 +32,7 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 }
 
 // flipBidiForHost="auto": Apple Terminal flips whole-run and needs the ride-safe
-// selection; kitty flips word-wise and keeps the real bar; the stream-order
+// selection; Kitty flips word-wise and keeps the real bar; the stream-order
 // terminals do not flip (all recognised, so all skip the probe); an unrecognised
 // host is left to the probe. Explicit true/false pass through.
 func TestFlipBidiForHostResolve(t *testing.T) {

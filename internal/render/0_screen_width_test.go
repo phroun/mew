@@ -271,7 +271,7 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 		t.Errorf("no-flip must never use the ride-safe style: %q", out)
 	}
 
-	// A flip host WITHOUT the selection glitch (flipRideSafe off — kitty) keeps
+	// A flip host WITHOUT the selection glitch (flipRideSafe off — Kitty) keeps
 	// the real bar even with marks shown: the ride-safe fallback is tied to the
 	// glitch, not to the flip itself.
 	sr.frame.flipBidi = true
