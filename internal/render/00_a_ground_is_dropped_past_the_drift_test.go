@@ -42,7 +42,7 @@ func TestABlankDrawsItsOwnBackground(t *testing.T) {
 		{"the ground becomes the ink", "\x1b[0;30;47m", "\x1b[0;37m", true},
 		{"and a bright one likewise", "\x1b[0;30;104m", "\x1b[0;94m", true},
 		{"a 256-colour ground keeps its index", "\x1b[0;48;5;27m", "\x1b[0;38;5;27m", true},
-		{"a direct colour keeps its channels", "\x1b[0;48;2;1;2;3m", "\x1b[0;38;2;1;2;3m", true},
+		{"a direct colour keeps its channels", "\x1b[0;48;2;10;120;200m", "\x1b[0;38;2;10;120;200m", true},
 		{"no ground, nothing to draw", "\x1b[0;32m", "\x1b[0m", false},
 		// Black is the ground a terminal already shows, so there is nothing to
 		// draw in its place -- but it still goes, since a black fill landing on

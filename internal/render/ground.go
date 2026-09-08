@@ -94,19 +94,77 @@ type sgrParam struct {
 	cellPainted bool
 }
 
-// isBlackGround reports whether an extended background names the colour a
-// terminal shows where nothing has been painted. Black has four spellings and a
-// theme is free to use any of them: the basic 40, the system palette's 0, the
-// 6x6x6 cube's own black at 16, and a direct colour with no light in it. Reading
-// only two of them left a theme written the other way with a ground that
-// answered as a colour, and every blank in the content area past the drift stood
-// a shade where a space belonged.
+// blackLuminance is the ceiling below which a ground counts as the black a
+// terminal shows where nothing has been painted. A theme's "black" is rarely
+// the pure one -- a near-black is the usual choice -- and a shade drawn over it
+// says nothing a reader can see, so what matters is not the value but whether
+// there is enough light in it to tell from the ground.
+//
+// Weighted for the eye rather than averaged: green carries most of what is
+// seen, red some, blue very little.
+const (
+	blackLuminance = 0.14
+	weightRed      = 0.22
+	weightGreen    = 0.72
+	weightBlue     = 0.08
+)
+
+func groundIsDark(r, g, b int) bool {
+	lum := weightRed*float64(r) + weightGreen*float64(g) + weightBlue*float64(b)
+	return lum/255 < blackLuminance
+}
+
+// isBlackGround reports whether an extended background is the ground itself.
+// Black has spellings a theme is free to choose between -- the basic 40, the
+// system palette's 0, and any colour dark enough to be one -- and reading only
+// some of them left a theme written another way with a ground that answered as
+// a colour, standing a shade on every blank past the drift where the file has a
+// space.
 func isBlackGround(text string) bool {
-	switch text {
-	case "48;5;0", "48;5;16", "48;2;0;0;0":
+	switch {
+	case text == "48;5;0":
+		// Named black, whatever the terminal happens to draw it as.
 		return true
+	case strings.HasPrefix(text, "48;5;"):
+		n, err := strconv.Atoi(text[len("48;5;"):])
+		if err != nil {
+			return false
+		}
+		r, g, b, ok := palette256(n)
+		return ok && groundIsDark(r, g, b)
+	case strings.HasPrefix(text, "48;2;"):
+		f := strings.Split(text[len("48;2;"):], ";")
+		if len(f) != 3 {
+			return false
+		}
+		var c [3]int
+		for i, s := range f {
+			n, err := strconv.Atoi(s)
+			if err != nil {
+				return false
+			}
+			c[i] = n
+		}
+		return groundIsDark(c[0], c[1], c[2])
 	}
 	return false
+}
+
+// palette256 is the colour behind an extended-palette index, for the two thirds
+// of the palette that are standardised: the 6x6x6 cube from 16 and the
+// greyscale ramp from 232. The sixteen below those are the terminal's own to
+// draw and have no answer here.
+func palette256(n int) (r, g, b int, ok bool) {
+	switch {
+	case n >= 16 && n <= 231:
+		n -= 16
+		level := [6]int{0, 95, 135, 175, 215, 255}
+		return level[n/36], level[(n/6)%6], level[n%6], true
+	case n >= 232 && n <= 255:
+		v := 8 + (n-232)*10
+		return v, v, v, true
+	}
+	return 0, 0, 0, false
 }
 
 // filterSGR rewrites every SGR sequence in style through keep, which returns

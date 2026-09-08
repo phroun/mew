@@ -64,3 +64,40 @@ func TestAColouredGroundStillDrawsItsOwn(t *testing.T) {
 		t.Errorf("a blue ground past the drift drew nothing in its place: %q", out)
 	}
 }
+
+// A theme's black is rarely the pure one, so what counts is not the value but
+// whether there is enough light in it to tell from the ground: below 14% of
+// full, weighted for the eye, a colour IS the ground and a shade over it says
+// nothing a reader can see.
+//
+// Stated either side of the line rather than at one point, since a threshold
+// nothing is measured against is a number rather than a rule.
+func TestAGroundTooDarkToSeeIsTheGround(t *testing.T) {
+	for _, c := range []struct {
+		name, ground string
+		black        bool
+	}{
+		{"pure black said in channels", "48;2;0;0;0", true},
+		{"a near-black a theme would actually write", "48;2;30;30;46", true},
+		{"the greyscale ramp's foot", "48;5;232", true},
+		{"and its fourth step, still under the line", "48;5;234", true},
+		{"its fifth step is over it", "48;5;235", false},
+		{"grey 34 is under", "48;2;34;34;34", true},
+		{"grey 36 is over", "48;2;36;36;36", false},
+		{"a mid colour is nowhere near", "48;2;10;120;200", false},
+		{"nor is a cube colour", "48;5;27", false},
+		{"the sixteen the terminal draws itself have no answer", "48;5;8", false},
+		{"except the one named black", "48;5;0", true},
+	} {
+		if got := isBlackGround(c.ground); got != c.black {
+			t.Errorf("%s: isBlackGround(%q) = %v, want %v",
+				c.name, c.ground, got, c.black)
+		}
+		// And the whole way through: a ground that is the ground draws no shade.
+		out := emittedRow(t, "\x1b[0;37;"+c.ground+"m")
+		if n := strings.Count(out, fallbackBlank); (n == 0) != c.black {
+			t.Errorf("%s (%q): %d shades in the content, black=%v",
+				c.name, c.ground, n, c.black)
+		}
+	}
+}
