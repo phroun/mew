@@ -102,16 +102,30 @@ func TestATurnedRowCarriesItsStyleWithEveryGlyph(t *testing.T) {
 	t.Cleanup(core.ForgetHostBidi)
 	core.SetHostAppliesBidi(true, false, false)
 
+	// The row goes out in colour, so a reset alone cannot pass for a style.
+	const red = "\033[31m"
 	b, out := newTestTUI(20, 2)
+	b.colorDepth = 256
 	b.BeginFrame()
 	b.DrawText(0, 0, "םולש", style.DefaultStyle().WithFg(style.ColorRed), nil)
 	b.EndFrame()
 
 	got := out.String()
 	body := got[strings.Index(got, "\033[2K")+len("\033[2K"):]
-	if n := strings.Count(body, "\033["); n < 4 {
-		t.Errorf("four glyphs went out under %d style escapes; each needs its own: %q",
+	if n := strings.Count(body, red); n < 4 {
+		t.Errorf("four glyphs went out under %d colour escapes; each needs its own: %q",
 			n, body)
+	}
+	// And the colour is set again for each of them, never left standing from the
+	// glyph before: no two glyphs are adjacent in the stream.
+	for i, r := range []rune("שלום") {
+		at := strings.IndexRune(body, r)
+		if at < 0 {
+			t.Fatalf("glyph %d (%q) did not go out at all: %q", i, r, body)
+		}
+		if !strings.HasSuffix(body[:at], red) {
+			t.Errorf("glyph %d (%q) went out without its own colour: %q", i, r, body)
+		}
 	}
 }
 
