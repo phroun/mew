@@ -2,39 +2,46 @@
 // background fill on a line carrying combining marks.
 //
 // macOS Terminal.app places such a fill wrongly: a selection bar over pointed
-// Hebrew drifts and half-vanishes. What is not known -- and what this is for --
-// is the LAW. Read off the screen, it says whether the displacement is a
-// uniform shift, one that grows per mark, or a span of the wrong length; and
-// whether the FOREGROUND is displaced with it or rides the glyph through
-// intact. That decides whether the fault can be compensated for by sending the
-// attributes in the order the terminal will consume them, rather than giving up
-// the fill on such lines altogether.
-//
-// Run it in the terminal in question and read the two blocks:
+// Hebrew drifts and half-vanishes. Whether that can be compensated for, and
+// how, is what this is for. Run it in the terminal in question:
 //
 //	go run ./examples/bidifill
 //
-// Every specimen is SIX cells, and every one of them is laid out so that the
-// six cells, left to right on the screen, are coloured
+// A key moves between two pages, and a second closes it.
+//
+// The FIRST page names the fault. Every specimen is SIX cells, and every one of
+// them is laid out so that the six cells, left to right on the screen, are
+// coloured
 //
 //	red  green  yellow  blue  magenta  cyan
 //
 // in that order. That is the whole test: the letters differ from row to row,
 // the colours never do. A row whose colours come out in that order is a row the
 // terminal placed correctly, whatever its letters are; anywhere they come out
-// in another order, or run out before the sixth cell, is the fault.
+// in another order, or run out before the sixth cell, is the fault. Each block
+// carries a ruler over the columns a colour can land in, the two anchors
+// included, so a wrong row can be read off column by column.
 //
-// The FILL block carries the sequence in the background, the INK block in the
-// foreground. If the ink block reads correctly and the fill block does not,
-// the terminal is keeping attributes with the glyphs and painting the
-// background at a position it counted separately -- which is the case the
-// compensation would be built on.
+// The FILL block carries the sequence in the background and the INK block in
+// the foreground, which separates displacement from loss: ink rides a glyph
+// through a reorder, background does not. The row wearing ONE colour across all
+// six cells separates them again, and more sharply -- a displaced fill still
+// paints the whole block, and only a fill that ran out leaves part of it bare.
+//
+// The SECOND page asks what to do about a terminal that runs out. It sends the
+// same six pointed letters six ways: as the backend sends them now, with an
+// attribute for every codepoint rather than every cell, and with spare
+// attributes carried in on zero-width characters -- after the row, before it,
+// and one per mark. Whichever row comes back in the right order names the fix,
+// and a bright colour anywhere is a spare the terminal took.
 package main
 
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/phroun/khatool"
 	"github.com/phroun/kittytk/backend/tui"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/hostterm"
@@ -197,12 +204,23 @@ func main() {
 	b.BeginFrame()
 	draw(b)
 	b.EndFrame()
+	if !waitKey(b) {
+		return
+	}
 
-	// Anything at all closes it.
+	probes()
+	waitKey(b)
+}
+
+// waitKey blocks until someone presses something, and reports whether to carry
+// on -- a quit says not to.
+func waitKey(b *tui.TUIBackend) bool {
 	for {
 		switch b.WaitEvent().(type) {
-		case core.KeyPressEvent, core.QuitEvent:
-			return
+		case core.KeyPressEvent:
+			return true
+		case core.QuitEvent:
+			return false
 		}
 	}
 }
@@ -286,4 +304,184 @@ func drawSpecimen(b *tui.TUIBackend, at func(col, row int) (core.Unit, core.Unit
 	}
 	x, y = at(specimenCol+len(sequence), row)
 	b.DrawText(x, y, rightAnchor, plain, nil)
+}
+
+// A zero-width character carries an attribute without claiming a cell -- which
+// is the whole idea the probe page is built on.
+const zwj = "‍"
+
+// The probe page asks one question of the row that fails worst: a terminal that
+// runs out of background partway along a line has been given six attributes for
+// twelve codepoints, so what happens if it is given twelve?
+//
+// Six ways of saying the same colours go out, and the row that comes back in
+// the right order names the fix. A BRIGHT colour anywhere is a padding
+// attribute the terminal took, which says the padding was consumed even where
+// it did not help.
+//
+// This is written straight to the terminal rather than through the backbuffer.
+// A cell holds one style, and every row here deliberately puts a style on a
+// codepoint that shares its cell with another -- there is no cell grid that can
+// say it. Nothing repaints afterwards, so the rows stand until a key is
+// pressed.
+var probeCells = []string{
+	"ו" + qamats, "ה" + qamats, "ד" + qamats,
+	"ג" + qamats, "ב" + qamats, "א" + qamats,
+}
+
+// paint is the attributes for one of the six sequence colours: black ink on
+// that ground, bright where a padding attribute wants telling apart from a real
+// one.
+func paint(i int, bright bool) string {
+	ground := 41 + i
+	if bright {
+		ground = 101 + i
+	}
+	return fmt.Sprintf("\033[0m\033[30m\033[%dm", ground)
+}
+
+// The six ways of sending the row. Each takes the emission order and the colour
+// its slot wears, and returns the bytes between the anchors.
+var probeWays = []struct {
+	label string
+	emit  func(order []int, colour func(k int) string) string
+}{
+	// What the backend sends today: one attribute per CELL, ahead of the base,
+	// with the marks riding along under it.
+	{"as we send it now", func(order []int, colour func(int) string) string {
+		var b strings.Builder
+		for k, i := range order {
+			b.WriteString(colour(k))
+			b.WriteString(probeCells[i])
+		}
+		return b.String()
+	}},
+
+	// One attribute per CODEPOINT, the mark given its own copy of the colour its
+	// base wears. No extra characters, nothing moved -- if this is enough, the
+	// fix costs nothing at all.
+	{"an SGR per codepoint", func(order []int, colour func(int) string) string {
+		var b strings.Builder
+		for k, i := range order {
+			for _, r := range probeCells[i] {
+				b.WriteString(colour(k))
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}},
+
+	// One attribute per codepoint again, but carried in after the cluster on a
+	// zero-width character rather than put on the mark. Same count, and the
+	// cluster itself is left alone.
+	{"a zwj per mark, same", func(order []int, colour func(int) string) string {
+		var b strings.Builder
+		for k, i := range order {
+			b.WriteString(colour(k))
+			b.WriteString(probeCells[i])
+			for range []rune(probeCells[i])[1:] {
+				b.WriteString(colour(k))
+				b.WriteString(zwj)
+			}
+		}
+		return b.String()
+	}},
+
+	// Six spare attributes at the END of the line, as the question was put: does
+	// the terminal reach past the row for the ones it ran out of?
+	{"6 bright zwj at end", func(order []int, colour func(int) string) string {
+		var b strings.Builder
+		for k, i := range order {
+			b.WriteString(colour(k))
+			b.WriteString(probeCells[i])
+		}
+		for k := range order {
+			b.WriteString(paint(k, true))
+			b.WriteString(zwj)
+		}
+		return b.String()
+	}},
+
+	// And six at the START, since what survives on the failing rows is the
+	// LEFTMOST fill -- so the front is where the terminal appears to be counting
+	// from.
+	{"6 bright zwj at start", func(order []int, colour func(int) string) string {
+		var b strings.Builder
+		for k := range order {
+			b.WriteString(paint(k, true))
+			b.WriteString(zwj)
+		}
+		for k, i := range order {
+			b.WriteString(colour(k))
+			b.WriteString(probeCells[i])
+		}
+		return b.String()
+	}},
+
+	// Both together: an attribute for every codepoint AND spares beyond the end.
+	{"per codepoint + 6 end", func(order []int, colour func(int) string) string {
+		var b strings.Builder
+		for k, i := range order {
+			for _, r := range probeCells[i] {
+				b.WriteString(colour(k))
+				b.WriteRune(r)
+			}
+		}
+		for k := range order {
+			b.WriteString(paint(k, true))
+			b.WriteString(zwj)
+		}
+		return b.String()
+	}},
+}
+
+func probes() {
+	// The row goes out turned back, exactly as the backend turns it back, so
+	// the host's own pass lands it the right way round.
+	bases := make([]rune, len(probeCells))
+	for i, c := range probeCells {
+		bases[i] = []rune(c)[0]
+	}
+	order, styleOf, _ := khatool.FlipRuns(bases, false)
+
+	var out strings.Builder
+	out.WriteString("\033[2J")
+	row := 1
+	say := func(text string) {
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s", row, text)
+		row++
+	}
+	// A row of the probe: the label, the anchors, and one way of sending it.
+	lay := func(label, body string) {
+		pad := strings.Repeat(" ", anchorCol-labelCol-len(label))
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s%s%s\033[0m\033[37m%s",
+			row, label, pad, leftAnchor, body, rightAnchor)
+		row++
+	}
+	block := func(heading string, solid bool) {
+		pad := strings.Repeat(" ", anchorCol-labelCol-len(heading))
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s\033[90m%s",
+			row, heading, pad, ruler)
+		row++
+		for _, way := range probeWays {
+			lay(way.label, way.emit(order, func(k int) string {
+				if solid {
+					return paint(0, false)
+				}
+				return paint(styleOf[k], false)
+			}))
+		}
+	}
+
+	say("PROBE -- every row is the same six pointed letters, sent six ways.")
+	say("correct is red green yellow blue magenta cyan across 0..5. a bright")
+	say("colour is a padding attribute the terminal took.")
+	row++
+	block("SEQUENCE", false)
+	row++
+	block("ALL RED", true)
+	row++
+	say("press a key to quit.")
+
+	os.Stdout.WriteString(out.String())
 }
