@@ -257,3 +257,53 @@ func TestATrailingStopAfterAPointedRunGivesUpToo(t *testing.T) {
 		t.Errorf("the English before the run lost the fill it can carry: %q", out)
 	}
 }
+
+// "After the pointed run" means after it ON THE SCREEN. Set a document
+// right-to-left and the run is drawn at the LEFT, so what follows it across the
+// screen is the chrome and Latin that came BEFORE it in the text -- and the
+// padding, laid down first, comes before it and keeps its bar.
+//
+// Answered in the rune array's own order, a right-to-left line gives up
+// exactly the wrong half of itself.
+func TestTheLostFillFollowsTheScreenNotTheText(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m"
+		flipSel = "\x1b[0;1;93m"
+	)
+	sr, w := testRenderer()
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true
+	w.ViewState.SuppressRTLCombining = false
+	t.Cleanup(func() { w.ViewState.Direction = "" })
+
+	// Latin, then a pointed Hebrew word: in the text the Latin comes first.
+	const line = "abc שָם"
+	through := selectionRange{startLine: 0, endLine: 1, startRune: 0, endRune: 9, exists: true}
+	render := func() string {
+		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, through, nil, nil)
+	}
+
+	// Left to right, the Hebrew is drawn last: the Latin before it keeps the
+	// bar, and the padding after it gives it up.
+	w.ViewState.Direction = "ltr"
+	out := render()
+	if !strings.Contains(out, bar+"a") {
+		t.Errorf("ltr: the Latin before the run lost the fill it can carry: %q", out)
+	}
+	if !strings.Contains(out, flipSel+selectedBlank) {
+		t.Errorf("ltr: the padding after the run kept a fill that drifts: %q", out)
+	}
+
+	// Right to left, the Hebrew is drawn FIRST: now the Latin follows it across
+	// the screen and gives up with it, where in the text it came first and kept
+	// its bar.
+	w.ViewState.Direction = "rtl"
+	out = render()
+	if strings.Contains(out, bar+"a") {
+		t.Errorf("rtl: the Latin drawn after the run kept a fill that drifts: %q", out)
+	}
+	// And the Hebrew itself still gives up, wherever it is drawn.
+	if !strings.Contains(out, flipSel) {
+		t.Errorf("rtl: the pointed run kept a fill it cannot place: %q", out)
+	}
+}

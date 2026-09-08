@@ -1542,10 +1542,10 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// cells and keeps the real bar — only marks that survive the fold (vowels,
 	// accents) force the ride-safe fill.
 	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
+	// Filled in once the line's order is known (see layoutFor below): "after"
+	// means after on the SCREEN, and on a right-to-left line that is the other
+	// end of the text.
 	var giveUpFill []bool
-	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining {
-		giveUpFill = khatool.UnplaceableFillAfterFold([]rune(line), folding, isZeroWidthMark)
-	}
 	// givesUpFill reports whether the rune at this display position sits in a
 	// run whose fill this host cannot place.
 	givesUpFill := func(runePos int) bool {
@@ -1555,13 +1555,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// past the end of the content has to go by: it is not in a run itself, but
 	// it lies past the point the drift starts from and its fill lands back over
 	// the letters.
-	lineGivesUpFill := false
-	for _, give := range giveUpFill {
-		if give {
-			lineGivesUpFill = true
-			break
-		}
-	}
+	var lineGivesUpFill bool
 	selectionColor := sr.col(w, "selection")
 	selectionFlipColor := sr.col(w, "selectionFlip")
 	// The selection colour for one rune: the run that cannot carry a fill wears
@@ -1621,6 +1615,25 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// on pure-LTR lines, where layout is nil). rtlCell drives bracket mirroring.
 	rtl := sr.winRTL(w)
 	layout := sr.layoutFor(w, runes[:contentLen])
+
+	// Now the order the cells go out in is known, the fill question can be
+	// answered: the damage starts at the first pointed run and carries to
+	// everything drawn after it, which on a right-to-left line is the material
+	// that came BEFORE it in the text.
+	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining {
+		var visual []int
+		if layout != nil {
+			visual = layout.Perm
+		}
+		giveUpFill = khatool.UnplaceableFillAfterFold(
+			[]rune(line), folding, isZeroWidthMark, visual)
+		for _, give := range giveUpFill {
+			if give {
+				lineGivesUpFill = true
+				break
+			}
+		}
+	}
 	termCount := len(runes) - contentLen
 	contentSlots := contentLen
 	if layout != nil {
@@ -2265,6 +2278,11 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// reordering through the way the letters' own colour does -- and a
 			// shaded cell is how a selected run of nothing gets to be visible
 			// at all under a style that paints no ground.
+			//
+			// This is the padding drawn AFTER the content, so it is always past
+			// the drift. A right-to-left line's right-alignment pad is a
+			// different thing, laid down before anything else and never part of
+			// the selection at all.
 			if lineGivesUpFill {
 				padColor = selectionFlipColor
 				padGlyph = selectedBlank

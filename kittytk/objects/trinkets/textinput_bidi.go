@@ -2,6 +2,7 @@ package trinkets
 
 import (
 	"github.com/phroun/khatool"
+	"sort"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/text"
@@ -1025,4 +1026,25 @@ func fillStretches(giveUp []bool, from, to int) []fillStretch {
 		i = j
 	}
 	return out
+}
+
+// visualOrder is the logical runes in the order they are drawn, left to right.
+// It is what tells a caller reasoning about the emitted stream which rune comes
+// AFTER which -- a question the rune order itself answers wrongly the moment a
+// run turns over.
+//
+// Runes sharing a box (a mark riding its base) keep their logical order within
+// it, so a cluster stays together.
+func (g *fieldGeometry) visualOrder() []int {
+	if g == nil || len(g.lo) == 0 {
+		return nil
+	}
+	order := make([]int, len(g.lo))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return g.lo[order[a]] < g.lo[order[b]]
+	})
+	return order
 }

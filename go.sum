@@ -28,6 +28,8 @@ github.com/phroun/khatool v0.1.1-0.20260908023732-5225d43a341a h1:Fyk6ZrS3o6Y95d
 github.com/phroun/khatool v0.1.1-0.20260908023732-5225d43a341a/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
 github.com/phroun/khatool v0.1.1-0.20260908054559-a670e8a9baa1 h1:S1Wt4d5UUXqB5JDuFWNpXxPhWbvlJOjbXv1FKcd8A6Y=
 github.com/phroun/khatool v0.1.1-0.20260908054559-a670e8a9baa1/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
+github.com/phroun/khatool v0.1.1-0.20260908074143-11cdcf0d93fb h1:bHHrs30UJJ6ZXv0Ox7COYrDz1Y56q+VT/ubdtn40pWs=
+github.com/phroun/khatool v0.1.1-0.20260908074143-11cdcf0d93fb/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
 github.com/phroun/kittytk v0.1.29-alpha h1:JWZzTH0dq1xTARwvO2q47tZb+2PwrzEJ7HzgCqXaS+o=
 github.com/phroun/kittytk v0.1.29-alpha/go.mod h1:whLqtigoWPNMaI736AOG1uTYWLfF9SLHA6wapVPpHNE=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=

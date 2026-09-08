@@ -935,11 +935,10 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// into its base no longer inflates the count, so pointed consonants come
 	// out even. And only on a cell target, since a pixel one paints its own
 	// fill and has no terminal to disagree with.
+	// Filled in once the geometry says what order the cells go out in: "after"
+	// means after on the SCREEN, and on a field that reads right to left that
+	// is the other end of the text.
 	var giveUpFill []bool
-	if !usePx && core.HostMiscountsFill() {
-		giveUpFill = khatool.UnplaceableFillAfterFold(
-			displayText, core.RtlMarkFolds(), core.ZeroWidth)
-	}
 	ridingStyle := scheme.GetEditBoxSelectionRiding(focused && t.IsEnabled(), paneType)
 
 	// runPx is a run's width in PIXELS, not its width in units scaled.
@@ -973,6 +972,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 	}
 	marked := t.markersShown() && !isPlaceholder
 	g := t.runGeometry(displayText, font, t.shapesText(), marked, ppu)
+
+	// Now the run's order is known, the fill question can be answered.
+	if !usePx && core.HostMiscountsFill() {
+		giveUpFill = khatool.UnplaceableFillAfterFold(
+			displayText, core.RtlMarkFolds(), core.ZeroWidth, g.visualOrder())
+	}
 
 	// And where the field sits on it. The scroll is a place on the RUN, so a
 	// field showing the middle of a line shows the middle of it as drawn.
