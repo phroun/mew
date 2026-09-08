@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -1377,27 +1379,44 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// Its own shade rather than the emitter's fallback, so an affected
 		// gutter is recognisable at a glance as the gutter (see the shades).
 		if w.LineNumbersVisible() && rtl {
-			numColor, shade := lineNumbersColor, ""
+			// Empty gutter cells and the label wear the gutter's own colour, so
+			// neither says anything more while that is what it is. On a row
+			// drawing its own ground they part: EVERY empty cell takes the
+			// shade, and the label alone stands on no ground.
+			numColor, blankColor, blankGlyph := "", "", " "
 			if sr.lineDriftsFill(w, lineContent) {
 				if ink, ok := groundAsInk(lineNumbersColor); ok {
-					numColor, shade = dropGround(lineNumbersColor), ink+gutterBlank
+					numColor = dropGround(lineNumbersColor)
+					blankColor, blankGlyph = ink, gutterBlank
 				}
 			}
-			pad := func(n int) string {
-				if shade == "" {
-					return strings.Repeat(" ", n)
+			if blankColor == "" {
+				// SGR accumulates until something resets it, and neither the
+				// shade's ink nor the label's carries a reset -- so asking for
+				// the gutter's colour here would leave its background standing
+				// behind the very cells drawn to do without one.
+				sr.Write(lineNumbersColor)
+			}
+			blanks := func(n int) string {
+				if n <= 0 {
+					return ""
 				}
-				return strings.Repeat(shade, n)
+				return blankColor + strings.Repeat(blankGlyph, n)
+			}
+			// One blank, the label, and the rest of the gutter blank again --
+			// which is what "%-*s" laid down when every cell wore one colour and
+			// the padding could be left to it.
+			field := func(label string) string {
+				return blanks(1) + numColor + label +
+					blanks(lineNumWidth-1-utf8.RuneCountInString(label))
 			}
 			switch {
 			case doubleWide:
-				sr.Write(pad(lineNumWidth / 2))
+				sr.Write(blanks(lineNumWidth / 2))
 			case haveContent:
-				sr.Write(pad(1) + numColor +
-					fmt.Sprintf("%-*d", lineNumWidth-1, docLine+1))
+				sr.Write(field(strconv.Itoa(docLine + 1)))
 			default:
-				sr.Write(pad(1) + numColor +
-					fmt.Sprintf("%-*s", lineNumWidth-1, sr.indicators.GutterEmpty))
+				sr.Write(field(sr.indicators.GutterEmpty))
 			}
 		}
 
