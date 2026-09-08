@@ -7,7 +7,7 @@
 //
 //	go run ./examples/bidifill
 //
-// A key moves between the three pages, and one more closes it.
+// A key moves between the four pages, and one more closes it.
 //
 // What it says about Apple Terminal, which is what it was written for:
 //
@@ -57,6 +57,13 @@
 // must hold: the colours in order, AND the R still standing under the ruler's
 // closing mark. A carrier that fixed the colours by making the line longer has
 // failed.
+//
+// The FOURTH page asks whether that length can be paid back. An emitter
+// addresses every cell it writes, so it can spend the carriers' columns inside
+// the run and then put the cursor on the column the next cell belongs in. The
+// row is four pointed letters and then two plain ones, which keeps the two
+// questions apart: whether the run's own fill lands, and whether what follows
+// it is still where it was put.
 package main
 
 import (
@@ -257,6 +264,11 @@ func main() {
 	}
 
 	carriers()
+	if !waitKey(b) {
+		return
+	}
+
+	relocation()
 	waitKey(b)
 }
 
@@ -562,4 +574,136 @@ func carriers() {
 		"claim no cell. correct is red green yellow blue magenta cyan across",
 		"0..5 AND an R still under the ruler's >. an R that moved is no use.",
 	}, carrierWays, "press a key to quit.")
+}
+
+// The fourth page asks whether the carrier's cost can be paid back.
+//
+// A carrier that cancels the drift takes a cell to do it, so everything after
+// the run is pushed along -- which page three reads as an R out of place. But
+// the emitter addresses every cell it writes anyway, so it can put the cursor
+// back: send the run with its carriers, then move to the column the next cell
+// belongs in and carry on from there. The carriers' columns are spent inside
+// the run, and nothing downstream need know.
+//
+// The row is four pointed letters and then two plain ones, so the two questions
+// are separate and both visible: whether the run's own fill lands on 0..3, and
+// whether c and d are still on 4 and 5 wearing magenta and cyan.
+var relocCells = []string{
+	"ד" + qamats, "ג" + qamats, "ב" + qamats, "א" + qamats, "c", "d",
+}
+
+// The column, counting from one, that a given cell of the block sits in.
+func cellColumn(i int) int { return specimenCol + 1 + i }
+
+var relocWays = []struct {
+	label string
+	emit  func(row int, colour func(k int) string) string
+}{
+	// The control: what the backend sends today.
+	{"as we send it now", func(row int, colour func(int) string) string {
+		return relocRun(colour, "", false) + relocTail(colour, 0)
+	}},
+
+	// Carriers inside the run and nothing done about the cost. The fill should
+	// land and c and d should be pushed off their columns.
+	{"carriers, no fixup", func(row int, colour func(int) string) string {
+		return relocRun(colour, zwj, false) + relocTail(colour, 0)
+	}},
+
+	// The same, with the cursor put back before the tail is written.
+	{"carriers, cursor back", func(row int, colour func(int) string) string {
+		return relocRun(colour, zwj, false) + relocTail(colour, row)
+	}},
+
+	// And with the carriers gathered after the run rather than spread through
+	// it, which is a smaller change to make in an emitter if it works.
+	{"carriers after, back", func(row int, colour func(int) string) string {
+		return relocRun(colour, zwj, true) + relocTail(colour, row)
+	}},
+}
+
+// relocRun writes the right-to-left run: its four clusters in the order a
+// reordering host wants them, each with its attributes. carrier, when given, is
+// added once per mark -- after each cluster, or all together at the end when
+// trailing is set.
+func relocRun(colour func(k int) string, carrier string, trailing bool) string {
+	var b strings.Builder
+	spare := 0
+	for k := 3; k >= 0; k-- { // the run turned back, as the backend turns it
+		b.WriteString(colour(k))
+		b.WriteString(relocCells[k])
+		marks := len([]rune(relocCells[k])) - 1
+		if carrier == "" {
+			continue
+		}
+		if trailing {
+			spare += marks
+			continue
+		}
+		for i := 0; i < marks; i++ {
+			b.WriteString(colour(k))
+			b.WriteString(carrier)
+		}
+	}
+	for i := 0; i < spare; i++ {
+		b.WriteString(colour(0))
+		b.WriteString(carrier)
+	}
+	return b.String()
+}
+
+// relocTail writes the two plain cells that follow the run. A non-zero row puts
+// the cursor back on the column they belong in first, paying back whatever the
+// carriers spent.
+func relocTail(colour func(k int) string, row int) string {
+	var b strings.Builder
+	if row > 0 {
+		fmt.Fprintf(&b, "\033[%d;%dH", row, cellColumn(4))
+	}
+	for k := 4; k < 6; k++ {
+		b.WriteString(colour(k))
+		b.WriteString(relocCells[k])
+	}
+	return b.String()
+}
+
+func relocation() {
+	var out strings.Builder
+	out.WriteString("\033[2J")
+	row := 1
+	say := func(text string) {
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s", row, text)
+		row++
+	}
+	pad := func(text string) string {
+		return text + strings.Repeat(" ", anchorCol-labelCol-len(text))
+	}
+	block := func(heading string, solid bool) {
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s\033[90m%s",
+			row, pad(heading), ruler)
+		row++
+		for _, w := range relocWays {
+			colour := func(k int) string {
+				if solid {
+					return paint(0, false)
+				}
+				return paint(k, false)
+			}
+			fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s%s\033[0m\033[37m%s",
+				row, pad(w.label), leftAnchor+" ", w.emit(row, colour), " "+rightAnchor)
+			row++
+		}
+	}
+
+	say("RELOCATION -- four pointed letters on 0..3, then c and d on 4 and 5.")
+	say("correct is red green yellow blue magenta cyan, c and d on their own")
+	say("columns, and the R back under the ruler's closing mark.")
+	row++
+	block("SEQUENCE", false)
+	row++
+	block("ALL RED", true)
+	row++
+	say("press a key to quit.")
+
+	os.Stdout.WriteString(out.String())
 }
