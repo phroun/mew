@@ -41,6 +41,12 @@ func TestABlankDrawsItsOwnBackground(t *testing.T) {
 		{"a 256-colour ground keeps its index", "\x1b[0;48;5;27m", "\x1b[0;38;5;27m", true},
 		{"a direct colour keeps its channels", "\x1b[0;48;2;1;2;3m", "\x1b[0;38;2;1;2;3m", true},
 		{"no ground, nothing to draw", "\x1b[0;32m", "\x1b[0m", false},
+		// Black is the ground a terminal already shows, so there is nothing to
+		// draw in its place -- but it still goes, since a black fill landing on
+		// a coloured cell would black that cell out.
+		{"black is the ground itself", "\x1b[0;32;40m", "", false},
+		{"and so is a black said the long way", "\x1b[0;48;5;0m", "", false},
+		{"but bright black is a colour", "\x1b[0;100m", "\x1b[0;90m", true},
 	} {
 		got, found := groundAsInk(c.style)
 		if found != c.found {
@@ -146,5 +152,42 @@ func TestTheMirroredGutterDrawsItsOwnGround(t *testing.T) {
 	w.ViewState.SuppressRTLCombining = true
 	if sr.lineDriftsFill(w, "abc שָם") {
 		t.Error("a line whose marks are not emitted was said to drift")
+	}
+}
+
+// Black is the ground a terminal already shows, so a blank wearing it has
+// nothing to draw in its place -- and mew's own styles say it constantly. Left
+// to the shade it would stand texture over every blank in the content area on
+// a row past the drift.
+func TestABlackGroundNeedsNoShade(t *testing.T) {
+	row := func(cells ...bbCell) string {
+		b := newBackBuffer(len(cells)+2, 1)
+		b.flipBidi = true
+		b.flipRideSafe = true
+		b.begin()
+		for i, c := range cells {
+			c.width = 1
+			b.cur[0][i] = c
+		}
+		var sb strings.Builder
+		b.emitRow(&sb, 0)
+		return sb.String()
+	}
+	pointed := bbCell{runes: []rune("ש" + "ְ")}
+
+	// A blank on black, past the drift: nothing to draw.
+	got := row(pointed, bbCell{style: "\x1b[0;32;40m"})
+	if strings.Contains(got, fallbackBlank) {
+		t.Errorf("a blank on black was given a shade: %q", got)
+	}
+	if strings.Contains(got, "40m") {
+		t.Errorf("a black ground survived past the drift, where it would black "+
+			"out whatever cell it lands on: %q", got)
+	}
+
+	// A blank on a colour still draws it.
+	got = row(pointed, bbCell{style: "\x1b[0;32;44m"})
+	if !strings.Contains(got, "\x1b[0;34m"+fallbackBlank) {
+		t.Errorf("a blank on a colour did not draw its own ground: %q", got)
 	}
 }

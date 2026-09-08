@@ -52,6 +52,12 @@ func groundAsInk(style string) (string, bool) {
 	found := false
 	out := filterSGR(style, func(p sgrParam) (string, bool) {
 		switch {
+		case p.blackGround:
+			// Black is what a terminal shows where nothing has been painted, so
+			// there is nothing here to draw and a shaded cell would only be
+			// texture over the ground it already has. It still goes, since a
+			// black fill landing on a coloured cell would black that cell out.
+			return "", false
 		case p.background != "":
 			found = true
 			return p.background, true
@@ -71,6 +77,10 @@ type sgrParam struct {
 	// that sets a background; empty otherwise.
 	background string
 	foreground bool // sets the glyph's colour
+	// blackGround marks a background that IS the ground: what the terminal
+	// shows where nothing was painted. It is dropped like any other, but a
+	// blank wearing it has nothing to draw in its place.
+	blackGround bool
 	// cellPainted marks what the terminal paints at the cell rather than on the
 	// glyph: a background, reverse video, an underline, a strike. These are the
 	// ones that land in the wrong place.
@@ -141,13 +151,15 @@ func sgrParams(body string) []sgrParam {
 			if n == 48 {
 				p.cellPainted = true
 				p.background = "38" + strings.TrimPrefix(text, "48")
+				p.blackGround = text == "48;5;0" || text == "48;2;0;0;0"
 			}
 			out = append(out, p)
 			i += take - 1
 		case n >= 40 && n <= 47, n >= 100 && n <= 107:
 			out = append(out, sgrParam{
 				text: fields[i], cellPainted: true,
-				background: strconv.Itoa(n - 10),
+				background:  strconv.Itoa(n - 10),
+				blackGround: n == 40,
 			})
 		case n >= 30 && n <= 37, n >= 90 && n <= 97:
 			out = append(out, sgrParam{text: fields[i], foreground: true})
