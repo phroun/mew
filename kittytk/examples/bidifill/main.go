@@ -20,11 +20,19 @@
 //   - A point that folds into its base leaves the count, so a line written with
 //     presentation forms is placed correctly and only surviving vowels drift.
 //   - An attribute is consumed only by a character the terminal gives a cell
-//     to. U+200D and U+200B are consumed, cancel the drift exactly, and make
-//     the line longer; U+2060, U+FEFF and U+034F take no cell and consume
-//     nothing at all. There is no third kind, so the fill cannot be given more
-//     to work with without changing the layout, and a line whose marks survive
-//     folding has to wear what rides the glyph instead.
+//     to. U+200D and U+200B are consumed and cancel the drift exactly, by
+//     splitting each cluster so that its mark stands in a cell of its own --
+//     which is the word coming apart. U+2060, U+FEFF and U+034F take no cell
+//     and consume nothing at all. Carriers gathered AFTER a run cost no
+//     columns and do nothing; carriers spread through one work and cost the
+//     word its shape. Paying the columns back with a reposition writes over
+//     the carriers and takes their fill with them, and an overrun with
+//     autowrap off parks the cursor exactly as it is documented to, which
+//     rescues nothing because the cost is not at the end of the line.
+//
+//     So there is nowhere to put a spare attribute that is both free and
+//     effective, and a run whose marks survive folding has to wear what rides
+//     the glyph instead.
 //
 // The FIRST page names the fault. Every specimen is SIX cells, and every one of
 // them is laid out so that the six cells, left to right on the screen, are

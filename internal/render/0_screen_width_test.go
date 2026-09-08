@@ -230,16 +230,27 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
 	}
 
-	marked := "a" + hebrewDot + "b" // a base + a combining mark + b
+	marked := "שָם"                // a pointed Hebrew word: a run with a mark
+	loose := "a" + hebrewDot + "b" // a mark with no right-to-left run to sit in
 	plain := "abc"
 
-	// flip + marks -> ride-safe fg+bold, never the bar.
+	// flip + a pointed run -> ride-safe fg+bold, never the bar.
 	out := render(marked, true)
 	if !strings.Contains(out, flipSel) {
 		t.Errorf("flip+marks should use the ride-safe selection: %q", out)
 	}
 	if strings.Contains(out, bar) {
 		t.Errorf("flip+marks must NOT emit the background bar: %q", out)
+	}
+
+	// A mark with nothing right-to-left around it is in no run, so the host
+	// reorders nothing and the fill lands where it was put: the bar stands.
+	out = render(loose, true)
+	if !strings.Contains(out, bar) {
+		t.Errorf("a mark outside any run should keep the bar: %q", out)
+	}
+	if strings.Contains(out, flipSel) {
+		t.Errorf("a mark outside any run must not force the ride-safe style: %q", out)
 	}
 
 	// flip + NO marks -> the real bar (English keeps its selection).

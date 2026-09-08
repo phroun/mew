@@ -1487,13 +1487,19 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	textColor := sr.col(w, "text")
 	// Selection styling. On a flip host whose bidi reorder miscounts a
 	// background/reverse selection fill (codepoints vs cells) — Terminal.app,
-	// flagged by flipRideSafe — a line carrying combining marks cannot use the
-	// real bar: it drifts and half-vanishes on pointed RTL. Foreground + bold
-	// ride each glyph intact, so those lines use the flip-safe selection (see
-	// the selectionFlip colors). Mark-free lines (English; Arabic, which mew
-	// pre-shapes to single presentation forms) keep the real bar, as do flip
-	// hosts whose fill tracks the glyphs (Kitty).
-	selName, selInvName := "selection", "selectionInvisibles"
+	// flagged by flipRideSafe — a RUN carrying combining marks cannot use the
+	// real bar: its fill slides off the cells it was meant for and pointed RTL
+	// loses most of its selection. Foreground + bold ride each glyph intact, so
+	// those runs use the flip-safe selection (see the selectionFlip colors).
+	// Mark-free runs (English; Arabic, which mew pre-shapes to single
+	// presentation forms) keep the real bar, as do flip hosts whose fill tracks
+	// the glyphs (Kitty).
+	//
+	// Per RUN, because a run is what such a host reorders as a unit and so what
+	// it counts wrongly. A line of chrome and English with one pointed word in
+	// it gives up that word and keeps the bar on everything else; giving up the
+	// whole line loses the fill on every cell where it would have landed right.
+	//
 	// The ride-safe selection is only needed when a zero-width mark is actually
 	// EMITTED: with rtlCombining off they are suppressed below, so the line
 	// carries codepoints == cells and the real bar works. (An LTR combining
@@ -1504,10 +1510,25 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// cells and keeps the real bar — only marks that survive the fold (vowels,
 	// accents) force the ride-safe fill.
 	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
-	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining && lineHasZeroWidthAfterFold(line, folding) {
-		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
+	var giveUpFill []bool
+	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining {
+		giveUpFill = khatool.ZeroWidthRunsAfterFold([]rune(line), folding, isZeroWidthMark)
 	}
-	selectionColor := sr.col(w, selName)
+	// givesUpFill reports whether the rune at this display position sits in a
+	// run whose fill this host cannot place.
+	givesUpFill := func(runePos int) bool {
+		return runePos >= 0 && runePos < len(giveUpFill) && giveUpFill[runePos]
+	}
+	selectionColor := sr.col(w, "selection")
+	selectionFlipColor := sr.col(w, "selectionFlip")
+	// The selection colour for one rune: the run that cannot carry a fill wears
+	// what rides a glyph, and the rest of the line keeps the bar.
+	selectionColorAt := func(runePos int) string {
+		if givesUpFill(runePos) {
+			return selectionFlipColor
+		}
+		return selectionColor
+	}
 	resetColor := sr.col(w, "reset")
 	substitutesColor := sr.col(w, "special") // control char substitutes (^X / hex)
 	truncatedColor := sr.col(w, "truncation")
@@ -1517,7 +1538,8 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// selection variant when the marker falls inside the selection).
 	showInvisibles := w.ViewState.ShowInvisibles
 	plainInvisiblesColor := sr.col(w, "invisibles")
-	selectionInvisiblesColor := sr.col(w, selInvName)
+	selectionInvisiblesColor := sr.col(w, "selectionInvisibles")
+	selectionInvisiblesFlipColor := sr.col(w, "selectionInvisiblesFlip")
 	invisibleSpace := sr.indicators.VisibleSpace // marker for a space
 
 	// showMarks: draw a "*" (in the "marks" color) at every mark / garland-
@@ -1806,7 +1828,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 				disp.ForcedSel[runePos] != "" {
 				return disp.ForcedSel[runePos]
 			}
-			return selectionColor
+			return selectionColorAt(runePos)
 		}
 		if forced != "" {
 			return forced
@@ -1821,6 +1843,9 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// markers use the selectionInvisibles variant.
 	getInvisiblesColor := func(runePos int) string {
 		if isSelected(runePos) {
+			if givesUpFill(runePos) {
+				return selectionInvisiblesFlipColor
+			}
 			return selectionInvisiblesColor
 		}
 		return plainInvisiblesColor
@@ -3121,17 +3146,6 @@ func lineHasZeroWidth(s string) bool {
 // (rendered as ^X, two cells) are excluded.
 func isZeroWidthMark(r rune) bool {
 	return r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0
-}
-
-// lineHasZeroWidthAfterFold reports whether s still carries a zero-width mark
-// once a folding rtlMarkMode has folded each Hebrew cluster into its
-// presentation form. A point that folds into (or is dropped from) its base no
-// longer inflates the codepoint count, so a line of pointed consonants keeps the
-// real selection bar; only marks that survive the fold — vowels, accents,
-// un-formable points — force the ride-safe fill. With folding off it is exactly
-// lineHasZeroWidth.
-func lineHasZeroWidthAfterFold(s string, folding bool) bool {
-	return khatool.HasZeroWidthAfterFold([]rune(s), folding, isZeroWidthMark)
 }
 
 // getTabSize returns the tab size for a viewport.

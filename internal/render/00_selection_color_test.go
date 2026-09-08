@@ -113,3 +113,44 @@ const (
 )
 
 var _ = viewport.Position{}
+
+// A terminal that reorders what it is sent misplaces a background fill one RUN
+// at a time, so a line of English with one pointed word in it gives up the bar
+// on that word and keeps it everywhere else. Giving up the whole line loses the
+// fill on every cell where it would have landed exactly right.
+func TestOnlyThePointedRunGivesUpTheBar(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m" // the ordinary selection fill
+		flipSel = "\x1b[0;1;93m"  // what rides a glyph instead
+	)
+	sr, w := testRenderer()
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true // the ride-safe (Terminal.app) profile
+	w.ViewState.SuppressRTLCombining = false
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+	render := func(line string) string {
+		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
+	}
+
+	// English on both sides of a pointed word: both styles on one line.
+	out := render("abc שָם xyz")
+	if !strings.Contains(out, flipSel) {
+		t.Errorf("the pointed run should give up its fill: %q", out)
+	}
+	if !strings.Contains(out, bar) {
+		t.Errorf("the English around it should keep the bar: %q", out)
+	}
+
+	// The same line with nothing pointed keeps the bar throughout.
+	out = render("abc שם xyz")
+	if strings.Contains(out, flipSel) {
+		t.Errorf("a run with no marks gave up its fill: %q", out)
+	}
+
+	// And a line that is nothing but the pointed run has only the one style,
+	// which is what the whole-line answer used to give every line.
+	out = render("שָם")
+	if strings.Contains(out, bar) {
+		t.Errorf("a line that is all one pointed run kept a bar it cannot place: %q", out)
+	}
+}
