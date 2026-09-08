@@ -1551,6 +1551,17 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	givesUpFill := func(runePos int) bool {
 		return runePos >= 0 && runePos < len(giveUpFill) && giveUpFill[runePos]
 	}
+	// And whether the LINE carries such a run at all, which is what the padding
+	// past the end of the content has to go by: it is not in a run itself, but
+	// it lies past the point the drift starts from and its fill lands back over
+	// the letters.
+	lineGivesUpFill := false
+	for _, give := range giveUpFill {
+		if give {
+			lineGivesUpFill = true
+			break
+		}
+	}
 	selectionColor := sr.col(w, "selection")
 	selectionFlipColor := sr.col(w, "selectionFlip")
 	// The selection colour for one rune: the run that cannot carry a fill wears
@@ -1986,6 +1997,14 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// Space shown as a marker glyph (never inside button chrome).
 			runeDisplay = invisiblesColor + invisibleSpace + baseColor
 			runeVisualWidth = 1
+		} else if r == ' ' && isSelected(logicalIdx) && givesUpFill(logicalIdx) &&
+			!isChrome(logicalIdx) {
+			// A selected space in a run wearing the riding style. That style
+			// paints no ground, so an ordinary space would read as unselected;
+			// a shaded cell says it is selected with ink, which is the one
+			// thing that survives this host's reordering.
+			runeVisualWidth = 1
+			runeDisplay = selectedBlank
 		} else if showInvisibles && r == '\n' {
 			// Line feed marker (appended terminator).
 			runeDisplay = invisiblesColor + sr.indicators.VisibleNewline + baseColor
@@ -2235,8 +2254,21 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	if outputVisualColumn < width {
 		padWidth := width - outputVisualColumn
 		padColor := textColor
+		padGlyph := " "
 		if sel.exists && docLine >= sel.startLine && docLine < sel.endLine {
 			padColor = selectionColor
+			// A line carrying a run whose fill this host cannot place cannot
+			// carry one out here either. The padding sits past the point the
+			// drift starts from, so its bar comes back over the letters and
+			// stands a white ground behind Hebrew that is not selected. The
+			// selection says itself with a GLYPH instead, which rides the
+			// reordering through the way the letters' own colour does -- and a
+			// shaded cell is how a selected run of nothing gets to be visible
+			// at all under a style that paints no ground.
+			if lineGivesUpFill {
+				padColor = selectionFlipColor
+				padGlyph = selectedBlank
+			}
 		}
 		// Under rtl the phantom column opens at the RIGHT edge, which is this
 		// padding's last cell. It holds no data, so highlighting it would show
@@ -2244,13 +2276,13 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		// written above, already in the plain text color.)
 		if phantom && rtl && padColor != textColor && padWidth > 0 {
 			if padWidth > 1 {
-				displayLine.WriteString(padColor + strings.Repeat(" ", padWidth-1))
+				displayLine.WriteString(padColor + strings.Repeat(padGlyph, padWidth-1))
 			}
 			displayLine.WriteString(textColor + " ")
 			padWidth = 0
 		}
 		if padWidth > 0 {
-			displayLine.WriteString(padColor + strings.Repeat(" ", padWidth))
+			displayLine.WriteString(padColor + strings.Repeat(padGlyph, padWidth))
 		}
 	}
 
@@ -3210,3 +3242,13 @@ func calculateAnsiAwareLength(s string) int {
 	}
 	return length
 }
+
+// selectedBlank is what the riding selection stands in place of a space: a
+// light-shaded cell, drawn in the selection's own ink.
+//
+// The riding style exists because a terminal that reorders what it is sent
+// misplaces a background fill, so it says "selected" with colour and weight
+// instead -- and a space has neither. Without this a selected run of
+// whitespace, and a selected end of line, would be indistinguishable from
+// unselected space. The shade is ink, so it lands where its cell lands.
+const selectedBlank = "░"

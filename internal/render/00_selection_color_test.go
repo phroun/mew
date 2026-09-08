@@ -154,3 +154,75 @@ func TestOnlyThePointedRunGivesUpTheBar(t *testing.T) {
 		t.Errorf("a line that is all one pointed run kept a bar it cannot place: %q", out)
 	}
 }
+
+// The riding selection paints no ground, so a selected SPACE under it would be
+// indistinguishable from an unselected one. It stands a shaded cell there
+// instead, in the selection's own ink -- which is what survives this host's
+// reordering.
+func TestTheRidingSelectionShowsItsWhitespace(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m"
+		flipSel = "\x1b[0;1;93m"
+	)
+	sr, w := testRenderer()
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true
+	w.ViewState.SuppressRTLCombining = false
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+	render := func(line string) string {
+		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
+	}
+
+	// A space between two pointed words is inside the run that gave up its
+	// fill, so it wears the shade.
+	out := render("שָם שָם")
+	if !strings.Contains(out, flipSel+selectedBlank) {
+		t.Errorf("a selected space in a run wearing the riding style kept a blank "+
+			"that reads as unselected: %q", out)
+	}
+
+	// A line with nothing to give up keeps ordinary spaces under the bar.
+	out = render("a b c")
+	if strings.Contains(out, selectedBlank) {
+		t.Errorf("a line that can carry its fill stood a shade where a space "+
+			"belongs: %q", out)
+	}
+	if !strings.Contains(out, bar) {
+		t.Errorf("a line that can carry its fill lost its bar: %q", out)
+	}
+}
+
+// And the padding past the end of the content follows the line, not the run.
+// It sits past the point the drift starts from, so its bar comes back over the
+// letters -- a selected newline says itself with the shade instead.
+func TestTheSelectedEndOfLineGivesUpItsFillToo(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m"
+		flipSel = "\x1b[0;1;93m"
+	)
+	sr, w := testRenderer()
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true
+	w.ViewState.SuppressRTLCombining = false
+
+	// A selection running past this line's newline, so the padding is selected.
+	through := selectionRange{startLine: 0, endLine: 1, startRune: 0, endRune: 5, exists: true}
+	render := func(line string) string {
+		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, through, nil, nil)
+	}
+
+	out := render("abc שָם")
+	if !strings.Contains(out, flipSel+strings.Repeat(selectedBlank, 4)) {
+		t.Errorf("the padding on a line carrying a pointed run kept a fill that "+
+			"lands back over the letters: %q", out)
+	}
+
+	// A line with nothing to give up pads with the ordinary bar.
+	out = render("abc")
+	if strings.Contains(out, selectedBlank) {
+		t.Errorf("a line that can carry its fill shaded its padding: %q", out)
+	}
+	if !strings.Contains(out, bar+strings.Repeat(" ", 4)) {
+		t.Errorf("a line that can carry its fill lost its padding bar: %q", out)
+	}
+}
