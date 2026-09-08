@@ -7,7 +7,7 @@
 //
 //	go run ./examples/bidifill
 //
-// A key moves between the four pages, and one more closes it.
+// A key moves between the five pages, and one more closes it.
 //
 // What it says about Apple Terminal, which is what it was written for:
 //
@@ -64,6 +64,15 @@
 // row is four pointed letters and then two plain ones, which keeps the two
 // questions apart: whether the run's own fill lands, and whether what follows
 // it is still where it was put.
+//
+// The FIFTH page measures what a carrier costs. Six of them moved the closing
+// anchor by about two columns on the third page rather than by six, so the cost
+// is not one cell apiece, and a count or a placing that costs nothing while
+// still being consumed would be the fix. Each row is four cells, then some
+// carriers, then a marker, and where the marker lands against the ruler is the
+// answer. The page ends by running a row far past the right edge with autowrap
+// off, to see whether the cursor parks as it is supposed to and leaves the rows
+// around it alone.
 package main
 
 import (
@@ -269,6 +278,11 @@ func main() {
 	}
 
 	relocation()
+	if !waitKey(b) {
+		return
+	}
+
+	carrierCost()
 	waitKey(b)
 }
 
@@ -703,6 +717,102 @@ func relocation() {
 	row++
 	block("ALL RED", true)
 	row++
+	say("press a key to quit.")
+
+	os.Stdout.WriteString(out.String())
+}
+
+// The fifth page measures what a carrier COSTS, and whether an overrun is safe.
+//
+// Six carriers moved the closing anchor by about two columns on the third page,
+// not by six, so a carrier plainly does not cost a whole cell. If there is a
+// count or a placing where it costs NOTHING and is still consumed, that is the
+// fix; and if the cost depends on what it follows, that says where to look.
+//
+// Each row is four cells, then some carriers, then a marker. Where the marker
+// lands against the ruler is the cost, read off directly: on 4 it cost nothing,
+// on 5 it cost one column, and so on.
+const marker = "\033[0m\033[30m\033[107mX"
+
+var costCells = struct{ ascii, hebrew, pointed []string }{
+	ascii:   []string{"a", "b", "c", "d"},
+	hebrew:  []string{"ד", "ג", "ב", "א"},
+	pointed: []string{"ד" + qamats, "ג" + qamats, "ב" + qamats, "א" + qamats},
+}
+
+// costRow writes four cells and then n carriers -- spread through the cells
+// when inside is set, gathered after them when it is not. Right-to-left cells
+// go out turned back, as the backend turns them back.
+func costRow(cells []string, rtl bool, n int, inside bool) string {
+	var b strings.Builder
+	at := func(k int) string { return paint(k, false) }
+	each := 0
+	if inside && len(cells) > 0 {
+		each = n / len(cells)
+	}
+	order := []int{0, 1, 2, 3}
+	if rtl {
+		order = []int{3, 2, 1, 0}
+	}
+	spent := 0
+	for _, k := range order {
+		b.WriteString(at(k))
+		b.WriteString(cells[k])
+		for i := 0; i < each && spent < n; i++ {
+			b.WriteString(at(k))
+			b.WriteString(zwj)
+			spent++
+		}
+	}
+	for ; spent < n; spent++ {
+		b.WriteString(at(3))
+		b.WriteString(zwj)
+	}
+	return b.String() + marker
+}
+
+func carrierCost() {
+	var out strings.Builder
+	out.WriteString("\033[2J")
+	row := 1
+	say := func(text string) {
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s", row, text)
+		row++
+	}
+	pad := func(text string) string {
+		return text + strings.Repeat(" ", anchorCol-labelCol-len(text))
+	}
+	lay := func(label, body string) {
+		fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s%s%s",
+			row, pad(label), leftAnchor+" ", body)
+		row++
+	}
+
+	say("COST -- four cells, then carriers, then a marker. where the marker")
+	say("lands is what the carriers cost: on 4 they cost nothing at all, on 5")
+	say("one column each two of them, on 8 a column apiece.")
+	row++
+
+	fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  %s\033[90m%s",
+		row, pad("COST"), ruler)
+	row++
+	lay("ascii, no carriers", costRow(costCells.ascii, false, 0, false))
+	lay("ascii, 4 after", costRow(costCells.ascii, false, 4, false))
+	lay("hebrew, 4 after", costRow(costCells.hebrew, true, 4, false))
+	lay("pointed, 4 after", costRow(costCells.pointed, true, 4, false))
+	lay("pointed, 4 inside", costRow(costCells.pointed, true, 4, true))
+	lay("pointed, 8 inside", costRow(costCells.pointed, true, 8, true))
+	row++
+
+	// And the overrun, with autowrap off: a row far longer than the screen,
+	// then the row after it. If parking the cursor works, the second row is
+	// where it was put and nothing has scrolled.
+	fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  OVERRUN -- autowrap off, then a row far longer than the screen", row)
+	row++
+	fmt.Fprintf(&out, "\033[?7l\033[%d;1H\033[0m\033[37m  %s", row, strings.Repeat("=", 400))
+	row++
+	fmt.Fprintf(&out, "\033[%d;1H\033[0m\033[37m  THIS LINE IS WHERE IT WAS PUT -- and nothing above it moved\033[?7h", row)
+	row += 2
 	say("press a key to quit.")
 
 	os.Stdout.WriteString(out.String())
