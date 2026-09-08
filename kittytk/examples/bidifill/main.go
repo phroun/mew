@@ -7,7 +7,24 @@
 //
 //	go run ./examples/bidifill
 //
-// A key moves between two pages, and a second closes it.
+// A key moves between the three pages, and one more closes it.
+//
+// What it says about Apple Terminal, which is what it was written for:
+//
+//   - The fill for a right-to-left run slides LEFT one column per combining
+//     mark that survives folding, the whole span together, and whatever slides
+//     past the run's left edge is lost -- it bleeds one column onto the
+//     neighbour and no further. A mark on the first cluster sent costs nothing,
+//     so the drift is the marks consumed before the fill's origin is set.
+//   - Foreground colour and weight ride each glyph through untouched.
+//   - A point that folds into its base leaves the count, so a line written with
+//     presentation forms is placed correctly and only surviving vowels drift.
+//   - An attribute is consumed only by a character the terminal gives a cell
+//     to. U+200D and U+200B are consumed, cancel the drift exactly, and make
+//     the line longer; U+2060, U+FEFF and U+034F take no cell and consume
+//     nothing at all. There is no third kind, so the fill cannot be given more
+//     to work with without changing the layout, and a line whose marks survive
+//     folding has to wear what rides the glyph instead.
 //
 // The FIRST page names the fault. Every specimen is SIX cells, and every one of
 // them is laid out so that the six cells, left to right on the screen, are
@@ -28,12 +45,18 @@
 // six cells separates them again, and more sharply -- a displaced fill still
 // paints the whole block, and only a fill that ran out leaves part of it bare.
 //
-// The SECOND page asks what to do about a terminal that runs out. It sends the
-// same six pointed letters six ways: as the backend sends them now, with an
-// attribute for every codepoint rather than every cell, and with spare
-// attributes carried in on zero-width characters -- after the row, before it,
-// and one per mark. Whichever row comes back in the right order names the fix,
-// and a bright colour anywhere is a spare the terminal took.
+// The SECOND page asks what a terminal that misplaces the fill will accept
+// instead. It sends the same six pointed letters six ways: as the backend sends
+// them now, with an attribute for every codepoint rather than every cell, and
+// with spare attributes carried in on zero-width characters -- after the row,
+// before it, and one per mark. Whichever row comes back in the right order
+// names the fix, and a bright colour anywhere is a spare the terminal took.
+//
+// The THIRD page takes whichever shape moved the fill and tries it with every
+// carrier that ought to claim no cell. Here the reading has two halves and both
+// must hold: the colours in order, AND the R still standing under the ruler's
+// closing mark. A carrier that fixed the colours by making the line longer has
+// failed.
 package main
 
 import (
