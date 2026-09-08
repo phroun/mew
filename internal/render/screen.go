@@ -82,7 +82,14 @@ type ScreenRenderer struct {
 	resizeChan        chan struct{}
 	onResizeFunc      func() // Callback called when terminal resizes
 	watchNativeResize bool   // watch OS resize signals (real terminals only)
-	nativeStop        func() // uninstalls the native watcher, if installed
+
+	// hosted marks a renderer whose output has been virtualized: the bytes go
+	// to another cell renderer rather than to a terminal. That one owns the
+	// wire, and so is the one that turns right-to-left runs back for a host
+	// that reorders -- doing it here as well would turn them back twice and
+	// land every run reversed. See SetTerminal.
+	hosted     bool
+	nativeStop func() // uninstalls the native watcher, if installed
 
 	// Indicator glyphs/labels used to draw chrome (whitespace markers, gutter,
 	// cursor indicators).
@@ -311,6 +318,8 @@ func realTerminalSize() (int, int, error) {
 func (sr *ScreenRenderer) SetTerminal(out io.Writer, sizeFn func() (int, int, error), watchNativeResize bool) {
 	if out != nil {
 		sr.out = out
+		sr.hosted = true
+		sr.frame.flipBidi = false // the host turns the runs back; see hosted
 		// Diagnostic: MEW_EMIT_LOG=/path tees every write that carries RTL text
 		// to that file as a Go-quoted line, so the exact bytes mew sends to the
 		// terminal for a Hebrew/Arabic line can be inspected. Off unless set.
@@ -389,6 +398,13 @@ func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *viewport.Viewport
 func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 	sr.renderMu.Lock()
 	defer sr.renderMu.Unlock()
+	if sr.hosted {
+		// The renderer this one feeds turns the runs back itself, from what it
+		// knows of the terminal it is talking to. Turning them back here too
+		// lands every run reversed, which is what a hosted mew showed while a
+		// standalone one on the same terminal was right.
+		flip = false
+	}
 	if sr.frame.flipBidi != flip {
 		sr.frame.flipBidi = flip
 		sr.frame.forceRedraw()
@@ -420,6 +436,13 @@ func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 //
 // Called with renderMu held.
 func (sr *ScreenRenderer) publishHostBidi() {
+	if sr.hosted {
+		// Not this renderer's to answer. Its own flip is off (the host turns
+		// the runs back), and saying so here would tell the host to stop --
+		// which is the one thing that must not happen. The host recognises the
+		// terminal for itself.
+		return
+	}
 	core.SetHostAppliesBidi(sr.frame.flipBidi, sr.frame.flipWordwise, sr.frame.flipRideSafe)
 }
 
