@@ -2403,6 +2403,51 @@ func (m *MenuBar) isLastMenuFullyVisible() bool {
 	return true
 }
 
+// firstMenuFitsItsMarker reports whether the leftmost menu's title takes no
+// more room than the "..." that stands in for it once it is scrolled off.
+// Both are three cells wide on a terminal for a one-glyph title -- a Ψ, a
+// hamburger -- where the marker measures narrower than most titles on a
+// proportional surface.
+func (m *MenuBar) firstMenuFitsItsMarker() bool {
+	if len(m.menus) == 0 {
+		return false
+	}
+	return m.menuTitleWidth(m.menus[0].title) <= m.ellipsisWidth()
+}
+
+// stepScrollRight gives up one more menu from the left of the run, and two
+// when giving up one would show nothing new.
+//
+// Only the first step pays for the marker: it takes the leftmost title away
+// and puts the "..." where it was, so what it frees is however much wider
+// than the marker that title was. A title no wider frees nothing at all, and
+// the bar comes back looking exactly as it did with one menu fewer on it.
+// Every later step gives its title up outright and always shows something.
+func (m *MenuBar) stepScrollRight() {
+	if !m.canScrollRight() {
+		return
+	}
+	idle := m.scrollOffset == 0 && m.firstMenuFitsItsMarker()
+	m.scrollOffset++
+	if idle && m.canScrollRight() {
+		m.scrollOffset++
+	}
+}
+
+// stepScrollLeft brings one more menu back into the run, and the first menu
+// with it when that one costs no more room than the marker it replaces.
+// Leaving it hidden behind a "..." of its own width buys nothing, so it is
+// shown rather than held back for a step that would look like no step.
+func (m *MenuBar) stepScrollLeft() {
+	if !m.canScrollLeft() {
+		return
+	}
+	m.scrollOffset--
+	if m.scrollOffset == 1 && m.firstMenuFitsItsMarker() {
+		m.scrollOffset--
+	}
+}
+
 // ensureMenuVisible scrolls an overflowing bar as little as it can to bring
 // one menu's whole title into the run.
 //
@@ -3700,7 +3745,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 			// Check [<] button
 			if event.X >= leftButtonX && event.X < leftButtonX+buttonWidth {
 				if m.canScrollLeft() {
-					m.scrollOffset--
+					m.stepScrollLeft()
 					m.Update()
 				}
 				return true
@@ -3710,7 +3755,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 			rightButtonX := leftButtonX + buttonWidth
 			if event.X >= rightButtonX && event.X < rightButtonX+buttonWidth {
 				if m.canScrollRight() {
-					m.scrollOffset++
+					m.stepScrollRight()
 					m.Update()
 				}
 				return true
@@ -4078,10 +4123,10 @@ func (m *MenuBar) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if !m.canScrollLeft() && !m.canScrollRight() {
 		return false
 	}
-	if step < 0 && m.canScrollLeft() {
-		m.scrollOffset--
-	} else if step > 0 && m.canScrollRight() {
-		m.scrollOffset++
+	if step < 0 {
+		m.stepScrollLeft()
+	} else {
+		m.stepScrollRight()
 	}
 	m.Update()
 	return true
