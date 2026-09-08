@@ -53,7 +53,7 @@ func ZeroWidth(r rune) bool {
 // terminal's own pass turns it forward again.
 //
 // macOS Terminal.app is the one in common use; the stream-order terminals
-// (iTerm2, Alacritty, Ghostty, Kitty) leave what they are sent alone. Unset
+// (iTerm2, Alacritty, Ghostty, kitty) leave what they are sent alone. Unset
 // means the second kind, which is the safe assumption: a flip sent to a
 // terminal that does not reorder is itself the bug.
 // The backend settles this from the terminal it finds itself in; a host that

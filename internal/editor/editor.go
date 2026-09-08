@@ -286,8 +286,8 @@ type Editor struct {
 	// which also governs raw-mode and other own-the-tty behaviors.
 	probeCapable bool
 
-	// kittyFlipActive is true when the host is Kitty AND mew is flipping RTL for
-	// it (force_ltr off — the path where Kitty may drop niqqud). It gates the
+	// kittyFlipActive is true when the host is kitty AND mew is flipping RTL for
+	// it (force_ltr off — the path where kitty may drop niqqud). It gates the
 	// force_ltr nudge; see updateNiqqudNudge / kittyconf.go.
 	kittyFlipActive bool
 	// force_ltr nudge hysteresis. The nudge occupies a screen row, so a niqqud
@@ -1139,11 +1139,11 @@ func New(cfg Config) (*Editor, error) {
 		cfg.FlipBidiForHost = "auto"
 	}
 	// Explicit setting applies now; "auto" turns the flip on for a sniffed bidi
-	// host (Apple Terminal, Kitty) and otherwise stays off until the probe
+	// host (Apple Terminal, kitty) and otherwise stays off until the probe
 	// decides (triggered by the first frame containing RTL content). The
 	// segmentation and ride-safe-selection axes ride the same sniff.
 	flip, wordwise, rideSafe, _ := flipSettings(cfg.FlipBidiForHost)
-	// Kitty applies its own bidi only while force_ltr is off; when the user has
+	// kitty applies its own bidi only while force_ltr is off; when the user has
 	// set force_ltr yes, mew must own the bidi and not flip. Sniff kitty.conf to
 	// pick the right path (there is no in-band way to detect force_ltr).
 	flip, wordwise, rideSafe, kittyFlipActive := adjustFlipForKitty(cfg.FlipBidiForHost, flip, wordwise, rideSafe)
@@ -3986,8 +3986,8 @@ func flipSettings(mode string) (flip, wordwise, rideSafe, known bool) {
 	return false, false, false, false
 }
 
-// adjustFlipForKitty overrides the flip axes when the host is Kitty and the
-// mode is "auto": Kitty applies its own bidi only while force_ltr is off, so if
+// adjustFlipForKitty overrides the flip axes when the host is kitty and the
+// mode is "auto": kitty applies its own bidi only while force_ltr is off, so if
 // the user's kitty.conf sets force_ltr yes, mew must own the bidi and NOT flip.
 // Nothing over the wire reveals force_ltr (see kittyconf.go), so this is the
 // one place the sniff feeds the renderer. Returns the (possibly adjusted) axes
@@ -4009,7 +4009,7 @@ func adjustFlipForKitty(mode string, flip, wordwise, rideSafe bool) (fl, ww, rs,
 // and selection match it.
 type hostBidiProfile struct {
 	flip     bool // emit RTL runs in logical order for the host's own bidi
-	wordwise bool // per-word run segmentation (Kitty) vs whole-run (Terminal.app)
+	wordwise bool // per-word run segmentation (kitty) vs whole-run (Terminal.app)
 	rideSafe bool // host's bidi miscounts a background selection fill -> use fg+bold
 	known    bool // sniffing recognised the host (skip the DSR probe)
 }
@@ -4019,7 +4019,7 @@ type hostBidiProfile struct {
 //
 //   - Apple Terminal applies its own bidi, keeps inter-word spaces inside the
 //     RTL run (whole-run), AND miscounts the selection fill (ride-safe).
-//   - Kitty reorders too but reverses each whitespace-separated word in place
+//   - kitty reorders too but reverses each whitespace-separated word in place
 //     (word-wise); its selection fill is assumed to track the glyphs, so it
 //     keeps the real bar (ride-safe off) — pending confirmation.
 //   - iTerm2, Alacritty and Ghostty are stream-order: they render mew's visual
@@ -8451,7 +8451,7 @@ func (e *Editor) performRender() {
 	e.maybeSendBidiProbe()
 	e.checkBidiProbeTimeout()
 
-	// Show/hide the Kitty force_ltr nudge based on what this frame painted.
+	// Show/hide the kitty force_ltr nudge based on what this frame painted.
 	e.updateNiqqudNudge()
 }
 
@@ -9381,9 +9381,9 @@ func (e *Editor) expireStaleNotifications() {
 // priority scan.
 const niqqudNudgeTag = "kitty_force_ltr_nudge"
 
-// niqqudNudgeMessage names the one Kitty config change that fixes RTL vowel
+// niqqudNudgeMessage names the one kitty config change that fixes RTL vowel
 // corruption. It sits pinned at the very bottom (just below the modebar) while a
-// Hebrew cluster with unfolded niqqud is on screen and mew is flipping for Kitty.
+// Hebrew cluster with unfolded niqqud is on screen and mew is flipping for kitty.
 // (Turning mew's own flip off instead would only scramble the letter order —
 // force_ltr is the real fix, so the message points at that alone.)
 const niqqudNudgeMessage = "* kitty terminal needs force_ltr = yes to eliminate RTL vowel corruption.  Please fix and restart mew."
@@ -9415,8 +9415,8 @@ func (e *Editor) niqqudLayoutSig() string {
 }
 
 // updateNiqqudNudge shows or hides the persistent force_ltr nudge. It should
-// exist exactly while mew is flipping RTL for Kitty AND the current frame holds
-// a Hebrew cluster whose niqqud survive the active fold (the content Kitty may
+// exist exactly while mew is flipping RTL for kitty AND the current frame holds
+// a Hebrew cluster whose niqqud survive the active fold (the content kitty may
 // mis-render), and come down otherwise. Called once per render, after the frame
 // is painted so the scan reads live cells.
 //

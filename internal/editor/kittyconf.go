@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Kitty's bidi is render-only: with force_ltr off (its default) it reorders RTL
+// kitty's bidi is render-only: with force_ltr off (its default) it reorders RTL
 // text at the pixel stage while keeping its line buffer in logical order, and
 // with force_ltr on it leaves logical order alone. Nothing over the wire reveals
 // which way it is set — CPR reports the logical cursor column either way, and
@@ -26,8 +26,8 @@ func kittyForceLTR() (forceLTR bool, found bool) {
 	return scanKittyForceLTR(filepath.Join(dir, "kitty.conf"), dir, 0)
 }
 
-// kittyConfigDir resolves the directory Kitty loads kitty.conf from, mirroring
-// Kitty's own precedence: $KITTY_CONFIG_DIRECTORY, else $XDG_CONFIG_HOME/kitty,
+// kittyConfigDir resolves the directory kitty loads kitty.conf from, mirroring
+// kitty's own precedence: $KITTY_CONFIG_DIRECTORY, else $XDG_CONFIG_HOME/kitty,
 // else ~/.config/kitty (the default on both Linux and macOS).
 func kittyConfigDir() string {
 	if d := os.Getenv("KITTY_CONFIG_DIRECTORY"); d != "" {

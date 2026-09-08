@@ -202,7 +202,7 @@ type TUIBackend struct {
 	// terminal that answers neither query falls back to what the environment
 	// says. Images the paint pass asks for are collected here and emitted
 	// after the text diff, since the screen is written as one flush.
-	graphics         int // Graphics{None,Kitty,Sixel}
+	graphics         int // Graphics{None,kitty,Sixel}
 	graphicsAnswered bool
 	pendingImages    []placedImage
 	// shownImages is what the last flush actually put on screen, so an
