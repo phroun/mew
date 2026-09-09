@@ -3002,3 +3002,52 @@ func (t *TreeView) colAlign(col *TreeColumn) core.HAlign {
 func (t *TreeView) colSide(col *TreeColumn, a core.HAlign) core.HSide {
 	return core.ResolveHAlign(a, core.DirInherit, t.colDirection(col))
 }
+
+// TooltipAt answers for the CELL under the pointer rather than for the tree as
+// a whole. A tree is made of parts, and the part being read is the one whose
+// text was cut to fit the column it sits in.
+func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	if s := t.Tooltip(); s != "" {
+		b := t.Bounds()
+		return s, core.UnitRect{Width: b.Width, Height: b.Height}, true
+	}
+	metrics := t.EffectiveCellMetrics()
+	rowH := metrics.UnitsPerCellHeight
+	headerH := t.headerHeight()
+	if rowH <= 0 || local.Y < headerH {
+		return "", core.UnitRect{}, false
+	}
+	visible := int((local.Y - headerH) / rowH)
+	at := t.scrollOffset + visible
+	if at < 0 || at >= len(t.flatList) {
+		return "", core.UnitRect{}, false
+	}
+	item := t.flatList[at]
+
+	lay := t.columnLayout()
+	for _, sp := range lay.spans {
+		clip, ok := lay.spanClip(sp, rowH)
+		if !ok || local.X < clip.X || local.X >= clip.X+clip.Width {
+			continue
+		}
+		text := item.Text
+		avail := clip.Width
+		if sp.col == nil {
+			// The key column's cell begins past the indent, the expander and
+			// the icon, so that is what its text has to fit in.
+			avail -= t.treeCellTextInset(item)
+		} else {
+			text = item.Value(sp.col.ID)
+		}
+		if text == "" || avail <= 0 || t.MeasureText(t.CellRun(text)) <= avail {
+			return "", core.UnitRect{}, false
+		}
+		return text, core.UnitRect{
+			X:      clip.X,
+			Y:      headerH + core.Unit(visible)*rowH,
+			Width:  clip.Width,
+			Height: rowH,
+		}, true
+	}
+	return "", core.UnitRect{}, false
+}

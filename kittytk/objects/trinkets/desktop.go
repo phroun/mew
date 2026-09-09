@@ -260,6 +260,10 @@ type Desktop struct {
 	// Window manager (optional - used when Desktop.Run() is called)
 	windowManager *window.WindowManager
 
+	// tooltip is what the desktop is showing for whoever asked, nil when it is
+	// showing nothing: see desktop_tooltip.go.
+	tooltip *desktopTooltip
+
 	// Focus manager
 	focusManager *core.GlobalFocusManager
 
@@ -5693,6 +5697,11 @@ func (d *Desktop) takePassNextKey(event core.KeyPressEvent, wm *window.WindowMan
 
 // HandleKeyPress handles keyboard input.
 func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
+	// A tooltip answers a pointer resting somewhere, and a reader who has
+	// started typing is no longer resting. It goes before the key is even
+	// dispatched, so an idle pointer cannot leave one standing for ever.
+	d.HideTooltip(nil)
+
 	// Before the menu bar gets a look at it: a key claimed by pass-next-key
 	// mode belongs to the trinket, F10 included.
 	if d.takePassNextKey(event, nil) {

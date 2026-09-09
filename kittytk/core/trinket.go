@@ -367,6 +367,10 @@ type TrinketBase struct {
 	margins    UnitMargins
 
 	elide            ElideMode
+	tooltip          string // what this trinket was told to say when asked
+	cutText          string // the whole of what it last had to cut short
+	tooltipShown     string // what it is currently offering, if anything
+	tooltipSide      TooltipSide
 	layoutStretch    int
 	layoutStretchSet bool
 	layoutAlign      Alignment
@@ -1341,6 +1345,10 @@ func (w *TrinketBase) HandleMouseRelease(event MouseReleaseEvent) bool {
 
 // HandleMouseMove handles mouse movement (override in subclasses).
 func (w *TrinketBase) HandleMouseMove(event MouseMoveEvent) bool {
+	// The default answer to a pointer passing over is to offer what this
+	// trinket could not show. It is not "handled": a move is news, not a
+	// request, and everything else that wants to hear it still does.
+	w.TrackTooltipHover(UnitPoint{X: event.X, Y: event.Y})
 	return false
 }
 

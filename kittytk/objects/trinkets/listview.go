@@ -95,6 +95,9 @@ func NewListView() *ListView {
 	l.Init(l) // Enable polymorphic focus handling
 	l.SetFocusPolicy(core.StrongFocus)
 	l.SetAccessibleRole(core.RoleList)
+	// A cut cell reads on in place: its tooltip stands exactly where the
+	// text is and runs past the boundary that cut it.
+	l.SetTooltipSide(core.TooltipOver)
 	return l
 }
 
@@ -492,6 +495,7 @@ func (l *ListView) Paint(p *core.Painter) {
 			}
 			x += metrics.UnitsPerCellWidth * 2
 		}
+		_ = x
 
 		// Draw text, ellipsized to the room left beside the indicator, the
 		// icon and the scrollbar's own column -- through the same function the
@@ -1007,6 +1011,9 @@ func (l *ListView) overScrollbarThumb(x, y core.Unit) bool {
 
 // HandleMouseMove handles mouse drag to sweep selection.
 func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	l.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	// Track scrollbar-thumb hover regardless of focus/drag state. The
 	// thumb stays lit while a drag is in progress even if the pointer
 	// slips off it.
@@ -1202,4 +1209,50 @@ func (l *ListView) AccessibleInfo() core.AccessibleInfo {
 	}
 
 	return info
+}
+
+// rowTextX is where a row's text begins: past the current-item indicator, and
+// past the icon where one is shown. It is the same arithmetic the painting
+// does, kept in one place so what is measured is what is drawn.
+func (l *ListView) rowTextX(metrics core.CellMetrics, item *ListItem) core.Unit {
+	x := metrics.UnitsPerCellWidth
+	if l.showIcons && item.Icon != nil {
+		x += metrics.UnitsPerCellWidth * 2
+	}
+	return x
+}
+
+// TooltipAt answers for the ROW under the pointer rather than for the list as
+// a whole: a list is made of parts, and the part being read is the one with
+// more to say than fits in it.
+func (l *ListView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	if s := l.Tooltip(); s != "" {
+		b := l.Bounds()
+		return s, core.UnitRect{Width: b.Width, Height: b.Height}, true
+	}
+	metrics := l.EffectiveCellMetrics()
+	bounds := l.Bounds()
+	if metrics.UnitsPerCellHeight <= 0 || local.Y < 0 || local.Y >= bounds.Height {
+		return "", core.UnitRect{}, false
+	}
+	row := int(local.Y / metrics.UnitsPerCellHeight)
+	at := l.scrollOffset + row
+	if at < 0 || at >= len(l.items) {
+		return "", core.UnitRect{}, false
+	}
+	item := l.items[at]
+	x := l.rowTextX(metrics, item)
+	avail := bounds.Width - x
+	if l.showsScrollbar() {
+		avail -= metrics.UnitsPerCellWidth
+	}
+	if item.Text == "" || l.MeasureText(l.CellRun(item.Text)) <= avail {
+		return "", core.UnitRect{}, false
+	}
+	return item.Text, core.UnitRect{
+		X:      x,
+		Y:      core.Unit(row) * metrics.UnitsPerCellHeight,
+		Width:  avail,
+		Height: metrics.UnitsPerCellHeight,
+	}, true
 }

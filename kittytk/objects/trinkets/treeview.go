@@ -227,6 +227,9 @@ func NewTreeView() *TreeView {
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
 	t.SetAccessibleRole(core.RoleTree)
+	// A cut cell reads on in place: its tooltip stands exactly where the
+	// text is and runs past the boundary that cut it.
+	t.SetTooltipSide(core.TooltipOver)
 	return t
 }
 
@@ -1432,6 +1435,9 @@ func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
 
 // HandleMouseMove handles mouse drag to sweep selection.
 func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	t.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	// Track scrollbar-thumb hover. Hover is a no-button affordance: while a
 	// button is held (a drag begun elsewhere passing over) don't light the
 	// thumb - unless this tree owns the scrollbar drag.

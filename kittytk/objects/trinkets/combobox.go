@@ -1977,6 +1977,9 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement while button may be held.
 func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	c.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	if !c.mouseDown || !c.isOpen {
 		return false
 	}

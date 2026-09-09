@@ -649,6 +649,9 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 // highlight when the button is idle, and the pressed-and-over state during
 // a press.
 func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	b.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	// Hover and drag use the same hit box as the click path (full bounds on
 	// cell surfaces; full bounds minus the dead bottom half-row on graphical
 	// surfaces), so all three stop at the same edge.

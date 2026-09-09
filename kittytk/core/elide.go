@@ -97,8 +97,12 @@ func (w *TrinketBase) ElideText(text string, avail Unit) (shown string, whole bo
 // only the ruler changes.
 func (w *TrinketBase) ElideTextWith(text string, avail Unit, measure func(string) Unit) (shown string, whole bool) {
 	if measure(text) <= avail {
+		w.noteCut(text, true)
 		return text, true
 	}
+	// Cut or clipped, there is more to read than is on the screen, and that is
+	// what a tooltip has to offer.
+	w.noteCut(text, false)
 	if w.ElideMode() == ElideOff {
 		return text, false
 	}
