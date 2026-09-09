@@ -4,6 +4,7 @@ package trinkets
 
 import (
 	"testing"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 )
@@ -85,5 +86,58 @@ func TestANoteNearAnEdgeComesBackOnScreen(t *testing.T) {
 	_, y := tooltipOrigin(core.TooltipAuto, anchor, box, screen, metrics, padX, padY)
 	if y+box.Height > screen.Height {
 		t.Errorf("the note reaches %d, past the screen's %d", y+box.Height, screen.Height)
+	}
+}
+
+// A note wide enough to wrap fits the surface it will be DRAWN on, which is
+// not always the desktop: a window torn out onto a surface of its own carries
+// its own popup layer, and a note wrapped to the whole screen runs off the
+// edge of that window.
+func TestAWrappedNoteFitsTheSurfaceItIsDrawnOn(t *testing.T) {
+	d, _, label := onScreen(t)
+	d.tooltipDwell = time.Nanosecond
+	d.tooltipFade = time.Nanosecond
+	d.tooltipShownAt = time.Now()
+
+	// The desktop stays wide; the layer the note goes to is narrow.
+	narrow := &ownLayer{screen: core.UnitRect{Width: 240, Height: 600}}
+	label.SetPopupController(narrow)
+
+	long := "Denomination is how many units make one character cell, eight wide " +
+		"by sixteen tall to begin with, and setting it on this window re-expresses " +
+		"every unit inside it."
+	d.ShowTooltip(core.TooltipRequest{Text: long, From: label})
+	d.ProcessTimers()
+
+	if narrow.got == nil {
+		t.Fatal("no note reached the window's own layer")
+	}
+	box := narrow.got.Bounds
+	if box.Width > narrow.screen.Width {
+		t.Errorf("the note is %d wide on a surface %d wide", box.Width, narrow.screen.Width)
+	}
+	if box.X < 0 || box.X+box.Width > narrow.screen.Width {
+		t.Errorf("the note occupies %d..%d, past the surface's %d",
+			box.X, box.X+box.Width, narrow.screen.Width)
+	}
+	if len(d.tooltip.lines) < 2 {
+		t.Fatalf("the note did not wrap at all: %q", d.tooltip.lines)
+	}
+}
+
+// The note's box is its widest line plus its padding, so a line allowed to
+// fill the whole surface makes a box wider than the surface. What a line may
+// take is the room LESS the padding -- whatever the words happen to do.
+func TestTheWrapWidthLeavesRoomForTheNotesOwnPadding(t *testing.T) {
+	d := NewDesktop()
+	mm := d.tooltipFace()
+	padX, _ := tooltipPadding(mm)
+
+	for _, w := range []core.Unit{80, 160, 240, 500, 900} {
+		surface := core.UnitRect{Width: w, Height: 600}
+		line := d.tooltipWrapWidth(mm, surface)
+		if box := line + padX*2; box > w {
+			t.Errorf("on a surface %d wide a full line makes a box %d wide", w, box)
+		}
 	}
 }

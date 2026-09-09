@@ -529,7 +529,15 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, i
 		// direction around it are both known; what is left is a side.
 		switch core.ResolveHAlign(align.H, core.FindTextDirection(item.Trinket), layoutDir) {
 		case core.SideLeft:
-			bounds.Width = hint.Width
+			// Only ever narrower than the allocation, the way the other two
+			// sides already are. A child handed MORE width than the box has
+			// spills past its edge -- and since a trinket cuts its text to
+			// its OWN bounds, it also concludes it had room for all of it, so
+			// a caption too long for the panel runs off the side instead of
+			// eliding, with nothing to offer on hover either.
+			if hint.Width < bounds.Width {
+				bounds.Width = hint.Width
+			}
 		case core.SideCenter:
 			if hint.Width < bounds.Width {
 				// Grid-snap the offset (see the vertical-centering note) so a

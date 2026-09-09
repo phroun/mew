@@ -261,13 +261,19 @@ func showAndCatch(t *testing.T, wm *window.WindowManager, from *Label) *window.P
 // ownLayer is a popup layer of a window's own, standing in for the surface a
 // torn-out window is drawn on.
 type ownLayer struct {
-	got  *core.PopupRequest
-	gone []string
+	got    *core.PopupRequest
+	gone   []string
+	screen core.UnitRect
 }
 
 func (c *ownLayer) RegisterPopup(r *core.PopupRequest) { c.got = r }
 func (c *ownLayer) UnregisterPopup(id string)          { c.gone = append(c.gone, id) }
-func (c *ownLayer) ScreenBounds() core.UnitRect        { return core.UnitRect{Width: 900, Height: 600} }
+func (c *ownLayer) ScreenBounds() core.UnitRect {
+	if c.screen.Width > 0 {
+		return c.screen
+	}
+	return core.UnitRect{Width: 900, Height: 600}
+}
 func (c *ownLayer) MapToScreen(t core.Trinket, local core.UnitPoint) core.UnitPoint {
 	return local
 }

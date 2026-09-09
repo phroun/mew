@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/objects/trinkets"
@@ -35,6 +36,15 @@ func defaultsSpecimens(t *testing.T) ([]core.Trinket, core.CellMetrics) {
 	}
 	tabs.SetCurrentIndex(idx)
 	win.Layout()
+
+	// Painted before anything is measured: a scroll area sizes its content
+	// when it draws, and a specimen sitting in a panel with no width of its
+	// own says nothing about what it asked for.
+	px, err := raster.New(1600, 1200)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	win.Paint(core.NewPainter(px))
 
 	// The tab holds a scroll area holding the vbox: the only panel down there
 	// with a specimen for every trinket in it.

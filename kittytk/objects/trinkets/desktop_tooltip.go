@@ -83,7 +83,7 @@ func (d *Desktop) ShowTooltip(req core.TooltipRequest) bool {
 		mm := d.tooltipFace()
 		d.tooltip = &desktopTooltip{
 			from:  req.From,
-			lines: tooltipLines(req.Text, d.tooltipWrapWidth(mm), mm),
+			lines: tooltipLines(req.Text, d.tooltipWrapWidth(mm, d.Bounds()), mm),
 			inBar: true,
 			saved: bar.Text(),
 		}
@@ -97,11 +97,10 @@ func (d *Desktop) ShowTooltip(req core.TooltipRequest) bool {
 // revealTooltip puts the note on the screen now.
 func (d *Desktop) revealTooltip(req core.TooltipRequest) bool {
 	mm := d.tooltipFace()
-	lines := tooltipLines(req.Text, d.tooltipWrapWidth(mm), mm)
 	// A note still fading out is replaced rather than left to expire: the
 	// layer holds one tooltip, and this is now that one.
 	d.cancelTooltipDeparture()
-	layer, popup := d.raiseTooltipPopup(req, lines, mm)
+	layer, popup, lines := d.raiseTooltipPopup(req, mm)
 	if layer == nil {
 		return false
 	}
@@ -328,11 +327,22 @@ func (d *Desktop) tooltipFace() MenuMetrics {
 	return MenuMetricsFor(d.EffectiveCellMetrics(), d.EffectiveFont(), d.graphicalSurface())
 }
 
-// tooltipWrapWidth is the widest a tooltip line may be, in units.
-func (d *Desktop) tooltipWrapWidth(mm MenuMetrics) core.Unit {
+// tooltipWrapWidth is the widest a tooltip LINE may be, in units.
+//
+// surface is the room the note will be drawn in. The whole note has to fit
+// there, so what a line may take is that room less the note's own padding and
+// the rule around it -- wrapping to the full width and then adding the
+// padding is what pushed the right edge off the surface.
+func (d *Desktop) tooltipWrapWidth(mm MenuMetrics, surface core.UnitRect) core.Unit {
 	w := core.Unit(tooltipWrapCells) * mm.CellW
-	if b := d.Bounds(); b.Width > 0 && w > b.Width-mm.CellW*4 {
-		w = b.Width - mm.CellW*4
+	padX, _ := tooltipPadding(mm)
+	if surface.Width > 0 {
+		if room := surface.Width - padX*2 - mm.CellW; room > 0 && w > room {
+			w = room
+		}
+	}
+	if w < mm.CellW {
+		w = mm.CellW
 	}
 	return w
 }
@@ -370,15 +380,20 @@ func tooltipStatusText(text string) string {
 
 // raiseTooltipPopup puts the classic tooltip on the popup layer, placed
 // against the text it stands for and shifted to stay on the screen.
-func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm MenuMetrics) (core.PopupController, *core.PopupRequest) {
+func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, mm MenuMetrics) (core.PopupController, *core.PopupRequest, []string) {
 	if req.From == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	pc := d.popupHost(req.From)
 	if pc == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	metrics := d.EffectiveCellMetrics()
+
+	// Wrapped against the SURFACE it will be drawn on, not against the
+	// desktop: a torn-out window's layer is its own window, and a note
+	// wrapped to the whole screen runs off the edge of it.
+	lines := tooltipLines(req.Text, d.tooltipWrapWidth(mm, pc.ScreenBounds()), mm)
 
 	var textW core.Unit
 	for _, line := range lines {
@@ -430,7 +445,7 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm 
 		Fade: &core.Fade{Start: time.Now(), Dur: d.tooltipFadeFor(), From: 0, To: 1},
 	}
 	pc.RegisterPopup(popup)
-	return pc, popup
+	return pc, popup, lines
 }
 
 // tooltipOrigin places the box against the anchor the way the asker asked, and
