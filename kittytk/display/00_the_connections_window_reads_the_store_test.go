@@ -186,18 +186,67 @@ func TestTheWindowActuallyOpens(t *testing.T) {
 	}
 }
 
-// The nickname is what the user wrote and what they read; a fingerprint is
-// seventy-one characters that will be cut short at any width worth giving it.
-// So the name gets the larger share, and the window says so rather than
-// leaving it to whichever number happened to be typed.
-func TestTheNicknameGetsTheLargerShare(t *testing.T) {
-	if nicknameWidth <= identityWidth {
-		t.Errorf("the nickname column is %d units against the identity's %d; the "+
-			"name is the part worth reading whole", nicknameWidth, identityWidth)
+// The name is held still and the fingerprint travels. Squeezing both to the
+// window cuts the fingerprint anyway -- it is seventy-one characters -- and
+// takes the cut out of the name as well, so the tree is put in scroll mode
+// with the name pinned outside the scrolling region.
+func TestTheFingerprintScrollsAndTheNameStaysPut(t *testing.T) {
+	d := trinkets.NewDesktop()
+	b, err := raster.NewScaled(800, 400, 1)
+	if err != nil {
+		t.Fatal(err)
 	}
-	script := connectionsShellScript()
-	if !strings.Contains(script, "key_width="+strconv.Itoa(nicknameWidth)) ||
-		!strings.Contains(script, "width="+strconv.Itoa(identityWidth)) {
-		t.Errorf("the widths are not the ones the window is built with:\n%s", script)
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 8000, Height: 4000})
+	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 8000, Height: 4000})
+
+	store := storeWith(t, "allow app sha256:aaa Editor")
+	if win := showConnections(d, store, tempNicknames(t)); win == nil {
+		t.Fatal("the window did not open")
 	}
+
+	// The tree the window is actually showing, not the text it was built from.
+	tree := openConnectionsTree(t, d)
+	if tree.FitWidth() {
+		t.Error("the columns are squeezed into the window, so the fingerprint is " +
+			"cut short and takes the name's room with it")
+	}
+	if begin, _ := tree.FixedColumns(); begin != 1 {
+		t.Errorf("%d columns are pinned; the name leads the run and is the one "+
+			"that must stay put while the fingerprint travels", begin)
+	}
+	if !strings.Contains(connectionsShellScript(), "key_width="+strconv.Itoa(nicknameWidth)) ||
+		!strings.Contains(connectionsShellScript(), "width="+strconv.Itoa(identityWidth)) {
+		t.Errorf("the widths are not the ones the window is built with:\n%s",
+			connectionsShellScript())
+	}
+}
+
+// openConnectionsTree opens the window and hands back its tree.
+func openConnectionsTree(t *testing.T, d *trinkets.Desktop) *trinkets.TreeView {
+	t.Helper()
+	for _, w := range d.WindowManager().Windows() {
+		if w.Title() != "Connections" {
+			continue
+		}
+		var found *trinkets.TreeView
+		var walk func(core.Trinket)
+		walk = func(n core.Trinket) {
+			if tv, ok := n.(*trinkets.TreeView); ok {
+				found = tv
+				return
+			}
+			if box, ok := n.(core.Container); ok {
+				for _, c := range box.Children() {
+					walk(c)
+				}
+			}
+		}
+		walk(w)
+		if found != nil {
+			return found
+		}
+	}
+	t.Fatal("the window has no tree in it")
+	return nil
 }

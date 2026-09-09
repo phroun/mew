@@ -764,6 +764,9 @@ func (t *TreeView) SetFitWidth(on bool) {
 	t.Update()
 }
 
+// FitWidth reports which of the two modes the columns are in.
+func (t *TreeView) FitWidth() bool { return t.fitWidth }
+
 // SetFixedColumns pins visible columns outside the horizontal scrolling
 // region: the first `begin` of the run and the last `end` of it.
 //
@@ -779,6 +782,10 @@ func (t *TreeView) SetFixedColumns(begin, end int) {
 	t.fixedBegin, t.fixedEnd = begin, end
 	t.Update()
 }
+
+// FixedColumns reports how many visible columns are pinned at each end of the
+// run.
+func (t *TreeView) FixedColumns() (begin, end int) { return t.fixedBegin, t.fixedEnd }
 
 // SetKeyWidth sets the tree column's width in units for scroll mode (fit mode
 // sizes it to the leftover space automatically).

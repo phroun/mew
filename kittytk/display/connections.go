@@ -85,16 +85,21 @@ func connectionsRows(store *authStore, names map[string]string) []connectionsRow
 	return rows
 }
 
-// The two columns' share of the width. A nickname is what the user wrote and
-// what they read, so it takes the larger half. A fingerprint is seventy-one
-// characters that will be cut short at any width worth giving it, and its
-// leading digits are enough to tell two of them apart.
+// The two columns, in units -- eight to a character cell.
 //
-// In units -- eight to a character cell -- and squeezed proportionally to
-// whatever the window turns out to be, so what these settle is the ratio.
+// The name is PINNED and the fingerprint SCROLLS, rather than both being
+// squeezed to the window. Squeezing has to take the space from somewhere, and
+// with two columns of unequal worth there is no ratio that reads well at every
+// window size: the name is short and must be whole, the fingerprint is
+// seventy-one characters and will not fit whatever it is given.
+//
+// So the name is held outside the scrolling region at a width that shows one,
+// and the fingerprint is given room for all of itself and left to scroll --
+// which is the one arrangement where neither has to be cut short to suit the
+// other.
 const (
-	nicknameWidth = 360
-	identityWidth = 240
+	nicknameWidth = 240 // pinned: 30 cells, enough for a name
+	identityWidth = 600 // scrolls: 75 cells, enough for sha256:<64 hex>
 )
 
 // connectionsShellScript is the window and the empty tree. The rows go in
@@ -105,6 +110,7 @@ func connectionsShellScript() string {
 		"w=new window title=\"Connections\" width=640 height=340 children={\n" +
 		"  root=new panel layout=vbox spacing=0 children={\n" +
 		"    tv=new treeview caption=\"Nickname\" showheader treelines editable" +
+		" !fit_width fixed_begin=1" +
 		" key_width=" + strconv.Itoa(nicknameWidth) + " columns={\n" +
 		"      idc=new column id=identity caption=\"Identity\" width=" +
 		strconv.Itoa(identityWidth) + "\n" +
