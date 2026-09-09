@@ -3,12 +3,20 @@ package display
 // One app's shelf: a key-value store of blobs, kept in the app's own folder
 // under whichever of the two trees it named.
 //
-// An app addresses its material by a key of its own choosing -- whatever it
-// finds readable, spaces and punctuation included. What goes on disk is a
-// cleaned form of that key with the item's type as the extension, and an index
-// beside the files says which key each one belongs to. The key is what the app
-// knows; the filename is what the filesystem will take; neither has to be the
-// other.
+// This is NOT a filesystem. A filesystem is coming and this is not the early
+// version of it: an app's shelf is nearer to cookies or a browser's local
+// storage -- a flat set of names, each holding one thing. There are no
+// directories, nothing nests, and a key with a path in it would say otherwise.
+//
+// A key is a NAME. It is the app's own word for the item, and it is the same
+// name the item carries when it becomes a bundle, so the two are one namespace
+// rather than two that have to be kept in step. That is what the rules on it
+// come from: see storeKeyRules.
+//
+// What goes on disk is a cleaned form of the key with the item's type as the
+// extension, and an index beside the files says which key each one belongs to.
+// The key is what the app knows; the filename is what the filesystem will take;
+// neither has to be the other.
 //
 // Bundles are what this is being built for, and it knows nothing about them.
 // It stores blobs.
@@ -53,6 +61,48 @@ const storeIndexName = "index"
 // the file, so nothing on either side has to hold the whole of it to make
 // progress.
 const storeChunk = 2048
+
+// storeKeyRules says whether a key is one this store will take, and why not
+// where it will not.
+//
+// A key is the same name the item carries as a bundle, and a bundle is
+// addressed `<source>/<bundle>/<record>` -- so the three things an address
+// needs to stay unambiguous are the three things a key may not be:
+//
+//   - No slash. It is the separator between the levels of an address, and a
+//     key holding one could not be told from two levels. It is also the thing
+//     that would make a shelf look like a filesystem, and a shelf is not one:
+//     it is a flat set of names, nearer to cookies than to directories.
+//   - No key of nothing but digits. All-digits is how an address says it means
+//     the record at that INDEX, so `objectLibrary/7` could name a bundle or a
+//     record and there is no way to say which.
+//   - Nothing unprintable. The index beside the files is a line per item, so a
+//     key with a newline in it writes a line that reads back as a different
+//     item, silently.
+func storeKeyRules(key string) error {
+	if key == "" {
+		return fmt.Errorf("an item needs a key")
+	}
+	if strings.ContainsRune(key, '/') {
+		return fmt.Errorf("a key is a name, not a path: %q holds a slash, which"+
+			" separates the levels of an address", key)
+	}
+	digits := true
+	for _, r := range key {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("a key is written down as it stands: %q holds a"+
+				" character that cannot be", key)
+		}
+		if r < '0' || r > '9' {
+			digits = false
+		}
+	}
+	if digits {
+		return fmt.Errorf("a key of nothing but digits is how an address names"+
+			" a record by its position, so %q could not be told from one", key)
+	}
+	return nil
+}
 
 // storeItem is one entry: what the app calls it, what it is, what it is filed
 // under, and how big it is.
@@ -100,8 +150,8 @@ func (s *appStore) appendTo(key, typ string, data []byte) (storeItem, error) {
 
 func (s *appStore) write(key, typ string, data []byte, extend bool) (storeItem, error) {
 	key = strings.TrimSpace(key)
-	if key == "" {
-		return storeItem{}, fmt.Errorf("an item needs a key")
+	if err := storeKeyRules(key); err != nil {
+		return storeItem{}, err
 	}
 	if !storeTypes[typ] {
 		return storeItem{}, fmt.Errorf("type %q is not one this desktop stores; it stores %s",
@@ -150,6 +200,33 @@ func (s *appStore) write(key, typ string, data []byte, extend bool) (storeItem, 
 		return storeItem{}, err
 	}
 	return s.sized(it), nil
+}
+
+// drop removes an item: its bytes, and the index line that named it. The name
+// it was filed under is free again afterwards, since nothing holds it and no
+// file answers to it.
+//
+// Dropping what is not there succeeds. What the app asked for is that the key
+// hold nothing, and it holds nothing -- so a clean-up that runs twice, or after
+// a connection dropped mid-batch, is not an error to handle.
+func (s *appStore) drop(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("an item needs a key")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	items := s.readLocked()
+	it, held := items[key]
+	if !held {
+		return nil
+	}
+	if err := os.Remove(s.pathOf(it)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	delete(items, key)
+	return s.writeLocked(items)
 }
 
 // read hands back one slice of an item, and says whether it is the last. An

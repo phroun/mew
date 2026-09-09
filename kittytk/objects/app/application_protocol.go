@@ -65,6 +65,10 @@ func init() {
 				Field("size", "int", "The whole item's size in bytes.").
 				Field("data", "string", "The chunk's bytes, every one of them escaped that is not printable ASCII.").
 				Field("last", "flag", "Set on the chunk that ends the item."),
+			"store_gone": protocol.NewEventDesc("An item is no longer there: what store_drop answers with.").
+				Field("app", "uint", "The application the item was stored for.").
+				Field("tree", "enum", "data or cache.").
+				Field("key", "string", "The key that now holds nothing."),
 			"store_error": protocol.NewEventDesc("A store statement the desktop refused, and why.").
 				Field("app", "uint", "The application that asked.").
 				Field("tree", "enum", "data or cache, where the statement named one.").

@@ -3,10 +3,11 @@ package display
 // The wire face of the app store: four verbs an app uses to keep material on
 // the desktop, and the events they answer with.
 //
-//	store_put    tree=data key="objects/figaro" type=psl data="..."
-//	store_append tree=data key="objects/figaro" type=psl data="..."
+//	store_put    tree=data key="figaro" type=psl data="..."
+//	store_append tree=data key="figaro" type=psl data="..."
 //	store_list   tree=cache
-//	store_get    tree=data key="objects/figaro" offset=2048
+//	store_get    tree=data key="figaro" offset=2048
+//	store_drop   tree=cache key="orchard-thumbnail"
 //
 // Answers come back as events on the application object, which is the ID the
 // handshake already handed the client, so they reach the app through the same
@@ -33,6 +34,7 @@ const (
 	EventStoreItem  = "store_item"  // one item: what it is and how big
 	EventStoreDone  = "store_done"  // the end of an inventory
 	EventStoreData  = "store_data"  // one chunk of an item being read back
+	EventStoreGone  = "store_gone"  // an item is no longer there
 	EventStoreError = "store_error" // what went wrong, and with which key
 )
 
@@ -41,7 +43,7 @@ const (
 // statement on.
 func (c *conn) storeVerb(stmt *protocol.Statement) bool {
 	switch stmt.Verb {
-	case "store_put", "store_append", "store_list", "store_get":
+	case "store_put", "store_append", "store_list", "store_get", "store_drop":
 	default:
 		return false
 	}
@@ -89,6 +91,16 @@ func (c *conn) storeVerb(stmt *protocol.Statement) bool {
 			WithString("key", it.key).
 			WithWord("type", it.typ).
 			WithInt("size", int(it.size)))
+
+	case "store_drop":
+		if err := store.drop(key); err != nil {
+			c.storeFailed(tree, key, err)
+			return true
+		}
+		c.answer(protocol.NewEvent(EventStoreGone).
+			WithUint("app", c.app.ID()).
+			WithWord("tree", tree).
+			WithString("key", key))
 
 	case "store_get":
 		// One chunk per request, from where the app says it has got to. The

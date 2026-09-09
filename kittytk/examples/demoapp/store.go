@@ -29,9 +29,9 @@ type sample struct {
 // dataSamples is what the demo keeps: material it would be sorry to lose.
 func dataSamples() []sample {
 	return []sample{
-		{"catalog/fruit", "txt", []byte(fruitList)},
-		{"registry/departments", "psl", []byte(departmentRegistry)},
-		{"mime/types", "conf", []byte(mimeTypes)},
+		{"fruit-catalog", "txt", []byte(fruitList)},
+		{"department-registry", "psl", []byte(departmentRegistry)},
+		{"mime-types", "conf", []byte(mimeTypes)},
 		{"settings", "ini", []byte(demoSettings)},
 		{"seal", "bin", byteRamp(1)},
 	}
@@ -41,8 +41,8 @@ func dataSamples() []sample {
 // away, and Clear Cache in the Connections window does exactly that.
 func cacheSamples() []sample {
 	return []sample{
-		{"thumbnails/orchard", "bin", byteRamp(24)},
-		{"search/index", "txt", []byte(searchIndex)},
+		{"orchard-thumbnail", "bin", byteRamp(24)},
+		{"search-index", "txt", []byte(searchIndex)},
 	}
 }
 
@@ -291,11 +291,11 @@ shell = default
 `
 
 const searchIndex = `# A scratch index: rebuildable, so it lives in the cache.
-apple      catalog/fruit:1
-acoustics  registry/departments:3
-archive    registry/departments:5
-banana     catalog/fruit:3
-engineering registry/departments:1
-png        mime/types:15
-psl        mime/types:16
+apple      fruit-catalog:1
+acoustics  department-registry:3
+archive    department-registry:5
+banana     fruit-catalog:3
+engineering department-registry:1
+png        mime-types:15
+psl        mime-types:16
 `

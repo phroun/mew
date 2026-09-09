@@ -81,7 +81,8 @@ func storeApp(t *testing.T, name string) (*client.Conn, *storeAnswers) {
 	t.Cleanup(func() { conn.Close() })
 
 	answers := newStoreAnswers()
-	for _, ev := range []string{client.StoreItem, client.StoreDone, client.StoreData, client.StoreError} {
+	for _, ev := range []string{client.StoreItem, client.StoreDone, client.StoreData,
+		client.StoreGone, client.StoreError} {
 		conn.OnStore(ev, answers.add)
 	}
 	return conn, answers
@@ -93,11 +94,11 @@ func TestAnAppWritesAnItemAndReadsItBack(t *testing.T) {
 	conn, answers := storeApp(t, "Store App")
 	want := []byte("(bundle: \"figaro\")")
 
-	if err := conn.Data().Put("objects/figaro", "psl", want); err != nil {
+	if err := conn.Data().Put("figaro", "psl", want); err != nil {
 		t.Fatal(err)
 	}
 	ev := answers.await(t, client.StoreItem)
-	if key, _ := ev.Text("key"); key != "objects/figaro" {
+	if key, _ := ev.Text("key"); key != "figaro" {
 		t.Errorf("the answer is about %q", key)
 	}
 	if typ, _ := ev.Word("type"); typ != "psl" {
@@ -107,7 +108,7 @@ func TestAnAppWritesAnItemAndReadsItBack(t *testing.T) {
 		t.Errorf("the item is %d bytes, want %d", size, len(want))
 	}
 
-	if err := conn.Data().Get("objects/figaro", 0); err != nil {
+	if err := conn.Data().Get("figaro", 0); err != nil {
 		t.Fatal(err)
 	}
 	data := answers.await(t, client.StoreData)
@@ -225,6 +226,50 @@ func TestAnAppAsksWhatItHasStored(t *testing.T) {
 	if _, listed := found["scratch"]; listed {
 		t.Error("the data inventory listed what is in the cache")
 	}
+}
+
+// An app can take an item off its own shelf, and is told the key holds nothing
+// now. Without it a shelf only ever grows, and the app that filled it has no
+// way to empty it.
+func TestAnAppTakesAnItemOffItsShelf(t *testing.T) {
+	conn, answers := storeApp(t, "Tidy App")
+
+	for _, key := range []string{"keep", "spent"} {
+		if err := conn.Data().Put(key, "txt", []byte(key)); err != nil {
+			t.Fatal(err)
+		}
+		answers.await(t, client.StoreItem)
+	}
+
+	if err := conn.Data().Drop("spent"); err != nil {
+		t.Fatal(err)
+	}
+	if key, _ := answers.await(t, client.StoreGone).Text("key"); key != "spent" {
+		t.Errorf("the answer is about %q", key)
+	}
+
+	if err := conn.Data().List(); err != nil {
+		t.Fatal(err)
+	}
+	item := answers.await(t, client.StoreItem)
+	if key, _ := item.Text("key"); key != "keep" {
+		t.Errorf("the inventory still lists %q", key)
+	}
+	if count, _ := answers.await(t, client.StoreDone).Int("count"); count != 1 {
+		t.Errorf("the shelf holds %d items after one of two was dropped", count)
+	}
+
+	// Asking for what was dropped is answered, not left hanging.
+	if err := conn.Data().Get("spent", 0); err != nil {
+		t.Fatal(err)
+	}
+	answers.await(t, client.StoreError)
+
+	// And dropping it again is not an error: the key holds nothing either way.
+	if err := conn.Data().Drop("spent"); err != nil {
+		t.Fatal(err)
+	}
+	answers.await(t, client.StoreGone)
 }
 
 // A statement the store refuses is answered rather than dropped, and says

@@ -9,8 +9,8 @@ package client
 // the answers once, with OnStore, and then asks:
 //
 //	conn.OnStore(client.StoreData, func(ev *wire.Event) { ... })
-//	conn.Data().Put("objects/figaro", "psl", bundle)
-//	conn.Data().Get("objects/figaro", 0)
+//	conn.Data().Put("figaro", "psl", bundle)
+//	conn.Data().Get("figaro", 0)
 //
 // The desktop decides where any of it physically lives. An app names its
 // material and nothing else about it.
@@ -34,6 +34,7 @@ const (
 	StoreItem  = "store_item"  // one item: what it is and how big
 	StoreDone  = "store_done"  // the end of an inventory
 	StoreData  = "store_data"  // one chunk of an item being read back
+	StoreGone  = "store_gone"  // an item is no longer there
 	StoreError = "store_error" // what went wrong, and with which key
 )
 
@@ -55,8 +56,13 @@ func (c *Conn) App() Handle { return Handle{c: c, id: c.AppID()} }
 // flow for it.
 func (c *Conn) OnStore(event string, fn func(*wire.Event)) { c.App().On(event, fn) }
 
-// Put writes an item, replacing whatever the key held. typ is one of txt, psl,
-// bin, ini or conf; the desktop refuses anything else.
+// Put writes an item, replacing whatever the key held.
+//
+// A key is a NAME, not a path: no slashes, nothing that is only digits, and
+// nothing unprintable. It is the same name the item carries when it becomes a
+// bundle, and an address reaches into a bundle with slashes and positions.
+//
+// typ is one of txt, psl, bin, ini or conf; the desktop refuses anything else.
 func (s Store) Put(key, typ string, data []byte) error {
 	return s.send("store_put", key, typ, data)
 }
@@ -79,6 +85,14 @@ func (s Store) List() error {
 func (s Store) Get(key string, offset int) error {
 	_, err := s.c.Exec(fmt.Sprintf("store_get tree=%s key=%s offset=%d",
 		s.tree, wire.Quote(key), offset))
+	return err
+}
+
+// Drop removes an item. It answers with a store_gone naming the key, and
+// dropping what is not there is not an error: what was asked for is that the
+// key hold nothing, and it does.
+func (s Store) Drop(key string) error {
+	_, err := s.c.Exec(fmt.Sprintf("store_drop tree=%s key=%s", s.tree, wire.Quote(key)))
 	return err
 }
 

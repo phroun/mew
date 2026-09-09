@@ -229,6 +229,26 @@ two spellings of one index, and it is a single validation at bundle load. Since
 the separator is a slash, no restriction on underscores in aliases or keys is
 needed.
 
+**And a slash is forbidden inside a key**, which the argument above implies and
+this states. Slash was chosen over underscore precisely because underscore's
+split point is ambiguous; a slash sitting inside a key reintroduces exactly that
+ambiguity, so reserving the separator is the whole of what made it the right
+one.
+
+That rule reaches further than bundles, because **a store key IS the bundle's
+key** — the name an app writes an item under is the name that item carries when
+it becomes a bundle. One namespace, not two kept in step. So the store enforces
+it at the door: no slash, nothing that is only digits, and nothing unprintable
+(its index is a line per item, and a key with a newline in it writes a line that
+reads back as a different item).
+
+A store is useful for more than bundles and will be used for more. But it is
+**not a filesystem** — a real one is coming, separately — and it is nearer to
+cookies or a browser's local storage: a flat set of names, each holding one
+thing. Allowing paths in keys would invite an app to treat it as the filesystem
+it is not, which is the second reason the slash is refused rather than merely
+discouraged.
+
 ## Reaching a bundle from Go
 
 `pawscript.PSLNode` presents both collections of a PSL list at once, which is

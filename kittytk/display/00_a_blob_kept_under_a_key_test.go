@@ -53,32 +53,32 @@ func whole(t *testing.T, s *appStore, key string) []byte {
 func TestWhatIsStoredComesBackByteForByte(t *testing.T) {
 	s := shelf(t)
 	want := everyByte()
-	if _, err := s.put("objects/figaro", "bin", want); err != nil {
+	if _, err := s.put("figaro", "bin", want); err != nil {
 		t.Fatal(err)
 	}
-	if got := whole(t, s, "objects/figaro"); !bytes.Equal(got, want) {
+	if got := whole(t, s, "figaro"); !bytes.Equal(got, want) {
 		t.Errorf("read back %d bytes of %d", len(got), len(want))
 	}
 }
 
 // The key is the app's own word for the item and the filename is what the
-// filesystem will take. A key with a slash in it is not a directory, and one
-// with punctuation is not a file called that.
+// filesystem will take. A key with punctuation in it is not a file called
+// that, and what the app asks for it by does not change.
 func TestAKeyIsFiledUnderACleanedFormOfItself(t *testing.T) {
 	s := shelf(t)
-	it, err := s.put("objects/Figaro's Bundle!", "psl", []byte("(a: 1)"))
+	it, err := s.put("Figaro's Bundle!", "psl", []byte("(a: 1)"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if it.safe != "objects-figaro-s-bundle" {
+	if it.safe != "figaro-s-bundle" {
 		t.Errorf("filed under %q", it.safe)
 	}
-	if _, err := os.Stat(filepath.Join(s.dir, "objects-figaro-s-bundle.psl")); err != nil {
+	if _, err := os.Stat(filepath.Join(s.dir, "figaro-s-bundle.psl")); err != nil {
 		t.Errorf("the file is not where the index says: %v", err)
 	}
 	// The key it answers to is still the app's own.
 	items := s.list()
-	if len(items) != 1 || items[0].key != "objects/Figaro's Bundle!" {
+	if len(items) != 1 || items[0].key != "Figaro's Bundle!" {
 		t.Errorf("the inventory reads as %+v", items)
 	}
 }
@@ -197,6 +197,143 @@ func TestAnItemWithNoKeyIsRefused(t *testing.T) {
 		if _, err := s.put(key, "txt", []byte("x")); err == nil {
 			t.Errorf("an item was stored under %q", key)
 		}
+	}
+}
+
+// A key is a name, and the shelf is a flat set of them -- nearer to cookies
+// than to directories. A slash is what separates the levels of an ADDRESS, so
+// one inside a key could not be told from two levels; and it is what would
+// have an app treat this as the filesystem, which it is not and which is
+// coming separately.
+func TestAKeyIsANameAndNotAPath(t *testing.T) {
+	s := shelf(t)
+	for _, key := range []string{
+		"objects/figaro",
+		"/leading",
+		"trailing/",
+		"a/b/c",
+	} {
+		if _, err := s.put(key, "txt", []byte("x")); err == nil {
+			t.Errorf("%q was stored, so the shelf reads as a filesystem", key)
+		}
+	}
+	// The same name without the path in it is fine, and so is punctuation that
+	// separates nothing.
+	for _, key := range []string{"objects-figaro", "figaro.v2", "my notes", "a_b"} {
+		if _, err := s.put(key, "txt", []byte("x")); err != nil {
+			t.Errorf("%q was refused: %v", key, err)
+		}
+	}
+}
+
+// A key of nothing but digits is how an address names a record by its
+// position, so one would be a bundle that could not be told from an index.
+func TestAKeyOfOnlyDigitsIsRefused(t *testing.T) {
+	s := shelf(t)
+	for _, key := range []string{"7", "01", "1234567"} {
+		if _, err := s.put(key, "txt", []byte("x")); err == nil {
+			t.Errorf("%q was stored, and could not be told from a record index", key)
+		}
+	}
+	// Digits are only a problem when they are the whole of it.
+	for _, key := range []string{"v7", "7a", "7-of-9", "1.0"} {
+		if _, err := s.put(key, "txt", []byte("x")); err != nil {
+			t.Errorf("%q was refused: %v", key, err)
+		}
+	}
+}
+
+// The index is a line per item, so a key with a line break in it would write a
+// second line that reads back as a different item -- and the item it named
+// would answer to a key nobody asked for.
+func TestAKeyThatWouldBreakTheIndexIsRefused(t *testing.T) {
+	s := shelf(t)
+	for _, key := range []string{"two\nlines", "tab\there", "bell\x07", "null\x00"} {
+		if _, err := s.put(key, "txt", []byte("x")); err == nil {
+			t.Errorf("%q was stored, and the index no longer says what is where", key)
+		}
+	}
+	if n := len(s.list()); n != 0 {
+		t.Errorf("the shelf holds %d items after storing nothing storable", n)
+	}
+}
+
+// Dropping an item takes its bytes and the line that named it, and leaves the
+// rest of the shelf alone. An app that can only ever add fills a shelf it has
+// no way to empty.
+func TestDroppingAnItemTakesItAndNothingElse(t *testing.T) {
+	s := shelf(t)
+	for _, key := range []string{"keep", "drop", "also-keep"} {
+		if _, err := s.put(key, "txt", []byte(key)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gone := s.list()[1] // the inventory is by key, so "drop" is the middle one
+	if gone.key != "drop" {
+		t.Fatalf("the inventory reads as %+v", s.list())
+	}
+
+	if err := s.drop("drop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, gone.safe+".txt")); err == nil {
+		t.Error("the item's file outlived the item")
+	}
+	var keys []string
+	for _, it := range s.list() {
+		keys = append(keys, it.key)
+	}
+	if len(keys) != 2 || keys[0] != "also-keep" || keys[1] != "keep" {
+		t.Errorf("the shelf reads as %v after one item was dropped", keys)
+	}
+	if _, _, _, err := s.read("drop", 0); err == nil {
+		t.Error("the dropped item still reads back")
+	}
+	if got := string(whole(t, s, "keep")); got != "keep" {
+		t.Errorf("a neighbour reads as %q", got)
+	}
+}
+
+// Dropping what is not there succeeds: what was asked for is that the key hold
+// nothing, and it does. A clean-up that runs twice is not an error to handle.
+func TestDroppingWhatIsNotThereIsNotAnError(t *testing.T) {
+	s := shelf(t)
+	if _, err := s.put("thing", "txt", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.drop("thing"); err != nil {
+			t.Errorf("drop %d: %v", i, err)
+		}
+	}
+	if err := s.drop("never stored"); err != nil {
+		t.Errorf("dropping a key nothing was under: %v", err)
+	}
+	// And a key needs saying, dropped or not.
+	if err := s.drop("  "); err == nil {
+		t.Error("a drop with no key was accepted")
+	}
+}
+
+// The name a dropped item was filed under is free again: nothing holds it and
+// no file answers to it, so the next key that cleans to it takes it bare rather
+// than being numbered around a gap.
+func TestADroppedItemsNameIsFreeAgain(t *testing.T) {
+	s := shelf(t)
+	first, err := s.put("notes", "txt", []byte("one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.drop("notes"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.put("Notes!", "txt", []byte("two"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.safe != first.safe {
+		t.Errorf("the freed name %q was not used again; the new item is %q",
+			first.safe, second.safe)
 	}
 }
 
