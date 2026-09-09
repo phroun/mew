@@ -67,6 +67,9 @@ type app struct {
 	// Set once the Terminal tab has been opened and its shell started.
 	terminalStarted bool
 
+	// What the desktop has kept for this app, as its answers arrive.
+	shelf storeReport
+
 	quit     chan struct{}
 	quitOnce sync.Once
 }
@@ -108,6 +111,7 @@ func newPrimary(path string) (*app, error) {
 	a.wireMenus()
 	a.wireMDI()
 	a.wireDetails()
+	a.stockTheShelf()
 	a.openProtocolWindow()
 
 	// The demo ends when its main window closes (or the desktop exits).
