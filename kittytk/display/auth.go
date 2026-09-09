@@ -297,3 +297,79 @@ func isLocalConn(nc net.Conn) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
+
+// authEntry is one client the store holds a standing decision about, with the
+// apps it names individually. It is what the Connections window reads: the
+// same lines `decide` consults, gathered per identity instead of answered for
+// one request.
+type authEntry struct {
+	identity string
+	allow    bool // a client-wide allow stands
+	deny     bool // a client-wide deny stands
+	apps     []authEntryApp
+}
+
+// authEntryApp is one app name a client was decided for by itself. Both
+// verdicts are kept rather than one flag, so deny wins wherever the two lines
+// happen to sit relative to each other -- which is what decide does.
+type authEntryApp struct {
+	name  string
+	allow bool
+	deny  bool
+}
+
+// allowed reports the standing verdict for this app: deny beats allow.
+func (a authEntryApp) allowed() bool { return a.allow && !a.deny }
+
+// entries reads every standing decision, in the order identities first appear
+// in the file -- which is the order the user approved them. A repeated line
+// updates the entry it belongs to rather than adding another, matching
+// `decide`, which reads them all and lets deny win.
+func (s *authStore) entries() []authEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := os.Open(s.path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var out []authEntry
+	at := map[string]int{}    // identity -> index in out
+	appAt := map[string]int{} // identity+"\x00"+app -> index in that entry's apps
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		verdict, scope, id, app, ok := parseAuthLine(sc.Text())
+		if !ok {
+			continue
+		}
+		i, seen := at[id]
+		if !seen {
+			i = len(out)
+			at[id] = i
+			out = append(out, authEntry{identity: id})
+		}
+		switch {
+		case scope == "client" && verdict == "allow":
+			out[i].allow = true
+		case scope == "client" && verdict == "deny":
+			out[i].deny = true
+		case scope == "app" && app != "":
+			k := id + "\x00" + app
+			j, had := appAt[k]
+			if !had {
+				j = len(out[i].apps)
+				appAt[k] = j
+				out[i].apps = append(out[i].apps, authEntryApp{name: app})
+			}
+			if verdict == "deny" {
+				out[i].apps[j].deny = true
+			} else {
+				out[i].apps[j].allow = true
+			}
+		}
+	}
+	return out
+}

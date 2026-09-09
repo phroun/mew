@@ -94,6 +94,10 @@ type Application struct {
 	// window. See SetMultiWindow.
 	multiWindow bool
 
+	// showConnections asks for the desktop's Connections item on this app's
+	// own menu. See SetShowConnections.
+	showConnections bool
+
 	// contextOnly suppresses the automatic graphical Edit menu. See
 	// SetContextOnly.
 	contextOnly bool
@@ -563,6 +567,28 @@ func (app *Application) MultiWindow() bool {
 func (app *Application) SetMultiWindow(multi bool) {
 	app.mu.Lock()
 	app.multiWindow = multi
+	app.mu.Unlock()
+}
+
+// ShowConnections reports whether the app asked for the desktop's Connections
+// item on its own menu.
+func (app *Application) ShowConnections() bool {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.showConnections
+}
+
+// SetShowConnections asks for the desktop's Connections item on this app's own
+// menu, directly above Quit.
+//
+// The desktop's own menu carries the item whatever any app says, so this is
+// for an app that expects to be the only thing on the screen -- where that
+// menu may not be shown at all -- and wants the user able to see who has been
+// let in regardless. The window it opens is the desktop's: the app cannot
+// read it, populate it, or be told it was opened.
+func (app *Application) SetShowConnections(show bool) {
+	app.mu.Lock()
+	app.showConnections = show
 	app.mu.Unlock()
 }
 

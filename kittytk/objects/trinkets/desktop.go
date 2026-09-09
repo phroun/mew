@@ -43,6 +43,13 @@ type ApplicationProvider interface {
 	// See Application.SetMultiWindow for the window-creation contract.
 	MultiWindow() bool
 
+	// ShowConnections asks for the desktop's Connections item on this app's
+	// own menu, where it sits directly above Quit. The Ψ menu carries it
+	// whatever any app says; this is for an app that expects to be the only
+	// thing on screen and wants the user able to reach it anyway. See
+	// Application.SetShowConnections.
+	ShowConnections() bool
+
 	// ContextOnly, on a graphical surface, suppresses the automatic Edit
 	// menu and its standard Cut/Copy/Paste/Select All items (the app relies
 	// on context menus instead). It is ignored in the text/TUI version, where
@@ -181,6 +188,10 @@ type Desktop struct {
 	// mode already handles fullscreen there). Off by default - so the standalone
 	// hosts keep their normal chrome.
 	soleAppChromeSuppression bool
+
+	// openConnections is what the Connections menu item calls, installed by
+	// whatever answers for who has connected here. Nil means no item.
+	openConnections func()
 
 	// hideMenuBarSoleApp, when set (SetHideMenuBarForSoleApp), extends the
 	// suppression to the menu bar too (see menuBarShown) - an experimental toggle
@@ -515,6 +526,9 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.AddItem(NewMenuItem("&About Desktop").SetOnTriggered(func() {
 		d.showAboutDesktop()
 	}))
+	if open := d.connectionsOpener(); open != nil {
+		menu.AddItem(NewMenuItem("&Connections...").SetOnTriggered(open))
+	}
 	menu.AddItem(NewSeparator())
 
 	// Desktop Accessories: the small tools that belong to the desktop rather
@@ -2089,6 +2103,36 @@ func (d *Desktop) suppressSoleAppChrome() bool {
 	return true
 }
 
+// SetConnectionsOpener installs what the Connections menu item calls, and by
+// installing it says the item should exist at all.
+//
+// The desktop knows nothing about who has connected to it -- that is the
+// display server's record, and a desktop without one has no connections to
+// show. So the item is offered only where something has offered to answer for
+// it, which is the display package (see display.NewConnectionsOpener).
+func (d *Desktop) SetConnectionsOpener(open func()) {
+	d.mu.Lock()
+	d.openConnections = open
+	d.mu.Unlock()
+	d.updateMenuBarContent()
+}
+
+// connectionsOpener is what the menu items ask for; nil means no item.
+func (d *Desktop) connectionsOpener() func() {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.openConnections
+}
+
+// appShowsConnections reports whether the active app asked for the item on its
+// own menu. The Ψ menu does not consult this: the desktop's own menu carries
+// the item whatever any app thinks.
+func (d *Desktop) appShowsConnections() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.activeApp != nil && d.activeApp.ShowConnections()
+}
+
 // SetSoleAppChromeSuppression enables the sole-app chrome suppression (Ψ menu,
 // status bar, and - with SetHideMenuBarForSoleApp - the menu bar). Off by
 // default; a TUI host enables it, the graphical host does not.
@@ -2405,6 +2449,15 @@ func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator
 // that declared no app-menu items (the synthesized "≡" menu) would otherwise
 // open with a stray separator as its first row, with nothing but Quit below.
 func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
+	// Connections sits directly above Quit, and the separator that already
+	// offsets Quit offsets it too -- so the app's own items, then the
+	// desktop's one, then a rule, then Quit.
+	if open := d.connectionsOpener(); open != nil && d.appShowsConnections() {
+		if len(menu.Items()) > 0 {
+			menu.AddSeparator()
+		}
+		menu.AddItem(NewMenuItem("&Connections...").SetOnTriggered(open))
+	}
 	if len(menu.Items()) > 0 {
 		menu.AddSeparator()
 	}

@@ -24,6 +24,10 @@ import (
 // $KITTYTK_PROMPT_LOCAL=1 to also prompt for local (unix/loopback)
 // connections - handy for trying the prompt on one machine.
 func DefaultConfig(desktop *trinkets.Desktop, endpoint string) Config {
+	// The desktop can only offer Connections where something answers for who
+	// has connected, and this is that something: a host with a display server
+	// gets the menu item, a bare desktop does not.
+	desktop.SetConnectionsOpener(NewConnectionsOpener(desktop))
 	return Config{
 		Endpoint:    endpoint,
 		Token:       os.Getenv("KITTYTK_TOKEN"),
@@ -80,7 +84,7 @@ func NewDesktopAuthorizer(d *trinkets.Desktop) Authorizer {
 
 // authPromptScript is the protocol text for the prompt window. The six
 // buttons carry surfaced names the wiring looks up by id.
-func authPromptScript(req AuthRequest) string {
+func authPromptScript(req AuthRequest, nickname string) string {
 	who := req.Fingerprint
 	if who == "" {
 		who = req.RemoteAddr
@@ -98,6 +102,11 @@ func authPromptScript(req AuthRequest) string {
 		"  root=new panel layout=vbox spacing=6 children={\n" +
 		"    q=new label caption=" + protocol.Quote(q) + " wrap\n" +
 		"    src=new label caption=" + protocol.Quote(from) + " wrap\n" +
+		"    nrow=new panel layout=hbox spacing=6 children={\n" +
+		"      nl=new label caption=\"Call it:\" fill=none\n" +
+		"      nick=new textinput placeholder=\"a name for this client\"" +
+		" text=" + protocol.Quote(nickname) + "\n" +
+		"    }\n" +
 		"    al=new label caption=\"Allow:\"\n" +
 		"    arow=new panel layout=hbox spacing=6 children={\n" +
 		"      b_once=new button caption=\"Once Only\"\n" +
@@ -117,7 +126,8 @@ func authPromptScript(req AuthRequest) string {
 		"all=w.root.arow.b_all\n" +
 		"notnow=w.root.drow.b_not\n" +
 		"never=w.root.drow.b_never\n" +
-		"block=w.root.drow.b_block\n"
+		"block=w.root.drow.b_block\n" +
+		"nickfield=w.root.nrow.nick\n"
 }
 
 // quotedApp wraps an app name in quotes for display within a caption.
@@ -176,7 +186,9 @@ func showAuthPrompt(d *trinkets.Desktop, req AuthRequest, deliver func(AuthDecis
 		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
 		byID:  make(map[uint64]any),
 	}
-	parsed, err := protocol.Parse(authPromptScript(req))
+	nicks := newNicknameStore("")
+	identity := req.identity()
+	parsed, err := protocol.Parse(authPromptScript(req, nicks.get(identity)))
 	if err != nil {
 		return false
 	}
@@ -194,10 +206,17 @@ func showAuthPrompt(d *trinkets.Desktop, req AuthRequest, deliver func(AuthDecis
 		return false
 	}
 
+	// The name the user typed, recorded whichever way they answered: a client
+	// they blocked is one they may most want to recognise next time.
+	nickField, _ := factory.byID[reply.IDs["nickfield"]].(*trinkets.TextInput)
+
 	var once sync.Once
 	choose := func(dec AuthDecision) func() {
 		return func() {
 			once.Do(func() {
+				if nickField != nil && identity != "" {
+					_ = nicks.set(identity, nickField.Text())
+				}
 				// Tear the modal down BEFORE releasing the decision, so
 				// the admitted connection can't start building its window
 				// while this modal is still on the stack (ActivateWindow

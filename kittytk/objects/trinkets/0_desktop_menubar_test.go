@@ -11,20 +11,22 @@ import (
 // mockApp is a minimal ApplicationProvider for exercising the desktop's
 // menu-bar composition.
 type mockApp struct {
-	passNextKey bool
-	name        string
-	objectID    core.ObjectID
-	menuName    string
-	main        *window.Window
-	menus       []*Menu
-	windows     []*window.Window
-	multiWindow bool
-	contextOnly bool
+	passNextKey     bool
+	name            string
+	objectID        core.ObjectID
+	menuName        string
+	main            *window.Window
+	menus           []*Menu
+	windows         []*window.Window
+	multiWindow     bool
+	showConnections bool
+	contextOnly     bool
 }
 
 func (a *mockApp) Name() string            { return a.name }
 func (a *mockApp) ObjectID() core.ObjectID { return a.objectID }
 func (a *mockApp) MultiWindow() bool       { return a.multiWindow }
+func (a *mockApp) ShowConnections() bool   { return a.showConnections }
 func (a *mockApp) ContextOnly() bool       { return a.contextOnly }
 func (a *mockApp) MenuName() string {
 	if a.menuName == "" {
