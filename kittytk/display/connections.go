@@ -215,6 +215,8 @@ func connectionsShellScript() string {
 		"  }\n" +
 		"}\n" +
 		"tree=w.root.tv\n" +
+		"top=w.root.top\n" +
+		"bottom=w.root.bottom\n" +
 		"trusted=w.root.top.trow.trusted\n" +
 		"trustedfrom=w.root.top.trow.tfrom\n" +
 		"loopback=w.root.top.lrow.loopback\n" +
@@ -301,6 +303,8 @@ type connectionsView struct {
 	seen  *pairStore
 
 	tree     *trinkets.TreeView
+	top      *trinkets.Panel // the pane above the list
+	bottom   *trinkets.Panel // the pane below it
 	trusted      *trinkets.Checkbox // admit only clients already decided about
 	trustedFrom  *trinkets.Label    // where that value came from
 	loopback     *trinkets.Checkbox // admit same-machine clients without asking
@@ -338,6 +342,7 @@ func (v *connectionsView) showPolicies() {
 	v.loopback.SetChecked(!v.host.PromptLocal())
 	v.trustedFrom.SetText(originPhrase(v.host.PolicyOrigin(PolicyPreTrustedOnly)))
 	v.loopbackFrom.SetText(originPhrase(v.host.PolicyOrigin(PolicyPromptLocal)))
+	v.top.Layout()
 }
 
 // policyChosen carries a thrown switch to the server, and puts back beside it
@@ -355,6 +360,7 @@ func (v *connectionsView) policyChosen(name string, on bool) {
 	case PolicyPromptLocal:
 		v.loopbackFrom.SetText(originPhrase(v.host.PolicyOrigin(name)))
 	}
+	v.top.Layout()
 	v.d.RequestUpdate()
 }
 
@@ -405,6 +411,11 @@ func (v *connectionsView) show(item *trinkets.TreeItem) {
 		c.SetText(captions[i])
 	}
 	v.choices[standingOf(*row)].SetChecked(true)
+	// The row of standings is as wide as the words in it, and those words are
+	// rewritten every time the selection moves. Nothing asks a parent to lay
+	// out again when a child's text changes, so the pane asks: a row still
+	// arranged for the words before these draws each button over the last.
+	v.bottom.Layout()
 }
 
 // standingOf is which of the three the row sits at: refused, deferred, or
@@ -532,6 +543,8 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 	win, _ := factory.byID[reply.IDs["w"]].(*window.Window)
 	v := &connectionsView{d: d, host: host, store: store, nicks: nicks, seen: seen}
 	v.tree, _ = factory.byID[reply.IDs["tree"]].(*trinkets.TreeView)
+	v.top, _ = factory.byID[reply.IDs["top"]].(*trinkets.Panel)
+	v.bottom, _ = factory.byID[reply.IDs["bottom"]].(*trinkets.Panel)
 	v.trusted, _ = factory.byID[reply.IDs["trusted"]].(*trinkets.Checkbox)
 	v.trustedFrom, _ = factory.byID[reply.IDs["trustedfrom"]].(*trinkets.Label)
 	v.loopback, _ = factory.byID[reply.IDs["loopback"]].(*trinkets.Checkbox)
@@ -597,7 +610,8 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 // window missing one of them would open with a pane that answers nothing, so
 // it is not opened at all.
 func (v *connectionsView) complete() bool {
-	if v.tree == nil || v.trusted == nil || v.loopback == nil ||
+	if v.tree == nil || v.top == nil || v.bottom == nil ||
+		v.trusted == nil || v.loopback == nil ||
 		v.trustedFrom == nil || v.loopbackFrom == nil || v.subject == nil || v.value == nil || v.permhead == nil ||
 		v.acthead == nil || v.permrow == nil || v.actrow == nil || v.forget == nil {
 		return false

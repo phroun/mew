@@ -101,6 +101,26 @@ func TestASwitchSaysWhereItsValueCameFrom(t *testing.T) {
 	}
 }
 
+// And the note is laid out for the words it now holds. It is rewritten when a
+// switch is thrown, and a note still arranged for the shorter words before it
+// is cut off in the middle.
+func TestTheNoteFitsWhatItNowSays(t *testing.T) {
+	host := &fakeHost{kept: "a place with a much longer name than any file"}
+	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempSeen(t))
+
+	for _, step := range []func(){
+		func() { v.trusted.SetChecked(true) },
+		func() { v.loopback.SetChecked(false) },
+	} {
+		step()
+		for _, note := range []*trinkets.Label{v.trustedFrom, v.loopbackFrom} {
+			if b, want := note.Bounds(), note.SizeHint().Width; b.Width < want {
+				t.Errorf("%q sits in %d units and needs %d", note.Text(), b.Width, want)
+			}
+		}
+	}
+}
+
 // A change nothing keeps says so, rather than naming a place it did not go.
 func TestAChangeNobodyKeepsSaysSo(t *testing.T) {
 	host := &fakeHost{origins: map[string]string{PolicyPromptLocal: "kittytk.ini"}}

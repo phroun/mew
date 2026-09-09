@@ -336,3 +336,35 @@ func TestSelectingARowDecidesNothing(t *testing.T) {
 		}
 	}
 }
+
+// The row of standings is laid out for the words it is showing. The pane
+// rewrites those words every time the selection moves -- a client is offered
+// Blocked/Prompt/Allow All, an app Deny/Follow Host Rule/Allow -- and a row
+// still laid out for the words before them draws each button over the last.
+func TestTheStandingsFitTheRowTheyAreShownIn(t *testing.T) {
+	store := storeWith(t, "allow client sha256:aaa", "allow app sha256:aaa Editor")
+	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+
+	// Both wordings, in both orders, since what is wrong is the leftover
+	// arrangement from whichever was shown before.
+	for _, at := range []struct {
+		row int
+		app string
+	}{{1, ""}, {1, "Editor"}, {1, ""}, {1, "Editor"}} {
+		selectRow(t, v, at.row, at.app)
+		for i, c := range v.choices {
+			b, want := c.Bounds(), c.SizeHint().Width
+			if b.Width < want {
+				t.Errorf("%q sits in %d units and needs %d, so it draws outside "+
+					"the room it was given", c.Text(), b.Width, want)
+			}
+			if i > 0 {
+				prev := v.choices[i-1].Bounds()
+				if b.X < prev.X+prev.Width {
+					t.Errorf("%q starts at %d, inside %q which runs to %d",
+						c.Text(), b.X, v.choices[i-1].Text(), prev.X+prev.Width)
+				}
+			}
+		}
+	}
+}
