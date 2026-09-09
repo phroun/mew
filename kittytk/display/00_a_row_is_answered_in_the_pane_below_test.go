@@ -4,7 +4,6 @@ package display
 // choosing in it does to the store behind that row.
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -14,16 +13,16 @@ import (
 
 // paneFor opens the window over the given stores and hands back the view, with
 // the tree already holding this host and whatever the store decided.
-func paneFor(t *testing.T, store *authStore, nicks, seen *pairStore) *connectionsView {
+func paneFor(t *testing.T, store *authStore, nicks *pairStore, known *knownStore) *connectionsView {
 	t.Helper()
-	return paneWithHost(t, nil, store, nicks, seen)
+	return paneWithHost(t, nil, store, nicks, known)
 }
 
 // paneWithHost is the same with a server behind it, which is what the two
 // switches above the list are for.
-func paneWithHost(t *testing.T, host connectionsHost, store *authStore, nicks, seen *pairStore) *connectionsView {
+func paneWithHost(t *testing.T, host connectionsHost, store *authStore, nicks *pairStore, known *knownStore) *connectionsView {
 	t.Helper()
-	v, win := buildConnections(shownDesktop(t), host, store, nicks, seen)
+	v, win := buildConnections(shownDesktop(t), host, store, nicks, known)
 	if v == nil || win == nil {
 		t.Fatal("the window did not build, so the menu item does nothing")
 	}
@@ -86,7 +85,7 @@ func checkedChoice(t *testing.T, v *connectionsView) int {
 // answers whichever row the list is on. The list is the one that grows, so the
 // panes keep their size whatever the window is given.
 func TestTheListSitsBetweenTwoPanes(t *testing.T) {
-	_, win := buildConnections(shownDesktop(t), nil, storeWith(t), tempNicknames(t), tempSeen(t))
+	_, win := buildConnections(shownDesktop(t), nil, storeWith(t), tempNicknames(t), tempKnown(t))
 	if win == nil {
 		t.Fatal("the window did not build")
 	}
@@ -129,7 +128,7 @@ func TestTheListSitsBetweenTwoPanes(t *testing.T) {
 // put at, with the one it stands at now.
 func TestAClientReadsAsItsFingerprintAndItsStanding(t *testing.T) {
 	store := storeWith(t, "deny client sha256:aaa", "allow app sha256:aaa Editor")
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 	selectRow(t, v, 1, "")
 
 	if got := v.subject.Text(); got != "Identity:" {
@@ -154,7 +153,7 @@ func TestAClientReadsAsItsFingerprintAndItsStanding(t *testing.T) {
 // middle one being no standing of its own.
 func TestAnAppReadsAsItsNameAndItsStanding(t *testing.T) {
 	store := storeWith(t, "allow client sha256:aaa", "deny app sha256:aaa Scratch")
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 	selectRow(t, v, 1, "Scratch")
 
 	if got := v.subject.Text(); got != "App Name:" {
@@ -176,7 +175,7 @@ func TestAnAppReadsAsItsNameAndItsStanding(t *testing.T) {
 // gate does with it: nothing, and lets the client's own standing answer.
 func TestAnAppWithNoLineFollowsItsHost(t *testing.T) {
 	store := storeWith(t, "allow app sha256:aaa Editor")
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 	selectRow(t, v, 1, "Editor")
 	if got := checkedChoice(t, v); got != 2 {
 		t.Fatalf("an allowed app reads as standing %d", got)
@@ -197,7 +196,7 @@ func TestAnAppWithNoLineFollowsItsHost(t *testing.T) {
 // This host is us: there is no standing to grant ourselves and nothing to
 // forget, so the pane shows what we are and stops there.
 func TestThisHostIsOnlyShownNotAnswered(t *testing.T) {
-	v := paneFor(t, storeWith(t, "allow client sha256:aaa"), tempNicknames(t), tempSeen(t))
+	v := paneFor(t, storeWith(t, "allow client sha256:aaa"), tempNicknames(t), tempKnown(t))
 	selectRow(t, v, 0, "")
 
 	if got := v.subject.Text(); got != "Identity:" {
@@ -215,10 +214,10 @@ func TestThisHostIsOnlyShownNotAnswered(t *testing.T) {
 }
 
 // Choosing a standing writes it: the store decides the way the pane says, and
-// the row's own Identity cell says the same thing.
+// the row's own Permission cell says the same thing.
 func TestChoosingAStandingRewritesTheStore(t *testing.T) {
 	store := storeWith(t, "allow client sha256:aaa")
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 	selectRow(t, v, 1, "")
 	if got := checkedChoice(t, v); got != 2 {
 		t.Fatalf("a client allowed for every app reads as standing %d", got)
@@ -229,8 +228,9 @@ func TestChoosingAStandingRewritesTheStore(t *testing.T) {
 	if !ok || allow {
 		t.Errorf("after Blocked the store decides allow=%v decided=%v", allow, ok)
 	}
-	if got := v.tree.RootItems()[1].Value("identity"); !strings.Contains(got, "blocked") {
-		t.Errorf("the row still reads %q, so the list and the pane disagree", got)
+	if got := v.tree.RootItems()[1].Value("permission"); got != hostChoices[0] {
+		t.Errorf("the row's Permission cell reads %q, so the list and the pane "+
+			"disagree about the client", got)
 	}
 
 	v.choices[1].SetChecked(true) // Prompt
@@ -247,7 +247,7 @@ func TestAnAppsStandingIsItsOwn(t *testing.T) {
 		"allow app sha256:aaa Editor",
 		"allow app sha256:aaa Mailer",
 	)
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 	selectRow(t, v, 1, "Editor")
 	v.choices[0].SetChecked(true) // Deny
 
@@ -263,15 +263,15 @@ func TestAnAppsStandingIsItsOwn(t *testing.T) {
 // here -- and takes its row with it.
 func TestForgettingAClientLeavesNothingBehind(t *testing.T) {
 	store := storeWith(t, "allow client sha256:aaa", "allow app sha256:aaa Editor")
-	nicks, seen := tempNicknames(t), tempSeen(t)
+	nicks, known := tempNicknames(t), tempKnown(t)
 	if err := nicks.set("sha256:aaa", "the laptop"); err != nil {
 		t.Fatal(err)
 	}
-	if err := markSeen(seen, "sha256:aaa", time.Now()); err != nil {
+	if err := known.admitted("sha256:aaa", "Editor", "the laptop", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
-	v := paneFor(t, store, nicks, seen)
+	v := paneFor(t, store, nicks, known)
 	selectRow(t, v, 1, "")
 	v.forget.Click()
 
@@ -281,8 +281,10 @@ func TestForgettingAClientLeavesNothingBehind(t *testing.T) {
 	if got := nicks.get("sha256:aaa"); got != "" {
 		t.Errorf("the name %q outlived the client it named", got)
 	}
-	if got := seen.get("sha256:aaa"); got != "" {
-		t.Errorf("the last-seen stamp %q outlived the client", got)
+	for _, r := range known.all() {
+		if r.identity == "sha256:aaa" {
+			t.Errorf("%+v outlived the client it is about", r)
+		}
 	}
 	if n := len(v.tree.RootItems()); n != 1 {
 		t.Errorf("the tree still has %d rows; only this host should be left", n)
@@ -296,7 +298,7 @@ func TestForgettingAnAppLeavesItsClient(t *testing.T) {
 		"allow app sha256:aaa Editor",
 		"allow app sha256:aaa Mailer",
 	)
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 	selectRow(t, v, 1, "Editor")
 	v.forget.Click()
 
@@ -317,7 +319,7 @@ func TestForgettingAnAppLeavesItsClient(t *testing.T) {
 // radios move whenever a row is selected, and that is not a choice.
 func TestSelectingARowDecidesNothing(t *testing.T) {
 	store := storeWith(t, "allow client sha256:aaa", "deny client sha256:bbb")
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 	before := store.entries()
 
 	selectRow(t, v, 1, "")
@@ -343,7 +345,7 @@ func TestSelectingARowDecidesNothing(t *testing.T) {
 // still laid out for the words before them draws each button over the last.
 func TestTheStandingsFitTheRowTheyAreShownIn(t *testing.T) {
 	store := storeWith(t, "allow client sha256:aaa", "allow app sha256:aaa Editor")
-	v := paneFor(t, store, tempNicknames(t), tempSeen(t))
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
 
 	// Both wordings, in both orders, since what is wrong is the leftover
 	// arrangement from whichever was shown before.

@@ -101,7 +101,8 @@ type Server struct {
 	endpoint  endpoint
 	token     string
 	store     *authStore
-	seen      *pairStore
+	known     *knownStore
+	nicks     *pairStore
 	authorize Authorizer
 	prompt    Authorizer
 
@@ -196,7 +197,8 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 		endpoint:  ep,
 		token:     cfg.Token,
 		store:     newAuthStore(""),
-		seen:      newSeenStore(""),
+		known:     newKnownStore(""),
+		nicks:     newNicknameStore(""),
 		authorize: cfg.Authorize,
 		prompt:    cfg.Prompt,
 	}
@@ -356,10 +358,13 @@ func (s *Server) serveConn(nc net.Conn) {
 		return
 	}
 	// Admitted: this client has said who it is and been let in, which is what
-	// the Connections window means by having spoken to us. A peer with no
-	// identity -- a unix socket, which is the machine itself -- has no row
-	// there to stamp.
-	_ = markSeen(s.seen, req.identity(), time.Now())
+	// the Connections window means by having spoken to us. Both it and the app
+	// it came as are written down here, so a client allowed for this session
+	// only -- which leaves no rule behind it -- is still shown and still has a
+	// folder of its own. A peer with no identity, which over a unix socket is
+	// this machine, has no row there to record.
+	id := req.identity()
+	_ = s.known.admitted(id, req.AppName, s.nicks.get(id), time.Now())
 
 	sessionID := s.sessions.Add(1)
 

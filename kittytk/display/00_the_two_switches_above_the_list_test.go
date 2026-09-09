@@ -43,7 +43,7 @@ func (h *fakeHost) PolicyOrigin(name string) string { return h.origins[name] }
 // the note that says where its value came from, and worded the way the user
 // thinks of them.
 func TestTheTwoSwitchesStandAboveTheList(t *testing.T) {
-	v := paneWithHost(t, &fakeHost{}, storeWith(t), tempNicknames(t), tempSeen(t))
+	v := paneWithHost(t, &fakeHost{}, storeWith(t), tempNicknames(t), tempKnown(t))
 
 	first, ok := v.trusted.Parent().(*trinkets.Panel)
 	if !ok {
@@ -85,7 +85,7 @@ func TestASwitchSaysWhereItsValueCameFrom(t *testing.T) {
 		},
 		kept: "current",
 	}
-	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempSeen(t))
+	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempKnown(t))
 
 	if got := v.trustedFrom.Text(); got != "(kittytk.ini)" {
 		t.Errorf("the lockdown switch says %q, not the file it came from", got)
@@ -106,7 +106,7 @@ func TestASwitchSaysWhereItsValueCameFrom(t *testing.T) {
 // is cut off in the middle.
 func TestTheNoteFitsWhatItNowSays(t *testing.T) {
 	host := &fakeHost{kept: "a place with a much longer name than any file"}
-	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempSeen(t))
+	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempKnown(t))
 
 	for _, step := range []func(){
 		func() { v.trusted.SetChecked(true) },
@@ -124,7 +124,7 @@ func TestTheNoteFitsWhatItNowSays(t *testing.T) {
 // A change nothing keeps says so, rather than naming a place it did not go.
 func TestAChangeNobodyKeepsSaysSo(t *testing.T) {
 	host := &fakeHost{origins: map[string]string{PolicyPromptLocal: "kittytk.ini"}}
-	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempSeen(t))
+	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempKnown(t))
 
 	v.loopback.SetChecked(false)
 	if got := v.loopbackFrom.Text(); got != "(this session)" {
@@ -142,7 +142,7 @@ func TestTheSwitchesOpenWhereTheServerStands(t *testing.T) {
 		{trusted: true, prompt: false},
 	} {
 		host := h
-		v := paneWithHost(t, &host, storeWith(t), tempNicknames(t), tempSeen(t))
+		v := paneWithHost(t, &host, storeWith(t), tempNicknames(t), tempKnown(t))
 		if v.trusted.IsChecked() != host.trusted {
 			t.Errorf("%+v: the lockdown switch reads %v", host, v.trusted.IsChecked())
 		}
@@ -159,7 +159,7 @@ func TestTheSwitchesOpenWhereTheServerStands(t *testing.T) {
 // And throwing one changes the server, not just the window.
 func TestThrowingASwitchReachesTheServer(t *testing.T) {
 	host := &fakeHost{}
-	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempSeen(t))
+	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempKnown(t))
 
 	v.trusted.SetChecked(true)
 	if !host.trusted {
@@ -184,7 +184,7 @@ func TestThrowingASwitchReachesTheServer(t *testing.T) {
 // A window with no server behind it offers switches that cannot be thrown,
 // rather than switches that look live and change nothing.
 func TestSwitchesWithNoServerAreDead(t *testing.T) {
-	v := paneFor(t, storeWith(t), tempNicknames(t), tempSeen(t))
+	v := paneFor(t, storeWith(t), tempNicknames(t), tempKnown(t))
 	if v.trusted.IsEnabled() || v.loopback.IsEnabled() {
 		t.Error("the switches are live with nothing behind them to change")
 	}

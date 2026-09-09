@@ -23,7 +23,7 @@ func TestASwitchTooWideForTheWindowIsCutToIt(t *testing.T) {
 
 	store := newAuthStore(t.TempDir() + "/authorizations")
 	v, win := buildConnections(shownDesktop(t), &fakeHost{}, store,
-		newPairStore(t.TempDir()+"/nicks", ""), newPairStore(t.TempDir()+"/seen", ""))
+		newPairStore(t.TempDir()+"/nicks", ""), tempKnown(t))
 	if v == nil || win == nil {
 		t.Fatal("the window did not build")
 	}

@@ -418,6 +418,18 @@ type authEntryApp struct {
 // allowed reports the standing verdict for this app: deny beats allow.
 func (a authEntryApp) allowed() bool { return a.allow && !a.deny }
 
+// app is what this client's rules say about one app of it. An app with no rule
+// of its own comes back with neither verdict set, which is the standing that
+// leaves it to the client's own.
+func (e authEntry) app(name string) authEntryApp {
+	for _, a := range e.apps {
+		if a.name == name {
+			return a
+		}
+	}
+	return authEntryApp{name: name}
+}
+
 // entries reads every standing decision, in the order identities first appear
 // in the file -- which is the order the user approved them. A repeated line
 // updates the entry it belongs to rather than adding another, matching

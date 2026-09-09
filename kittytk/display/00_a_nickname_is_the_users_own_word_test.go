@@ -122,7 +122,7 @@ func TestThePromptOffersTheNameAlreadyGiven(t *testing.T) {
 // is somewhere the name can be dropped.
 func TestRenamingAClientInTheWindowSavesIt(t *testing.T) {
 	nicks := tempNicknames(t)
-	v := paneFor(t, storeWith(t, "allow client sha256:aaa"), nicks, tempSeen(t))
+	v := paneFor(t, storeWith(t, "allow client sha256:aaa"), nicks, tempKnown(t))
 	selectRow(t, v, 1, "")
 
 	v.tree.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
@@ -157,7 +157,7 @@ func TestClearingANicknameInTheWindowSaysUnnamed(t *testing.T) {
 	if err := nicks.set("sha256:aaa", "laptop"); err != nil {
 		t.Fatal(err)
 	}
-	v := paneFor(t, storeWith(t, "allow client sha256:aaa"), nicks, tempSeen(t))
+	v := paneFor(t, storeWith(t, "allow client sha256:aaa"), nicks, tempKnown(t))
 	selectRow(t, v, 1, "")
 
 	v.tree.HandleKeyPress(core.KeyPressEvent{Key: "Return"})

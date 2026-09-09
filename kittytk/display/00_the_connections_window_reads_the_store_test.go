@@ -157,7 +157,7 @@ func TestTheWindowActuallyOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	win := showConnections(d, nil, store, nicks, tempSeen(t))
+	win := showConnections(d, nil, store, nicks, tempKnown(t))
 	if win == nil {
 		t.Fatal("the window did not open, so choosing the menu item does nothing")
 	}
@@ -185,7 +185,7 @@ func TestTheWindowActuallyOpens(t *testing.T) {
 func TestTheFingerprintScrollsAndTheNameStaysPut(t *testing.T) {
 	d := shownDesktop(t)
 	store := storeWith(t, "allow app sha256:aaa Editor")
-	if win := showConnections(d, nil, store, tempNicknames(t), tempSeen(t)); win == nil {
+	if win := showConnections(d, nil, store, tempNicknames(t), tempKnown(t)); win == nil {
 		t.Fatal("the window did not open")
 	}
 
@@ -201,7 +201,7 @@ func TestTheFingerprintScrollsAndTheNameStaysPut(t *testing.T) {
 			begin, pinnedColumns)
 	}
 	script := connectionsShellScript()
-	for _, w := range []int{nicknameWidth, lastSeenWidth, identityWidth} {
+	for _, w := range []int{nicknameWidth, lastSeenWidth, storageWidth, permWidth, identityWidth} {
 		if !strings.Contains(script, "width="+strconv.Itoa(w)) {
 			t.Errorf("no column is %d units wide, so the window is not built with "+
 				"the widths that were reasoned about:\n%s", w, script)
@@ -261,7 +261,7 @@ func openConnectionsTree(t *testing.T, d *trinkets.Desktop) *trinkets.TreeView {
 func TestOnlyAClientRowTakesANickname(t *testing.T) {
 	d := shownDesktop(t)
 	store := storeWith(t, "allow app sha256:aaa Editor", "allow app sha256:aaa Mailer")
-	if showConnections(d, nil, store, tempNicknames(t), tempSeen(t)) == nil {
+	if showConnections(d, nil, store, tempNicknames(t), tempKnown(t)) == nil {
 		t.Fatal("the window did not open")
 	}
 

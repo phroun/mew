@@ -2,11 +2,11 @@ package display
 
 // The Connections window: who has been allowed to draw on this desktop.
 //
-// It is the authorizations store made visible. Every row is a client the user
-// has decided about, named by its certificate fingerprint -- exact, permanent,
-// and unreadable -- with the apps it was approved for beneath it. The first
-// column is a nickname the user writes, which is the only part of this the
-// user chooses and the only part nothing depends on.
+// Every row is a client this desktop has either decided about or let in, named
+// by its certificate fingerprint -- exact, permanent, and unreadable -- with
+// the apps it has presented beneath it. The first column is a nickname the user
+// writes, which is the only part of this the user chooses; everything else the
+// row says is read from the two stores behind it.
 //
 // The pane below the list is where a row is read and answered: what it is,
 // what standing it has, and the one destructive thing that can be done to it.
@@ -48,97 +48,212 @@ func hostFingerprint() string {
 // connectionsRow is one line of the tree: a peer, or an app beneath one.
 type connectionsRow struct {
 	name     string // what the name column shows
-	seen     string // what the last-seen column shows: YYYY-MM-DD, or nothing
-	detail   string // what the identity column shows
+	stamp    string // the whole moment this row was last here, RFC 3339
 	identity string // the client this row is about; empty on this host's row
 	app      string // non-empty on an app row
 	self     bool   // this host, which is not a client of itself
 	allow    bool   // a standing allow at this row's scope
 	deny     bool   // a standing deny at this row's scope
+	hostSafe string // the folder this row's client keeps its material in
+	appSafe  string // the folder within it, on an app row
+	bytes    int64  // what it is taking up across both trees
 	children []connectionsRow
 }
 
-// hostDetail is what a client's Identity column says: the fingerprint, and the
-// standing it has where it has one.
-func hostDetail(identity string, allow, deny bool) string {
-	switch {
-	case deny:
-		return identity + "  -- blocked"
-	case allow:
-		return identity + "  -- every app"
+// measure reads what this row is taking up on disk. This host stores nothing
+// for itself, and a client that has never been admitted has no folder to look
+// in -- neither is nothing measured, they are nothing to measure.
+func (r *connectionsRow) measure() {
+	if r.self || r.hostSafe == "" {
+		r.bytes = 0
+		return
 	}
-	return identity
+	r.bytes = storageUsed(r.hostSafe, r.appSafe)
 }
 
-// appDetail is what an app's Identity column says: its own standing, or that
-// it has none and answers to the client's.
-func appDetail(allow, deny bool) string {
+// permWord is what the Permission column says: the standing this row is at, in
+// the same words the pane below offers for it. This host has no standing to be
+// at, being the one granting them.
+func permWord(row connectionsRow) string {
 	switch {
-	case deny:
-		return "denied"
-	case allow:
-		return "allowed"
+	case row.self:
+		return ""
+	case row.app != "":
+		return appChoices[standingOf(row)]
 	}
-	return "follows the host"
+	return hostChoices[standingOf(row)]
 }
+
+// identityWord is what the Identity column says. A fingerprint belongs to a
+// client: an app has no identity of its own and is trusted through the client
+// that presented it.
+func identityWord(row connectionsRow) string {
+	if row.app != "" {
+		return ""
+	}
+	return row.identity
+}
+
+// storageWord is what the Storage column says: what this row is taking up
+// across both trees, or nothing when it has never stored anything.
+func storageWord(row connectionsRow) string { return storageSize(row.bytes) }
+
+// The two columns nobody sees. A size is shown abbreviated and a date is shown
+// as a day, and sorting on either of those sorts on the wrong thing: 9K would
+// come after 10M, and two visits an hour apart would be one value. So each of
+// the shown columns hands its sorting to a hidden one holding what it was
+// abbreviated FROM -- the whole moment, and the byte count.
+func stampWord(row connectionsRow) string { return row.stamp }
+
+func bytesWord(row connectionsRow) string { return strconv.FormatInt(row.bytes, 10) }
+
+// seenWord is what the Last Seen column shows: the day, which is as fine as
+// anyone reads a list of clients by.
+func seenWord(row connectionsRow) string { return seenDate(row.stamp) }
 
 // connectionsRows gathers what the window shows: this host first, then every
-// client the store has decided about, each with the apps it names.
-func connectionsRows(store *authStore, names, seen map[string]string) []connectionsRow {
+// client this desktop knows of.
+//
+// Two stores answer that, and neither alone is the list. The authorizations
+// store holds the clients there is a RULE about, which includes ones blocked
+// before they ever drew anything; the known-clients store holds the ones that
+// have been ADMITTED, which includes ones let in for a session only and so
+// carrying no rule at all. A client in either belongs in the window.
+func connectionsRows(store *authStore, names map[string]string, known []knownRecord) []connectionsRow {
 	self := hostFingerprint()
 	if self == "" {
 		self = "(no identity yet -- none has been needed)"
 	}
-	rows := []connectionsRow{{name: "This Host", detail: self, identity: self, self: true}}
+	rows := []connectionsRow{{name: "This Host", identity: self, self: true}}
 
-	for _, e := range store.entries() {
+	ruled := store.entries()
+	byID := map[string]authEntry{}
+	for _, e := range ruled {
+		byID[e.identity] = e
+	}
+	hosts, apps := indexKnown(known)
+	for _, identity := range clientOrder(ruled, known) {
+		e := byID[identity]
 		r := connectionsRow{
-			identity: e.identity,
+			identity: identity,
 			allow:    e.allow,
 			deny:     e.deny,
-			detail:   hostDetail(e.identity, e.allow, e.deny),
-			seen:     seenDate(seen[e.identity]),
+			hostSafe: hosts[identity].safe,
+			stamp:    hosts[identity].seen,
+			name:     "(unnamed)",
 		}
-		if n := names[e.identity]; n != "" {
+		if n := names[identity]; n != "" {
 			r.name = n
-		} else {
-			r.name = "(unnamed)"
 		}
-		apps := append([]authEntryApp(nil), e.apps...)
-		sort.Slice(apps, func(i, j int) bool { return apps[i].name < apps[j].name })
-		for _, a := range apps {
-			r.children = append(r.children, connectionsRow{
-				name:     a.name,
-				identity: e.identity,
-				app:      a.name,
+		r.measure()
+		for _, name := range appOrder(e, apps[identity]) {
+			a := e.app(name)
+			child := connectionsRow{
+				name:     name,
+				identity: identity,
+				app:      name,
 				allow:    a.allow,
 				deny:     a.deny,
-				detail:   appDetail(a.allow, a.deny),
-			})
+				hostSafe: r.hostSafe,
+				appSafe:  apps[identity][name].safe,
+				stamp:    apps[identity][name].seen,
+			}
+			child.measure()
+			r.children = append(r.children, child)
 		}
 		rows = append(rows, r)
 	}
 	return rows
 }
 
-// The three columns, in units -- eight to a character cell.
+// indexKnown sorts the records into what they are about: one per client, and
+// one per app of a client keyed by the name it connected as.
+func indexKnown(known []knownRecord) (map[string]knownRecord, map[string]map[string]knownRecord) {
+	hosts := map[string]knownRecord{}
+	apps := map[string]map[string]knownRecord{}
+	for _, r := range known {
+		if r.app == "" {
+			hosts[r.identity] = r
+			continue
+		}
+		if apps[r.identity] == nil {
+			apps[r.identity] = map[string]knownRecord{}
+		}
+		apps[r.identity][r.app] = r
+	}
+	return hosts, apps
+}
+
+// clientOrder is every client either store knows of, once each: those with a
+// rule in the order they were decided about, then those without one in the
+// order they were first admitted.
+func clientOrder(ruled []authEntry, known []knownRecord) []string {
+	var order []string
+	at := map[string]bool{}
+	for _, e := range ruled {
+		if !at[e.identity] {
+			at[e.identity] = true
+			order = append(order, e.identity)
+		}
+	}
+	for _, r := range known {
+		if r.app == "" && !at[r.identity] {
+			at[r.identity] = true
+			order = append(order, r.identity)
+		}
+	}
+	return order
+}
+
+// appOrder is every app of one client, from either store, in name order -- the
+// only order that means anything, since one store holds the ones ruled about
+// and the other the ones merely admitted.
+func appOrder(e authEntry, known map[string]knownRecord) []string {
+	var order []string
+	at := map[string]bool{}
+	for _, a := range e.apps {
+		if !at[a.name] {
+			at[a.name] = true
+			order = append(order, a.name)
+		}
+	}
+	for name := range known {
+		if !at[name] {
+			at[name] = true
+			order = append(order, name)
+		}
+	}
+	sort.Strings(order)
+	return order
+}
+
+// The five columns, in units -- eight to a character cell.
 //
-// The two short ones are PINNED and the fingerprint SCROLLS, rather than all
-// three being squeezed to the window. Squeezing has to take the space from
+// The four short ones are PINNED and the fingerprint SCROLLS, rather than all
+// five being squeezed to the window. Squeezing has to take the space from
 // somewhere, and with columns of unequal worth there is no ratio that reads
-// well at every window size: a name and a date are short and must be whole,
-// the fingerprint is seventy-one characters and will not fit whatever it is
-// given.
+// well at every window size: a name, a date, a size and a standing are short
+// and must be whole, the fingerprint is seventy-one characters and will not fit
+// whatever it is given.
 //
-// So the name and the date are held outside the scrolling region at widths
-// that show them, and the fingerprint is given room for all of itself and left
-// to scroll -- which is the one arrangement where nothing has to be cut short
-// to suit anything else.
+// So the short ones are held outside the scrolling region at widths that show
+// them, and the fingerprint is given room for all of itself and left to scroll
+// -- which is the one arrangement where nothing has to be cut short to suit
+// anything else.
+// Two more columns are declared and never drawn: they hold what the shown date
+// and the shown size were abbreviated from, and each shown column sorts on its
+// hidden one. Their indices are into the data columns in declaration order,
+// which is what a column's sortproxy names.
 const (
 	nicknameWidth = 120 // pinned: 15 cells
 	lastSeenWidth = 96  // pinned: 12 cells, enough for YYYY-MM-DD
+	storageWidth  = 72  // pinned: 9 cells, enough for 1023b
+	permWidth     = 136 // pinned: 17 cells, enough for Follow Host Rule
 	identityWidth = 600 // scrolls: 75 cells, enough for sha256:<64 hex>
-	pinnedColumns = 2   // the name and the date, counted from where the run begins
+	pinnedColumns = 4   // everything but the fingerprint, counted from where the run begins
+
+	stampColumn = 4 // the whole moment behind the Last Seen day
+	bytesColumn = 5 // the byte count behind the Storage figure
 )
 
 // The three standings offered in the pane, in the order they are shown:
@@ -191,10 +306,21 @@ func connectionsShellScript() string {
 		"    tv=new treeview stretch=1 caption=\"Nickname\" showheader treelines" +
 		" editable !fit_width fixed_begin=" + strconv.Itoa(pinnedColumns) +
 		" key_width=" + strconv.Itoa(nicknameWidth) + " columns={\n" +
-		"      sc=new column id=lastseen caption=\"Last Seen\" width=" +
-		strconv.Itoa(lastSeenWidth) + "\n" +
+		"      sc=new column id=lastseen caption=\"Last Seen\" sortable sortproxy=" +
+		strconv.Itoa(stampColumn) + " width=" + strconv.Itoa(lastSeenWidth) + "\n" +
+		// A size reads from its last digit, so the sizes line up on the edge
+		// the column ends at, whichever way the column reads.
+		"      stc=new column id=storage caption=\"Storage\" align=layoutopposite" +
+		" sortable sortproxy=" + strconv.Itoa(bytesColumn) +
+		" width=" + strconv.Itoa(storageWidth) + "\n" +
+		"      pc=new column id=permission caption=\"Permission\" width=" +
+		strconv.Itoa(permWidth) + "\n" +
 		"      idc=new column id=identity caption=\"Identity\" width=" +
 		strconv.Itoa(identityWidth) + "\n" +
+		// Declared last so the four shown ones keep the indices the pinning
+		// counts, and never drawn: they exist to be sorted on.
+		"      stampc=new column id=stamp hidden\n" +
+		"      bytesc=new column id=bytes hidden numeric\n" +
 		"    }\n" +
 		"    bottom=new panel layout=grid columns={\n" +
 		"      new band id=body stretch=1\n" +
@@ -210,6 +336,7 @@ func connectionsShellScript() string {
 		"      acthead=new label caption=\"Actions:\" row=4\n" +
 		"      actrow=new panel layout=hbox spacing=8 row=5 children={\n" +
 		"        forget=new button caption=\"Forget\"\n" +
+		"        clearcache=new button caption=\"Clear Cache\"\n" +
 		"      }\n" +
 		"    }\n" +
 		"  }\n" +
@@ -221,6 +348,10 @@ func connectionsShellScript() string {
 		"loopback=w.root.top.lrow.loopback\n" +
 		"loopbackfrom=w.root.top.lrow.lfrom\n" +
 		"seencol=w.root.tv.sc\n" +
+		"storagecol=w.root.tv.stc\n" +
+		"stampcol=w.root.tv.stampc\n" +
+		"bytescol=w.root.tv.bytesc\n" +
+		"permcol=w.root.tv.pc\n" +
 		"col=w.root.tv.idc\n" +
 		"subject=w.root.bottom.subject\n" +
 		"value=w.root.bottom.value\n" +
@@ -231,7 +362,8 @@ func connectionsShellScript() string {
 		"choice0=w.root.bottom.permrow.c0\n" +
 		"choice1=w.root.bottom.permrow.c1\n" +
 		"choice2=w.root.bottom.permrow.c2\n" +
-		"forget=w.root.bottom.actrow.forget\n"
+		"forget=w.root.bottom.actrow.forget\n" +
+		"clearcache=w.root.bottom.actrow.clearcache\n"
 }
 
 // editableFlag is what a row says about being written in.
@@ -275,7 +407,7 @@ func connectionsItemsScript(rows []connectionsRow) string {
 	return sb.String()
 }
 
-// connectionsCellsScript fills both data columns from the rows, addressing
+// connectionsCellsScript fills every data column from the rows, addressing
 // each cell by the item id the items batch surfaced.
 func connectionsCellsScript(rows []connectionsRow, ids map[string]uint64) string {
 	var sb strings.Builder
@@ -283,8 +415,12 @@ func connectionsCellsScript(rows []connectionsRow, ids map[string]uint64) string
 		name  string
 		value func(connectionsRow) string
 	}{
-		{"seencol", func(r connectionsRow) string { return r.seen }},
-		{"col", func(r connectionsRow) string { return r.detail }},
+		{"seencol", seenWord},
+		{"storagecol", storageWord},
+		{"permcol", permWord},
+		{"col", identityWord},
+		{"stampcol", stampWord},
+		{"bytescol", bytesWord},
 	} {
 		fmt.Fprintf(&sb, "set %s children={\n", col.name)
 		for i, r := range rows {
@@ -311,21 +447,22 @@ type connectionsView struct {
 	host  connectionsHost
 	store *authStore
 	nicks *pairStore
-	seen  *pairStore
+	known *knownStore
 
-	tree     *trinkets.TreeView
+	tree         *trinkets.TreeView
 	trusted      *trinkets.Checkbox // admit only clients already decided about
 	trustedFrom  *trinkets.Label    // where that value came from
 	loopback     *trinkets.Checkbox // admit same-machine clients without asking
 	loopbackFrom *trinkets.Label
-	subject  *trinkets.Label    // "Identity:" or "App Name:"
-	value    *trinkets.Label // the fingerprint, or the app's name
-	permhead *trinkets.Label
-	permrow  core.Trinket
-	acthead  *trinkets.Label
-	actrow   core.Trinket
-	choices  [3]*trinkets.RadioButton
-	forget   *trinkets.Button
+	subject      *trinkets.Label // "Identity:" or "App Name:"
+	value        *trinkets.Label // the fingerprint, or the app's name
+	permhead     *trinkets.Label
+	permrow      core.Trinket
+	acthead      *trinkets.Label
+	actrow       core.Trinket
+	choices      [3]*trinkets.RadioButton
+	forget       *trinkets.Button
+	clear        *trinkets.Button
 
 	// answering is set while the window is writing its own controls to match
 	// what it found, so what it moves is not read back as the user choosing.
@@ -434,7 +571,7 @@ func standingOf(row connectionsRow) int {
 }
 
 // choose puts the current row at a standing and writes it to the store. The
-// row's Identity cell says what the store now holds, so the list and the pane
+// row's Permission cell says what the store now holds, so the list and the pane
 // cannot disagree about it.
 func (v *connectionsView) choose(at int) {
 	item := v.tree.CurrentItem()
@@ -452,14 +589,39 @@ func (v *connectionsView) choose(at int) {
 	}
 	row.deny = rule == ruleDeny
 	row.allow = rule == ruleAllow
-	if row.app != "" {
-		row.detail = appDetail(row.allow, row.deny)
-	} else {
-		row.detail = hostDetail(row.identity, row.allow, row.deny)
-	}
-	item.SetValue("identity", row.detail)
+	item.SetValue("permission", permWord(*row))
 	v.tree.Update()
 	v.d.RequestUpdate()
+}
+
+// clearCurrentCache throws away what the current row has cached and puts the
+// new figure in its Storage cell. The client's own row is refreshed too when an
+// app's cache goes, since a client's figure counts its apps.
+func (v *connectionsView) clearCurrentCache() {
+	item := v.tree.CurrentItem()
+	row := rowOf(item)
+	if row == nil || row.self || row.hostSafe == "" {
+		return
+	}
+	if err := clearCache(row.hostSafe, row.appSafe); err != nil {
+		return
+	}
+	showSize(item, row)
+	if parent := item.Parent; parent != nil {
+		if up := rowOf(parent); up != nil {
+			showSize(parent, up)
+		}
+	}
+	v.tree.Update()
+	v.d.RequestUpdate()
+}
+
+// showSize measures a row again and puts the figure in both the cell that shows
+// it and the hidden one it sorts by.
+func showSize(item *trinkets.TreeItem, row *connectionsRow) {
+	row.measure()
+	item.SetValue("storage", storageWord(*row))
+	item.SetValue("bytes", bytesWord(*row))
 }
 
 // forgetCurrent drops the current row from the store and from the list. A
@@ -476,12 +638,13 @@ func (v *connectionsView) forgetCurrent() {
 		if err := v.store.forgetApp(row.identity, row.app); err != nil {
 			return
 		}
+		_ = v.known.forgetApp(row.identity, row.app)
 	} else {
 		if err := v.store.forget(row.identity); err != nil {
 			return
 		}
+		_ = v.known.forget(row.identity)
 		_ = v.nicks.set(row.identity, "")
-		_ = v.seen.set(row.identity, "")
 	}
 	v.tree.RemoveItem(item)
 	v.show(v.tree.CurrentItem())
@@ -491,28 +654,54 @@ func (v *connectionsView) forgetCurrent() {
 // rename records the name a user typed over a row. Any row that is not a
 // client -- this host, an app beneath a client -- has no name to give, so its
 // caption is put back rather than quietly kept.
+//
+// The folder the client's material sits in is named after the nickname, so a
+// new nickname moves it. The move happens first: renaming the record and
+// leaving the folder would point every later read at a folder that is not
+// there, and the material would read as lost.
 func (v *connectionsView) rename(item *trinkets.TreeItem, value string) {
 	row := rowOf(item)
 	if row == nil || row.self || row.app != "" {
 		return
 	}
-	_ = v.nicks.set(row.identity, value)
-	row.name = strings.TrimSpace(value)
+	nickname := strings.TrimSpace(value)
+	_ = v.nicks.set(row.identity, nickname)
+	row.name = nickname
 	if row.name == "" {
 		row.name = "(unnamed)"
 		item.Text = row.name
 		v.tree.Update()
 	}
+	v.refile(row, nickname)
+}
+
+// refile moves a renamed client's folder to match the name it now has, and
+// carries the new folder name onto the rows that read from it. The name it is
+// filed under comes from the NICKNAME rather than from the row's caption: a
+// client whose name was cleared reads as "(unnamed)" on screen, and filing it
+// under `unnamed` would be filing it under a word nobody typed.
+func (v *connectionsView) refile(row *connectionsRow, nickname string) {
+	from, to, err := v.known.rename(row.identity, nickname)
+	if err != nil || from == to {
+		return
+	}
+	if err := renameStorage(from, to); err != nil {
+		return
+	}
+	row.hostSafe = to
+	for i := range row.children {
+		row.children[i].hostSafe = to
+	}
 }
 
 // showConnections builds and shows the window, returning it so its caller can
 // tell whether one is already up. Runs on the desktop's own thread.
-func showConnections(d *trinkets.Desktop, host connectionsHost, store *authStore, nicks, seen *pairStore) *window.Window {
+func showConnections(d *trinkets.Desktop, host connectionsHost, store *authStore, nicks *pairStore, known *knownStore) *window.Window {
 	wm := d.WindowManager()
 	if wm == nil {
 		return nil
 	}
-	_, win := buildConnections(d, host, store, nicks, seen)
+	_, win := buildConnections(d, host, store, nicks, known)
 	if win == nil {
 		return nil
 	}
@@ -522,7 +711,7 @@ func showConnections(d *trinkets.Desktop, host connectionsHost, store *authStore
 
 // buildConnections builds the window and wires it to the stores, up to but not
 // including putting it on the desktop.
-func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStore, nicks, seen *pairStore) (*connectionsView, *window.Window) {
+func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStore, nicks *pairStore, known *knownStore) (*connectionsView, *window.Window) {
 	factory := &promptFactory{
 		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
 		byID:  make(map[uint64]any),
@@ -543,7 +732,7 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 	// by type simply fails. The columns are addressed by the names the script
 	// bound them to instead, which is all the cell batch needs.
 	win, _ := factory.byID[reply.IDs["w"]].(*window.Window)
-	v := &connectionsView{d: d, host: host, store: store, nicks: nicks, seen: seen}
+	v := &connectionsView{d: d, host: host, store: store, nicks: nicks, known: known}
 	v.tree, _ = factory.byID[reply.IDs["tree"]].(*trinkets.TreeView)
 	v.trusted, _ = factory.byID[reply.IDs["trusted"]].(*trinkets.Checkbox)
 	v.trustedFrom, _ = factory.byID[reply.IDs["trustedfrom"]].(*trinkets.Label)
@@ -556,6 +745,7 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 	v.permrow, _ = factory.byID[reply.IDs["permrow"]].(core.Trinket)
 	v.actrow, _ = factory.byID[reply.IDs["actrow"]].(core.Trinket)
 	v.forget, _ = factory.byID[reply.IDs["forget"]].(*trinkets.Button)
+	v.clear, _ = factory.byID[reply.IDs["clearcache"]].(*trinkets.Button)
 	for i := range v.choices {
 		v.choices[i], _ = factory.byID[reply.IDs[fmt.Sprintf("choice%d", i)]].(*trinkets.RadioButton)
 	}
@@ -563,7 +753,7 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 		return nil, nil
 	}
 
-	rows := connectionsRows(store, nicks.all(), seen.all())
+	rows := connectionsRows(store, nicks.all(), known.all())
 	items, err := protocol.Parse(connectionsItemsScript(rows))
 	if err != nil {
 		return nil, nil
@@ -600,6 +790,7 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 		})
 	}
 	v.forget.SetOnClick(v.forgetCurrent)
+	v.clear.SetOnClick(v.clearCurrentCache)
 	v.trusted.SetOnToggled(func(on bool) { v.policyChosen(PolicyPreTrustedOnly, on) })
 	// The loopback switch says what the user wants; the server holds the
 	// question that answers, which is the opposite one.
@@ -615,7 +806,7 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 func (v *connectionsView) complete() bool {
 	if v.tree == nil || v.trusted == nil || v.loopback == nil ||
 		v.trustedFrom == nil || v.loopbackFrom == nil || v.subject == nil || v.value == nil || v.permhead == nil ||
-		v.acthead == nil || v.permrow == nil || v.actrow == nil || v.forget == nil {
+		v.acthead == nil || v.permrow == nil || v.actrow == nil || v.forget == nil || v.clear == nil {
 		return false
 	}
 	for _, c := range v.choices {
@@ -685,7 +876,7 @@ func sizeAndShow(d *trinkets.Desktop, wm *window.WindowManager, win *window.Wind
 func NewConnectionsOpener(d *trinkets.Desktop, host connectionsHost) func() {
 	store := newAuthStore("")
 	nicks := newNicknameStore("")
-	seen := newSeenStore("")
+	known := newKnownStore("")
 	// One window, not one per visit: a second copy would show the same store
 	// twice and let a rename in one go stale in the other.
 	var mu sync.Mutex
@@ -701,7 +892,7 @@ func NewConnectionsOpener(d *trinkets.Desktop, host connectionsHost) func() {
 				}
 				return
 			}
-			win := showConnections(d, host, store, nicks, seen)
+			win := showConnections(d, host, store, nicks, known)
 			if win == nil {
 				return
 			}
