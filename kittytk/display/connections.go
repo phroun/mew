@@ -151,13 +151,23 @@ var (
 )
 
 // connectionsHost is the server the window sits in front of: the two policies
-// the pane above the list turns on and off. A window built without one shows
-// them disabled, there being nothing for them to change.
+// the pane above the list turns on and off, and where each of them came from.
+// A window built without one shows them disabled, there being nothing for them
+// to change.
 type connectionsHost interface {
 	PreTrustedOnly() bool
-	SetPreTrustedOnly(bool)
 	PromptLocal() bool
-	SetPromptLocal(bool)
+	SetPolicy(name string, on bool)
+	PolicyOrigin(name string) string
+}
+
+// originPhrase is the note beside a switch: where its value came from, or that
+// nothing outside this session is holding it.
+func originPhrase(origin string) string {
+	if strings.TrimSpace(origin) == "" {
+		return "(this session)"
+	}
+	return "(" + origin + ")"
 }
 
 // connectionsShellScript is the window: a pane, the tree, and the pane that
@@ -169,8 +179,14 @@ func connectionsShellScript() string {
 		"w=new window title=\"Connections\" width=640 height=440 children={\n" +
 		"  root=new panel layout=vbox spacing=0 children={\n" +
 		"    top=new panel layout=vbox spacing=0 children={\n" +
-		"      trusted=new checkbox caption=\"Allow Previously Trusted Clients Only\"\n" +
-		"      loopback=new checkbox caption=\"Automatically Approve Loopback Connections\"\n" +
+		"      trow=new panel layout=hbox spacing=8 children={\n" +
+		"        trusted=new checkbox caption=\"Allow Previously Trusted Clients Only\"\n" +
+		"        tfrom=new label caption=\"\"\n" +
+		"      }\n" +
+		"      lrow=new panel layout=hbox spacing=8 children={\n" +
+		"        loopback=new checkbox caption=\"Automatically Approve Loopback Connections\"\n" +
+		"        lfrom=new label caption=\"\"\n" +
+		"      }\n" +
 		"    }\n" +
 		"    tv=new treeview stretch=1 caption=\"Nickname\" showheader treelines" +
 		" editable !fit_width fixed_begin=" + strconv.Itoa(pinnedColumns) +
@@ -199,8 +215,10 @@ func connectionsShellScript() string {
 		"  }\n" +
 		"}\n" +
 		"tree=w.root.tv\n" +
-		"trusted=w.root.top.trusted\n" +
-		"loopback=w.root.top.loopback\n" +
+		"trusted=w.root.top.trow.trusted\n" +
+		"trustedfrom=w.root.top.trow.tfrom\n" +
+		"loopback=w.root.top.lrow.loopback\n" +
+		"loopbackfrom=w.root.top.lrow.lfrom\n" +
 		"seencol=w.root.tv.sc\n" +
 		"col=w.root.tv.idc\n" +
 		"subject=w.root.bottom.subject\n" +
@@ -283,8 +301,10 @@ type connectionsView struct {
 	seen  *pairStore
 
 	tree     *trinkets.TreeView
-	trusted  *trinkets.Checkbox // admit only clients already decided about
-	loopback *trinkets.Checkbox // admit same-machine clients without asking
+	trusted      *trinkets.Checkbox // admit only clients already decided about
+	trustedFrom  *trinkets.Label    // where that value came from
+	loopback     *trinkets.Checkbox // admit same-machine clients without asking
+	loopbackFrom *trinkets.Label
 	subject  *trinkets.Label    // "Identity:" or "App Name:"
 	value    *trinkets.Label // the fingerprint, or the app's name
 	permhead *trinkets.Label
@@ -307,6 +327,8 @@ func (v *connectionsView) showPolicies() {
 	if v.host == nil {
 		v.trusted.SetEnabled(false)
 		v.loopback.SetEnabled(false)
+		v.trustedFrom.SetText("")
+		v.loopbackFrom.SetText("")
 		return
 	}
 	v.trusted.SetChecked(v.host.PreTrustedOnly())
@@ -314,6 +336,26 @@ func (v *connectionsView) showPolicies() {
 	// through -- and the server holds the question it answers, which is
 	// whether to ask about a local client at all.
 	v.loopback.SetChecked(!v.host.PromptLocal())
+	v.trustedFrom.SetText(originPhrase(v.host.PolicyOrigin(PolicyPreTrustedOnly)))
+	v.loopbackFrom.SetText(originPhrase(v.host.PolicyOrigin(PolicyPromptLocal)))
+}
+
+// policyChosen carries a thrown switch to the server, and puts back beside it
+// wherever the server says the change was kept.
+func (v *connectionsView) policyChosen(name string, on bool) {
+	if v.answering || v.host == nil {
+		return
+	}
+	v.host.SetPolicy(name, on)
+	v.answering = true
+	defer func() { v.answering = false }()
+	switch name {
+	case PolicyPreTrustedOnly:
+		v.trustedFrom.SetText(originPhrase(v.host.PolicyOrigin(name)))
+	case PolicyPromptLocal:
+		v.loopbackFrom.SetText(originPhrase(v.host.PolicyOrigin(name)))
+	}
+	v.d.RequestUpdate()
 }
 
 // rowOf is what a tree row stands for, hung on the item itself.
@@ -491,7 +533,9 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 	v := &connectionsView{d: d, host: host, store: store, nicks: nicks, seen: seen}
 	v.tree, _ = factory.byID[reply.IDs["tree"]].(*trinkets.TreeView)
 	v.trusted, _ = factory.byID[reply.IDs["trusted"]].(*trinkets.Checkbox)
+	v.trustedFrom, _ = factory.byID[reply.IDs["trustedfrom"]].(*trinkets.Label)
 	v.loopback, _ = factory.byID[reply.IDs["loopback"]].(*trinkets.Checkbox)
+	v.loopbackFrom, _ = factory.byID[reply.IDs["loopbackfrom"]].(*trinkets.Label)
 	v.subject, _ = factory.byID[reply.IDs["subject"]].(*trinkets.Label)
 	v.value, _ = factory.byID[reply.IDs["value"]].(*trinkets.Label)
 	v.permhead, _ = factory.byID[reply.IDs["permhead"]].(*trinkets.Label)
@@ -540,16 +584,10 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 		})
 	}
 	v.forget.SetOnClick(v.forgetCurrent)
-	v.trusted.SetOnToggled(func(on bool) {
-		if !v.answering && v.host != nil {
-			v.host.SetPreTrustedOnly(on)
-		}
-	})
-	v.loopback.SetOnToggled(func(on bool) {
-		if !v.answering && v.host != nil {
-			v.host.SetPromptLocal(!on)
-		}
-	})
+	v.trusted.SetOnToggled(func(on bool) { v.policyChosen(PolicyPreTrustedOnly, on) })
+	// The loopback switch says what the user wants; the server holds the
+	// question that answers, which is the opposite one.
+	v.loopback.SetOnToggled(func(on bool) { v.policyChosen(PolicyPromptLocal, !on) })
 	v.showPolicies()
 	v.show(v.tree.CurrentItem())
 	return v, win
@@ -559,7 +597,8 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 // window missing one of them would open with a pane that answers nothing, so
 // it is not opened at all.
 func (v *connectionsView) complete() bool {
-	if v.tree == nil || v.trusted == nil || v.loopback == nil || v.subject == nil || v.value == nil || v.permhead == nil ||
+	if v.tree == nil || v.trusted == nil || v.loopback == nil ||
+		v.trustedFrom == nil || v.loopbackFrom == nil || v.subject == nil || v.value == nil || v.permhead == nil ||
 		v.acthead == nil || v.permrow == nil || v.actrow == nil || v.forget == nil {
 		return false
 	}

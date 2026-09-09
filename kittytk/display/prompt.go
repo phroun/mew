@@ -28,7 +28,7 @@ func DefaultConfig(desktop *trinkets.Desktop, endpoint string) Config {
 		Endpoint:    endpoint,
 		Token:       os.Getenv("KITTYTK_TOKEN"),
 		Prompt:      NewDesktopAuthorizer(desktop),
-		PromptLocal: envTruthy("KITTYTK_PROMPT_LOCAL"),
+		PromptLocal: envTruthy(PromptLocalEnv),
 	}
 }
 

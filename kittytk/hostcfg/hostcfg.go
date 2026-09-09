@@ -55,6 +55,13 @@
 //	[service]
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
 //	token    =            ; optional shared secret
+//	pre_trusted_only =    ; true = admit only clients already decided about,
+//	                      ;   refusing anything else without asking
+//	prompt_local     =    ; true = ask about same-machine connections too,
+//	                      ;   instead of admitting them for being local
+//	                      ; Both are also switches in the Connections window;
+//	                      ;   changing one there writes `current`, which is read
+//	                      ;   after this file (see policies.go)
 //
 //	[system]
 //	density  =            ; the PHYSICAL screen's content scale (2 on a HiDPI
@@ -90,7 +97,10 @@
 //	                      ;   fraktur cipher; default), off (normal font).
 //
 // Environment variables still take precedence over the file: KITTYTK_DISPLAY
-// for the endpoint and KITTYTK_TOKEN for the token.
+// for the endpoint, KITTYTK_TOKEN for the token, and KITTYTK_PRE_TRUSTED_ONLY /
+// KITTYTK_PROMPT_LOCAL for the two connection policies -- which they START
+// rather than govern, since a user who changes one in the desktop has said
+// something newer than the variable did.
 package hostcfg
 
 import (
@@ -154,6 +164,19 @@ type Config struct {
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
+
+	// The two connection policies the Connections window also offers. They are
+	// the settings a user changes while the desktop is running, so they arrive
+	// from three places -- the ini, the `current` overlay written when the
+	// window is used, and the environment -- and policyOrigins remembers which,
+	// to be shown beside the switch.
+	PreTrustedOnly bool
+	PromptLocal    bool
+
+	// layer is the file being read, and policyOrigins what each policy traces
+	// back to. Both are for showing, not deciding.
+	layer         string
+	policyOrigins map[string]string
 
 	// Native/TUINative set the menu-shortcut glyph style ("true" = native on
 	// macOS, "mac" = force native, else default) for the graphical ([system])
@@ -309,7 +332,11 @@ type Config struct {
 // (and as the base every ini is applied onto).
 func Defaults() Config {
 	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1, MenuScale: 1,
-		ShortcutScale: 0.8, ShortcutNativeScale: 0.8}
+		ShortcutScale: 0.8, ShortcutNativeScale: 0.8,
+		policyOrigins: map[string]string{
+			PolicyPreTrustedOnly: OriginBuiltIn,
+			PolicyPromptLocal:    OriginBuiltIn,
+		}}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -327,7 +354,8 @@ func SearchPaths() []string {
 }
 
 // Load returns the configuration from the first readable kittytk.ini in
-// SearchPaths (whole file wins), or Defaults() if none is found.
+// SearchPaths (whole file wins), or Defaults() if none is found, with the
+// `current` overlay applied over the top of it (see policies.go).
 func Load() Config {
 	cfg := Defaults()
 	for _, p := range SearchPaths() {
@@ -335,6 +363,7 @@ func Load() Config {
 		if err != nil {
 			continue
 		}
+		cfg.layer = filepath.Base(p)
 		apply(data, &cfg)
 		cfg.Source = p
 		// Resolve relative font paths against the ini's own directory, so a
@@ -353,6 +382,14 @@ func Load() Config {
 		}
 		break // first found wins
 	}
+	// What the user has changed in the desktop itself, over the top of what the
+	// ini says. Only ever the user config dir: it is this machine's record of
+	// what was done here, not something shipped beside a program.
+	if data, err := os.ReadFile(CurrentPath()); err == nil {
+		cfg.layer = CurrentName
+		apply(data, &cfg)
+	}
+	cfg.layer = ""
 	return cfg
 }
 
@@ -596,6 +633,12 @@ func apply(data []byte, cfg *Config) {
 			cfg.Endpoint = val
 		case "token":
 			cfg.Token = val
+		case PolicyPreTrustedOnly:
+			cfg.PreTrustedOnly = parseBool(val)
+			cfg.notePolicy(PolicyPreTrustedOnly)
+		case PolicyPromptLocal:
+			cfg.PromptLocal = parseBool(val)
+			cfg.notePolicy(PolicyPromptLocal)
 		case "native":
 			// The only section-sensitive key: [tui] configures the terminal
 			// host, every other section (including none) the graphical host.

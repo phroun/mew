@@ -231,11 +231,7 @@ func main() {
 
 	// Start the display service: applications appear as they connect.
 	desktop.SetOnStartup(func() {
-		dcfg := display.DefaultConfig(desktop, cfg.ResolveEndpoint())
-		if dcfg.Token == "" {
-			dcfg.Token = cfg.ResolveToken()
-		}
-		srv, err := display.ServeConfig(desktop, dcfg)
+		srv, err := hostcfg.Serve(desktop, cfg)
 		if sb := desktop.StatusBar(); sb != nil {
 			switch {
 			case err != nil:

@@ -15,7 +15,6 @@ import (
 
 	"github.com/phroun/kittytk/backend/tui"
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
@@ -66,11 +65,7 @@ func main() {
 	// service only touches the desktop via Post, so it is agnostic to the
 	// backend - the very same Serve call powers kittytk-sdl.
 	desktop.SetOnStartup(func() {
-		dcfg := display.DefaultConfig(desktop, cfg.ResolveEndpoint())
-		if dcfg.Token == "" {
-			dcfg.Token = cfg.ResolveToken()
-		}
-		srv, err := display.ServeConfig(desktop, dcfg)
+		srv, err := hostcfg.Serve(desktop, cfg)
 		if sb := desktop.StatusBar(); sb != nil {
 			switch {
 			case err != nil:

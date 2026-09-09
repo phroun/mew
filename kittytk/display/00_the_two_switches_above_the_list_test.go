@@ -11,38 +11,104 @@ import (
 )
 
 // fakeHost is a server as far as the window is concerned: two switches it can
-// read and throw.
+// read and throw, and a word for where each of them came from.
 type fakeHost struct {
 	trusted bool
 	prompt  bool
+	origins map[string]string
+	kept    string // what a change is said to be kept in; "" = nowhere
 }
 
-func (h *fakeHost) PreTrustedOnly() bool     { return h.trusted }
-func (h *fakeHost) SetPreTrustedOnly(v bool) { h.trusted = v }
-func (h *fakeHost) PromptLocal() bool        { return h.prompt }
-func (h *fakeHost) SetPromptLocal(v bool)    { h.prompt = v }
+func (h *fakeHost) PreTrustedOnly() bool { return h.trusted }
+func (h *fakeHost) PromptLocal() bool    { return h.prompt }
 
-// The switches are in the pane above the list, one under the other, worded the
-// way the user thinks of them.
+func (h *fakeHost) SetPolicy(name string, on bool) {
+	switch name {
+	case PolicyPreTrustedOnly:
+		h.trusted = on
+	case PolicyPromptLocal:
+		h.prompt = on
+	default:
+		return
+	}
+	if h.origins == nil {
+		h.origins = map[string]string{}
+	}
+	h.origins[name] = h.kept
+}
+
+func (h *fakeHost) PolicyOrigin(name string) string { return h.origins[name] }
+
+// The switches are in the pane above the list, one under the other, each with
+// the note that says where its value came from, and worded the way the user
+// thinks of them.
 func TestTheTwoSwitchesStandAboveTheList(t *testing.T) {
 	v := paneWithHost(t, &fakeHost{}, storeWith(t), tempNicknames(t), tempSeen(t))
 
-	above, ok := v.trusted.Parent().(*trinkets.Panel)
+	first, ok := v.trusted.Parent().(*trinkets.Panel)
 	if !ok {
 		t.Fatalf("the first switch hangs off a %T", v.trusted.Parent())
 	}
-	if v.loopback.Parent() != above {
-		t.Fatal("the two switches are in different panes")
+	second, ok := v.loopback.Parent().(*trinkets.Panel)
+	if !ok {
+		t.Fatalf("the second switch hangs off a %T", v.loopback.Parent())
 	}
-	kids := above.Children()
-	if len(kids) != 2 || kids[0] != v.trusted || kids[1] != v.loopback {
-		t.Fatalf("the pane above holds %d children in another order", len(kids))
+	if first == second {
+		t.Fatal("both switches are on one row, so they do not stack")
+	}
+	if v.trustedFrom.Parent() != first || v.loopbackFrom.Parent() != second {
+		t.Error("a switch and the note about it are on different rows")
+	}
+
+	above, ok := first.Parent().(*trinkets.Panel)
+	if !ok || second.Parent() != above {
+		t.Fatal("the two rows are not in one pane")
+	}
+	if kids := above.Children(); len(kids) != 2 || kids[0] != first || kids[1] != second {
+		t.Fatalf("the pane above holds %d rows in another order", len(kids))
 	}
 	if got := v.trusted.Text(); got != "Allow Previously Trusted Clients Only" {
 		t.Errorf("the first switch reads %q", got)
 	}
 	if got := v.loopback.Text(); got != "Automatically Approve Loopback Connections" {
 		t.Errorf("the second switch reads %q", got)
+	}
+}
+
+// Each switch says where its value came from, so a setting nobody in this
+// session chose can still account for itself.
+func TestASwitchSaysWhereItsValueCameFrom(t *testing.T) {
+	host := &fakeHost{
+		origins: map[string]string{
+			PolicyPreTrustedOnly: "kittytk.ini",
+			PolicyPromptLocal:    PromptLocalEnv,
+		},
+		kept: "current",
+	}
+	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempSeen(t))
+
+	if got := v.trustedFrom.Text(); got != "(kittytk.ini)" {
+		t.Errorf("the lockdown switch says %q, not the file it came from", got)
+	}
+	if got := v.loopbackFrom.Text(); got != "("+PromptLocalEnv+")" {
+		t.Errorf("the loopback switch says %q, not the variable that set it", got)
+	}
+
+	// Throwing one moves it to wherever the host says it was kept.
+	v.trusted.SetChecked(true)
+	if got := v.trustedFrom.Text(); got != "(current)" {
+		t.Errorf("after being changed the switch still says %q", got)
+	}
+}
+
+// A change nothing keeps says so, rather than naming a place it did not go.
+func TestAChangeNobodyKeepsSaysSo(t *testing.T) {
+	host := &fakeHost{origins: map[string]string{PolicyPromptLocal: "kittytk.ini"}}
+	v := paneWithHost(t, host, storeWith(t), tempNicknames(t), tempSeen(t))
+
+	v.loopback.SetChecked(false)
+	if got := v.loopbackFrom.Text(); got != "(this session)" {
+		t.Errorf("the switch says %q about a change nothing wrote down", got)
 	}
 }
 

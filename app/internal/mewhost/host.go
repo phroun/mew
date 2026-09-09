@@ -314,11 +314,7 @@ func windowManaged(wm *window.WindowManager, win *window.Window) bool {
 // serveSocket starts the display service so apps appear as they connect,
 // reporting the outcome in the status bar.
 func serveSocket(desktop *trinkets.Desktop, cfg hostcfg.Config) {
-	dcfg := display.DefaultConfig(desktop, cfg.ResolveEndpoint())
-	if dcfg.Token == "" {
-		dcfg.Token = cfg.ResolveToken()
-	}
-	if srv, err := display.ServeConfig(desktop, dcfg); err != nil {
+	if srv, err := hostcfg.Serve(desktop, cfg); err != nil {
 		if sb := desktop.StatusBar(); sb != nil {
 			sb.SetText("display service unavailable: " + err.Error())
 		}

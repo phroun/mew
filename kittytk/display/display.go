@@ -59,7 +59,37 @@ type Config struct {
 	// connections to the same authorization as remote ones instead of
 	// trusting them automatically (for shared machines).
 	PromptLocal bool
+
+	// PreTrustedOnly starts the server in lockdown: connections without a
+	// standing allow are refused rather than asked about.
+	PreTrustedOnly bool
+
+	// PolicyOrigins says where each policy's starting value came from, keyed
+	// by policy name, in words meant to be read: the file it was written in,
+	// or the environment variable that set it. The Connections window shows it
+	// beside the switch, so a value nobody in this session chose can still
+	// account for itself.
+	PolicyOrigins map[string]string
+
+	// OnPolicyChanged is called when the user throws one of those switches in
+	// the Connections window, and answers with what to call the place the
+	// change was kept -- which becomes the switch's new origin. A host that
+	// keeps nothing between runs returns "", and the window says as much.
+	//
+	// This is the whole of the server's part in remembering a policy: it holds
+	// the value, reports the change, and knows nothing about files.
+	OnPolicyChanged func(name string, on bool) string
 }
+
+// The policies the Connections window offers, named so a host can tell which
+// one changed. Each has an environment variable that sets its starting value.
+const (
+	PolicyPreTrustedOnly = "pre_trusted_only"
+	PolicyPromptLocal    = "prompt_local"
+
+	PreTrustedOnlyEnv = "KITTYTK_PRE_TRUSTED_ONLY"
+	PromptLocalEnv    = "KITTYTK_PROMPT_LOCAL"
+)
 
 // Server accepts display-protocol connections for one desktop.
 type Server struct {
@@ -83,8 +113,15 @@ type Server struct {
 
 	// preTrustedOnly, when set, auto-rejects any connection without an
 	// existing stored allow instead of prompting (a lockdown mode the
-	// Psi menu's "Pre-Trusted Clients Only" toggles at runtime).
+	// Connections window's "Allow Previously Trusted Clients Only"
+	// toggles at runtime).
 	preTrustedOnly atomic.Bool
+
+	// Where each policy's value came from, and who to tell when the user
+	// changes one. The mutex is held only for these two.
+	policyMu      sync.Mutex
+	policyOrigins map[string]string
+	onPolicy      func(name string, on bool) string
 
 	// TLSFingerprint is the host certificate's sha256:<hex> for tls://
 	// endpoints (what clients pin); empty otherwise.
@@ -104,6 +141,44 @@ func (s *Server) SetPromptLocal(v bool) { s.promptLocal.Store(v) }
 
 // PromptLocal reports whether same-machine connections are asked about.
 func (s *Server) PromptLocal() bool { return s.promptLocal.Load() }
+
+// SetPolicy is a policy changed BY THE USER, which is the one path that tells
+// the host to keep it. What the host answers with is what the value now traces
+// back to; a host that keeps nothing leaves the change standing for as long as
+// this server runs, and the window says so.
+func (s *Server) SetPolicy(name string, on bool) {
+	switch name {
+	case PolicyPreTrustedOnly:
+		s.SetPreTrustedOnly(on)
+	case PolicyPromptLocal:
+		s.SetPromptLocal(on)
+	default:
+		return
+	}
+	s.policyMu.Lock()
+	keep := s.onPolicy
+	s.policyMu.Unlock()
+
+	origin := ""
+	if keep != nil {
+		origin = keep(name, on)
+	}
+	s.policyMu.Lock()
+	if s.policyOrigins == nil {
+		s.policyOrigins = map[string]string{}
+	}
+	s.policyOrigins[name] = origin
+	s.policyMu.Unlock()
+}
+
+// PolicyOrigin is where a policy's value traces back to, in the words the host
+// gave: a file, an environment variable, or "" for one this session changed
+// and nothing kept.
+func (s *Server) PolicyOrigin(name string) string {
+	s.policyMu.Lock()
+	defer s.policyMu.Unlock()
+	return s.policyOrigins[name]
+}
 
 // Serve listens on the unix socket at path (creating its directory,
 // 0700) and serves connections until Close. Call from desktop wiring
@@ -126,6 +201,12 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 		prompt:    cfg.Prompt,
 	}
 	s.promptLocal.Store(cfg.PromptLocal)
+	s.preTrustedOnly.Store(cfg.PreTrustedOnly)
+	s.onPolicy = cfg.OnPolicyChanged
+	s.policyOrigins = map[string]string{}
+	for name, origin := range cfg.PolicyOrigins {
+		s.policyOrigins[name] = origin
+	}
 
 	// Serving is what gives the desktop connections to show, so this is where
 	// the Connections item earns its place -- not in DefaultConfig, which a
