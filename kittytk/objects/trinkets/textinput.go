@@ -2426,6 +2426,10 @@ func (t *TextInput) SetEmbedHost(host core.Trinket, origin func() core.UnitPoint
 	t.embedOrigin = origin
 }
 
+// EmbedHost is the trinket standing in for a parent this input does not have,
+// which is who draws it and therefore who a repaint has to reach.
+func (t *TextInput) EmbedHost() core.Trinket { return t.embedHost }
+
 // envAnchor is the trinket whose ancestry resolves this input's
 // environment: the embed host when set, else the input itself.
 func (t *TextInput) envAnchor() core.Trinket {

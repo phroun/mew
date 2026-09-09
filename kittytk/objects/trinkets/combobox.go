@@ -96,6 +96,10 @@ func (c *ComboBox) SetEmbedHost(host core.Trinket, origin func() core.UnitPoint)
 	c.embedOrigin = origin
 }
 
+// EmbedHost is the trinket standing in for a parent this box does not have,
+// which is who draws it and therefore who a repaint has to reach.
+func (c *ComboBox) EmbedHost() core.Trinket { return c.embedHost }
+
 // markPopupGrab records where a press on the BOX landed, in the screen space
 // the drop-down's own handlers work in. Without a controller to map through
 // there is no drop-down either, and the box's own space is the best answer.
