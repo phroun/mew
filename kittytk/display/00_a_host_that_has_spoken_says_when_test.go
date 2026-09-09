@@ -119,7 +119,7 @@ func TestTheDateReachesItsColumn(t *testing.T) {
 	}
 
 	store := storeWith(t, "allow app sha256:aaa Editor")
-	if showConnections(d, store, tempNicknames(t), seen) == nil {
+	if showConnections(d, nil, store, tempNicknames(t), seen) == nil {
 		t.Fatal("the window did not open")
 	}
 

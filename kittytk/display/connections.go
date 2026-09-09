@@ -8,6 +8,10 @@ package display
 // column is a nickname the user writes, which is the only part of this the
 // user chooses and the only part nothing depends on.
 //
+// The pane below the list is where a row is read and answered: what it is,
+// what standing it has, and the one destructive thing that can be done to it.
+// Both are settings, not reports -- choosing in the pane rewrites the store.
+//
 // Host-side only, and built from protocol text like the approval prompt: no
 // application asked for it, none can see it, and none can be told it is open.
 
@@ -46,8 +50,36 @@ type connectionsRow struct {
 	name     string // what the name column shows
 	seen     string // what the last-seen column shows: YYYY-MM-DD, or nothing
 	detail   string // what the identity column shows
-	identity string // non-empty only on a renameable peer row
+	identity string // the client this row is about; empty on this host's row
+	app      string // non-empty on an app row
+	self     bool   // this host, which is not a client of itself
+	allow    bool   // a standing allow at this row's scope
+	deny     bool   // a standing deny at this row's scope
 	children []connectionsRow
+}
+
+// hostDetail is what a client's Identity column says: the fingerprint, and the
+// standing it has where it has one.
+func hostDetail(identity string, allow, deny bool) string {
+	switch {
+	case deny:
+		return identity + "  -- blocked"
+	case allow:
+		return identity + "  -- every app"
+	}
+	return identity
+}
+
+// appDetail is what an app's Identity column says: its own standing, or that
+// it has none and answers to the client's.
+func appDetail(allow, deny bool) string {
+	switch {
+	case deny:
+		return "denied"
+	case allow:
+		return "allowed"
+	}
+	return "follows the host"
 }
 
 // connectionsRows gathers what the window shows: this host first, then every
@@ -57,12 +89,14 @@ func connectionsRows(store *authStore, names, seen map[string]string) []connecti
 	if self == "" {
 		self = "(no identity yet -- none has been needed)"
 	}
-	rows := []connectionsRow{{name: "This Host", detail: self}}
+	rows := []connectionsRow{{name: "This Host", detail: self, identity: self, self: true}}
 
 	for _, e := range store.entries() {
 		r := connectionsRow{
 			identity: e.identity,
-			detail:   e.identity,
+			allow:    e.allow,
+			deny:     e.deny,
+			detail:   hostDetail(e.identity, e.allow, e.deny),
 			seen:     seenDate(seen[e.identity]),
 		}
 		if n := names[e.identity]; n != "" {
@@ -70,20 +104,17 @@ func connectionsRows(store *authStore, names, seen map[string]string) []connecti
 		} else {
 			r.name = "(unnamed)"
 		}
-		switch {
-		case e.deny:
-			r.detail = e.identity + "  -- blocked"
-		case e.allow:
-			r.detail = e.identity + "  -- every app"
-		}
 		apps := append([]authEntryApp(nil), e.apps...)
 		sort.Slice(apps, func(i, j int) bool { return apps[i].name < apps[j].name })
 		for _, a := range apps {
-			verdict := "denied"
-			if a.allowed() {
-				verdict = "allowed"
-			}
-			r.children = append(r.children, connectionsRow{name: a.name, detail: verdict})
+			r.children = append(r.children, connectionsRow{
+				name:     a.name,
+				identity: e.identity,
+				app:      a.name,
+				allow:    a.allow,
+				deny:     a.deny,
+				detail:   appDetail(a.allow, a.deny),
+			})
 		}
 		rows = append(rows, r)
 	}
@@ -110,26 +141,78 @@ const (
 	pinnedColumns = 2   // the name and the date, counted from where the run begins
 )
 
-// connectionsShellScript is the window and the empty tree. The rows go in
-// afterwards, so their ids can be surfaced and their cells filled by the same
-// two-batch pattern a client would use.
+// The three standings offered in the pane, in the order they are shown:
+// refuse, defer, admit. A client defers to being asked again; an app defers to
+// whatever its client was granted.
+var (
+	hostChoices = [3]string{"Blocked", "Prompt", "Allow All"}
+	appChoices  = [3]string{"Deny", "Follow Host Rule", "Allow"}
+	choiceRules = [3]string{ruleDeny, ruleNone, ruleAllow}
+)
+
+// connectionsHost is the server the window sits in front of: the two policies
+// the pane above the list turns on and off. A window built without one shows
+// them disabled, there being nothing for them to change.
+type connectionsHost interface {
+	PreTrustedOnly() bool
+	SetPreTrustedOnly(bool)
+	PromptLocal() bool
+	SetPromptLocal(bool)
+}
+
+// connectionsShellScript is the window: a pane, the tree, and the pane that
+// reads whichever row is current. The rows go in afterwards, so their ids can
+// be surfaced and their cells filled by the same two-batch pattern a client
+// would use.
 func connectionsShellScript() string {
 	return "" +
-		"w=new window title=\"Connections\" width=640 height=340 children={\n" +
+		"w=new window title=\"Connections\" width=640 height=440 children={\n" +
 		"  root=new panel layout=vbox spacing=0 children={\n" +
-		"    tv=new treeview caption=\"Nickname\" showheader treelines editable" +
-		" !fit_width fixed_begin=" + strconv.Itoa(pinnedColumns) +
+		"    top=new panel layout=vbox spacing=0 children={\n" +
+		"      trusted=new checkbox caption=\"Allow Previously Trusted Clients Only\"\n" +
+		"      loopback=new checkbox caption=\"Automatically Approve Loopback Connections\"\n" +
+		"    }\n" +
+		"    tv=new treeview stretch=1 caption=\"Nickname\" showheader treelines" +
+		" editable !fit_width fixed_begin=" + strconv.Itoa(pinnedColumns) +
 		" key_width=" + strconv.Itoa(nicknameWidth) + " columns={\n" +
 		"      sc=new column id=lastseen caption=\"Last Seen\" width=" +
 		strconv.Itoa(lastSeenWidth) + "\n" +
 		"      idc=new column id=identity caption=\"Identity\" width=" +
 		strconv.Itoa(identityWidth) + "\n" +
 		"    }\n" +
+		"    bottom=new panel layout=grid columns={\n" +
+		"      new band id=body stretch=1\n" +
+		"    } children={\n" +
+		"      subject=new label caption=\"Identity:\" row=0\n" +
+		"      value=new label caption=\"\" row=1\n" +
+		"      permhead=new label caption=\"Permission:\" row=2\n" +
+		"      permrow=new panel layout=hbox spacing=8 row=3 children={\n" +
+		"        c0=new radiobutton caption=" + protocol.Quote(hostChoices[0]) + " group=standing\n" +
+		"        c1=new radiobutton caption=" + protocol.Quote(hostChoices[1]) + " group=standing checked\n" +
+		"        c2=new radiobutton caption=" + protocol.Quote(hostChoices[2]) + " group=standing\n" +
+		"      }\n" +
+		"      acthead=new label caption=\"Actions:\" row=4\n" +
+		"      actrow=new panel layout=hbox spacing=8 row=5 children={\n" +
+		"        forget=new button caption=\"Forget\"\n" +
+		"      }\n" +
+		"    }\n" +
 		"  }\n" +
 		"}\n" +
 		"tree=w.root.tv\n" +
+		"trusted=w.root.top.trusted\n" +
+		"loopback=w.root.top.loopback\n" +
 		"seencol=w.root.tv.sc\n" +
-		"col=w.root.tv.idc\n"
+		"col=w.root.tv.idc\n" +
+		"subject=w.root.bottom.subject\n" +
+		"value=w.root.bottom.value\n" +
+		"permhead=w.root.bottom.permhead\n" +
+		"permrow=w.root.bottom.permrow\n" +
+		"acthead=w.root.bottom.acthead\n" +
+		"actrow=w.root.bottom.actrow\n" +
+		"choice0=w.root.bottom.permrow.c0\n" +
+		"choice1=w.root.bottom.permrow.c1\n" +
+		"choice2=w.root.bottom.permrow.c2\n" +
+		"forget=w.root.bottom.actrow.forget\n"
 }
 
 // connectionsItemsScript builds the rows, binding a surfaced name to each so
@@ -161,14 +244,230 @@ func connectionsItemsScript(rows []connectionsRow) string {
 	return sb.String()
 }
 
+// connectionsCellsScript fills both data columns from the rows, addressing
+// each cell by the item id the items batch surfaced.
+func connectionsCellsScript(rows []connectionsRow, ids map[string]uint64) string {
+	var sb strings.Builder
+	for _, col := range []struct {
+		name  string
+		value func(connectionsRow) string
+	}{
+		{"seencol", func(r connectionsRow) string { return r.seen }},
+		{"col", func(r connectionsRow) string { return r.detail }},
+	} {
+		fmt.Fprintf(&sb, "set %s children={\n", col.name)
+		for i, r := range rows {
+			if id, ok := ids[fmt.Sprintf("i%d", i)]; ok {
+				fmt.Fprintf(&sb, "  new cell item=%d value=%s\n",
+					id, protocol.Quote(col.value(r)))
+			}
+			for j, c := range r.children {
+				if id, ok := ids[fmt.Sprintf("i%dc%d", i, j)]; ok {
+					fmt.Fprintf(&sb, "  new cell item=%d value=%s\n",
+						id, protocol.Quote(col.value(c)))
+				}
+			}
+		}
+		sb.WriteString("}\n")
+	}
+	return sb.String()
+}
+
+// connectionsView is the window while it is open: the trinkets the pane writes
+// into, and the stores a choice in it rewrites.
+type connectionsView struct {
+	d     *trinkets.Desktop
+	host  connectionsHost
+	store *authStore
+	nicks *pairStore
+	seen  *pairStore
+
+	tree     *trinkets.TreeView
+	trusted  *trinkets.Checkbox // admit only clients already decided about
+	loopback *trinkets.Checkbox // admit same-machine clients without asking
+	subject  *trinkets.Label    // "Identity:" or "App Name:"
+	value    *trinkets.Label // the fingerprint, or the app's name
+	permhead *trinkets.Label
+	permrow  core.Trinket
+	acthead  *trinkets.Label
+	actrow   core.Trinket
+	choices  [3]*trinkets.RadioButton
+	forget   *trinkets.Button
+
+	// answering is set while the window is writing its own controls to match
+	// what it found, so what it moves is not read back as the user choosing.
+	answering bool
+}
+
+// showPolicies puts the two switches above the list where the server has them,
+// and hands a window with no server behind it switches that cannot be thrown.
+func (v *connectionsView) showPolicies() {
+	v.answering = true
+	defer func() { v.answering = false }()
+	if v.host == nil {
+		v.trusted.SetEnabled(false)
+		v.loopback.SetEnabled(false)
+		return
+	}
+	v.trusted.SetChecked(v.host.PreTrustedOnly())
+	// The switch is offered the way a user thinks of it -- loopback is waved
+	// through -- and the server holds the question it answers, which is
+	// whether to ask about a local client at all.
+	v.loopback.SetChecked(!v.host.PromptLocal())
+}
+
+// rowOf is what a tree row stands for, hung on the item itself.
+func rowOf(item *trinkets.TreeItem) *connectionsRow {
+	if item == nil {
+		return nil
+	}
+	r, _ := item.Data.(*connectionsRow)
+	return r
+}
+
+// show writes the pane to match a row: what it is, where it stands, and
+// whether there is anything to be done to it. This host is us -- there is no
+// standing to grant ourselves and nothing to forget -- so only its identity is
+// shown.
+func (v *connectionsView) show(item *trinkets.TreeItem) {
+	row := rowOf(item)
+	v.answering = true
+	defer func() { v.answering = false }()
+
+	answerable := row != nil && !row.self
+	v.permhead.SetVisible(answerable)
+	v.permrow.SetVisible(answerable)
+	v.acthead.SetVisible(answerable)
+	v.actrow.SetVisible(answerable)
+
+	switch {
+	case row == nil:
+		v.subject.SetText("")
+		v.value.SetText("")
+	case row.app != "":
+		v.subject.SetText("App Name:")
+		v.value.SetText(row.app)
+	default:
+		v.subject.SetText("Identity:")
+		v.value.SetText(row.identity)
+	}
+	if !answerable {
+		return
+	}
+
+	captions := hostChoices
+	if row.app != "" {
+		captions = appChoices
+	}
+	for i, c := range v.choices {
+		c.SetText(captions[i])
+	}
+	v.choices[standingOf(*row)].SetChecked(true)
+}
+
+// standingOf is which of the three the row sits at: refused, deferred, or
+// admitted. A deny outranks an allow, which is how the gate reads the same
+// two lines.
+func standingOf(row connectionsRow) int {
+	switch {
+	case row.deny:
+		return 0
+	case row.allow:
+		return 2
+	}
+	return 1
+}
+
+// choose puts the current row at a standing and writes it to the store. The
+// row's Identity cell says what the store now holds, so the list and the pane
+// cannot disagree about it.
+func (v *connectionsView) choose(at int) {
+	item := v.tree.CurrentItem()
+	row := rowOf(item)
+	if row == nil || row.self || at < 0 || at >= len(choiceRules) {
+		return
+	}
+	rule := choiceRules[at]
+	if row.app != "" {
+		if err := v.store.setAppRule(row.identity, row.app, rule); err != nil {
+			return
+		}
+	} else if err := v.store.setClientRule(row.identity, rule); err != nil {
+		return
+	}
+	row.deny = rule == ruleDeny
+	row.allow = rule == ruleAllow
+	if row.app != "" {
+		row.detail = appDetail(row.allow, row.deny)
+	} else {
+		row.detail = hostDetail(row.identity, row.allow, row.deny)
+	}
+	item.SetValue("identity", row.detail)
+	v.tree.Update()
+	v.d.RequestUpdate()
+}
+
+// forgetCurrent drops the current row from the store and from the list. A
+// client is forgotten whole: its apps, the name the user gave it, and when it
+// was last here all go with it, since none of them is worth keeping about a
+// client this desktop no longer knows.
+func (v *connectionsView) forgetCurrent() {
+	item := v.tree.CurrentItem()
+	row := rowOf(item)
+	if row == nil || row.self {
+		return
+	}
+	if row.app != "" {
+		if err := v.store.forgetApp(row.identity, row.app); err != nil {
+			return
+		}
+	} else {
+		if err := v.store.forget(row.identity); err != nil {
+			return
+		}
+		_ = v.nicks.set(row.identity, "")
+		_ = v.seen.set(row.identity, "")
+	}
+	v.tree.RemoveItem(item)
+	v.show(v.tree.CurrentItem())
+	v.d.RequestUpdate()
+}
+
+// rename records the name a user typed over a row. Any row that is not a
+// client -- this host, an app beneath a client -- has no name to give, so its
+// caption is put back rather than quietly kept.
+func (v *connectionsView) rename(item *trinkets.TreeItem, value string) {
+	row := rowOf(item)
+	if row == nil || row.self || row.app != "" {
+		return
+	}
+	_ = v.nicks.set(row.identity, value)
+	row.name = strings.TrimSpace(value)
+	if row.name == "" {
+		row.name = "(unnamed)"
+		item.Text = row.name
+		v.tree.Update()
+	}
+}
+
 // showConnections builds and shows the window, returning it so its caller can
 // tell whether one is already up. Runs on the desktop's own thread.
-func showConnections(d *trinkets.Desktop, store *authStore, nicks, seen *pairStore) *window.Window {
+func showConnections(d *trinkets.Desktop, host connectionsHost, store *authStore, nicks, seen *pairStore) *window.Window {
 	wm := d.WindowManager()
 	if wm == nil {
 		return nil
 	}
+	_, win := buildConnections(d, host, store, nicks, seen)
+	if win == nil {
+		return nil
+	}
+	sizeAndShow(d, wm, win)
+	return win
+}
 
+// buildConnections builds the window and wires it to the stores, up to but not
+// including putting it on the desktop.
+func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStore, nicks, seen *pairStore) (*connectionsView, *window.Window) {
 	factory := &promptFactory{
 		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
 		byID:  make(map[uint64]any),
@@ -177,91 +476,118 @@ func showConnections(d *trinkets.Desktop, store *authStore, nicks, seen *pairSto
 
 	shell, err := protocol.Parse(connectionsShellScript())
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	reply, err := session.Execute(shell, factory)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	// Only what this needs a Go handle for. The protocol registry hands back
 	// its own wrappers for a column and an item -- unexported, so nothing
 	// outside the trinkets package can name their type -- and asking for one
-	// by type simply fails. The column is addressed by the name the script
-	// bound it to instead, which is all the second batch needs.
+	// by type simply fails. The columns are addressed by the names the script
+	// bound them to instead, which is all the cell batch needs.
 	win, _ := factory.byID[reply.IDs["w"]].(*window.Window)
-	tree, _ := factory.byID[reply.IDs["tree"]].(*trinkets.TreeView)
-	if win == nil || tree == nil {
-		return nil
+	v := &connectionsView{d: d, host: host, store: store, nicks: nicks, seen: seen}
+	v.tree, _ = factory.byID[reply.IDs["tree"]].(*trinkets.TreeView)
+	v.trusted, _ = factory.byID[reply.IDs["trusted"]].(*trinkets.Checkbox)
+	v.loopback, _ = factory.byID[reply.IDs["loopback"]].(*trinkets.Checkbox)
+	v.subject, _ = factory.byID[reply.IDs["subject"]].(*trinkets.Label)
+	v.value, _ = factory.byID[reply.IDs["value"]].(*trinkets.Label)
+	v.permhead, _ = factory.byID[reply.IDs["permhead"]].(*trinkets.Label)
+	v.acthead, _ = factory.byID[reply.IDs["acthead"]].(*trinkets.Label)
+	v.permrow, _ = factory.byID[reply.IDs["permrow"]].(core.Trinket)
+	v.actrow, _ = factory.byID[reply.IDs["actrow"]].(core.Trinket)
+	v.forget, _ = factory.byID[reply.IDs["forget"]].(*trinkets.Button)
+	for i := range v.choices {
+		v.choices[i], _ = factory.byID[reply.IDs[fmt.Sprintf("choice%d", i)]].(*trinkets.RadioButton)
+	}
+	if win == nil || !v.complete() {
+		return nil, nil
 	}
 
 	rows := connectionsRows(store, nicks.all(), seen.all())
 	items, err := protocol.Parse(connectionsItemsScript(rows))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	itemReply, err := session.Execute(items, factory)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
+	cells, err := protocol.Parse(connectionsCellsScript(rows, itemReply.IDs))
+	if err != nil {
+		return nil, nil
+	}
+	if _, err := session.Execute(cells, factory); err != nil {
+		return nil, nil
+	}
+	v.attach(rows)
 
-	// The data columns, and the map from a row back to the peer it names --
-	// which is what says whether a rename means anything on that row. Keyed by
-	// the wire id a protocol-built item keeps, since the row objects here are
-	// the registry's wrappers rather than the tree's own items.
-	renameable := map[core.ObjectID]string{}
-	var cells strings.Builder
-	for _, col := range []struct {
-		name  string
-		value func(connectionsRow) string
-	}{
-		{"seencol", func(r connectionsRow) string { return r.seen }},
-		{"col", func(r connectionsRow) string { return r.detail }},
-	} {
-		fmt.Fprintf(&cells, "set %s children={\n", col.name)
-		for i, r := range rows {
-			if id, ok := itemReply.IDs[fmt.Sprintf("i%d", i)]; ok {
-				fmt.Fprintf(&cells, "  new cell item=%d value=%s\n",
-					id, protocol.Quote(col.value(r)))
-				if r.identity != "" {
-					renameable[core.ObjectID(id)] = r.identity
-				}
-			}
-			for j, c := range r.children {
-				if id, ok := itemReply.IDs[fmt.Sprintf("i%dc%d", i, j)]; ok {
-					fmt.Fprintf(&cells, "  new cell item=%d value=%s\n",
-						id, protocol.Quote(col.value(c)))
-				}
-			}
-		}
-		cells.WriteString("}\n")
-	}
-	if parsed, err := protocol.Parse(cells.String()); err == nil {
-		_, _ = session.Execute(parsed, factory)
-	}
-
-	// A rename writes the nickname store and nothing else. Any other row --
-	// this host, an app beneath a peer -- has no identity to name, so its
-	// caption is put back rather than quietly kept.
-	tree.SetOnCellEdited(func(item *trinkets.TreeItem, column *trinkets.TreeColumn, value string) {
+	v.tree.SetOnCellEdited(func(item *trinkets.TreeItem, column *trinkets.TreeColumn, value string) {
 		if column != nil {
 			return // only the key column carries the nickname
 		}
-		if item == nil {
-			return
-		}
-		id, ok := renameable[item.ID]
-		if !ok {
-			return
-		}
-		_ = nicks.set(id, value)
-		if strings.TrimSpace(value) == "" {
-			item.Text = "(unnamed)"
-			tree.Update()
+		v.rename(item, value)
+	})
+	v.tree.SetOnCurrentChanged(func(item *trinkets.TreeItem) { v.show(item) })
+	for i := range v.choices {
+		at := i
+		v.choices[i].SetOnToggled(func(checked bool) {
+			if checked && !v.answering {
+				v.choose(at)
+			}
+		})
+	}
+	v.forget.SetOnClick(v.forgetCurrent)
+	v.trusted.SetOnToggled(func(on bool) {
+		if !v.answering && v.host != nil {
+			v.host.SetPreTrustedOnly(on)
 		}
 	})
+	v.loopback.SetOnToggled(func(on bool) {
+		if !v.answering && v.host != nil {
+			v.host.SetPromptLocal(!on)
+		}
+	})
+	v.showPolicies()
+	v.show(v.tree.CurrentItem())
+	return v, win
+}
 
-	sizeAndShow(d, wm, win)
-	return win
+// complete reports whether every trinket the pane writes into was found. A
+// window missing one of them would open with a pane that answers nothing, so
+// it is not opened at all.
+func (v *connectionsView) complete() bool {
+	if v.tree == nil || v.trusted == nil || v.loopback == nil || v.subject == nil || v.value == nil || v.permhead == nil ||
+		v.acthead == nil || v.permrow == nil || v.actrow == nil || v.forget == nil {
+		return false
+	}
+	for _, c := range v.choices {
+		if c == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// attach hangs each row on the tree item that draws it, so a click on a row
+// reaches the client it is about. The tree holds the items in the order the
+// script built them, which is the order of the rows they came from.
+func (v *connectionsView) attach(rows []connectionsRow) {
+	items := v.tree.RootItems()
+	for i := range rows {
+		if i >= len(items) {
+			return
+		}
+		row := &rows[i]
+		items[i].Data = row
+		for j := range row.children {
+			if j < len(items[i].Children) {
+				items[i].Children[j].Data = &row.children[j]
+			}
+		}
+	}
 }
 
 // sizeAndShow gives the window a size to exist at and puts it on the desktop,
@@ -272,7 +598,7 @@ func sizeAndShow(d *trinkets.Desktop, wm *window.WindowManager, win *window.Wind
 	metrics := d.EffectiveCellMetrics()
 	area := wm.ClientArea()
 	w := metrics.UnitsPerCellWidth * 84
-	h := metrics.UnitsPerCellHeight * 18
+	h := metrics.UnitsPerCellHeight * 24
 	if area.Width > 0 {
 		w = min(w, area.Width*3/4)
 	}
@@ -301,7 +627,7 @@ func sizeAndShow(d *trinkets.Desktop, wm *window.WindowManager, win *window.Wind
 // NewConnectionsOpener returns what the desktop's Connections menu item calls.
 // Install it with Desktop.SetConnectionsOpener; without it the item is not
 // offered, since a desktop with no display server has no connections to show.
-func NewConnectionsOpener(d *trinkets.Desktop) func() {
+func NewConnectionsOpener(d *trinkets.Desktop, host connectionsHost) func() {
 	store := newAuthStore("")
 	nicks := newNicknameStore("")
 	seen := newSeenStore("")
@@ -320,7 +646,7 @@ func NewConnectionsOpener(d *trinkets.Desktop) func() {
 				}
 				return
 			}
-			win := showConnections(d, store, nicks, seen)
+			win := showConnections(d, host, store, nicks, seen)
 			if win == nil {
 				return
 			}

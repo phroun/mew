@@ -93,11 +93,11 @@ func TestAdmitLocalAndLockdown(t *testing.T) {
 
 func TestAdmitTokenBypass(t *testing.T) {
 	s := &Server{
-		store:       newAuthStore(filepath.Join(t.TempDir(), "auth")),
-		token:       "open-sesame",
-		authorize:   func(AuthRequest) AuthDecision { return AuthDenyOnce },
-		promptLocal: true,
+		store:     newAuthStore(filepath.Join(t.TempDir(), "auth")),
+		token:     "open-sesame",
+		authorize: func(AuthRequest) AuthDecision { return AuthDenyOnce },
 	}
+	s.SetPromptLocal(true)
 	r := req("Auto", "sha256:eeee")
 	if !s.admit(r, "open-sesame") {
 		t.Error("matching token should bypass the deny authorizer")

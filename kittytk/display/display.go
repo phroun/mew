@@ -68,13 +68,18 @@ type Server struct {
 	sessions atomic.Uint64
 	closed   atomic.Bool
 
-	endpoint    endpoint
-	token       string
-	store       *authStore
-	seen        *pairStore
-	authorize   Authorizer
-	prompt      Authorizer
-	promptLocal bool
+	endpoint  endpoint
+	token     string
+	store     *authStore
+	seen      *pairStore
+	authorize Authorizer
+	prompt    Authorizer
+
+	// promptLocal, when set, asks about same-machine connections too instead
+	// of admitting them on the strength of the OS having let them reach the
+	// socket. The Connections window offers it as "Automatically Approve
+	// Loopback Connections", which is this turned around.
+	promptLocal atomic.Bool
 
 	// preTrustedOnly, when set, auto-rejects any connection without an
 	// existing stored allow instead of prompting (a lockdown mode the
@@ -93,6 +98,13 @@ func (s *Server) SetPreTrustedOnly(v bool) { s.preTrustedOnly.Store(v) }
 // PreTrustedOnly reports the lockdown state.
 func (s *Server) PreTrustedOnly() bool { return s.preTrustedOnly.Load() }
 
+// SetPromptLocal chooses whether same-machine connections are asked about
+// rather than admitted for being local.
+func (s *Server) SetPromptLocal(v bool) { s.promptLocal.Store(v) }
+
+// PromptLocal reports whether same-machine connections are asked about.
+func (s *Server) PromptLocal() bool { return s.promptLocal.Load() }
+
 // Serve listens on the unix socket at path (creating its directory,
 // 0700) and serves connections until Close. Call from desktop wiring
 // (e.g. SetOnStartup). This is ServeConfig with a unix Endpoint.
@@ -105,21 +117,21 @@ func Serve(desktop *trinkets.Desktop, path string) (*Server, error) {
 func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 	ep := parseEndpoint(cfg.Endpoint)
 	s := &Server{
-		desktop:     desktop,
-		endpoint:    ep,
-		token:       cfg.Token,
-		store:       newAuthStore(""),
-		seen:        newSeenStore(""),
-		authorize:   cfg.Authorize,
-		prompt:      cfg.Prompt,
-		promptLocal: cfg.PromptLocal,
+		desktop:   desktop,
+		endpoint:  ep,
+		token:     cfg.Token,
+		store:     newAuthStore(""),
+		seen:      newSeenStore(""),
+		authorize: cfg.Authorize,
+		prompt:    cfg.Prompt,
 	}
+	s.promptLocal.Store(cfg.PromptLocal)
 
 	// Serving is what gives the desktop connections to show, so this is where
 	// the Connections item earns its place -- not in DefaultConfig, which a
 	// host is free not to use, and which would have left a hand-configured
 	// server with no way to see who it had let in.
-	desktop.SetConnectionsOpener(NewConnectionsOpener(desktop))
+	desktop.SetConnectionsOpener(NewConnectionsOpener(desktop, s))
 
 	var ln net.Listener
 	var err error

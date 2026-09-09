@@ -92,8 +92,9 @@ func TestTheRowsNameThisHostFirst(t *testing.T) {
 	if rows[0].name != "This Host" {
 		t.Errorf("the first row is %q, want This Host", rows[0].name)
 	}
-	if rows[0].identity != "" {
-		t.Error("this host was made renameable; it is not a peer in the store")
+	if !rows[0].self {
+		t.Error("this host reads as a client of itself, so it would be offered a " +
+			"standing and a name like any other row")
 	}
 	if rows[1].name != "Jeff's laptop" {
 		t.Errorf("the peer shows as %q, not the name it was given", rows[1].name)
@@ -105,8 +106,9 @@ func TestTheRowsNameThisHostFirst(t *testing.T) {
 	if len(rows[1].children) != 1 || rows[1].children[0].name != "Editor" {
 		t.Errorf("the peer's apps read as %+v", rows[1].children)
 	}
-	if rows[1].children[0].identity != "" {
-		t.Error("an app row was made renameable; only a peer has a name to give")
+	if rows[1].children[0].app != "Editor" {
+		t.Errorf("the app row names app %q; without it a rename or a standing "+
+			"would land on the client instead", rows[1].children[0].app)
 	}
 }
 
@@ -155,7 +157,7 @@ func TestTheWindowActuallyOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	win := showConnections(d, store, nicks, tempSeen(t))
+	win := showConnections(d, nil, store, nicks, tempSeen(t))
 	if win == nil {
 		t.Fatal("the window did not open, so choosing the menu item does nothing")
 	}
@@ -183,7 +185,7 @@ func TestTheWindowActuallyOpens(t *testing.T) {
 func TestTheFingerprintScrollsAndTheNameStaysPut(t *testing.T) {
 	d := shownDesktop(t)
 	store := storeWith(t, "allow app sha256:aaa Editor")
-	if win := showConnections(d, store, tempNicknames(t), tempSeen(t)); win == nil {
+	if win := showConnections(d, nil, store, tempNicknames(t), tempSeen(t)); win == nil {
 		t.Fatal("the window did not open")
 	}
 

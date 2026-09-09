@@ -305,6 +305,24 @@ func (t *TreeView) RemoveRootItem(item *TreeItem) {
 	t.Update()
 }
 
+// RemoveItem removes an item from wherever it sits -- a root item, or a child
+// of another item -- and rebuilds what the tree draws.
+func (t *TreeView) RemoveItem(item *TreeItem) {
+	if item == nil {
+		return
+	}
+	if item.Parent == nil {
+		t.RemoveRootItem(item)
+		return
+	}
+	item.Parent.RemoveChild(item)
+	t.rebuildFlatList()
+	if t.currentIndex >= len(t.flatList) {
+		t.currentIndex = len(t.flatList) - 1
+	}
+	t.Update()
+}
+
 // Clear removes all items.
 func (t *TreeView) Clear() {
 	t.rootItems = nil
