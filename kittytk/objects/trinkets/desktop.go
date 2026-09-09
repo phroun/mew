@@ -527,7 +527,8 @@ func (d *Desktop) createSystemMenu() *Menu {
 		d.showAboutDesktop()
 	}))
 	if open := d.connectionsOpener(); open != nil {
-		menu.AddItem(NewMenuItem("&Connections...").SetOnTriggered(open))
+		menu.AddItem(NewMenuItem("&Connections...").
+			SetCommand(core.CmdDesktopConnections).SetOnTriggered(open))
 	}
 	menu.AddItem(NewSeparator())
 
@@ -2115,15 +2116,26 @@ func (d *Desktop) SetConnectionsOpener(open func()) {
 	d.openConnections = open
 	d.mu.Unlock()
 
-	// The system menu is built once, at construction, and only re-added to the
-	// bar after that -- so an item that appears on this being installed has to
-	// rebuild it. Serving starts after the desktop exists, which is exactly the
-	// case that would otherwise never show the item at all.
-	menu := d.createSystemMenu()
-	d.mu.Lock()
-	d.systemMenu = menu
-	commands := d.commands
-	d.mu.Unlock()
+	// The system menu is built once, at construction, and serving starts after
+	// the desktop exists -- so the item has to reach a menu that is already
+	// there. It is INSERTED rather than the menu rebuilt: the menu bar holds
+	// that object from construction and addHostWindowMenuItems adds Minimize
+	// and Zoom to it later, so a replacement shows one set or the other
+	// depending on which of them happened to run last.
+	d.mu.RLock()
+	menu, commands := d.systemMenu, d.commands
+	d.mu.RUnlock()
+	if menu == nil || open == nil {
+		return
+	}
+	for _, it := range menu.Items() {
+		if it != nil && it.Command == core.CmdDesktopConnections {
+			return // already there; installing twice must not double it
+		}
+	}
+	item := NewMenuItem("&Connections...").SetCommand(core.CmdDesktopConnections)
+	item.SetOnTriggered(open)
+	menu.InsertItem(1, item) // directly under About Desktop, which is item 0
 	if commands != nil {
 		menu.BindCommands(commands)
 	}

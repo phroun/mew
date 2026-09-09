@@ -39,10 +39,13 @@ const (
 	CmdAppShowAll    = "app_show_all"
 	// Leaving the desktop itself: the system menu's Exit Desktop, which ends
 	// the desktop rather than any application on it.
-	CmdDesktopExit   = "desktop_exit"
-	CmdGUIScaleDown  = "gui_scale_down"
-	CmdGUIScaleUp    = "gui_scale_up"
-	CmdGUIScaleReset = "gui_scale_reset"
+	CmdDesktopExit = "desktop_exit"
+	// Who has been allowed to draw here: the system menu's Connections, which
+	// the display service installs and a bare desktop never offers.
+	CmdDesktopConnections = "desktop_connections"
+	CmdGUIScaleDown       = "gui_scale_down"
+	CmdGUIScaleUp         = "gui_scale_up"
+	CmdGUIScaleReset      = "gui_scale_reset"
 
 	// Focus, which belongs to no one trinket.
 	CmdFocusNext  = "focus_next"

@@ -95,3 +95,34 @@ func TestAnAppCannotConjureTheItem(t *testing.T) {
 		t.Errorf("an app asked and got an item nothing answers: %v", rows)
 	}
 }
+
+// The item is put INTO the menu that already exists, not into a replacement
+// for it. The menu bar holds that object from construction and the host window
+// items are added to it later, so a desktop that swapped it would show one set
+// or the other depending on which happened to run last.
+func TestTheItemJoinsTheMenuTheDesktopAlreadyHas(t *testing.T) {
+	d := NewDesktop()
+	before := d.systemMenu
+
+	// Something else adds to the menu first, as the host window items do.
+	d.systemMenu.AddItem(NewMenuItem("&Zoom"))
+	d.SetConnectionsOpener(func() {})
+
+	if d.systemMenu != before {
+		t.Fatal("the system menu was replaced; whatever else holds it now shows " +
+			"a different menu from the one the desktop thinks it has")
+	}
+	rows := menuLayout(d.systemMenu)
+	if indexOf(rows, "Zoom") < 0 {
+		t.Errorf("an item added before the opener was lost: %v", rows)
+	}
+	if indexOf(rows, "Connections") != indexOf(rows, "About Desktop")+1 {
+		t.Errorf("Connections did not land under About Desktop: %v", rows)
+	}
+
+	// Installing again must not stack a second copy.
+	d.SetConnectionsOpener(func() {})
+	if n := strings.Count(strings.Join(menuLayout(d.systemMenu), "\n"), "Connections"); n != 1 {
+		t.Errorf("installing twice left %d copies: %v", n, menuLayout(d.systemMenu))
+	}
+}
