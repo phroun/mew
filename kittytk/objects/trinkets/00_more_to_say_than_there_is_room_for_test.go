@@ -195,3 +195,46 @@ func TestATreeOffersTheCellUnderThePointer(t *testing.T) {
 		t.Errorf("a tree asks for its tooltips %v", tree.TooltipSide())
 	}
 }
+
+// A splitter's caption is drawn in the middle of its divider band, dressed in
+// dots. When the band is too narrow for it, the band offers the title -- the
+// dots are decoration, and the reader is not missing them.
+func TestASplitterOffersItsTitleFromTheBand(t *testing.T) {
+	px, err := raster.New(900, 200)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	core.SetTextMeasurer(px)
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	c := newCatcher()
+	sp := NewSplitter(core.Vertical)
+	sp.SetTitle(longCaption)
+	sp.SetParent(c)
+	sp.SetBounds(core.UnitRect{Width: 120, Height: 160})
+	sp.Paint(core.NewPainter(px))
+
+	band := sp.dividerBounds()
+	mid := core.UnitPoint{X: band.X + band.Width/2, Y: band.Y + band.Height/2}
+	text, at, ok := sp.TooltipAt(mid)
+	if !ok {
+		t.Fatal("a band too narrow for its caption offered nothing")
+	}
+	if text != longCaption {
+		t.Errorf("it offered %q, not its title", text)
+	}
+	if at != band {
+		t.Errorf("it named %+v, not the band at %+v", at, band)
+	}
+
+	// Off the band, the panes answer for themselves.
+	if _, _, ok := sp.TooltipAt(core.UnitPoint{X: band.X, Y: band.Y + band.Height + 8}); ok {
+		t.Error("the splitter answered for a pane that is not its own caption")
+	}
+
+	// And the pointer arriving on the band makes the offer.
+	sp.HandleMouseMove(core.MouseMoveEvent{X: mid.X, Y: mid.Y})
+	if len(c.took) != 1 || c.took[0].Text != longCaption {
+		t.Errorf("the pointer on the band produced %+v", c.took)
+	}
+}

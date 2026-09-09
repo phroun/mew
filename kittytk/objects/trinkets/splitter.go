@@ -160,6 +160,26 @@ func (s *Splitter) SetTitle(title string) {
 	s.Update()
 }
 
+// TooltipAt answers for the divider band and nothing else: the panes on either
+// side are trinkets of their own and answer for themselves.
+//
+// What it offers is the TITLE rather than what was cut, because what the band
+// draws is the title dressed in its dots -- and the dots are decoration, not
+// something a reader is missing.
+func (s *Splitter) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	band := s.dividerBounds()
+	if !band.Contains(local) {
+		return "", core.UnitRect{}, false
+	}
+	if tip := s.Tooltip(); tip != "" {
+		return tip, band, true
+	}
+	if _, _, cut := s.TrinketBase.TooltipAt(local); cut && s.title != "" {
+		return s.title, band, true
+	}
+	return "", core.UnitRect{}, false
+}
+
 // Children returns all child trinkets.
 func (s *Splitter) Children() []core.Trinket {
 	var children []core.Trinket
@@ -641,6 +661,9 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement for dragging.
 func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	s.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	if s.dragging {
 		bounds := s.Bounds()
 		metrics := s.EffectiveCellMetrics()

@@ -167,6 +167,42 @@ func TestPressingThroughATooltipReachesWhatItLiesOver(t *testing.T) {
 	}
 }
 
+// The compositor never calls the popup layer: it is handed the overlays with
+// the rest of the frame and draws each on a layer of its own. A tooltip has to
+// be in that hand-off, or a composited host shows nothing however well the
+// software path draws it.
+func TestATooltipReachesTheCompositor(t *testing.T) {
+	d, _, label := onScreen(t)
+
+	d.ShowTooltip(core.TooltipRequest{
+		Text: "the whole fingerprint",
+		From: label,
+		At:   core.UnitRect{Width: label.Bounds().Width, Height: label.Bounds().Height},
+	})
+
+	list := d.GetChildWindows()
+	if list == nil {
+		t.Fatal("the desktop offered the compositor no frame at all")
+	}
+	var found *window.PopupOverlay
+	for _, p := range list.Popups {
+		if o, ok := p.(*window.PopupOverlay); ok && o.ID == tooltipPopupID {
+			found = o
+		}
+	}
+	if found == nil {
+		t.Fatal("the frame the compositor is given holds no tooltip")
+	}
+	// The compositor skips an overlay with no area and one with no paint,
+	// and sizes the layer's texture from these bounds.
+	if found.Bounds.Width <= 0 || found.Bounds.Height <= 0 {
+		t.Errorf("the tooltip layer is %dx%d, which the compositor drops", found.Bounds.Width, found.Bounds.Height)
+	}
+	if found.Paint == nil {
+		t.Error("the tooltip layer has nothing to paint it")
+	}
+}
+
 // And it leaves the popup layer when it is withdrawn.
 func TestATooltipLeavesThePopupLayer(t *testing.T) {
 	d, wm, label := onScreen(t)
