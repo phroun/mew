@@ -887,7 +887,8 @@ func (c *ComboBox) Paint(p *core.Painter) {
 
 	// Draw text
 	// Cut to fit first, prepared for the cell target after.
-	shown := c.CellRun(c.displayText(text, textAreaWidth))
+	cut, _ := c.ElideText(text, textAreaWidth)
+	shown := c.CellRun(cut)
 	p.DrawText(core.LeadingX(c.ancestor(), bounds.Width, 0, c.MeasureText(shown)), 0, shown, s, font)
 
 	// Draw dropdown arrow at the trailing edge
@@ -973,7 +974,10 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			Width:  bounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		run := c.CellRun(item)
+		// The row is indented a column on the leading side; the same column is
+		// left on the other, so a cut item does not run into the frame.
+		cut, _ := c.ElideText(item, bounds.Width-metrics.UnitsPerCellWidth*2)
+		run := c.CellRun(cut)
 		rowPainter.DrawText(core.LeadingX(c.ancestor(), bounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
 			itemY, run, s, font)
 	}
@@ -1091,7 +1095,8 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			Width:  popupBounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		run := c.CellRun(item)
+		cut, _ := c.ElideText(item, popupBounds.Width-metrics.UnitsPerCellWidth*2)
+		run := c.CellRun(cut)
 		rowPainter.DrawText(core.LeadingX(c.ancestor(), popupBounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
 			itemY, run, s, font)
 	}

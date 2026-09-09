@@ -194,7 +194,9 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	x := metrics.UnitsPerCellWidth * 4 // After indicator + space (4 cells)
 
 	if !r.wordWrap {
-		run := r.CellRun(r.text)
+		// The label has the room left over from the indicator and its space.
+		shown, _ := r.ElideText(r.text, box-x)
+		run := r.CellRun(shown)
 		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(run)), 0, run, labelStyle, font)
 		return
 	}

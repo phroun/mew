@@ -507,7 +507,10 @@ func (l *ListView) Paint(p *core.Painter) {
 		// Cut to fit first, prepared for the cell target after: what is
 		// trimmed is the text, and what is drawn is the run made from what is
 		// left of it.
-		shown := l.CellRun(ellipsizeText(font, metrics, item.Text, availableWidth))
+		// The row's own mode says where the cut goes, and a list told not to
+		// elide draws the whole row and lets the surface clip it.
+		cut, _ := l.ElideText(item.Text, availableWidth)
+		shown := l.CellRun(cut)
 
 		// The room is the list's; where the text sits IN it is the item's own
 		// (see itemTextSide), so a Hebrew name and an English one in the same

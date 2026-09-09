@@ -256,6 +256,37 @@ func init() {
 	})).OneOf("inherit", "ltr", "rtl").Def("inherit").
 		Tip("Side text begins on and a row runs from, here and below; inherit takes it from the container."))
 
+	// elide takes a word for WHERE the cut goes, and the flag form for whether
+	// there is one at all: !elide leaves the text whole and lets the surface
+	// clip it. Text that fits is never cut either way, so this is only ever
+	// about a trinket given less room than it asked for.
+	protocol.RegisterCommonProperty("elide", protocol.NewProperty("enum", wprop("elide", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+		mode := core.ElideEnd
+		switch {
+		case f == protocol.FlagFalse:
+			mode = core.ElideOff
+		case f == protocol.FlagTrue || v == nil:
+			mode = core.ElideEnd
+		default:
+			word, err := protocol.AsWord("elide", v, f)
+			if err != nil {
+				return err
+			}
+			m, ok := core.ParseElideMode(word)
+			if !ok {
+				return fmt.Errorf("elide: %q is not end, middle, start or off", word)
+			}
+			mode = m
+		}
+		h, ok := w.(interface{ SetElideMode(core.ElideMode) })
+		if !ok {
+			return fmt.Errorf("elide: not supported by this type")
+		}
+		h.SetElideMode(mode)
+		return nil
+	})).OneOf("end", "middle", "start", "off").Def("end").
+		Tip("Where text too long for its room is cut: end (default), middle, start, or off to leave it whole."))
+
 	// Colors (vocabulary decision 2026-07-05): named colors as bare
 	// words, RGB as quoted "#rrggbb". fg/bg build on the trinket's
 	// custom style override.

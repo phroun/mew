@@ -246,7 +246,9 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	x := metrics.UnitsPerCellWidth * 4 // After indicator + space (4 cells)
 
 	if !c.wordWrap {
-		run := c.CellRun(c.text)
+		// The label has the room left over from the indicator and its space.
+		shown, _ := c.ElideText(c.text, box-x)
+		run := c.CellRun(shown)
 		p.DrawText(core.LeadingX(c, box, x, c.MeasureText(run)), 0, run, labelStyle, font)
 		return
 	}

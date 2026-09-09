@@ -410,6 +410,13 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 	}
 
+	// The face is as wide as what it holds -- unless the layout gave the button
+	// less than it asked for, and then the caption is cut and the face is what
+	// there is. A button drawn at its natural width in a narrower slot runs its
+	// last letters through whatever stands beside it.
+	shown, _ := b.ElideText(b.text, bounds.Width-bracketWidth-iconWidth)
+	textWidth = b.MeasureText(b.CellRun(shown))
+
 	// Total button width (content only, no shadow)
 	buttonWidth := bracketWidth + textWidth + iconWidth
 
@@ -499,9 +506,9 @@ func (b *Button) Paint(p *core.Painter) {
 	p.DrawCell(xOffset, yOffset, leftBracket, s)
 
 	// Draw text using font
-	if b.text != "" {
+	if shown != "" {
 		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
-		p.DrawText(textX, yOffset, b.CellRun(b.text), s, font)
+		p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)

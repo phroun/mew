@@ -366,6 +366,7 @@ type TrinketBase struct {
 	sizePolicy SizePolicyPair
 	margins    UnitMargins
 
+	elide            ElideMode
 	layoutStretch    int
 	layoutStretchSet bool
 	layoutAlign      Alignment
