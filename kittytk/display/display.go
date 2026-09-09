@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/app"
@@ -70,6 +71,7 @@ type Server struct {
 	endpoint    endpoint
 	token       string
 	store       *authStore
+	seen        *pairStore
 	authorize   Authorizer
 	prompt      Authorizer
 	promptLocal bool
@@ -107,6 +109,7 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 		endpoint:    ep,
 		token:       cfg.Token,
 		store:       newAuthStore(""),
+		seen:        newSeenStore(""),
 		authorize:   cfg.Authorize,
 		prompt:      cfg.Prompt,
 		promptLocal: cfg.PromptLocal,
@@ -259,6 +262,12 @@ func (s *Server) serveConn(nc net.Conn) {
 		fmt.Fprintf(nc, "%s\n", protocol.EncodeError("connection refused"))
 		return
 	}
+	// Admitted: this client has said who it is and been let in, which is what
+	// the Connections window means by having spoken to us. A peer with no
+	// identity -- a unix socket, which is the machine itself -- has no row
+	// there to stamp.
+	_ = markSeen(s.seen, req.identity(), time.Now())
+
 	sessionID := s.sessions.Add(1)
 
 	c := &conn{

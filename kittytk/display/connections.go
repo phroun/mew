@@ -43,15 +43,16 @@ func hostFingerprint() string {
 
 // connectionsRow is one line of the tree: a peer, or an app beneath one.
 type connectionsRow struct {
-	name     string // what the first column shows
-	detail   string // what the second column shows
+	name     string // what the name column shows
+	seen     string // what the last-seen column shows: YYYY-MM-DD, or nothing
+	detail   string // what the identity column shows
 	identity string // non-empty only on a renameable peer row
 	children []connectionsRow
 }
 
 // connectionsRows gathers what the window shows: this host first, then every
 // client the store has decided about, each with the apps it names.
-func connectionsRows(store *authStore, names map[string]string) []connectionsRow {
+func connectionsRows(store *authStore, names, seen map[string]string) []connectionsRow {
 	self := hostFingerprint()
 	if self == "" {
 		self = "(no identity yet -- none has been needed)"
@@ -59,7 +60,11 @@ func connectionsRows(store *authStore, names map[string]string) []connectionsRow
 	rows := []connectionsRow{{name: "This Host", detail: self}}
 
 	for _, e := range store.entries() {
-		r := connectionsRow{identity: e.identity, detail: e.identity}
+		r := connectionsRow{
+			identity: e.identity,
+			detail:   e.identity,
+			seen:     seenDate(seen[e.identity]),
+		}
 		if n := names[e.identity]; n != "" {
 			r.name = n
 		} else {
@@ -85,39 +90,45 @@ func connectionsRows(store *authStore, names map[string]string) []connectionsRow
 	return rows
 }
 
-// The two columns, in units -- eight to a character cell.
+// The three columns, in units -- eight to a character cell.
 //
-// The name is PINNED and the fingerprint SCROLLS, rather than both being
-// squeezed to the window. Squeezing has to take the space from somewhere, and
-// with two columns of unequal worth there is no ratio that reads well at every
-// window size: the name is short and must be whole, the fingerprint is
-// seventy-one characters and will not fit whatever it is given.
+// The two short ones are PINNED and the fingerprint SCROLLS, rather than all
+// three being squeezed to the window. Squeezing has to take the space from
+// somewhere, and with columns of unequal worth there is no ratio that reads
+// well at every window size: a name and a date are short and must be whole,
+// the fingerprint is seventy-one characters and will not fit whatever it is
+// given.
 //
-// So the name is held outside the scrolling region at a width that shows one,
-// and the fingerprint is given room for all of itself and left to scroll --
-// which is the one arrangement where neither has to be cut short to suit the
-// other.
+// So the name and the date are held outside the scrolling region at widths
+// that show them, and the fingerprint is given room for all of itself and left
+// to scroll -- which is the one arrangement where nothing has to be cut short
+// to suit anything else.
 const (
-	nicknameWidth = 240 // pinned: 30 cells, enough for a name
+	nicknameWidth = 120 // pinned: 15 cells
+	lastSeenWidth = 96  // pinned: 12 cells, enough for YYYY-MM-DD
 	identityWidth = 600 // scrolls: 75 cells, enough for sha256:<64 hex>
+	pinnedColumns = 2   // the name and the date, counted from where the run begins
 )
 
 // connectionsShellScript is the window and the empty tree. The rows go in
-// afterwards, so their ids can be surfaced and their second column filled by
-// the same two-batch pattern a client would use.
+// afterwards, so their ids can be surfaced and their cells filled by the same
+// two-batch pattern a client would use.
 func connectionsShellScript() string {
 	return "" +
 		"w=new window title=\"Connections\" width=640 height=340 children={\n" +
 		"  root=new panel layout=vbox spacing=0 children={\n" +
 		"    tv=new treeview caption=\"Nickname\" showheader treelines editable" +
-		" !fit_width fixed_begin=1" +
+		" !fit_width fixed_begin=" + strconv.Itoa(pinnedColumns) +
 		" key_width=" + strconv.Itoa(nicknameWidth) + " columns={\n" +
+		"      sc=new column id=lastseen caption=\"Last Seen\" width=" +
+		strconv.Itoa(lastSeenWidth) + "\n" +
 		"      idc=new column id=identity caption=\"Identity\" width=" +
 		strconv.Itoa(identityWidth) + "\n" +
 		"    }\n" +
 		"  }\n" +
 		"}\n" +
 		"tree=w.root.tv\n" +
+		"seencol=w.root.tv.sc\n" +
 		"col=w.root.tv.idc\n"
 }
 
@@ -152,7 +163,7 @@ func connectionsItemsScript(rows []connectionsRow) string {
 
 // showConnections builds and shows the window, returning it so its caller can
 // tell whether one is already up. Runs on the desktop's own thread.
-func showConnections(d *trinkets.Desktop, store *authStore, nicks *nicknameStore) *window.Window {
+func showConnections(d *trinkets.Desktop, store *authStore, nicks, seen *pairStore) *window.Window {
 	wm := d.WindowManager()
 	if wm == nil {
 		return nil
@@ -183,7 +194,7 @@ func showConnections(d *trinkets.Desktop, store *authStore, nicks *nicknameStore
 		return nil
 	}
 
-	rows := connectionsRows(store, nicks.all())
+	rows := connectionsRows(store, nicks.all(), seen.all())
 	items, err := protocol.Parse(connectionsItemsScript(rows))
 	if err != nil {
 		return nil
@@ -193,29 +204,37 @@ func showConnections(d *trinkets.Desktop, store *authStore, nicks *nicknameStore
 		return nil
 	}
 
-	// The second column, and the map from a row back to the peer it names --
+	// The data columns, and the map from a row back to the peer it names --
 	// which is what says whether a rename means anything on that row. Keyed by
 	// the wire id a protocol-built item keeps, since the row objects here are
 	// the registry's wrappers rather than the tree's own items.
 	renameable := map[core.ObjectID]string{}
 	var cells strings.Builder
-	cells.WriteString("set col children={\n")
-	for i, r := range rows {
-		if id, ok := itemReply.IDs[fmt.Sprintf("i%d", i)]; ok {
-			fmt.Fprintf(&cells, "  new cell item=%d value=%s\n",
-				id, protocol.Quote(r.detail))
-			if r.identity != "" {
-				renameable[core.ObjectID(id)] = r.identity
-			}
-		}
-		for j, c := range r.children {
-			if id, ok := itemReply.IDs[fmt.Sprintf("i%dc%d", i, j)]; ok {
+	for _, col := range []struct {
+		name  string
+		value func(connectionsRow) string
+	}{
+		{"seencol", func(r connectionsRow) string { return r.seen }},
+		{"col", func(r connectionsRow) string { return r.detail }},
+	} {
+		fmt.Fprintf(&cells, "set %s children={\n", col.name)
+		for i, r := range rows {
+			if id, ok := itemReply.IDs[fmt.Sprintf("i%d", i)]; ok {
 				fmt.Fprintf(&cells, "  new cell item=%d value=%s\n",
-					id, protocol.Quote(c.detail))
+					id, protocol.Quote(col.value(r)))
+				if r.identity != "" {
+					renameable[core.ObjectID(id)] = r.identity
+				}
+			}
+			for j, c := range r.children {
+				if id, ok := itemReply.IDs[fmt.Sprintf("i%dc%d", i, j)]; ok {
+					fmt.Fprintf(&cells, "  new cell item=%d value=%s\n",
+						id, protocol.Quote(col.value(c)))
+				}
 			}
 		}
+		cells.WriteString("}\n")
 	}
-	cells.WriteString("}\n")
 	if parsed, err := protocol.Parse(cells.String()); err == nil {
 		_, _ = session.Execute(parsed, factory)
 	}
@@ -285,6 +304,7 @@ func sizeAndShow(d *trinkets.Desktop, wm *window.WindowManager, win *window.Wind
 func NewConnectionsOpener(d *trinkets.Desktop) func() {
 	store := newAuthStore("")
 	nicks := newNicknameStore("")
+	seen := newSeenStore("")
 	// One window, not one per visit: a second copy would show the same store
 	// twice and let a rename in one go stale in the other.
 	var mu sync.Mutex
@@ -300,7 +320,7 @@ func NewConnectionsOpener(d *trinkets.Desktop) func() {
 				}
 				return
 			}
-			win := showConnections(d, store, nicks)
+			win := showConnections(d, store, nicks, seen)
 			if win == nil {
 				return
 			}

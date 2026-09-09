@@ -84,7 +84,7 @@ func TestDenyWinsWhicheverLineCameFirst(t *testing.T) {
 // name the user gave it, with its apps beneath.
 func TestTheRowsNameThisHostFirst(t *testing.T) {
 	s := storeWith(t, "allow app sha256:aaa Editor")
-	rows := connectionsRows(s, map[string]string{"sha256:aaa": "Jeff's laptop"})
+	rows := connectionsRows(s, map[string]string{"sha256:aaa": "Jeff's laptop"}, nil)
 
 	if len(rows) != 2 {
 		t.Fatalf("built %d rows, want 2: %+v", len(rows), rows)
@@ -113,7 +113,7 @@ func TestTheRowsNameThisHostFirst(t *testing.T) {
 // A client nobody has named says so rather than showing a blank first column,
 // which would read as a row with nothing in it.
 func TestAnUnnamedClientSaysSo(t *testing.T) {
-	rows := connectionsRows(storeWith(t, "allow client sha256:aaa"), nil)
+	rows := connectionsRows(storeWith(t, "allow client sha256:aaa"), nil, nil)
 	if len(rows) != 2 || rows[1].name != "(unnamed)" {
 		t.Errorf("an unnamed client shows as %+v", rows[1:])
 	}
@@ -148,25 +148,14 @@ func TestServingInstallsTheItem(t *testing.T) {
 // as an unexported *wireColumn and an item as a *wireItem, so asking for either
 // by type never succeeded and the guard rejected a window that was fine.
 func TestTheWindowActuallyOpens(t *testing.T) {
-	d := trinkets.NewDesktop()
-	// A backend is what gives a desktop its window manager, and without one
-	// nothing can be shown -- so a check that skipped this would pass on a
-	// desktop that cannot open anything at all.
-	b, err := raster.NewScaled(800, 400, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d.SetBackend(b)
-	d.SetBounds(core.UnitRect{Width: 8000, Height: 4000})
-	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 8000, Height: 4000})
-
+	d := shownDesktop(t)
 	store := storeWith(t, "allow app sha256:aaa Editor", "allow client sha256:bbb")
 	nicks := tempNicknames(t)
 	if err := nicks.set("sha256:aaa", "the laptop"); err != nil {
 		t.Fatal(err)
 	}
 
-	win := showConnections(d, store, nicks)
+	win := showConnections(d, store, nicks, tempSeen(t))
 	if win == nil {
 		t.Fatal("the window did not open, so choosing the menu item does nothing")
 	}
@@ -186,22 +175,15 @@ func TestTheWindowActuallyOpens(t *testing.T) {
 	}
 }
 
-// The name is held still and the fingerprint travels. Squeezing both to the
-// window cuts the fingerprint anyway -- it is seventy-one characters -- and
-// takes the cut out of the name as well, so the tree is put in scroll mode
-// with the name pinned outside the scrolling region.
+// The short columns are held still and the fingerprint travels. Squeezing them
+// all into the window cuts the fingerprint anyway -- it is seventy-one
+// characters -- and takes the cut out of the name and the date as well, so the
+// tree is put in scroll mode with those two pinned outside the scrolling
+// region.
 func TestTheFingerprintScrollsAndTheNameStaysPut(t *testing.T) {
-	d := trinkets.NewDesktop()
-	b, err := raster.NewScaled(800, 400, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d.SetBackend(b)
-	d.SetBounds(core.UnitRect{Width: 8000, Height: 4000})
-	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 8000, Height: 4000})
-
+	d := shownDesktop(t)
 	store := storeWith(t, "allow app sha256:aaa Editor")
-	if win := showConnections(d, store, tempNicknames(t)); win == nil {
+	if win := showConnections(d, store, tempNicknames(t), tempSeen(t)); win == nil {
 		t.Fatal("the window did not open")
 	}
 
@@ -211,18 +193,37 @@ func TestTheFingerprintScrollsAndTheNameStaysPut(t *testing.T) {
 		t.Error("the columns are squeezed into the window, so the fingerprint is " +
 			"cut short and takes the name's room with it")
 	}
-	if begin, _ := tree.FixedColumns(); begin != 1 {
-		t.Errorf("%d columns are pinned; the name leads the run and is the one "+
-			"that must stay put while the fingerprint travels", begin)
+	if begin, _ := tree.FixedColumns(); begin != pinnedColumns {
+		t.Errorf("%d columns are pinned, want %d; the name and the date lead the "+
+			"run and must stay put while the fingerprint travels",
+			begin, pinnedColumns)
 	}
-	if !strings.Contains(connectionsShellScript(), "key_width="+strconv.Itoa(nicknameWidth)) ||
-		!strings.Contains(connectionsShellScript(), "width="+strconv.Itoa(identityWidth)) {
-		t.Errorf("the widths are not the ones the window is built with:\n%s",
-			connectionsShellScript())
+	script := connectionsShellScript()
+	for _, w := range []int{nicknameWidth, lastSeenWidth, identityWidth} {
+		if !strings.Contains(script, "width="+strconv.Itoa(w)) {
+			t.Errorf("no column is %d units wide, so the window is not built with "+
+				"the widths that were reasoned about:\n%s", w, script)
+		}
 	}
 }
 
-// openConnectionsTree opens the window and hands back its tree.
+// shownDesktop is a desktop something can be shown on. A backend is what gives
+// a desktop its window manager, and without one nothing opens at all -- so a
+// check that skipped this would pass on a desktop that can show nothing.
+func shownDesktop(t *testing.T) *trinkets.Desktop {
+	t.Helper()
+	d := trinkets.NewDesktop()
+	b, err := raster.NewScaled(800, 400, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 8000, Height: 4000})
+	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 8000, Height: 4000})
+	return d
+}
+
+// openConnectionsTree finds the open window and hands back its tree.
 func openConnectionsTree(t *testing.T, d *trinkets.Desktop) *trinkets.TreeView {
 	t.Helper()
 	for _, w := range d.WindowManager().Windows() {

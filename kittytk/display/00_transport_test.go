@@ -33,6 +33,8 @@ func TestMain(m *testing.M) {
 	set(client.KnownHostsEnv, filepath.Join(dir, "known_hosts"))
 	set(display.HostIdentityEnv, filepath.Join(dir, "host_identity.pem"))
 	set(display.AuthStoreEnv, filepath.Join(dir, "authorizations"))
+	set(display.NicknameStoreEnv, filepath.Join(dir, "nicknames"))
+	set(display.SeenStoreEnv, filepath.Join(dir, "last_seen"))
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

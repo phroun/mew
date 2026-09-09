@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func tempNicknames(t *testing.T) *nicknameStore {
+func tempNicknames(t *testing.T) *pairStore {
 	t.Helper()
 	return newNicknameStore(filepath.Join(t.TempDir(), "nicknames"))
 }
