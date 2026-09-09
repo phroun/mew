@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -84,6 +85,18 @@ func connectionsRows(store *authStore, names map[string]string) []connectionsRow
 	return rows
 }
 
+// The two columns' share of the width. A nickname is what the user wrote and
+// what they read, so it takes the larger half. A fingerprint is seventy-one
+// characters that will be cut short at any width worth giving it, and its
+// leading digits are enough to tell two of them apart.
+//
+// In units -- eight to a character cell -- and squeezed proportionally to
+// whatever the window turns out to be, so what these settle is the ratio.
+const (
+	nicknameWidth = 360
+	identityWidth = 240
+)
+
 // connectionsShellScript is the window and the empty tree. The rows go in
 // afterwards, so their ids can be surfaced and their second column filled by
 // the same two-batch pattern a client would use.
@@ -92,8 +105,9 @@ func connectionsShellScript() string {
 		"w=new window title=\"Connections\" width=640 height=340 children={\n" +
 		"  root=new panel layout=vbox spacing=0 children={\n" +
 		"    tv=new treeview caption=\"Nickname\" showheader treelines editable" +
-		" key_width=200 columns={\n" +
-		"      idc=new column id=identity caption=\"Identity\" width=560\n" +
+		" key_width=" + strconv.Itoa(nicknameWidth) + " columns={\n" +
+		"      idc=new column id=identity caption=\"Identity\" width=" +
+		strconv.Itoa(identityWidth) + "\n" +
 		"    }\n" +
 		"  }\n" +
 		"}\n" +

@@ -3,6 +3,7 @@ package display
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -182,5 +183,21 @@ func TestTheWindowActuallyOpens(t *testing.T) {
 	}
 	if !found {
 		t.Error("the window was built but never shown")
+	}
+}
+
+// The nickname is what the user wrote and what they read; a fingerprint is
+// seventy-one characters that will be cut short at any width worth giving it.
+// So the name gets the larger share, and the window says so rather than
+// leaving it to whichever number happened to be typed.
+func TestTheNicknameGetsTheLargerShare(t *testing.T) {
+	if nicknameWidth <= identityWidth {
+		t.Errorf("the nickname column is %d units against the identity's %d; the "+
+			"name is the part worth reading whole", nicknameWidth, identityWidth)
+	}
+	script := connectionsShellScript()
+	if !strings.Contains(script, "key_width="+strconv.Itoa(nicknameWidth)) ||
+		!strings.Contains(script, "width="+strconv.Itoa(identityWidth)) {
+		t.Errorf("the widths are not the ones the window is built with:\n%s", script)
 	}
 }
