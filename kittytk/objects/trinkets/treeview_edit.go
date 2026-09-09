@@ -66,9 +66,18 @@ func (t *TreeView) SetEditable(on bool) {
 	t.Update()
 }
 
+// IsKeyColumn reports whether a column handed to an observer is the KEY (tree)
+// column -- the one whose cell is the item's own caption.
+//
+// The key column is a sentinel that lives nowhere in the column list, so it
+// cannot be found by searching Columns() and is not nil either. This is how
+// anything outside the package tells a caption edit from a cell edit.
+func (t *TreeView) IsKeyColumn(col *TreeColumn) bool { return col == treeKeyColumn }
+
 // SetOnCellEdited installs the observer for committed cell edits (only
-// fired when the value actually changed). column is treeKeyColumn's
-// sentinel identity for key edits; wire consumers see index -1.
+// fired when the value actually changed). column is the key column's sentinel
+// identity for key edits, which IsKeyColumn recognises; wire consumers see
+// index -1.
 func (t *TreeView) SetOnCellEdited(fn func(item *TreeItem, column *TreeColumn, value string)) {
 	t.onCellEdited = fn
 }

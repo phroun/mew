@@ -582,8 +582,11 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 	v.attach(rows)
 
 	v.tree.SetOnCellEdited(func(item *trinkets.TreeItem, column *trinkets.TreeColumn, value string) {
-		if column != nil {
-			return // only the key column carries the nickname
+		// The nickname is the key column: the row's own caption. A key edit
+		// arrives under the tree's sentinel column rather than under nil, so
+		// the tree is asked which one it was.
+		if !v.tree.IsKeyColumn(column) {
+			return
 		}
 		v.rename(item, value)
 	})
