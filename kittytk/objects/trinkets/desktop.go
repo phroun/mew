@@ -2114,6 +2114,19 @@ func (d *Desktop) SetConnectionsOpener(open func()) {
 	d.mu.Lock()
 	d.openConnections = open
 	d.mu.Unlock()
+
+	// The system menu is built once, at construction, and only re-added to the
+	// bar after that -- so an item that appears on this being installed has to
+	// rebuild it. Serving starts after the desktop exists, which is exactly the
+	// case that would otherwise never show the item at all.
+	menu := d.createSystemMenu()
+	d.mu.Lock()
+	d.systemMenu = menu
+	commands := d.commands
+	d.mu.Unlock()
+	if commands != nil {
+		menu.BindCommands(commands)
+	}
 	d.updateMenuBarContent()
 }
 

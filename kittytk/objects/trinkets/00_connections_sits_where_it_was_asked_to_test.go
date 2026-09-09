@@ -34,12 +34,16 @@ func indexOf(rows []string, want string) int {
 func TestConnectionsSitsUnderAboutDesktop(t *testing.T) {
 	d := NewDesktop()
 
-	if rows := menuLayout(d.createSystemMenu()); indexOf(rows, "Connections") != -1 {
+	if rows := menuLayout(d.systemMenu); indexOf(rows, "Connections") != -1 {
 		t.Fatalf("the item was offered with nothing installed to answer it: %v", rows)
 	}
 
 	d.SetConnectionsOpener(func() {})
-	rows := menuLayout(d.createSystemMenu())
+	// The LIVE menu, not a freshly built one: the desktop builds its system
+	// menu once at construction and re-adds that object to the bar for the
+	// rest of its life, so a check against a new one proves only that the
+	// builder works.
+	rows := menuLayout(d.systemMenu)
 	about := indexOf(rows, "About Desktop")
 	conn := indexOf(rows, "Connections")
 	if about < 0 || conn < 0 {
