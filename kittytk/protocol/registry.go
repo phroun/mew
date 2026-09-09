@@ -294,6 +294,17 @@ type TypeSpec struct {
 	// Virtual marks pseudo-object types (e.g. combobox items): they
 	// skip common properties and trinket identity.
 	Virtual bool
+
+	// Hosted marks a type the wire cannot construct: the connection
+	// arrives with the instance and the host registers it (Session.Register),
+	// handing the client its ID. `new <name>` is refused.
+	//
+	// A hosted type declares no New, because there is nothing for the wire
+	// to build. It registers so the vocabulary can answer for the object a
+	// client already holds -- what it accepts, and what events reach the
+	// client through it, which is what a subscription on its ID is checked
+	// against.
+	Hosted bool
 }
 
 var (
@@ -309,8 +320,16 @@ func RegisterType(name string, spec *TypeSpec) {
 	if !isLowerInitial(name) {
 		panic(fmt.Sprintf("protocol: builtin type %q must begin lowercase (D18)", name))
 	}
-	if spec == nil || spec.New == nil {
+	if spec == nil {
+		panic(fmt.Sprintf("protocol: type %q: a spec is required", name))
+	}
+	// A hosted type is never built here, so it declares no constructor; every
+	// other type must, or `new` would have nothing to hand back.
+	if spec.New == nil && !spec.Hosted {
 		panic(fmt.Sprintf("protocol: type %q: spec.New is required", name))
+	}
+	if spec.New != nil && spec.Hosted {
+		panic(fmt.Sprintf("protocol: type %q: a hosted type is not constructed over the wire, so spec.New is never called", name))
 	}
 	if !spec.Virtual && spec.ID == nil {
 		panic(fmt.Sprintf("protocol: type %q: spec.ID is required for non-virtual types", name))
@@ -476,6 +495,12 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 	regMu.RUnlock()
 	if spec == nil {
 		return nil, fmt.Errorf("unknown trinket type %q", typeName)
+	}
+	// A hosted type's instance belongs to the connection, which already has
+	// one. Building a second would hand the client an object attached to
+	// nothing -- and asking a nil target for its identity is a crash.
+	if spec.Hosted {
+		return nil, fmt.Errorf("%s is not created over the wire: the host registers one and hands over its ID", typeName)
 	}
 	o := &registryObject{ctx: f.ctx, spec: spec, typeName: typeName, target: spec.New()}
 	if spec.Virtual {

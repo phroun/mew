@@ -31,10 +31,12 @@ func init() {
 		}
 	}
 	protocol.RegisterType("application", &protocol.TypeSpec{
-		// An application is not built over the wire: the connection arrives
-		// with one, and the handshake hands over its ID.
-		New: func() any { return nil },
-		ID:  func(target any) uint64 { return target.(*Application).ID() },
+		// The connection arrives with its Application and the host registers
+		// it; `new application` is refused. Registering says what the object
+		// a client ALREADY HOLDS accepts and raises -- it does not offer a
+		// way to make another.
+		Hosted: true,
+		ID:     func(target any) uint64 { return target.(*Application).ID() },
 		Props: map[string]protocol.Property{
 			"name": protocol.NewProperty("string", set("name")).
 				Tip("What the app is called. A remote app may only keep the name it was approved under.").Def(""),

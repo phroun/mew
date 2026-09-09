@@ -43,8 +43,11 @@ type EventInfo struct {
 type TypeInfo struct {
 	Name    string
 	Virtual bool
-	Props   []PropInfo
-	Events  []EventInfo
+	// Hosted marks a type the wire cannot construct: the host registers
+	// an instance and hands over its ID, and `new <name>` is refused.
+	Hosted bool
+	Props  []PropInfo
+	Events []EventInfo
 }
 
 // Vocabulary is the full introspection result: the common properties
@@ -74,7 +77,11 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 			switch st.Verb {
 			case "proptype":
 				name := stmtStr(st, "name")
-				v.Types = append(v.Types, TypeInfo{Name: name, Virtual: stmtFlag(st, "virtual")})
+				v.Types = append(v.Types, TypeInfo{
+					Name:    name,
+					Virtual: stmtFlag(st, "virtual"),
+					Hosted:  stmtFlag(st, "hosted"),
+				})
 				byType[name] = len(v.Types) - 1
 			case "propcommon":
 				v.Common = append(v.Common, stmtToPropInfo(st))

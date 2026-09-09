@@ -175,6 +175,7 @@ func DescribeVocabulary() *Vocabulary {
 		v.Types = append(v.Types, TypeInfo{
 			Name:    n,
 			Virtual: spec.Virtual,
+			Hosted:  spec.Hosted,
 			Props:   sortedPropInfos(spec.Props),
 			Events:  sortedEventInfos(spec.Events),
 		})
@@ -187,7 +188,7 @@ func DescribeVocabulary() *Vocabulary {
 // can parse it line by line:
 //
 //	propcommon name="enabled" kind=flag default="true" doc="..."
-//	proptype name="button" virtual=false
+//	proptype name="button" !virtual !hosted
 //	prop of="button" name="caption" kind=string default="" doc="..." enum="" members=""
 //	event of="button" name="click" doc="..."
 //	eventfield of="button" event="click" name="trinket" kind="uint" doc="..."
@@ -209,6 +210,11 @@ func EncodeVocabulary(v *Vocabulary) string {
 			sb.WriteString(" virtual")
 		} else {
 			sb.WriteString(" !virtual")
+		}
+		if t.Hosted {
+			sb.WriteString(" hosted")
+		} else {
+			sb.WriteString(" !hosted")
 		}
 		sb.WriteByte('\n')
 		for _, p := range t.Props {
