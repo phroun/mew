@@ -403,7 +403,7 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm 
 		Width:  core.ExchangeX(req.At.Width, local, metrics),
 		Height: core.ExchangeY(req.At.Height, local, metrics),
 	}
-	box.X, box.Y = tooltipOrigin(req.Side, anchor, box, pc.ScreenBounds(), metrics)
+	box.X, box.Y = tooltipOrigin(req.Side, anchor, box, pc.ScreenBounds(), metrics, padX, padY)
 
 	scheme := d.GetScheme()
 	face := scheme.GetTooltip()
@@ -436,24 +436,35 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm 
 // tooltipOrigin places the box against the anchor the way the asker asked, and
 // then shifts it back onto the screen -- the same compromise a context menu
 // makes near an edge: a preference is not worth half a tooltip.
-func tooltipOrigin(side core.TooltipSide, anchor, box, screen core.UnitRect, metrics core.CellMetrics) (x, y core.Unit) {
+func tooltipOrigin(side core.TooltipSide, anchor, box, screen core.UnitRect, metrics core.CellMetrics, padX, padY core.Unit) (x, y core.Unit) {
 	gap := metrics.UnitsPerCellHeight / 2
+	// Over the text, what has to line up is the note's TEXT and the text it
+	// expands -- not the note's box and the text's corner. The box is pulled
+	// back by its own padding on the left and centred on the anchor
+	// vertically, so the words sit where the words were.
+	overX := anchor.X - padX
+	overY := anchor.Y + (anchor.Height-box.Height)/2
 	switch side {
 	case core.TooltipOver:
-		x, y = anchor.X, anchor.Y
+		x, y = overX, overY
 	case core.TooltipAbove:
-		x, y = anchor.X, anchor.Y-box.Height-gap
+		x, y = overX, anchor.Y-box.Height-gap
 	case core.TooltipBefore:
-		x, y = anchor.X-box.Width-gap, anchor.Y
+		x, y = anchor.X-box.Width-gap, overY
 	case core.TooltipAfter:
-		x, y = anchor.X+anchor.Width+gap, anchor.Y
-	default: // auto and below both start under the text
-		x, y = anchor.X, anchor.Y+anchor.Height+gap
+		x, y = anchor.X+anchor.Width+gap, overY
+	case core.TooltipBelow:
+		x, y = overX, anchor.Y+anchor.Height+gap
+	default:
+		// Auto reads on IN PLACE. A note is an answer about the words under
+		// the pointer, and putting it a row below them leaves the reader's
+		// eye to travel and lands it on whatever stands underneath.
+		x, y = overX, overY
 	}
 
 	// Below and above flip rather than hang off the edge, since the other side
 	// of the same text is where the room is.
-	if y+box.Height > screen.Y+screen.Height && side != core.TooltipOver {
+	if y+box.Height > screen.Y+screen.Height && side != core.TooltipOver && side != core.TooltipAuto {
 		if above := anchor.Y - box.Height - gap; above >= screen.Y {
 			y = above
 		}

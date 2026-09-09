@@ -871,8 +871,13 @@ func (t *TextInput) Paint(p *core.Painter) {
 	var displayText []rune
 	isPlaceholder := false
 	preLo, preHi, caretIdx := 0, 0, 0
-	if len(t.text) == 0 && !focused && t.placeholder != "" {
-		displayText = []rune(t.placeholder)
+	if t.showingPlaceholder() {
+		// Cut to the field rather than scrolled through. There is no caret in
+		// a placeholder to follow and nothing to reach by arrowing along, so
+		// a run that ran on would raise arrows pointing at somewhere the
+		// reader cannot get to. The whole of it is offered on hover instead.
+		shown, _ := t.ElideText(t.placeholder, t.Bounds().Width)
+		displayText = []rune(shown)
 		s = s.WithAttrs(style.StyleDim)
 		isPlaceholder = true
 	} else {
@@ -2039,6 +2044,9 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 // everything to that end of the content; inside the box it tracks the pointer
 // directly.
 func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	t.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	if !t.selecting || event.Buttons&core.LeftButton == 0 {
 		return false
 	}
@@ -2701,4 +2709,29 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 		},
 	})
 	t.Update()
+}
+
+// showingPlaceholder reports whether the field is standing empty and saying
+// what it is for, rather than holding anything the reader put there.
+func (t *TextInput) showingPlaceholder() bool {
+	return len(t.text) == 0 && !t.HasFocus() && t.placeholder != ""
+}
+
+// TooltipAt offers the PLACEHOLDER when the field is too narrow for it.
+//
+// Only the placeholder. Text the reader entered scrolls under the caret --
+// the field shows the part being worked on and says so with its arrows --
+// and a note repeating it would answer a question nobody asked.
+func (t *TextInput) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	if tip := t.Tooltip(); tip != "" {
+		return t.TrinketBase.TooltipAt(local)
+	}
+	if !t.showingPlaceholder() {
+		return "", core.UnitRect{}, false
+	}
+	b := t.Bounds()
+	if b.Width <= 0 || t.MeasureText(t.CellRun(t.placeholder)) <= b.Width {
+		return "", core.UnitRect{}, false
+	}
+	return t.placeholder, core.UnitRect{Width: b.Width, Height: b.Height}, true
 }

@@ -63,8 +63,16 @@ func TestATabCutOffAtTheEdgeOffersItsName(t *testing.T) {
 	if text != tabs.tabs[clipped.owner].Text {
 		t.Errorf("it offered %q, not the name of the tab it stopped on", text)
 	}
-	if at != band {
-		t.Errorf("it named %+v rather than the strip at %+v", at, band)
+	// The note stands on the TAB, not on the strip: anchored to the strip it
+	// would appear at the far end of the trinket from the tab it names.
+	if at.Width != clipped.w {
+		t.Errorf("it named a rect %d wide; the tab is %d", at.Width, clipped.w)
+	}
+	if at.X != band.X+clipped.x {
+		t.Errorf("the note stands at %d; the tab begins at %d", at.X, band.X+clipped.x)
+	}
+	if at.Height != band.Height || at.Y != band.Y {
+		t.Errorf("it named %+v, which is not on the strip's own row %+v", at, band)
 	}
 
 	// A tab drawn in full is not missing anything.

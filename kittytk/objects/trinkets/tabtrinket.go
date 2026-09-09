@@ -3653,7 +3653,21 @@ func (t *TabTrinket) TooltipAt(local core.UnitPoint) (string, core.UnitRect, boo
 	if !ok || sp.owner < 0 || sp.owner >= len(t.tabs) || !sp.clipped {
 		return "", core.UnitRect{}, false
 	}
-	return t.tabs[sp.owner].Text, strip, true
+	// The note stands on the TAB, not on the strip: the strip runs the width
+	// of the trinket, and a note anchored to it would appear at the far end
+	// from the tab it names.
+	return t.tabs[sp.owner].Text, t.stripSpanBounds(sp, strip), true
+}
+
+// stripSpanBounds is one part of the strip in this trinket's own local units:
+// the run coordinates it was recorded in, turned back the way a mirrored run
+// reflects them.
+func (t *TabTrinket) stripSpanBounds(sp stripSpan, strip core.UnitRect) core.UnitRect {
+	x := sp.x
+	if core.ChromeMirrored(t) {
+		x = strip.Width - sp.x - sp.w
+	}
+	return core.UnitRect{X: strip.X + x, Y: strip.Y, Width: sp.w, Height: strip.Height}
 }
 
 // stripHoverBounds is the band the tabs occupy, in this trinket's own local
