@@ -229,31 +229,29 @@ two spellings of one index, and it is a single validation at bundle load. Since
 the separator is a slash, no restriction on underscores in aliases or keys is
 needed.
 
-## What the current PSL wrappers cannot carry
+## Reaching a bundle from Go
 
-The **format** holds this structure. `StoredList` carries both collections —
-`Items()` for the ordered children and `NamedArgs()` for the keyed ones —
-`parseArguments` returns both, and the display formatter emits both.
-
-The **convenience wrappers do not**. `ParsePSL` returns a `PSLMap`, which is a
-Go `map[string]interface{}` and structurally cannot hold ordered children, so
-it keeps positional items only when there are no named members at all:
+`pawscript.PSLNode` presents both collections of a PSL list at once, which is
+what reading a bundle needs:
 
 ```go
-if len(namedArgs) == 0 && len(args) > 0 { … }
+n, err := pawscript.ParsePSLNode(text)
+n.Get("_bundle")    // the keyed metadata
+n.Len(), n.Item(i)  // the ordered records
+n.Child(i)          // an ordered record as a node in its own right
+n.Map()             // the keyed members as a PSLMap
 ```
 
-A bundle always has `_bundle` and `_hash`, so every ordered record in it would
-be discarded — silently, with no error. `SerializePSL` has the same shape going
-the other way.
+`SerializePSLNode` goes back the other way, so a bundle survives a round trip
+with its records in place.
 
-Closing this means an accessor that hands back a `StoredList` rather than a
-map. It is not a format change, so the do-not-modify banner on `psl.go` is not
-in the way: that banner protects the serialization behaviour, which this does
-not touch.
+`ParsePSL` is the wrapper to avoid here: it returns a `PSLMap`, which is a Go
+`map[string]interface{}` and so holds keyed members only. A bundle always has
+`_bundle` and `_hash`, and read through that call every ordered record in it
+would be dropped — silently, with no error.
 
-One other serializer behaviour to know: **keyed members are sorted on emit**,
-so declaration order among keyed records is not something to rely on. Ordered
+One serializer behaviour to know: **keyed members are sorted on emit**, so
+declaration order among keyed records is not something to rely on. Ordered
 records keep their order.
 
 ## Open questions
