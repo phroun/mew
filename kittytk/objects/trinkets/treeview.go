@@ -21,6 +21,14 @@ type TreeItem struct {
 	Icon     *style.TextIcon
 	Data     interface{} // User data
 	Enabled  bool
+
+	// ReadOnly holds this row out of the row editor, whatever its columns
+	// allow. Editability is otherwise a column's answer -- every row in an
+	// editable column can be edited -- and a list often holds rows that are
+	// not the same kind of thing as the rest: a heading, a total, something
+	// standing for the machine itself. Such a row is still selectable and
+	// still reads normally; it is only not written in.
+	ReadOnly bool
 	Expanded bool
 	Parent   *TreeItem
 	Children []*TreeItem

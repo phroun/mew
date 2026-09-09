@@ -234,17 +234,29 @@ func connectionsShellScript() string {
 		"forget=w.root.bottom.actrow.forget\n"
 }
 
+// editableFlag is what a row says about being written in.
+func editableFlag(editable bool) string {
+	if editable {
+		return ""
+	}
+	return " !editable"
+}
+
 // connectionsItemsScript builds the rows, binding a surfaced name to each so
 // the cell values can be addressed against them.
 func connectionsItemsScript(rows []connectionsRow) string {
 	var sb strings.Builder
 	sb.WriteString("set tree items={\n")
 	for i, r := range rows {
-		fmt.Fprintf(&sb, "  r%d=new item caption=%s", i, protocol.Quote(r.name))
+		// Only a client carries a nickname. This host is named by its
+		// certificate and an app by the name it connected under, so those rows
+		// are held out of the editor rather than taking a rename that is then
+		// quietly dropped.
+		fmt.Fprintf(&sb, "  r%d=new item%s caption=%s", i, editableFlag(r.identity != "" && !r.self), protocol.Quote(r.name))
 		if len(r.children) > 0 {
 			sb.WriteString(" expanded items={\n")
 			for j, c := range r.children {
-				fmt.Fprintf(&sb, "    r%dc%d=new item caption=%s\n",
+				fmt.Fprintf(&sb, "    r%dc%d=new item !editable caption=%s\n",
 					i, j, protocol.Quote(c.name))
 			}
 			sb.WriteString("  }")

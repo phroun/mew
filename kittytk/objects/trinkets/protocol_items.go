@@ -28,6 +28,7 @@ type wireItem struct {
 	id       uint64
 	caption  string
 	expanded bool
+	readOnly bool
 	children []*wireItem
 
 	// Live backrefs, filled in when a treeview adopts the item.
@@ -63,6 +64,17 @@ func init() {
 				}
 				return nil
 			})).Tip("Row or node display text."),
+			"editable": protocol.NewProperty("flag", wprop("editable", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
+				b, err := protocol.AsBool("editable", v, f)
+				if err != nil {
+					return err
+				}
+				it.readOnly = !b
+				if it.node != nil {
+					it.node.ReadOnly = it.readOnly
+				}
+				return nil
+			})).Tip("Whether this row joins the row editor; !editable holds one row out of a column that is otherwise editable.").Def("true"),
 			"expanded": protocol.NewProperty("flag", wprop("expanded", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("expanded", v, f)
 				if err != nil {
@@ -116,6 +128,7 @@ func (it *wireItem) bind(view *TreeView) *TreeItem {
 		node.ID = core.ObjectID(it.id)
 	}
 	node.Expanded = it.expanded
+	node.ReadOnly = it.readOnly
 	it.node = node
 	it.view = view
 	for _, c := range it.children {

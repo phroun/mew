@@ -96,6 +96,12 @@ func (t *TreeView) colEditable(col *TreeColumn) bool {
 	return col != nil && col.Editable && !col.Hidden
 }
 
+// cellEditable reports whether this cell may be opened for editing: the
+// column has to allow it, and the row has to be one that is written in.
+func (t *TreeView) cellEditable(item *TreeItem, col *TreeColumn) bool {
+	return item != nil && !item.ReadOnly && t.colEditable(col)
+}
+
 // cellValue reads the raw stored value for a column (the key column
 // stores the item's caption).
 func (t *TreeView) cellValue(item *TreeItem, col *TreeColumn) string {
@@ -207,7 +213,7 @@ func (t *TreeView) moveEnterTargetColumn(delta int) bool {
 // editable one. Returns false when there is nothing to edit.
 func (t *TreeView) startRowEdit() bool {
 	item := t.CurrentItem()
-	if item == nil || !t.multiColumn() || t.rowEditing {
+	if item == nil || !t.multiColumn() || t.rowEditing || item.ReadOnly {
 		return false
 	}
 	col := t.enterTargetColumn()
@@ -497,7 +503,9 @@ func (t *TreeView) stepEditRow(delta int) {
 	if ni := t.CurrentIndex() + delta; ni >= 0 && ni < len(t.flatList) {
 		t.SetCurrentIndex(ni)
 	}
-	if it := t.CurrentItem(); it != nil && col != nil {
+	// A row that is not written in ends the walk rather than opening an
+	// editor over it: the selection lands there, and stops.
+	if it := t.CurrentItem(); it != nil && col != nil && t.cellEditable(it, col) {
 		t.beginCellEdit(it, col)
 	}
 }
@@ -878,7 +886,7 @@ func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 	if dx > slopX || dy > slopY {
 		return // a drag, not a click
 	}
-	if t.rowEditing || t.CurrentItem() != item || !t.colEditable(col) {
+	if t.rowEditing || t.CurrentItem() != item || !t.cellEditable(item, col) {
 		return
 	}
 	t.beginCellEdit(item, col)

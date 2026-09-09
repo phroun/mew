@@ -20,6 +20,11 @@ func treeInAWindow(t *testing.T) (*window.Window, *TreeView, *TreeItem) {
 	t.Helper()
 	tree := NewTreeView()
 	tree.SetEditable(true)
+	// A second column: the row editor is the multi-column apparatus, and the
+	// window this stands in for has three.
+	if err := tree.AddColumn(&TreeColumn{ID: "detail", Caption: "Detail"}); err != nil {
+		t.Fatal(err)
+	}
 	item := NewTreeItem("nickname")
 	tree.AddRootItem(item)
 
@@ -86,4 +91,72 @@ func TestAChoiceCellEditorReachesTheWindowToo(t *testing.T) {
 func TestAnEditorStandingAloneIsNoTrouble(t *testing.T) {
 	NewTextInput().SetText("alone")
 	NewComboBox().Update()
+}
+
+// A row can be held out of the editor while its column stays editable, since a
+// list often holds one row that is not the same kind of thing as the rest.
+func TestAReadOnlyRowIsNotWrittenIn(t *testing.T) {
+	_, tree, item := treeInAWindow(t)
+	fixed := NewTreeItem("this host")
+	fixed.ReadOnly = true
+	tree.AddRootItem(fixed)
+
+	// The ordinary row still edits, by keyboard and by click alike.
+	tree.SetCurrentItem(item)
+	if !tree.startRowEdit() {
+		t.Fatal("an editable row refused the editor")
+	}
+	tree.endRowEdit(false)
+
+	tree.SetCurrentItem(fixed)
+	if tree.startRowEdit() {
+		t.Error("a read-only row opened the editor")
+	}
+	if tree.rowEditing {
+		t.Error("the tree went into edit mode over a read-only row")
+	}
+
+	// And the mouse path, which is a separate gate.
+	tree.clickEditItem, tree.clickEditCol = fixed, treeKeyColumn
+	tree.armClickEdit(core.MouseReleaseEvent{})
+	if tree.rowEditing {
+		t.Error("a click opened the editor on a read-only row")
+	}
+}
+
+// Walking from one row to the next while editing stops at a row that is not
+// written in, rather than opening an editor over it.
+func TestWalkingIntoAReadOnlyRowEndsTheEdit(t *testing.T) {
+	_, tree, item := treeInAWindow(t)
+	fixed := NewTreeItem("this host")
+	fixed.ReadOnly = true
+	tree.AddRootItem(fixed)
+
+	tree.SetCurrentItem(item)
+	if !tree.startRowEdit() {
+		t.Fatal("the first row refused the editor")
+	}
+	tree.stepEditRow(1)
+
+	if tree.CurrentItem() != fixed {
+		t.Fatalf("the walk landed on %q", tree.CurrentItem().Text)
+	}
+	if tree.rowEditing {
+		t.Error("the walk opened an editor over the read-only row it landed on")
+	}
+}
+
+// The wire says it the way it reads: a row is editable unless it says it is
+// not, so nothing already written changes meaning.
+func TestTheWireHoldsARowOutOfTheEditor(t *testing.T) {
+	tree := NewTreeView()
+	tree.SetEditable(true)
+	built := &wireItem{caption: "this host", readOnly: true}
+	node := built.bind(tree)
+	if !node.ReadOnly {
+		t.Error("!editable did not reach the row it was written on")
+	}
+	if ordinary := (&wireItem{caption: "a client"}).bind(tree); ordinary.ReadOnly {
+		t.Error("a row that said nothing came back read-only")
+	}
 }

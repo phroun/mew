@@ -253,3 +253,36 @@ func openConnectionsTree(t *testing.T, d *trinkets.Desktop) *trinkets.TreeView {
 	t.Fatal("the window has no tree in it")
 	return nil
 }
+
+// A nickname is the user's word for a client, so a client's row is the only
+// one that takes one. This host is named by its certificate and an app by the
+// name it connected under: neither is the user's to rewrite, and neither opens
+// the editor.
+func TestOnlyAClientRowTakesANickname(t *testing.T) {
+	d := shownDesktop(t)
+	store := storeWith(t, "allow app sha256:aaa Editor", "allow app sha256:aaa Mailer")
+	if showConnections(d, nil, store, tempNicknames(t), tempSeen(t)) == nil {
+		t.Fatal("the window did not open")
+	}
+
+	items := openConnectionsTree(t, d).RootItems()
+	if len(items) != 2 {
+		t.Fatalf("the tree has %d top rows, want 2", len(items))
+	}
+	if !items[0].ReadOnly {
+		t.Error("this host was offered a nickname; it is named by its certificate")
+	}
+	if items[1].ReadOnly {
+		t.Error("a client cannot be given a name, which is the one thing in this " +
+			"window the user chooses")
+	}
+	if len(items[1].Children) != 2 {
+		t.Fatalf("the client shows %d apps", len(items[1].Children))
+	}
+	for _, app := range items[1].Children {
+		if !app.ReadOnly {
+			t.Errorf("the app row %q was offered a nickname; it is named by what it "+
+				"connected as, which is part of what it was approved for", app.Text)
+		}
+	}
+}
