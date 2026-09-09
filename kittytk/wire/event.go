@@ -133,13 +133,13 @@ func (e *Event) Trinket() (uint64, bool) {
 	if id, ok := e.Uint("trinket"); ok {
 		return id, ok
 	}
-	// Window events name their source window= rather than trinket=, and an
-	// application's own events name it app=. All three are ObjectIDs, and
-	// subscriptions key on the source whichever word names it.
+	// Window events name their source window= rather than trinket=, and a
+	// store's name it store=. All three are ObjectIDs, and subscriptions key on
+	// the source whichever word names it.
 	if id, ok := e.Uint("window"); ok {
 		return id, ok
 	}
-	return e.Uint("app")
+	return e.Uint("store")
 }
 
 // Encode renders the event as protocol text: a parseable statement.

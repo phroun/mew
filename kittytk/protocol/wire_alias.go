@@ -26,6 +26,7 @@ type (
 	PropInfo        = wire.PropInfo
 	TypeInfo        = wire.TypeInfo
 	EventInfo       = wire.EventInfo
+	AskInfo         = wire.AskInfo
 	EventFieldDesc  = wire.EventFieldDesc
 	Vocabulary      = wire.Vocabulary
 	EventDispatcher = wire.EventDispatcher

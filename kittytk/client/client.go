@@ -59,6 +59,11 @@ type Conn struct {
 	// have no handshake). Address app-wide properties by it - see SetApp.
 	appID uint64
 
+	// storeID is this connection's store ObjectID, reported in the same
+	// handshake. Everything the app has kept on the desktop is addressed
+	// through it (see Conn.Store).
+	storeID uint64
+
 	// closed fires once when the transport disconnects (remote) or
 	// Close is called, so callers can block on the connection's life.
 	closed    chan struct{}
@@ -112,6 +117,10 @@ func (c *Conn) Closed() <-chan struct{} { return c.closed }
 // (which have no handshake). Use it to address application-wide properties -
 // e.g. c.Exec(fmt.Sprintf("set %d multiwindow", c.AppID())), or SetApp.
 func (c *Conn) AppID() uint64 { return c.appID }
+
+// App is this connection's application object as a handle: what app-wide
+// properties are set through, and what it raises events on.
+func (c *Conn) App() Handle { return Handle{c: c, id: c.appID} }
 
 // SetApp applies application-wide properties to this connection's app with the
 // same syntax as any object: SetApp("multiwindow contextonly") sends

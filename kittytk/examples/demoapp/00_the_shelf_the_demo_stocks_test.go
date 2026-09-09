@@ -17,32 +17,38 @@ var storedTypes = map[string]bool{
 }
 
 func TestEverySampleIsSomethingTheDesktopStores(t *testing.T) {
-	for _, tree := range []struct {
-		name    string
-		samples []sample
-	}{
-		{"data", dataSamples()},
-		{"cache", cacheSamples()},
-	} {
-		seen := map[string]bool{}
-		for _, s := range tree.samples {
-			if !storedTypes[s.typ] {
-				t.Errorf("%s/%s is a %q, which the desktop does not store", tree.name, s.key, s.typ)
-			}
-			if strings.TrimSpace(s.key) == "" {
-				t.Errorf("%s holds a sample with no key", tree.name)
-			}
-			if seen[s.key] {
-				t.Errorf("%s/%s is stocked twice, so one write lands on the other", tree.name, s.key)
-			}
-			seen[s.key] = true
-			if len(s.body) == 0 {
-				t.Errorf("%s/%s is empty, and shows nothing to look at", tree.name, s.key)
-			}
+	all := samples()
+	if len(all) == 0 {
+		t.Fatal("the demo stocks nothing")
+	}
+	seen := map[string]bool{}
+	marked := 0
+	for _, s := range all {
+		if !storedTypes[s.typ] {
+			t.Errorf("%s is a %q, which the desktop does not store", s.key, s.typ)
 		}
-		if len(tree.samples) == 0 {
-			t.Errorf("%s is stocked with nothing", tree.name)
+		name := strings.TrimPrefix(s.key, "#")
+		if strings.TrimSpace(name) == "" {
+			t.Errorf("a sample has no name: %q", s.key)
 		}
+		if strings.ContainsAny(name, "#/") {
+			t.Errorf("%q is not a name: the mark leads a key and a slash is not in one", s.key)
+		}
+		if seen[s.key] {
+			t.Errorf("%s is stocked twice, so one write lands on the other", s.key)
+		}
+		seen[s.key] = true
+		if len(s.body) == 0 {
+			t.Errorf("%s is empty, and shows nothing to look at", s.key)
+		}
+		if strings.HasPrefix(s.key, "#") {
+			marked++
+		}
+	}
+	// Some of it marked and some not, or the two directories on disk have
+	// nothing to show and Clear Cache nothing to take.
+	if marked == 0 || marked == len(all) {
+		t.Errorf("%d of %d samples are marked as cache", marked, len(all))
 	}
 }
 
@@ -65,7 +71,7 @@ func TestTheBlobIsEveryByteValue(t *testing.T) {
 // need.
 func TestSomethingOnTheShelfNeedsMoreThanOneStatement(t *testing.T) {
 	var largest int
-	for _, s := range append(dataSamples(), cacheSamples()...) {
+	for _, s := range samples() {
 		if len(s.body) > largest {
 			largest = len(s.body)
 		}

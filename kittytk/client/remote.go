@@ -119,11 +119,18 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
 	}
-	// The handshake carries this connection's Application ObjectID, so the app
-	// can address application-wide properties (see Conn.AppID / Conn.SetApp).
+	// The handshake carries the ObjectIDs of the two things this connection
+	// arrives with rather than builds: its Application, and its store (see
+	// Conn.AppID / Conn.SetApp, Conn.StoreID / Conn.Store).
 	for _, a := range script.Statements[0].Args {
-		if a.Name == "app" && a.Value != nil && a.Value.Kind == wire.NumberValue && a.Value.IsInt {
+		if a.Value == nil || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
+			continue
+		}
+		switch a.Name {
+		case "app":
 			c.appID = uint64(a.Value.Number)
+		case "store":
+			c.storeID = uint64(a.Value.Number)
 		}
 	}
 	dbg("dial app=%q: welcome received (app id=%d), connection ready", appName, c.appID)
@@ -221,13 +228,21 @@ func (t *remoteTransport) readLoop() {
 					}
 				}
 				t.replies <- replyOrError{err: fmt.Errorf("%s", msg)}
-			case "proptype", "prop", "propcommon":
+			case "proptype", "prop", "propcommon", "ask", "askarg", "eventfield":
 				// describe verb output: buffer until the reply arrives.
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
 			case "event":
+				// One verb, two things: an event RECORD opens with a bare type
+				// word, and the describe stream's description of one names the
+				// type it belongs to with of=. ParseEvent is what tells them
+				// apart -- it wants that leading word -- so a line it refuses is
+				// a description, and describing events was reaching no client
+				// at all until it was buffered here.
 				if ev, err := wire.ParseEvent(text); err == nil {
 					t.events <- ev
+					continue
 				}
+				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
 			}
 		}
 	}

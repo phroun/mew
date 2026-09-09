@@ -273,6 +273,12 @@ type TypeSpec struct {
 	// wiring, same as their property registration. Optional.
 	Bind func(ctx *BindContext, target any)
 
+	// Asks describes the questions this type answers, keyed by question
+	// name, so the vocabulary says what a client may ask it. The answering
+	// is the target's own Ask method; this is the describing, and a question
+	// no type declares is refused rather than quietly doing nothing.
+	Asks map[string]AskDesc
+
 	// Events describes what Bind emits, keyed by event name, so the wire
 	// vocabulary answers for events the way it answers for properties.
 	// Optional; empty for a type that emits none.
@@ -408,6 +414,69 @@ func EventNames(typeName string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// AskNames returns the sorted questions a type answers.
+func AskNames(typeName string) []string {
+	regMu.RLock()
+	spec := regTypes[typeName]
+	regMu.RUnlock()
+	if spec == nil {
+		return nil
+	}
+	names := make([]string, 0, len(spec.Asks))
+	for n := range spec.Asks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TypeAnswers reports whether a registered type declares a question.
+func TypeAnswers(typeName, question string) bool {
+	regMu.RLock()
+	spec := regTypes[typeName]
+	regMu.RUnlock()
+	if spec == nil {
+		return false
+	}
+	_, declared := spec.Asks[question]
+	return declared
+}
+
+// AnyTypeAnswers reports whether ANY registered type declares a question. It is
+// the question to ask about an object the HOST registered, which has no type to
+// check against.
+func AnyTypeAnswers(question string) bool {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	for _, spec := range regTypes {
+		if _, declared := spec.Asks[question]; declared {
+			return true
+		}
+	}
+	return false
+}
+
+// checkAskName rejects a question the target cannot answer, for the same reason
+// a misspelled event name is rejected: accepted and then silently doing nothing
+// is the worst answer available.
+func checkAskName(typeName, question string) error {
+	if typeName == "" {
+		if AnyTypeAnswers(question) {
+			return nil
+		}
+		return fmt.Errorf("ask: nothing answers a question called %q", question)
+	}
+	if TypeAnswers(typeName, question) {
+		return nil
+	}
+	if names := AskNames(typeName); len(names) > 0 {
+		return fmt.Errorf("ask: %s answers no question called %q; it answers %s",
+			typeName, question, strings.Join(names, ", "))
+	}
+	return fmt.Errorf("ask: %s answers no questions at all, so it cannot answer %q",
+		typeName, question)
 }
 
 // TypeEmits reports whether a registered type declares an event. An
@@ -575,6 +644,18 @@ func (o *registryObject) Append(slot string, child Object) error {
 		}
 	}
 	return p.Accept(o.target, c.target)
+}
+
+// Ask puts a question to the target, backing the ask verb for anything the wire
+// built. The target answers; this only carries the question to it.
+func (o *registryObject) Ask(question string, args []*Arg) error {
+	a, ok := o.target.(interface {
+		Ask(string, []*Arg) error
+	})
+	if !ok {
+		return fmt.Errorf("ask: a %s answers no questions", o.typeName)
+	}
+	return a.Ask(question, args)
 }
 
 // property resolves a name against this type's own table and, for a

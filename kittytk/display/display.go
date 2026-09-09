@@ -292,6 +292,10 @@ type conn struct {
 	// do rather than arriving whether or not the app asked for them.
 	ctx *protocol.BindContext
 
+	// The connection's store, as a wire object: the handshake hands the client
+	// its id, and everything it holds is addressed through it.
+	store *storeObject
+
 	// Who this connection is, as the folders on disk are keyed: the client's
 	// identity and the name the app was ADMITTED under. The app may rename
 	// itself over the wire where its trust allows; its shelf does not move
@@ -311,6 +315,12 @@ type conn struct {
 	announceSpeak  bool
 	speechMu       sync.Mutex
 	speechCmd      *exec.Cmd
+
+	// What the store was asked during a batch and will say when the batch is
+	// over: `set` runs with emission suppressed, so an answer to one waits here
+	// (see storeObject.answer).
+	answerMu sync.Mutex
+	answers  []*protocol.Event
 
 	// outbound statements; the writer goroutine owns the socket's
 	// write side.
@@ -420,8 +430,16 @@ func (s *Server) serveConn(nc net.Conn) {
 	go c.writeLoop()
 	defer close(c.out)
 
-	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d", sessionID, application.ObjectID()))
-	dbg("welcome sent session=%d app=%q id=%d", sessionID, appName, application.ObjectID())
+	// The store is an object of this connection's too, registered the same way
+	// and handed over in the same breath, so an app addresses what it has kept
+	// without a verb of its own.
+	c.store = newStoreObject(c, storeObjectID())
+	c.session.Register(c.store)
+
+	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d store=%d",
+		sessionID, application.ObjectID(), c.store.ID()))
+	dbg("welcome sent session=%d app=%q id=%d store=%d",
+		sessionID, appName, application.ObjectID(), c.store.ID())
 
 	// Batch loop: read until end, execute on the UI thread, reply.
 	for {
@@ -472,6 +490,7 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	script := &protocol.Script{Statements: batch}
 	reply, err := c.session.Execute(script, c.factory)
 	if err != nil {
+		c.flushAnswers()
 		c.send(protocol.EncodeError(err.Error()))
 		return
 	}
@@ -528,7 +547,10 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	dbg("batch adopted for app=%q: app now has %d window(s)", c.app.Name(), len(c.app.Windows()))
 
 	// Deliver any verb-produced statements (the describe verb's flat
-	// vocabulary stream) ahead of the reply that terminates the batch.
+	// vocabulary stream) ahead of the reply that terminates the batch, and with
+	// them whatever the store was asked and could not answer while emission was
+	// suppressed.
+	c.flushAnswers()
 	for _, line := range reply.Extra {
 		c.send(line)
 	}
@@ -628,9 +650,6 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 	for _, stmt := range batch {
 		if stmt.Key != "" {
 			rest = append(rest, stmt)
-			continue
-		}
-		if c.storeVerb(stmt) {
 			continue
 		}
 		switch stmt.Verb {

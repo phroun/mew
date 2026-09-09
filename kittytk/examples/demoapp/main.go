@@ -111,7 +111,7 @@ func newPrimary(path string) (*app, error) {
 	a.wireMenus()
 	a.wireMDI()
 	a.wireDetails()
-	a.stockTheShelf()
+	a.stockTheStore()
 	a.openProtocolWindow()
 
 	// The demo ends when its main window closes (or the desktop exits).

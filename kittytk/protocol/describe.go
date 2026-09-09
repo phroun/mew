@@ -89,6 +89,40 @@ func (p Property) OneOf(words ...string) Property {
 // As overrides the value kind (for raw appliers built without a helper).
 func (p Property) As(kind string) Property { p.Desc.Kind = kind; return p }
 
+// AskDesc is the queryable descriptor for one question an object answers: what
+// it means, what arguments it takes, and what it answers with.
+//
+// A question is declared beside the properties and events for the same reason
+// they are: one registration is the source of both behavior and introspection,
+// so a client can find out what it may ask rather than reading the host's code.
+type AskDesc struct {
+	// Doc says what the question means.
+	Doc string
+	// Args are the named arguments it takes, in the order worth reading.
+	Args []EventFieldDesc
+	// Answers names the events it answers with.
+	Answers []string
+}
+
+// NewAskDesc builds an AskDesc from its description; add arguments with Arg and
+// the events it answers with using Answering.
+func NewAskDesc(doc string) AskDesc { return AskDesc{Doc: doc} }
+
+// Arg appends one named argument to the descriptor and returns it for chaining.
+// The append copies, for the reason EventDesc.Field does.
+func (a AskDesc) Arg(name, kind, doc string) AskDesc {
+	args := make([]EventFieldDesc, len(a.Args), len(a.Args)+1)
+	copy(args, a.Args)
+	a.Args = append(args, EventFieldDesc{Name: name, Kind: kind, Doc: doc})
+	return a
+}
+
+// Answering names the events the question is answered with.
+func (a AskDesc) Answering(events ...string) AskDesc {
+	a.Answers = events
+	return a
+}
+
 // EventDesc is the queryable descriptor for one wire event: when it
 // fires, and what it carries.
 //
@@ -155,6 +189,24 @@ func sortedEventInfos(events map[string]EventDesc) []EventInfo {
 	return out
 }
 
+// sortedAskInfos renders a type's questions in name order.
+func sortedAskInfos(asks map[string]AskDesc) []AskInfo {
+	if len(asks) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(asks))
+	for n := range asks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]AskInfo, 0, len(names))
+	for _, n := range names {
+		d := asks[n]
+		out = append(out, AskInfo{Name: n, Doc: d.Doc, Args: d.Args, Answers: d.Answers})
+	}
+	return out
+}
+
 // DescribeVocabulary returns the registered wire vocabulary: common
 // properties plus every type, each with its type-specific properties and
 // the events it emits. Types, properties and events are sorted for
@@ -176,6 +228,7 @@ func DescribeVocabulary() *Vocabulary {
 			Name:    n,
 			Virtual: spec.Virtual,
 			Hosted:  spec.Hosted,
+			Asks:    sortedAskInfos(spec.Asks),
 			Props:   sortedPropInfos(spec.Props),
 			Events:  sortedEventInfos(spec.Events),
 		})
@@ -190,6 +243,8 @@ func DescribeVocabulary() *Vocabulary {
 //	propcommon name="enabled" kind=flag default="true" doc="..."
 //	proptype name="button" !virtual !hosted
 //	prop of="button" name="caption" kind=string default="" doc="..." enum="" members=""
+//	ask of="store" name="inventory" doc="..." answers="store_blob,store_done"
+//	askarg of="blob" ask="bytes" name="offset" kind="int" doc="..."
 //	event of="button" name="click" doc="..."
 //	eventfield of="button" event="click" name="trinket" kind="uint" doc="..."
 //
@@ -219,6 +274,30 @@ func EncodeVocabulary(v *Vocabulary) string {
 		sb.WriteByte('\n')
 		for _, p := range t.Props {
 			writePropStmt(&sb, "prop", t.Name, p)
+		}
+		for _, a := range t.Asks {
+			sb.WriteString("ask of=")
+			sb.WriteString(Quote(t.Name))
+			sb.WriteString(" name=")
+			sb.WriteString(Quote(a.Name))
+			sb.WriteString(" doc=")
+			sb.WriteString(Quote(a.Doc))
+			sb.WriteString(" answers=")
+			sb.WriteString(Quote(strings.Join(a.Answers, ",")))
+			sb.WriteByte('\n')
+			for _, f := range a.Args {
+				sb.WriteString("askarg of=")
+				sb.WriteString(Quote(t.Name))
+				sb.WriteString(" ask=")
+				sb.WriteString(Quote(a.Name))
+				sb.WriteString(" name=")
+				sb.WriteString(Quote(f.Name))
+				sb.WriteString(" kind=")
+				sb.WriteString(Quote(f.Kind))
+				sb.WriteString(" doc=")
+				sb.WriteString(Quote(f.Doc))
+				sb.WriteByte('\n')
+			}
 		}
 		for _, e := range t.Events {
 			sb.WriteString("event of=")

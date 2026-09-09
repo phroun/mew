@@ -1,7 +1,7 @@
 package display
 
-// An app's shelf: what a key is filed as, what survives being written and read
-// back, and what the store refuses.
+// An app's store on disk: what a key is filed as, what survives being written
+// and read back, and what is refused.
 
 import (
 	"bytes"
@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// shelf is a store in a directory of this test's own.
-func shelf(t *testing.T) *appStore {
+// shelf is one directory of a store, in a place of this test's own.
+func shelf(t *testing.T) *storeDir {
 	t.Helper()
-	return newAppStore(filepath.Join(t.TempDir(), "app"))
+	return newStoreDir(filepath.Join(t.TempDir(), "app"))
 }
 
 // everyByte is a payload holding all 256 values, which is what tells a
@@ -28,7 +28,7 @@ func everyByte() []byte {
 
 // whole reads an item back the way an app does: a chunk at a time from where
 // the last one ended, until the one marked last.
-func whole(t *testing.T, s *appStore, key string) []byte {
+func whole(t *testing.T, s *storeDir, key string) []byte {
 	t.Helper()
 	var out []byte
 	for offset := int64(0); ; {
@@ -99,7 +99,7 @@ func TestTwoKeysThatCleanAlikeAreTwoItems(t *testing.T) {
 		t.Errorf("the second item reads as %q", got)
 	}
 	if n := len(s.list()); n != 2 {
-		t.Errorf("the shelf holds %d items, want 2", n)
+		t.Errorf("the store holds %d items, want 2", n)
 	}
 }
 
@@ -214,7 +214,7 @@ func TestAKeyIsANameAndNotAPath(t *testing.T) {
 		"a/b/c",
 	} {
 		if _, err := s.put(key, "txt", []byte("x")); err == nil {
-			t.Errorf("%q was stored, so the shelf reads as a filesystem", key)
+			t.Errorf("%q was stored, so the store reads as a filesystem", key)
 		}
 	}
 	// The same name without the path in it is fine, and so is punctuation that
@@ -254,7 +254,7 @@ func TestAKeyThatWouldBreakTheIndexIsRefused(t *testing.T) {
 		}
 	}
 	if n := len(s.list()); n != 0 {
-		t.Errorf("the shelf holds %d items after storing nothing storable", n)
+		t.Errorf("the store holds %d items after storing nothing storable", n)
 	}
 }
 
@@ -435,22 +435,22 @@ func TestTheIndexIsNotAnItem(t *testing.T) {
 // the object that wrote it.
 func TestTheInventoryOutlivesTheStoreThatWroteIt(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "app")
-	first := newAppStore(dir)
+	first := newStoreDir(dir)
 	if _, err := first.put("a key with spaces", "conf", []byte("x=1")); err != nil {
 		t.Fatal(err)
 	}
 
-	items := newAppStore(dir).list()
+	items := newStoreDir(dir).list()
 	if len(items) != 1 {
-		t.Fatalf("the reopened shelf holds %+v", items)
+		t.Fatalf("the reopened store holds %+v", items)
 	}
 	if items[0].key != "a key with spaces" || items[0].typ != "conf" || items[0].size != 3 {
 		t.Errorf("the item reads back as %+v", items[0])
 	}
 }
 
-// Which tree a statement names, and whether the connection has anywhere to put
-// anything, are settled before the store is reached at all.
+// Whether the connection has anywhere to put anything is settled before the
+// store is reached at all.
 func TestAConnectionIsToldWhenThereIsNowhereToPutIt(t *testing.T) {
 	tempConfig(t)
 	known := admittedOnce(t, "sha256:aaa", "Demo", "Laptop")
@@ -459,16 +459,8 @@ func TestAConnectionIsToldWhenThereIsNowhereToPutIt(t *testing.T) {
 		identity: "sha256:aaa",
 		appName:  "Demo",
 	}
-
-	for _, tree := range []string{dataTree, cacheTree} {
-		if _, err := c.storeIn(tree); err != nil {
-			t.Errorf("%s is a tree this desktop keeps, and was refused: %v", tree, err)
-		}
-	}
-	for _, tree := range []string{"", "temp", "DATA", "../data"} {
-		if _, err := c.storeIn(tree); err == nil {
-			t.Errorf("a statement reached the shelf %q", tree)
-		}
+	if _, err := c.appStore(); err != nil {
+		t.Errorf("an admitted app was refused a store: %v", err)
 	}
 
 	// A peer with no identity has no folder, and neither has an app this
@@ -479,13 +471,9 @@ func TestAConnectionIsToldWhenThereIsNowhereToPutIt(t *testing.T) {
 		{"sha256:aaa", "Never Admitted"},
 		{"sha256:unknown", "Demo"},
 	} {
-		nobody := &conn{
-			server:   c.server,
-			identity: at.identity,
-			appName:  at.app,
-		}
-		if _, err := nobody.storeIn(dataTree); err == nil {
-			t.Errorf("identity %q app %q was given a shelf", at.identity, at.app)
+		nobody := &conn{server: c.server, identity: at.identity, appName: at.app}
+		if _, err := nobody.appStore(); err == nil {
+			t.Errorf("identity %q app %q was given a store", at.identity, at.app)
 		}
 	}
 }
@@ -511,5 +499,74 @@ func TestAFileNoIndexMentionsKeepsItsName(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(s.dir, "notes.txt")); err != nil || string(got) != "older" {
 		t.Errorf("the unaccounted file reads as %q (%v)", got, err)
+	}
+}
+
+// The cache mark on a key is the only difference between what is kept and what
+// is cached, and it decides which of the two directories the bytes go in. That
+// is what lets Clear Cache take one and leave the other, and it is why one
+// namespace does not mean one pile of files.
+func TestTheCacheMarkChoosesTheDirectory(t *testing.T) {
+	tempConfig(t)
+	s := newAppStore("laptop", "demo")
+
+	if _, err := s.put("report", "txt", []byte("kept")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.put(cacheMark+"report", "txt", []byte("cached")); err != nil {
+		t.Fatal(err)
+	}
+
+	root := configDir()
+	for _, at := range []struct{ tree, want string }{
+		{dataTree, "kept"},
+		{cacheTree, "cached"},
+	} {
+		path := filepath.Join(root, at.tree, "laptop", "demo", "report.txt")
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s holds no report.txt: %v", at.tree, err)
+			continue
+		}
+		if string(got) != at.want {
+			t.Errorf("%s/report.txt reads as %q, want %q", at.tree, got, at.want)
+		}
+	}
+
+	// The same name marked and unmarked is two items, and one inventory names
+	// both -- the mark sorting first, since it sorts before every letter.
+	items := s.list()
+	if len(items) != 2 {
+		t.Fatalf("a marked key and an unmarked one came to %+v", items)
+	}
+	if items[0].key != cacheMark+"report" || items[1].key != "report" {
+		t.Errorf("the inventory reads as %q then %q", items[0].key, items[1].key)
+	}
+}
+
+// The mark belongs at the front or not at all: one anywhere else marks nothing,
+// and a key that is only the mark names nothing.
+func TestTheCacheMarkOnlyLeadsAKey(t *testing.T) {
+	tempConfig(t)
+	s := newAppStore("laptop", "demo")
+	for _, key := range []string{cacheMark, "a" + cacheMark + "b", "trailing" + cacheMark} {
+		if _, err := s.put(key, "txt", []byte("x")); err == nil {
+			t.Errorf("%q was stored", key)
+		}
+	}
+	if _, err := s.put(cacheMark+"fine", "txt", []byte("x")); err != nil {
+		t.Errorf("a properly marked key was refused: %v", err)
+	}
+}
+
+// Every rule about a key is about its NAME, so the mark does not smuggle one
+// past them: `#7` is still a name that could be a record index.
+func TestTheRulesApplyBehindTheMark(t *testing.T) {
+	tempConfig(t)
+	s := newAppStore("laptop", "demo")
+	for _, key := range []string{cacheMark + "7", cacheMark + "a/b", cacheMark + "two\nlines"} {
+		if _, err := s.put(key, "txt", []byte("x")); err == nil {
+			t.Errorf("%q was stored", key)
+		}
 	}
 }

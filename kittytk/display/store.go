@@ -1,22 +1,28 @@
 package display
 
-// One app's shelf: a key-value store of blobs, kept in the app's own folder
-// under whichever of the two trees it named.
+// One app's store: a flat set of names, each holding one blob.
 //
 // This is NOT a filesystem. A filesystem is coming and this is not the early
-// version of it: an app's shelf is nearer to cookies or a browser's local
-// storage -- a flat set of names, each holding one thing. There are no
-// directories, nothing nests, and a key with a path in it would say otherwise.
+// version of it: an app's store is nearer to cookies or a browser's local
+// storage. There are no directories, nothing nests, and a key with a path in it
+// would say otherwise.
 //
 // A key is a NAME. It is the app's own word for the item, and it is the same
 // name the item carries when it becomes a bundle, so the two are one namespace
 // rather than two that have to be kept in step. That is what the rules on it
 // come from: see storeKeyRules.
 //
-// What goes on disk is a cleaned form of the key with the item's type as the
-// extension, and an index beside the files says which key each one belongs to.
-// The key is what the app knows; the filename is what the filesystem will take;
-// neither has to be the other.
+// ONE namespace, and the key says how long the item lives: a key beginning with
+// the cache mark names something the desktop may throw away at any moment,
+// exactly as a `#` names a temporary table in SQL. Durability is part of the
+// name rather than a place the item sits in, so it is visible everywhere the key
+// is and there is no second namespace where the same key means something else.
+//
+// The two directories behind it are the desktop's business. What goes on disk is
+// a cleaned form of the key with the item's type as the extension, and an index
+// beside the files says which key each one belongs to. The key is what the app
+// knows; the filename is what the filesystem will take; neither has to be the
+// other.
 //
 // Bundles are what this is being built for, and it knows nothing about them.
 // It stores blobs.
@@ -62,33 +68,53 @@ const storeIndexName = "index"
 // progress.
 const storeChunk = 2048
 
+// cacheMark begins the key of an item the desktop may throw away. It is the
+// only difference between something kept and something cached -- there is one
+// namespace, and this says which half of it a name is in.
+const cacheMark = "#"
+
+// cached reports whether a key names something discardable.
+func cached(key string) bool { return strings.HasPrefix(key, cacheMark) }
+
 // storeKeyRules says whether a key is one this store will take, and why not
 // where it will not.
 //
 // A key is the same name the item carries as a bundle, and a bundle is
-// addressed `<source>/<bundle>/<record>` -- so the three things an address
-// needs to stay unambiguous are the three things a key may not be:
+// addressed `<source>/<bundle>/<record>` -- so what an address needs to stay
+// unambiguous is what a key may not hold:
 //
 //   - No slash. It is the separator between the levels of an address, and a
 //     key holding one could not be told from two levels. It is also the thing
-//     that would make a shelf look like a filesystem, and a shelf is not one:
+//     that would make a store look like a filesystem, and a store is not one:
 //     it is a flat set of names, nearer to cookies than to directories.
-//   - No key of nothing but digits. All-digits is how an address says it means
+//   - No name of nothing but digits. All-digits is how an address says it means
 //     the record at that INDEX, so `objectLibrary/7` could name a bundle or a
 //     record and there is no way to say which.
 //   - Nothing unprintable. The index beside the files is a line per item, so a
 //     key with a newline in it writes a line that reads back as a different
 //     item, silently.
+//
+// The cache mark leads the key or does not appear: one at the front says the
+// item is discardable, and one anywhere else would be a mark that marks
+// nothing. Every other rule is about the NAME, which is the key without it.
 func storeKeyRules(key string) error {
 	if key == "" {
 		return fmt.Errorf("an item needs a key")
 	}
-	if strings.ContainsRune(key, '/') {
+	name := strings.TrimPrefix(key, cacheMark)
+	if name == "" {
+		return fmt.Errorf("%q is a cache mark and no name", key)
+	}
+	if strings.Contains(name, cacheMark) {
+		return fmt.Errorf("the cache mark begins a key or is not in it: %q holds"+
+			" one where it says nothing", key)
+	}
+	if strings.ContainsRune(name, '/') {
 		return fmt.Errorf("a key is a name, not a path: %q holds a slash, which"+
 			" separates the levels of an address", key)
 	}
 	digits := true
-	for _, r := range key {
+	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
 			return fmt.Errorf("a key is written down as it stands: %q holds a"+
 				" character that cannot be", key)
@@ -98,7 +124,7 @@ func storeKeyRules(key string) error {
 		}
 	}
 	if digits {
-		return fmt.Errorf("a key of nothing but digits is how an address names"+
+		return fmt.Errorf("a name of nothing but digits is how an address names"+
 			" a record by its position, so %q could not be told from one", key)
 	}
 	return nil
@@ -113,16 +139,68 @@ type storeItem struct {
 	size int64
 }
 
-// appStore is one app's folder in one tree.
-type appStore struct {
+// storeDir is one app's folder in one tree.
+type storeDir struct {
 	dir string
 	mu  sync.Mutex
 }
 
-func newAppStore(dir string) *appStore { return &appStore{dir: dir} }
+func newStoreDir(dir string) *storeDir { return &storeDir{dir: dir} }
+
+// appStore is one app's whole store: the names it keeps and the names it
+// caches, in one flat namespace. The cache mark on a key is what decides which
+// of the two directories the item's bytes sit in, so an app names things and
+// the desktop files them.
+type appStore struct {
+	kept   *storeDir
+	cached *storeDir
+}
+
+func newAppStore(host, app string) *appStore {
+	return &appStore{
+		kept:   newStoreDir(storagePath(dataTree, host, app)),
+		cached: newStoreDir(storagePath(cacheTree, host, app)),
+	}
+}
+
+// dirFor is where a key's bytes belong.
+func (s *appStore) dirFor(key string) *storeDir {
+	if cached(key) {
+		return s.cached
+	}
+	return s.kept
+}
+
+// list is the whole inventory, both halves, by key. The cache mark sorts before
+// every letter, so what is discardable reads first.
+func (s *appStore) list() []storeItem {
+	out := append(s.kept.list(), s.cached.list()...)
+	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
+	return out
+}
+
+func (s *appStore) put(key, typ string, data []byte) (storeItem, error) {
+	if err := storeKeyRules(strings.TrimSpace(key)); err != nil {
+		return storeItem{}, err
+	}
+	return s.dirFor(key).put(key, typ, data)
+}
+
+func (s *appStore) appendTo(key, typ string, data []byte) (storeItem, error) {
+	if err := storeKeyRules(strings.TrimSpace(key)); err != nil {
+		return storeItem{}, err
+	}
+	return s.dirFor(key).appendTo(key, typ, data)
+}
+
+func (s *appStore) read(key string, offset int64) ([]byte, storeItem, bool, error) {
+	return s.dirFor(key).read(key, offset)
+}
+
+func (s *appStore) drop(key string) error { return s.dirFor(key).drop(key) }
 
 // list is the inventory: every item, by key.
-func (s *appStore) list() []storeItem {
+func (s *storeDir) list() []storeItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := s.readLocked()
@@ -137,18 +215,18 @@ func (s *appStore) list() []storeItem {
 // put writes an item, replacing whatever the key held. A key whose type
 // changes is refiled under the new extension and the old file goes: one key is
 // one item, and leaving the old one behind would leave two files claiming it.
-func (s *appStore) put(key, typ string, data []byte) (storeItem, error) {
+func (s *storeDir) put(key, typ string, data []byte) (storeItem, error) {
 	return s.write(key, typ, data, false)
 }
 
 // appendTo adds to the end of an item, making it first if there is none. The
 // type must be the one the item already has -- appending psl to a png is not
 // something either of them survives.
-func (s *appStore) appendTo(key, typ string, data []byte) (storeItem, error) {
+func (s *storeDir) appendTo(key, typ string, data []byte) (storeItem, error) {
 	return s.write(key, typ, data, true)
 }
 
-func (s *appStore) write(key, typ string, data []byte, extend bool) (storeItem, error) {
+func (s *storeDir) write(key, typ string, data []byte, extend bool) (storeItem, error) {
 	key = strings.TrimSpace(key)
 	if err := storeKeyRules(key); err != nil {
 		return storeItem{}, err
@@ -209,7 +287,7 @@ func (s *appStore) write(key, typ string, data []byte, extend bool) (storeItem, 
 // Dropping what is not there succeeds. What the app asked for is that the key
 // hold nothing, and it holds nothing -- so a clean-up that runs twice, or after
 // a connection dropped mid-batch, is not an error to handle.
-func (s *appStore) drop(key string) error {
+func (s *storeDir) drop(key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return fmt.Errorf("an item needs a key")
@@ -232,7 +310,7 @@ func (s *appStore) drop(key string) error {
 // read hands back one slice of an item, and says whether it is the last. An
 // offset past the end reads as an empty last chunk rather than an error: it is
 // what an app that read to the end and asked once more should be told.
-func (s *appStore) read(key string, offset int64) (data []byte, it storeItem, last bool, err error) {
+func (s *storeDir) read(key string, offset int64) (data []byte, it storeItem, last bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -267,14 +345,14 @@ func (s *appStore) read(key string, offset int64) (data []byte, it storeItem, la
 
 // pathOf is where an item's bytes live: its filed name, and its type as the
 // extension.
-func (s *appStore) pathOf(it storeItem) string {
+func (s *storeDir) pathOf(it storeItem) string {
 	return filepath.Join(s.dir, it.safe+"."+it.typ)
 }
 
 // sized fills in what the item currently weighs. A file that is not there
 // weighs nothing, which is what an item written and then removed by hand
 // should read as rather than an error nobody can act on.
-func (s *appStore) sized(it storeItem) storeItem {
+func (s *storeDir) sized(it storeItem) storeItem {
 	if info, err := os.Stat(s.pathOf(it)); err == nil {
 		it.size = info.Size()
 	}
@@ -283,7 +361,7 @@ func (s *appStore) sized(it storeItem) storeItem {
 
 // freeNameLocked is what a new key is filed under: the cleaned key, numbered if
 // another item or another file already answers to it.
-func (s *appStore) freeNameLocked(items map[string]storeItem, key string) string {
+func (s *storeDir) freeNameLocked(items map[string]storeItem, key string) string {
 	taken := map[string]bool{storeIndexName: true}
 	for _, it := range items {
 		taken[it.safe] = true
@@ -299,10 +377,10 @@ func (s *appStore) freeNameLocked(items map[string]storeItem, key string) string
 	return safeName(key, "item", taken)
 }
 
-func (s *appStore) indexPath() string { return filepath.Join(s.dir, storeIndexName) }
+func (s *storeDir) indexPath() string { return filepath.Join(s.dir, storeIndexName) }
 
 // readLocked reads the index: key -> what it is filed as.
-func (s *appStore) readLocked() map[string]storeItem {
+func (s *storeDir) readLocked() map[string]storeItem {
 	out := map[string]storeItem{}
 	f, err := os.Open(s.indexPath())
 	if err != nil {
@@ -318,7 +396,7 @@ func (s *appStore) readLocked() map[string]storeItem {
 	return out
 }
 
-func (s *appStore) writeLocked(items map[string]storeItem) error {
+func (s *storeDir) writeLocked(items map[string]storeItem) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
 	}

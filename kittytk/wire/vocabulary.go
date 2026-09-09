@@ -37,6 +37,14 @@ type EventInfo struct {
 	Fields []EventFieldDesc
 }
 
+// AskInfo describes one question a type answers.
+type AskInfo struct {
+	Name    string
+	Doc     string
+	Args    []EventFieldDesc
+	Answers []string
+}
+
 // TypeInfo describes one registered type, its type-specific props, and
 // the events it emits (common props are reported once at the vocabulary
 // level).
@@ -47,6 +55,7 @@ type TypeInfo struct {
 	// an instance and hands over its ID, and `new <name>` is refused.
 	Hosted bool
 	Props  []PropInfo
+	Asks   []AskInfo
 	Events []EventInfo
 }
 
@@ -59,7 +68,7 @@ type Vocabulary struct {
 
 // DecodeVocabulary parses the flat describe stream (the statements the
 // describe verb emits, one per line) back into a Vocabulary. Lines are
-// proptype/prop/propcommon/event/eventfield statements; unknown lines
+// proptype/prop/propcommon/ask/askarg/event/eventfield statements; unknown lines
 // are ignored, so a newer host can add statement kinds without breaking
 // an older client.
 func DecodeVocabulary(lines []string) (*Vocabulary, error) {
@@ -89,6 +98,32 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 				of := stmtStr(st, "of")
 				if i, ok := byType[of]; ok {
 					v.Types[i].Props = append(v.Types[i].Props, stmtToPropInfo(st))
+				}
+			case "ask":
+				of := stmtStr(st, "of")
+				if i, ok := byType[of]; ok {
+					v.Types[i].Asks = append(v.Types[i].Asks, AskInfo{
+						Name:    stmtStr(st, "name"),
+						Doc:     stmtStr(st, "doc"),
+						Answers: splitList(stmtStr(st, "answers")),
+					})
+				}
+			case "askarg":
+				i, ok := byType[stmtStr(st, "of")]
+				if !ok {
+					continue
+				}
+				name := stmtStr(st, "ask")
+				for j := range v.Types[i].Asks {
+					if v.Types[i].Asks[j].Name != name {
+						continue
+					}
+					v.Types[i].Asks[j].Args = append(v.Types[i].Asks[j].Args, EventFieldDesc{
+						Name: stmtStr(st, "name"),
+						Kind: stmtStr(st, "kind"),
+						Doc:  stmtStr(st, "doc"),
+					})
+					break
 				}
 			case "event":
 				of := stmtStr(st, "of")
@@ -125,6 +160,14 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 	return v, nil
 }
 
+// splitList reads a comma-separated field, empty for an empty one.
+func splitList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
+
 func stmtToPropInfo(st *Statement) PropInfo {
 	p := PropInfo{
 		Name:    stmtStr(st, "name"),
@@ -133,10 +176,10 @@ func stmtToPropInfo(st *Statement) PropInfo {
 		Doc:     stmtStr(st, "doc"),
 	}
 	if e := stmtStr(st, "enum"); e != "" {
-		p.Enum = strings.Split(e, ",")
+		p.Enum = splitList(e)
 	}
 	if m := stmtStr(st, "members"); m != "" {
-		p.Members = strings.Split(m, ",")
+		p.Members = splitList(m)
 	}
 	return p
 }

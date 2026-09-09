@@ -32,6 +32,14 @@ func (h Handle) Destroy() error {
 	return err
 }
 
+// Ask puts a question to the object: h.Ask("bytes offset=2048") sends
+// `ask <id> bytes offset=2048`. The answer arrives as the events the question
+// declares it answers with, so register for those before asking.
+func (h Handle) Ask(question string) error {
+	_, err := h.c.Exec(fmt.Sprintf("ask %d %s", h.id, question))
+	return err
+}
+
 // On subscribes to an event from this object.
 func (h Handle) On(event string, fn func(*wire.Event)) {
 	h.c.on(h.id, event, fn)

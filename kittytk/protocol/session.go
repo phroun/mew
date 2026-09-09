@@ -36,6 +36,23 @@ type destroyer interface {
 	Destroy() error
 }
 
+// asker is an optional Object capability backing the ask verb: the object is
+// put a question and answers it with events.
+//
+// The protocol had no way to ask for anything. `new`, `set` and `destroy` change
+// the display; `sub` opens the flow of events an object raises when something
+// happens TO it; `describe` reports the vocabulary. None of them is "tell me
+// this, now" -- so a read was modelled as subscribing and being pushed, which
+// suits state that changes and does not suit a question with an argument in it,
+// or an answer that comes in more than one piece.
+//
+// An answer is events, not a reply. The reply says the batch was understood; what
+// the object had to say arrives as the events its type declares, which is how
+// everything else the display tells a client arrives.
+type asker interface {
+	Ask(question string, args []*Arg) error
+}
+
 // Session holds connection-scoped interpretation state: alias and
 // template dictionaries (D10/D14), plus — since D19's verbs — the
 // persistent key table and object table. Keys registered by one
@@ -183,6 +200,8 @@ func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) err
 		}
 		s.forget(obj.ID())
 		return nil
+	case "ask":
+		return s.askObject(stmt.Args)
 	case "sub", "unsub":
 		return s.subscribe(stmt.Verb, stmt.Args, f)
 	case "describe":
@@ -215,6 +234,41 @@ func (s *Session) suppressed(f Factory, fn func() error) error {
 	var err error
 	ec.Suppressed(func() { err = fn() })
 	return err
+}
+
+// askObject puts a question to an object: `ask <target> <question> [args...]`.
+// The question is a bare word, as an event name is in `sub`, and what follows it
+// is named arguments -- `ask <blob> bytes offset=2048`.
+//
+// It runs OUTSIDE the emission suppression that wraps `new` and `set`: those
+// suppress so a property a client set does not echo back at it, and an answer to
+// a question is not an echo. It is the whole point of having asked.
+func (s *Session) askObject(args []*Arg) error {
+	obj, _, rest, err := s.resolveTarget("ask", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 || rest[0].Value != nil || rest[0].Flag != FlagTrue {
+		return fmt.Errorf("ask: expected a question after the target")
+	}
+	question := rest[0].Name
+	a, ok := obj.(asker)
+	if !ok {
+		return fmt.Errorf("ask: %s answers no questions", s.describeTarget(obj))
+	}
+	if err := checkAskName(s.objectTypes[obj.ID()], question); err != nil {
+		return err
+	}
+	return a.Ask(question, rest[1:])
+}
+
+// describeTarget names an object for a refusal: its type where the wire built
+// it, and its id where the host registered it.
+func (s *Session) describeTarget(obj Object) string {
+	if t := s.objectTypes[obj.ID()]; t != "" {
+		return fmt.Sprintf("a %s", t)
+	}
+	return fmt.Sprintf("object %d", obj.ID())
 }
 
 // resolveTarget interprets a verb's leading argument as an object

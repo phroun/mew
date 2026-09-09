@@ -18,11 +18,8 @@ import (
 // These three methods make *Application satisfy protocol.Object.
 //
 // The type is registered as well, so the vocabulary answers for the app object
-// the way it answers for a button: what properties it takes, and what events
-// reach the client through it. Registration is also what lets a subscription
-// on the app's ID be checked -- an event a type does not declare reads as
-// misspelled and the sub is refused, which is the answer a typo deserves and
-// the wrong one for an event that does exist.
+// the way it answers for a button: it is addressable, it takes properties, and
+// it is not something the wire builds.
 
 func init() {
 	set := func(name string) protocol.PropertyApplier {
@@ -44,36 +41,6 @@ func init() {
 				Tip("The app may open more than one top-level window.").Def("false"),
 			"contextonly": protocol.NewProperty("flag", set("contextonly")).
 				Tip("The app contributes context menus and no windows of its own.").Def("false"),
-		},
-		Events: map[string]protocol.EventDesc{
-			"store_item": protocol.NewEventDesc("One stored item: what an inventory lists, and what a put or an append answers with.").
-				Field("app", "uint", "The application the item is stored for.").
-				Field("tree", "enum", "data or cache.").
-				Field("key", "string", "What the app calls the item.").
-				Field("type", "enum", "txt, psl, bin, ini or conf.").
-				Field("size", "int", "The item's size in bytes."),
-			"store_done": protocol.NewEventDesc("The end of an inventory: every item has been sent.").
-				Field("app", "uint", "The application the inventory is of.").
-				Field("tree", "enum", "data or cache.").
-				Field("count", "int", "How many items were listed."),
-			"store_data": protocol.NewEventDesc("One chunk of an item being read back. Ask again from the offset reached until the chunk marked last.").
-				Field("app", "uint", "The application the item is stored for.").
-				Field("tree", "enum", "data or cache.").
-				Field("key", "string", "What the app calls the item.").
-				Field("type", "enum", "txt, psl, bin, ini or conf.").
-				Field("offset", "int", "Where in the item this chunk starts.").
-				Field("size", "int", "The whole item's size in bytes.").
-				Field("data", "string", "The chunk's bytes, every one of them escaped that is not printable ASCII.").
-				Field("last", "flag", "Set on the chunk that ends the item."),
-			"store_gone": protocol.NewEventDesc("An item is no longer there: what store_drop answers with.").
-				Field("app", "uint", "The application the item was stored for.").
-				Field("tree", "enum", "data or cache.").
-				Field("key", "string", "The key that now holds nothing."),
-			"store_error": protocol.NewEventDesc("A store statement the desktop refused, and why.").
-				Field("app", "uint", "The application that asked.").
-				Field("tree", "enum", "data or cache, where the statement named one.").
-				Field("key", "string", "The key it was about, where it named one.").
-				Field("reason", "string", "What was wrong with it."),
 		},
 	})
 }
