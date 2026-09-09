@@ -385,11 +385,7 @@ func Load() Config {
 	// What the user has changed in the desktop itself, over the top of what the
 	// ini says. Only ever the user config dir: it is this machine's record of
 	// what was done here, not something shipped beside a program.
-	if data, err := os.ReadFile(CurrentPath()); err == nil {
-		cfg.layer = CurrentName
-		apply(data, &cfg)
-	}
-	cfg.layer = ""
+	cfg.ApplyCurrent()
 	return cfg
 }
 

@@ -66,6 +66,38 @@ func CurrentPath() string {
 	return filepath.Join(client.ConfigDir(), CurrentName)
 }
 
+// ApplyCurrent overlays what the desktop has written onto this configuration.
+// Load does it for a host that reads kittytk.ini; a host that reads a file of
+// its own -- mew reads ~/.mew/editor.conf -- calls it once that file has been
+// applied, so a switch thrown in the Connections window comes back the same
+// way whichever host is running.
+func (c *Config) ApplyCurrent() {
+	data, err := os.ReadFile(CurrentPath())
+	if err != nil {
+		return
+	}
+	c.layer = CurrentName
+	apply(data, c)
+	c.layer = ""
+}
+
+// SetPolicy records a policy read from a host's own configuration file, and
+// what to call that file where the value is accounted for.
+func (c *Config) SetPolicy(name string, on bool, origin string) {
+	switch name {
+	case PolicyPreTrustedOnly:
+		c.PreTrustedOnly = on
+	case PolicyPromptLocal:
+		c.PromptLocal = on
+	default:
+		return
+	}
+	if c.policyOrigins == nil {
+		c.policyOrigins = map[string]string{}
+	}
+	c.policyOrigins[name] = origin
+}
+
 // notePolicy records that the layer being read set this policy.
 func (c *Config) notePolicy(name string) {
 	if c.policyOrigins == nil {
