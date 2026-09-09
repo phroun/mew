@@ -35,7 +35,10 @@ type desktopTooltip struct {
 	lines []string
 	inBar bool   // the status bar is showing it
 	saved string // and this is what it was saying before
-	popup bool   // the popup layer is showing it
+	// layer is the popup layer showing it, remembered so it is withdrawn
+	// from the same one it was raised into: a torn-out window has a layer
+	// of its own, and the desktop's would not know about this note.
+	layer core.PopupController
 }
 
 // ShowTooltip implements core.TooltipHandler: the desktop takes anything that
@@ -46,12 +49,13 @@ func (d *Desktop) ShowTooltip(req core.TooltipRequest) bool {
 	}
 	d.HideTooltip(nil)
 
-	lines := tooltipLines(req.Text, d.tooltipWrapWidth())
+	mm := d.tooltipFace()
+	lines := tooltipLines(req.Text, d.tooltipWrapWidth(mm), mm)
 	d.tooltip = &desktopTooltip{from: req.From, lines: lines}
 
 	if d.graphicalSurface() {
-		if d.raiseTooltipPopup(req, lines) {
-			d.tooltip.popup = true
+		if layer := d.raiseTooltipPopup(req, lines, mm); layer != nil {
+			d.tooltip.layer = layer
 			d.RequestUpdate()
 			return true
 		}
@@ -81,10 +85,8 @@ func (d *Desktop) HideTooltip(from core.Trinket) {
 			bar.SetText(t.saved)
 		}
 	}
-	if t.popup {
-		if pc := d.popupHost(); pc != nil {
-			pc.UnregisterPopup(tooltipPopupID)
-		}
+	if t.layer != nil {
+		t.layer.UnregisterPopup(tooltipPopupID)
 	}
 	d.RequestUpdate()
 }
@@ -94,7 +96,7 @@ func (d *Desktop) HideTooltip(from core.Trinket) {
 // it has already dropped.
 func (d *Desktop) forgetTooltipPopup() {
 	t := d.tooltip
-	if t == nil || !t.popup {
+	if t == nil || t.layer == nil {
 		return
 	}
 	d.tooltip = nil
@@ -117,9 +119,24 @@ func (d *Desktop) graphicalSurface() bool {
 	return ok && gm.GraphicalMode()
 }
 
-// popupHost is the layer a tooltip is raised into: the window manager, which
-// is what holds every other popup on the screen.
-func (d *Desktop) popupHost() core.PopupController {
+// popupHost is the layer a tooltip is raised into.
+//
+// It is asked of the TRINKET, not of the desktop: a window torn out onto a
+// surface of its own carries its own popup layer, and a note about something
+// in it belongs on that surface rather than back on the desktop the window
+// came from. The desktop's own manager is the answer for everything still on
+// the desktop, and the fallback for a trinket that names no layer.
+func (d *Desktop) popupHost(from core.Trinket) core.PopupController {
+	for t, depth := from, 0; t != nil && depth < maxPopupHostWalk; depth++ {
+		if getter, ok := t.(interface {
+			PopupController() core.PopupController
+		}); ok {
+			if pc := getter.PopupController(); pc != nil {
+				return pc
+			}
+		}
+		t = popupWalkParent(t)
+	}
 	if d.windowManager == nil {
 		return nil
 	}
@@ -129,26 +146,49 @@ func (d *Desktop) popupHost() core.PopupController {
 	return nil
 }
 
+// maxPopupHostWalk stops the walk for a chain that somehow leads back into
+// itself, the same guard the rest of the chain walks carry.
+const maxPopupHostWalk = 64
+
+// popupWalkParent is the next trinket up, following an embedded trinket's host
+// where it has no parent of its own -- a tree's cell editor is drawn by the
+// tree, and its popups belong to the same layer as the tree's.
+func popupWalkParent(t core.Trinket) core.Trinket {
+	if p := t.Parent(); p != nil {
+		return p
+	}
+	if e, ok := t.(core.EmbedHosted); ok {
+		return e.EmbedHost()
+	}
+	return nil
+}
+
+// tooltipFace is the size a tooltip is drawn at, which is a menu's: a note
+// that appears beside the pointer belongs with the dropdowns and context
+// menus it appears among, and [window] menu_scale is what sets that size.
+func (d *Desktop) tooltipFace() MenuMetrics {
+	return MenuMetricsFor(d.EffectiveCellMetrics(), d.EffectiveFont(), d.graphicalSurface())
+}
+
 // tooltipWrapWidth is the widest a tooltip line may be, in units.
-func (d *Desktop) tooltipWrapWidth() core.Unit {
-	metrics := d.EffectiveCellMetrics()
-	w := core.Unit(tooltipWrapCells) * metrics.UnitsPerCellWidth
-	if b := d.Bounds(); b.Width > 0 && w > b.Width-metrics.UnitsPerCellWidth*4 {
-		w = b.Width - metrics.UnitsPerCellWidth*4
+func (d *Desktop) tooltipWrapWidth(mm MenuMetrics) core.Unit {
+	w := core.Unit(tooltipWrapCells) * mm.CellW
+	if b := d.Bounds(); b.Width > 0 && w > b.Width-mm.CellW*4 {
+		w = b.Width - mm.CellW*4
 	}
 	return w
 }
 
 // tooltipLines is the text as it will be shown: broken where it says to break,
 // and wrapped where a line is longer than a tooltip may be.
-func tooltipLines(text string, width core.Unit) []string {
+func tooltipLines(text string, width core.Unit, mm MenuMetrics) []string {
 	var out []string
 	for _, line := range strings.Split(text, "\n") {
 		if line == "" {
 			out = append(out, "")
 			continue
 		}
-		out = append(out, wrapText(line, width, core.DefaultFont(), core.DefaultCellMetrics())...)
+		out = append(out, wrapText(line, width, mm.Font, mm.base)...)
 	}
 	if len(out) == 0 {
 		out = []string{""}
@@ -172,24 +212,26 @@ func tooltipStatusText(text string) string {
 
 // raiseTooltipPopup puts the classic tooltip on the popup layer, placed
 // against the text it stands for and shifted to stay on the screen.
-func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string) bool {
-	pc := d.popupHost()
-	if pc == nil || req.From == nil {
-		return false
+func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm MenuMetrics) core.PopupController {
+	if req.From == nil {
+		return nil
+	}
+	pc := d.popupHost(req.From)
+	if pc == nil {
+		return nil
 	}
 	metrics := d.EffectiveCellMetrics()
-	font := d.EffectiveFont()
 
 	var textW core.Unit
 	for _, line := range lines {
-		if w := font.MeasureTextIn(line, metrics); w > textW {
+		if w := mm.TextWidth(line); w > textW {
 			textW = w
 		}
 	}
-	pad := metrics.UnitsPerCellWidth
+	padX, padY := tooltipPadding(mm)
 	box := core.UnitRect{
-		Width:  textW + pad*2,
-		Height: core.Unit(len(lines))*metrics.UnitsPerCellHeight + metrics.UnitsPerCellHeight,
+		Width:  textW + padX*2,
+		Height: core.Unit(len(lines))*mm.RowH + padY*2,
 	}
 
 	// The anchor in screen space: the rect the text occupies, mapped the way
@@ -211,18 +253,22 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string) boo
 	pc.RegisterPopup(&core.PopupRequest{
 		ID:     tooltipPopupID,
 		Bounds: box,
-		Anchor: anchor,
+		// No anchor. A drop-down and the control it opened from cast one
+		// shadow because they read as one piece; a tooltip is a note laid
+		// over the screen, and giving it an anchor would draw a shadow
+		// around the very text it is explaining.
+		//
 		// A tooltip is drawn and nothing else. It sits ON the text it
 		// stands for, so a click there is a click on the text.
 		Inert: true,
 		Paint: func(p *core.Painter) {
-			paintTooltip(p, box, lines, face, border, metrics, font)
+			paintTooltip(p, box, lines, face, border, mm)
 		},
 		// The layer clears every popup on a press outside them. Without
 		// this the desktop would go on believing it is showing one.
 		OnDismiss: func() { d.forgetTooltipPopup() },
 	})
-	return true
+	return pc
 }
 
 // tooltipOrigin places the box against the anchor the way the asker asked, and
@@ -271,16 +317,31 @@ func tooltipOrigin(side core.TooltipSide, anchor, box, screen core.UnitRect, met
 // box is in SCREEN units, and so is everything drawn here: the popup layer
 // hands every overlay the screen's own painter rather than one moved to the
 // overlay, so a popup that drew from zero would draw in the corner.
-func paintTooltip(p *core.Painter, box core.UnitRect, lines []string, face, border style.CellStyle, metrics core.CellMetrics, font *core.Font) {
-	radius := metrics.UnitsPerCellHeight / 2
+func paintTooltip(p *core.Painter, box core.UnitRect, lines []string, face, border style.CellStyle, mm MenuMetrics) {
+	radius := mm.RowH / 2
 	if !p.DrawRoundedRect(box, radius, style.BorderSingle, face.WithFg(border.Fg)) {
 		p.FillRect(box, ' ', face)
 		p.DrawRect(box, style.BorderSingle, face.WithFg(border.Fg))
 	}
-	x := box.X + metrics.UnitsPerCellWidth
-	y := box.Y + metrics.UnitsPerCellHeight/2
+	padX, padY := tooltipPadding(mm)
+	x := box.X + padX
+	y := box.Y + padY
 	for _, line := range lines {
-		p.DrawText(x, y, line, face, font)
-		y += metrics.UnitsPerCellHeight
+		p.DrawText(x, y+mm.YOff, line, face, mm.Font)
+		y += mm.RowH
 	}
+}
+
+// tooltipPadding is the room between the note's text and its rule: half a
+// pitch beside the text and a quarter row above and below it. A tooltip is
+// read at a glance and wants to be small.
+func tooltipPadding(mm MenuMetrics) (x, y core.Unit) {
+	x, y = mm.CellW/2, mm.RowH/4
+	if x < 1 {
+		x = 1
+	}
+	if y < 1 {
+		y = 1
+	}
+	return x, y
 }

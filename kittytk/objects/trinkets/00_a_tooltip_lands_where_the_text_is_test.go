@@ -203,6 +203,100 @@ func TestATooltipReachesTheCompositor(t *testing.T) {
 	}
 }
 
+// The compositor unions a popup's anchor into its drop shadow, so a drop-down
+// and the control it opened from cast one shape. A tooltip is not one piece
+// with anything: an anchor would draw a shadow around the very text it is
+// explaining.
+func TestATooltipCastsNoShadowOverTheTextItExplains(t *testing.T) {
+	_, wm, label := onScreen(t)
+
+	overlay := showAndCatch(t, wm, label)
+	if !overlay.Anchor.IsEmpty() {
+		t.Errorf("the tooltip named %+v as its anchor, which the shadow would take in", overlay.Anchor)
+	}
+}
+
+// A tooltip is read among the dropdowns and context menus, so it is drawn at
+// their size: [window] menu_scale, not the full body face.
+func TestATooltipIsDrawnAtTheMenuSize(t *testing.T) {
+	_, wm, label := onScreen(t)
+	full := showAndCatch(t, wm, label).Bounds
+
+	core.SetMenuScale(0.5)
+	t.Cleanup(func() { core.SetMenuScale(1) })
+	small := showAndCatch(t, wm, label).Bounds
+
+	if small.Width >= full.Width || small.Height >= full.Height {
+		t.Errorf("at half the menu scale the note is %dx%d, no smaller than %dx%d",
+			small.Width, small.Height, full.Width, full.Height)
+	}
+}
+
+// showAndCatch raises one tooltip over the label and hands back the overlay.
+func showAndCatch(t *testing.T, wm *window.WindowManager, from *Label) *window.PopupOverlay {
+	t.Helper()
+	d := from.Parent().Parent().Parent().(*Desktop)
+	d.HideTooltip(nil)
+	d.ShowTooltip(core.TooltipRequest{
+		Text: "the whole fingerprint",
+		From: from,
+		At:   core.UnitRect{Width: from.Bounds().Width, Height: from.Bounds().Height},
+	})
+	o := tooltipOverlay(wm)
+	if o == nil {
+		t.Fatal("a graphical desktop raised no popup")
+	}
+	return o
+}
+
+// ownLayer is a popup layer of a window's own, standing in for the surface a
+// torn-out window is drawn on.
+type ownLayer struct {
+	got  *core.PopupRequest
+	gone []string
+}
+
+func (c *ownLayer) RegisterPopup(r *core.PopupRequest) { c.got = r }
+func (c *ownLayer) UnregisterPopup(id string)          { c.gone = append(c.gone, id) }
+func (c *ownLayer) ScreenBounds() core.UnitRect        { return core.UnitRect{Width: 900, Height: 600} }
+func (c *ownLayer) MapToScreen(t core.Trinket, local core.UnitPoint) core.UnitPoint {
+	return local
+}
+
+// A window torn out onto a surface of its own carries its own popup layer. A
+// note about something inside it belongs on that surface -- drawing it on the
+// desktop's layer puts it on a different screen from the text it explains.
+func TestATornOutWindowKeepsItsTooltipOnItsOwnSurface(t *testing.T) {
+	d, wm, label := onScreen(t)
+
+	// Tearing a window out stamps the new surface's layer onto the window
+	// and everything in it, which is what makes the trinket the thing to
+	// ask -- the desktop's own manager is the wrong answer for it now.
+	layer := &ownLayer{}
+	wm.Windows()[0].SetPopupController(layer)
+	label.Parent().(*Panel).SetPopupController(layer)
+	label.SetPopupController(layer)
+
+	d.ShowTooltip(core.TooltipRequest{
+		Text: "the whole fingerprint",
+		From: label,
+		At:   core.UnitRect{Width: label.Bounds().Width, Height: label.Bounds().Height},
+	})
+
+	if layer.got == nil {
+		t.Fatal("the note went somewhere other than the window's own layer")
+	}
+	if tooltipOverlay(wm) != nil {
+		t.Error("the note was also put on the desktop the window was torn out of")
+	}
+
+	// And it is withdrawn from the layer it was raised into.
+	d.HideTooltip(label)
+	if len(layer.gone) != 1 || layer.gone[0] != tooltipPopupID {
+		t.Errorf("the window's layer was told to drop %v", layer.gone)
+	}
+}
+
 // And it leaves the popup layer when it is withdrawn.
 func TestATooltipLeavesThePopupLayer(t *testing.T) {
 	d, wm, label := onScreen(t)
