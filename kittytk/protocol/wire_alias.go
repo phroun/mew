@@ -48,6 +48,7 @@ const (
 var (
 	Parse              = wire.Parse
 	Quote              = wire.Quote
+	QuoteBlob          = wire.QuoteBlob
 	NewEvent           = wire.NewEvent
 	ParseEvent         = wire.ParseEvent
 	EncodeReply        = wire.EncodeReply

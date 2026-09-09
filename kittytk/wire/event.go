@@ -113,14 +113,33 @@ func (e *Event) Flag(name string) FlagState {
 	return a.Flag
 }
 
+// WithBlob adds a field carrying arbitrary bytes, escaped so every one of
+// them survives the trip. See QuoteBlob.
+func (e *Event) WithBlob(name string, b []byte) *Event {
+	e.Fields = append(e.Fields, &Arg{Name: name, Value: &Value{
+		Kind: StringValue, Str: string(b), Blob: true,
+	}})
+	return e
+}
+
+// Blob reads a field written with WithBlob back as the bytes it carried.
+func (e *Event) Blob(name string) ([]byte, bool) {
+	s, ok := e.Text(name)
+	return []byte(s), ok
+}
+
 // Trinket reads the conventional trinket-identity field.
 func (e *Event) Trinket() (uint64, bool) {
 	if id, ok := e.Uint("trinket"); ok {
 		return id, ok
 	}
-	// Window events name their source window= rather than trinket=;
-	// both are ObjectIDs, and subscriptions key on the source.
-	return e.Uint("window")
+	// Window events name their source window= rather than trinket=, and an
+	// application's own events name it app=. All three are ObjectIDs, and
+	// subscriptions key on the source whichever word names it.
+	if id, ok := e.Uint("window"); ok {
+		return id, ok
+	}
+	return e.Uint("app")
 }
 
 // Encode renders the event as protocol text: a parseable statement.
@@ -152,6 +171,10 @@ func (e *Event) Encode() string {
 				fmt.Fprintf(&sb, "%g", a.Value.Number)
 			}
 		case StringValue:
+			if a.Value.Blob {
+				sb.WriteString(QuoteBlob([]byte(a.Value.Str)))
+				continue
+			}
 			sb.WriteString(quoteString(a.Value.Str))
 		}
 	}
@@ -164,6 +187,37 @@ func (e *Event) Encode() string {
 // control bytes as \xNN). Script builders use it to interpolate
 // arbitrary text safely.
 func Quote(s string) string { return quoteString(s) }
+
+// QuoteBlob renders arbitrary bytes as a protocol string literal, byte for
+// byte: everything outside printable ASCII becomes a \xNN escape.
+//
+// Quote is for TEXT and cannot carry a byte stream. A statement is parsed as
+// runes, so a byte that is not part of valid UTF-8 is replaced before the
+// parser ever sees the escape it should have been -- and a payload that
+// arrived as PNG or as a compressed bundle would come back altered, with
+// nothing to say it had been.
+//
+// The cost is four characters per escaped byte, which for binary is the whole
+// payload. That is the price of a text protocol carrying bytes at all, and
+// the bulk frame the parser's \x note anticipates is where it goes away.
+func QuoteBlob(b []byte) string {
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for _, c := range b {
+		switch {
+		case c == '"':
+			sb.WriteString(`\"`)
+		case c == '\\':
+			sb.WriteString(`\\`)
+		case c >= 0x20 && c < 0x7f:
+			sb.WriteByte(c)
+		default:
+			fmt.Fprintf(&sb, `\x%02x`, c)
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
 
 func quoteString(s string) string {
 	var sb strings.Builder

@@ -270,6 +270,19 @@ func (c *Conn) OnCommand(action string, fn func()) {
 	c.mu.Unlock()
 }
 
+// OnType registers a handler for every event of a type that reaches this
+// connection, whichever object raised it -- and WITHOUT subscribing to
+// anything. It is observation: what arrives is what some subscription
+// elsewhere, or the event's own unconditional flow, has already let through.
+//
+// Handle.On is the way to ask for an object's events. This is the way to watch
+// what comes.
+func (c *Conn) OnType(eventType string, fn func(*wire.Event)) {
+	c.mu.Lock()
+	c.typeHandlers[eventType] = append(c.typeHandlers[eventType], fn)
+	c.mu.Unlock()
+}
+
 // stateOf returns the replica entry, creating it lazily.
 func (c *Conn) stateOf(id uint64) *objState {
 	c.mu.Lock()

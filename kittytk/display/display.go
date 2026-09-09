@@ -287,6 +287,18 @@ type conn struct {
 	factory *hostFactory
 	app     *app.Application
 
+	// ctx is the connection's event seam: what the store verbs answer
+	// through, so their events pass the same subscription filter a trinket's
+	// do rather than arriving whether or not the app asked for them.
+	ctx *protocol.BindContext
+
+	// Who this connection is, as the folders on disk are keyed: the client's
+	// identity and the name the app was ADMITTED under. The app may rename
+	// itself over the wire where its trust allows; its shelf does not move
+	// when it does.
+	identity string
+	appName  string
+
 	// solo marks a connection that asked (via the handshake) to be the
 	// whole display: its main window replaces the desktop entirely.
 	solo bool
@@ -369,11 +381,13 @@ func (s *Server) serveConn(nc net.Conn) {
 	sessionID := s.sessions.Add(1)
 
 	c := &conn{
-		server:  s,
-		nc:      nc,
-		session: protocol.NewSession(),
-		solo:    solo,
-		out:     make(chan string, 1024),
+		server:   s,
+		nc:       nc,
+		session:  protocol.NewSession(),
+		identity: id,
+		appName:  req.AppName,
+		solo:     solo,
+		out:      make(chan string, 1024),
 	}
 
 	// Per-connection BindContext: events encode onto the wire.
@@ -382,6 +396,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	ctx := &protocol.BindContext{
 		Emit: func(ev *protocol.Event) { c.send(ev.Encode()) },
 	}
+	c.ctx = ctx
 	c.factory = &hostFactory{inner: protocol.NewRegistryFactory(ctx)}
 
 	// The connection is a full Application (D22). It is a protocol object in
@@ -613,6 +628,9 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 	for _, stmt := range batch {
 		if stmt.Key != "" {
 			rest = append(rest, stmt)
+			continue
+		}
+		if c.storeVerb(stmt) {
 			continue
 		}
 		switch stmt.Verb {

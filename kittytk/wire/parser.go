@@ -54,6 +54,12 @@ type Value struct {
 	IsInt  bool    // NumberValue: no fractional part written
 	Str    string  // StringValue (unescaped)
 	Block  *Script // BlockValue
+
+	// Blob marks a StringValue built from arbitrary bytes rather than text,
+	// so encoding escapes every one of them (QuoteBlob) instead of writing
+	// the printable ones through. It is set by the builder, never by the
+	// parser: what comes off the wire is already the bytes that were sent.
+	Blob bool
 }
 
 // Arg is one argument of a statement: either a flag (bare name with

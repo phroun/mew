@@ -199,6 +199,19 @@ func namesTaken(records []knownRecord, identity, app string) map[string]bool {
 	return taken
 }
 
+// folders is where one app of one client keeps its material: the client's
+// folder, and the app's within it. Either coming back empty means there is no
+// folder -- a peer with no identity, or one this desktop has not admitted.
+func (s *knownStore) folders(identity, app string) (host, item string) {
+	records := s.all()
+	for _, r := range records {
+		if r.identity == identity && r.app == app && app != "" {
+			item = r.safe
+		}
+	}
+	return hostSafe(records, identity), item
+}
+
 // hostSafe is the folder one client keeps its material in, or empty for a
 // client with no record.
 func hostSafe(records []knownRecord, identity string) string {
