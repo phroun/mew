@@ -85,26 +85,39 @@ WINDOWS_SYSO := app/cmd/mew-sdl/rsrc_windows_$(WINDOWS_ARCH).syso
 # artefact, not checked in; see the windows-sdl target.
 CONSOLE_PAYLOAD := app/internal/selfinstall/payload/mew.exe.gz
 
+# A recipe that fails leaves nothing behind claiming to be its output. This
+# covers the real-file targets (the Windows payload and resource objects); the
+# binary targets are phony names, so they clear their own output below.
+.DELETE_ON_ERROR:
+
 .PHONY: all build mew mew-sdl sdl3 windows-sdl-console mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp notarize check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
 build: mew mew-sdl
 
+# The three native binaries clear their output before building it. The link
+# refuses to write over a copy that is currently running -- text file busy --
+# and a link that fails partway leaves one that runs no better; unlinking first
+# answers both, and a running copy keeps the inode it is already executing.
+#
 # The terminal host: a maximized root mew editor in the terminal, serving the
 # KittyTK protocol. Recognizes --window (hands off to mew-sdl beside it).
 mew:
+	@rm -f $(BIN_DIR)/mew
 	$(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew ./app/cmd/mew
 
 # The graphical host: the same mew editor in an SDL window. SDL3 + wgpu load
 # through purego at runtime from the system install; cgo is used only for the
 # Unix PTY, so a C compiler is required on macOS/Linux but no SDL headers.
 mew-sdl:
+	@rm -f $(BIN_DIR)/mew-sdl
 	$(GO) build -tags "$(SDL_TAGS)" -o $(BIN_DIR)/mew-sdl ./app/cmd/mew-sdl
 
 # The bare terminal editor - mew driving the terminal directly, none of the
 # host machinery. The reference build for evaluating and comparing behavior.
 mew-plain:
+	@rm -f $(BIN_DIR)/mew-plain
 	$(GO) build -o $(BIN_DIR)/mew-plain ./app/cmd/mew
 
 # Cross-build a Windows console executable of the terminal host. It is pure Go
