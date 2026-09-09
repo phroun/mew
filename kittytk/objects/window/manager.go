@@ -185,6 +185,9 @@ type PopupOverlay struct {
 	Anchor core.UnitRect
 	// Paint function to render the popup
 	Paint func(p *core.Painter)
+	// Inert marks a paint-only popup the pointer passes through (see
+	// core.PopupRequest).
+	Inert bool
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event core.MousePressEvent) bool
 	// HandleMouseMove function to handle mouse movement (returns true if handled)
@@ -1960,6 +1963,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		Bounds:             request.Bounds,
 		Anchor:             request.Anchor,
 		Paint:              request.Paint,
+		Inert:              request.Inert,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
@@ -2347,9 +2351,14 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 	popups := m.popups
 	m.mu.RUnlock()
 
-	// Check popups first (highest z-order)
+	// Check popups first (highest z-order). An inert one is not there as
+	// far as the pointer is concerned: the press goes on to whatever it
+	// was lying over, and the clear below takes it off the screen.
 	for i := len(popups) - 1; i >= 0; i-- {
 		popup := popups[i]
+		if popup.Inert {
+			continue
+		}
 		if popup.Bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
 			if popup.HandleMousePress != nil {
 				return popup.HandleMousePress(event)

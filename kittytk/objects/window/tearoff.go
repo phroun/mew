@@ -651,6 +651,7 @@ func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 		// read as one piece).
 		Anchor:             request.Anchor,
 		Paint:              request.Paint,
+		Inert:              request.Inert,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
@@ -697,6 +698,11 @@ func (h *TearOffHost) popupsHandleMouse(ev core.Event) (handled bool) {
 	case core.MousePressEvent:
 		for i := len(h.popups) - 1; i >= 0; i-- {
 			popup := h.popups[i]
+			// An inert popup is not there as far as the pointer is
+			// concerned (see core.PopupRequest).
+			if popup.Inert {
+				continue
+			}
 			if popup.Bounds.Contains(core.UnitPoint{X: e.X, Y: e.Y}) {
 				if popup.HandleMousePress != nil {
 					return popup.HandleMousePress(e)

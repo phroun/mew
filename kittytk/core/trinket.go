@@ -257,6 +257,16 @@ type PopupRequest struct {
 	Anchor UnitRect
 	// Paint function to render the popup
 	Paint func(p *Painter)
+	// Inert marks a popup that is drawn and nothing else: the pointer
+	// passes through it to whatever it is lying over, so a press inside
+	// its bounds reaches the thing underneath instead of being swallowed
+	// by an overlay that has nothing to do with the click. A tooltip is
+	// the case for it -- it sits ON the text it stands for, and the
+	// reader clicking that text means the text.
+	//
+	// An inert popup is still cleared by a press like any other: the
+	// pointer has stopped resting, so what it was resting on is answered.
+	Inert bool
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event MousePressEvent) bool
 	// HandleMouseMove function to handle mouse movement (returns true if handled)

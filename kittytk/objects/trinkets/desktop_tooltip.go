@@ -89,6 +89,18 @@ func (d *Desktop) HideTooltip(from core.Trinket) {
 	d.RequestUpdate()
 }
 
+// forgetTooltipPopup is what the desktop does when the popup layer discards
+// the tooltip for it: let go of it without asking the layer to drop something
+// it has already dropped.
+func (d *Desktop) forgetTooltipPopup() {
+	t := d.tooltip
+	if t == nil || !t.popup {
+		return
+	}
+	d.tooltip = nil
+	d.RequestUpdate()
+}
+
 // TooltipShowing is what the desktop is currently saying, for a test or a host
 // that wants to know.
 func (d *Desktop) TooltipShowing() string {
@@ -181,9 +193,16 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string) boo
 	}
 
 	// The anchor in screen space: the rect the text occupies, mapped the way
-	// every other popup maps its opener.
+	// every other popup maps its opener. Its SIZE crosses denominations with
+	// it -- the asker measured it in its own container's units, and the
+	// popup layer is the screen's.
 	origin := pc.MapToScreen(req.From, core.UnitPoint{X: req.At.X, Y: req.At.Y})
-	anchor := core.UnitRect{X: origin.X, Y: origin.Y, Width: req.At.Width, Height: req.At.Height}
+	local := core.FindEffectiveCellMetrics(req.From)
+	anchor := core.UnitRect{
+		X: origin.X, Y: origin.Y,
+		Width:  core.ExchangeX(req.At.Width, local, metrics),
+		Height: core.ExchangeY(req.At.Height, local, metrics),
+	}
 	box.X, box.Y = tooltipOrigin(req.Side, anchor, box, pc.ScreenBounds(), metrics)
 
 	scheme := d.GetScheme()
@@ -193,9 +212,15 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string) boo
 		ID:     tooltipPopupID,
 		Bounds: box,
 		Anchor: anchor,
+		// A tooltip is drawn and nothing else. It sits ON the text it
+		// stands for, so a click there is a click on the text.
+		Inert: true,
 		Paint: func(p *core.Painter) {
 			paintTooltip(p, box, lines, face, border, metrics, font)
 		},
+		// The layer clears every popup on a press outside them. Without
+		// this the desktop would go on believing it is showing one.
+		OnDismiss: func() { d.forgetTooltipPopup() },
 	})
 	return true
 }
@@ -242,17 +267,20 @@ func tooltipOrigin(side core.TooltipSide, anchor, box, screen core.UnitRect, met
 
 // paintTooltip draws the note: its own face, a rule around it, and the text
 // inside. Rounded where the surface can round, square where it cannot.
+//
+// box is in SCREEN units, and so is everything drawn here: the popup layer
+// hands every overlay the screen's own painter rather than one moved to the
+// overlay, so a popup that drew from zero would draw in the corner.
 func paintTooltip(p *core.Painter, box core.UnitRect, lines []string, face, border style.CellStyle, metrics core.CellMetrics, font *core.Font) {
-	local := core.UnitRect{Width: box.Width, Height: box.Height}
 	radius := metrics.UnitsPerCellHeight / 2
-	if !p.DrawRoundedRect(local, radius, style.BorderSingle, face.WithFg(border.Fg)) {
-		p.FillRect(local, ' ', face)
-		p.DrawRect(local, style.BorderSingle, face.WithFg(border.Fg))
+	if !p.DrawRoundedRect(box, radius, style.BorderSingle, face.WithFg(border.Fg)) {
+		p.FillRect(box, ' ', face)
+		p.DrawRect(box, style.BorderSingle, face.WithFg(border.Fg))
 	}
-	pad := metrics.UnitsPerCellWidth
-	y := metrics.UnitsPerCellHeight / 2
+	x := box.X + metrics.UnitsPerCellWidth
+	y := box.Y + metrics.UnitsPerCellHeight/2
 	for _, line := range lines {
-		p.DrawText(pad, y, line, face, font)
+		p.DrawText(x, y, line, face, font)
 		y += metrics.UnitsPerCellHeight
 	}
 }
