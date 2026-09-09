@@ -263,6 +263,18 @@ type Desktop struct {
 	// tooltip is what the desktop is showing for whoever asked, nil when it is
 	// showing nothing: see desktop_tooltip.go.
 	tooltip *desktopTooltip
+	// tooltipPending is an offer taken but not yet shown: a note raised over
+	// the screen waits for the pointer to settle, and tooltipTimer is that
+	// wait. pointerMovedAt is what the wait is measured from, and
+	// tooltipShownAt is when the last note left the screen, which is what
+	// lets the next one come without waiting.
+	tooltipPending *core.TooltipRequest
+	tooltipTimer   *DesktopTimer
+	pointerMovedAt time.Time
+	tooltipShownAt time.Time
+	// tooltipDwell overrides how long the pointer rests before a note
+	// appears; zero takes tooltipDwellDefault.
+	tooltipDwell time.Duration
 
 	// Focus manager
 	focusManager *core.GlobalFocusManager
@@ -5978,6 +5990,11 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement.
 func (d *Desktop) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Every move on the screen reaches the desktop before it reaches
+	// anything under it, which is what makes this the place to keep the
+	// clock a waiting tooltip is measured against.
+	d.notePointerMoved()
+
 	// Forward to menu bar for drag navigation (origin-local: the themed
 	// frame's shift is subtracted on the way in).
 	bx, by := d.hostChromeOffset()

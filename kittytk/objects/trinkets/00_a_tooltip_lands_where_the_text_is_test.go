@@ -4,6 +4,7 @@ package trinkets
 
 import (
 	"testing"
+	"time"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
@@ -64,6 +65,9 @@ func onScreen(t *testing.T) (*Desktop, *window.WindowManager, *Label) {
 	d.windowManager = window.NewWindowManager()
 	d.windowManager.SetDesktop(d)
 	d.windowManager.SetScreenBounds(core.UnitRect{Width: 900, Height: 600})
+	// These tests are about what a note looks like and where it goes, not
+	// about how long the pointer waits for it: the dwell is its own test.
+	d.tooltipDwell = time.Nanosecond
 
 	win := window.NewWindow("Connections")
 	panel := NewPanel()
@@ -100,6 +104,7 @@ func TestATooltipIsDrawnWhereItWasPlaced(t *testing.T) {
 	}) {
 		t.Fatal("the desktop took nothing")
 	}
+	d.ProcessTimers()
 	overlay := tooltipOverlay(wm)
 	if overlay == nil {
 		t.Fatal("a graphical desktop raised no popup")
@@ -147,6 +152,7 @@ func TestPressingThroughATooltipReachesWhatItLiesOver(t *testing.T) {
 		At:   core.UnitRect{Width: btn.Bounds().Width, Height: btn.Bounds().Height},
 		Side: core.TooltipOver,
 	})
+	d.ProcessTimers()
 	overlay := tooltipOverlay(wm)
 	if overlay == nil {
 		t.Fatal("a graphical desktop raised no popup")
@@ -179,6 +185,7 @@ func TestATooltipReachesTheCompositor(t *testing.T) {
 		From: label,
 		At:   core.UnitRect{Width: label.Bounds().Width, Height: label.Bounds().Height},
 	})
+	d.ProcessTimers()
 
 	list := d.GetChildWindows()
 	if list == nil {
@@ -242,6 +249,7 @@ func showAndCatch(t *testing.T, wm *window.WindowManager, from *Label) *window.P
 		From: from,
 		At:   core.UnitRect{Width: from.Bounds().Width, Height: from.Bounds().Height},
 	})
+	d.ProcessTimers()
 	o := tooltipOverlay(wm)
 	if o == nil {
 		t.Fatal("a graphical desktop raised no popup")
@@ -282,6 +290,7 @@ func TestATornOutWindowKeepsItsTooltipOnItsOwnSurface(t *testing.T) {
 		From: label,
 		At:   core.UnitRect{Width: label.Bounds().Width, Height: label.Bounds().Height},
 	})
+	d.ProcessTimers()
 
 	if layer.got == nil {
 		t.Fatal("the note went somewhere other than the window's own layer")
@@ -302,6 +311,7 @@ func TestATooltipLeavesThePopupLayer(t *testing.T) {
 	d, wm, label := onScreen(t)
 
 	d.ShowTooltip(core.TooltipRequest{Text: "the whole fingerprint", From: label})
+	d.ProcessTimers()
 	if tooltipOverlay(wm) == nil {
 		t.Fatal("a graphical desktop raised no popup")
 	}

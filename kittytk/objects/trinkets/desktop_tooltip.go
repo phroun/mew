@@ -15,6 +15,7 @@ package trinkets
 
 import (
 	"strings"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -28,6 +29,15 @@ const tooltipPopupID = "kittytk.tooltip"
 // wraps. Long enough for a path or a fingerprint, short enough that a
 // paragraph does not become one line across the screen.
 const tooltipWrapCells = 60
+
+// tooltipDwellDefault is how long the pointer rests before a note is raised
+// over the screen, and tooltipFollowOn is how long after one goes the next
+// comes without waiting -- long enough to read along a row of trinkets, short
+// enough that coming back later starts the wait again.
+const (
+	tooltipDwellDefault = 500 * time.Millisecond
+	tooltipFollowOn     = 1500 * time.Millisecond
+)
 
 // desktopTooltip is what is on the screen for whom.
 type desktopTooltip struct {
@@ -43,43 +53,133 @@ type desktopTooltip struct {
 
 // ShowTooltip implements core.TooltipHandler: the desktop takes anything that
 // reached it, which is everything nothing else wanted.
+//
+// A note raised over the screen WAITS for the pointer to settle. It is a
+// second window's worth of ink appearing under the hand, and a pointer merely
+// crossing the screen should not leave a trail of them. The status bar has no
+// such cost -- it is a row that is already there, saying something already --
+// so it answers at once.
 func (d *Desktop) ShowTooltip(req core.TooltipRequest) bool {
 	if strings.TrimSpace(req.Text) == "" {
 		return false
 	}
 	d.HideTooltip(nil)
 
-	mm := d.tooltipFace()
-	lines := tooltipLines(req.Text, d.tooltipWrapWidth(mm), mm)
-	d.tooltip = &desktopTooltip{from: req.From, lines: lines}
-
-	if d.graphicalSurface() {
-		if layer := d.raiseTooltipPopup(req, lines, mm); layer != nil {
-			d.tooltip.layer = layer
-			d.RequestUpdate()
-			return true
+	if d.graphicalSurface() && d.popupHost(req.From) != nil {
+		if d.tooltipComesAtOnce() {
+			return d.revealTooltip(req)
 		}
+		d.awaitTooltipRest(req)
+		return true
 	}
 	// No popup layer, or a cell surface: the status bar says it instead.
 	if bar := d.StatusBar(); bar != nil {
-		d.tooltip.saved = bar.Text()
-		d.tooltip.inBar = true
+		mm := d.tooltipFace()
+		d.tooltip = &desktopTooltip{
+			from:  req.From,
+			lines: tooltipLines(req.Text, d.tooltipWrapWidth(mm), mm),
+			inBar: true,
+			saved: bar.Text(),
+		}
 		bar.SetText(tooltipStatusText(req.Text))
 		d.RequestUpdate()
 		return true
 	}
-	d.tooltip = nil
 	return false
 }
+
+// revealTooltip puts the note on the screen now.
+func (d *Desktop) revealTooltip(req core.TooltipRequest) bool {
+	mm := d.tooltipFace()
+	lines := tooltipLines(req.Text, d.tooltipWrapWidth(mm), mm)
+	layer := d.raiseTooltipPopup(req, lines, mm)
+	if layer == nil {
+		return false
+	}
+	d.tooltip = &desktopTooltip{from: req.From, lines: lines, layer: layer}
+	d.RequestUpdate()
+	return true
+}
+
+// awaitTooltipRest holds the offer until the pointer has been still long
+// enough, and drops it if the pointer moves on to something else first.
+func (d *Desktop) awaitTooltipRest(req core.TooltipRequest) {
+	d.dropPendingTooltip()
+	d.tooltipPending = &req
+	d.armTooltipDwell(d.tooltipDelay())
+}
+
+// armTooltipDwell asks to be woken in `in`, replacing any earlier wait.
+func (d *Desktop) armTooltipDwell(in time.Duration) {
+	if in <= 0 {
+		d.wakeTooltipDwell()
+		return
+	}
+	d.tooltipTimer = d.StartTimer(in, d.wakeTooltipDwell)
+}
+
+// wakeTooltipDwell reveals the offer being held, or waits out the rest of the
+// dwell if the pointer moved while it was waiting: the clock is on the
+// POINTER being still, not on how long the offer has been held, so a hand
+// travelling across a row of trinkets never reaches the end of it.
+func (d *Desktop) wakeTooltipDwell() {
+	d.tooltipTimer = nil
+	req := d.tooltipPending
+	if req == nil {
+		return
+	}
+	if rest := d.tooltipDelay() - time.Since(d.pointerMovedAt); rest > 0 {
+		d.armTooltipDwell(rest)
+		return
+	}
+	d.tooltipPending = nil
+	d.revealTooltip(*req)
+}
+
+// dropPendingTooltip forgets an offer that was still waiting to be shown.
+func (d *Desktop) dropPendingTooltip() {
+	d.tooltipPending = nil
+	if d.tooltipTimer != nil {
+		d.StopTimer(d.tooltipTimer)
+		d.tooltipTimer = nil
+	}
+}
+
+// tooltipComesAtOnce reports whether the reader is already reading tooltips,
+// in which case the next one is not made to wait: having asked for one, moving
+// along a row to ask about its neighbour is one continued question, and a
+// fresh half-second on each would answer none of it.
+func (d *Desktop) tooltipComesAtOnce() bool {
+	return !d.tooltipShownAt.IsZero() && time.Since(d.tooltipShownAt) < tooltipFollowOn
+}
+
+// tooltipDelay is how long the pointer rests before a note appears.
+func (d *Desktop) tooltipDelay() time.Duration {
+	if d.tooltipDwell > 0 {
+		return d.tooltipDwell
+	}
+	return tooltipDwellDefault
+}
+
+// notePointerMoved restarts the dwell: the pointer is what the clock is on.
+func (d *Desktop) notePointerMoved() { d.pointerMovedAt = time.Now() }
 
 // HideTooltip implements core.TooltipHandler. A nil asker means every tooltip,
 // which is what a keystroke asks for.
 func (d *Desktop) HideTooltip(from core.Trinket) {
+	if p := d.tooltipPending; p != nil && (from == nil || p.From == from) {
+		d.dropPendingTooltip()
+	}
 	t := d.tooltip
 	if t == nil || (from != nil && t.from != from) {
 		return
 	}
 	d.tooltip = nil
+	// A note that was on the screen starts the follow-on clock. An offer
+	// still waiting its turn never gets here -- it is dropped above, and
+	// d.tooltip was never set for it -- so a pointer crossing a row of
+	// trinkets does not buy itself an instant note at the far end.
+	d.tooltipShownAt = time.Now()
 	if t.inBar {
 		if bar := d.StatusBar(); bar != nil {
 			bar.SetText(t.saved)
@@ -100,6 +200,7 @@ func (d *Desktop) forgetTooltipPopup() {
 		return
 	}
 	d.tooltip = nil
+	d.tooltipShownAt = time.Now()
 	d.RequestUpdate()
 }
 

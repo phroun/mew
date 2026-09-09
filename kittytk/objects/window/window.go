@@ -81,6 +81,12 @@ type Window struct {
 
 	// Window properties
 	title string
+	// titleCut records that the last paint had to cut the title short, and
+	// titleBandH how tall the bar it was drawn in is: what the bar can show
+	// depends on the buttons beside the name and the room the frame leaves,
+	// so the paint is what knows.
+	titleCut   bool
+	titleBandH core.Unit
 	flags WindowFlags
 	state WindowState
 
@@ -2681,7 +2687,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		if titleFocus == TitleFocusBlur {
 			rightLimit = bounds.Width - buttonWidth
 		}
-		PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
+		w.noteTitleCut(PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width), tm)
 	}
 
 	// Draw blur button on far right when blur item is focused
@@ -2962,7 +2968,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			if titleFocus == TitleFocusBlur {
 				rightLimit = innerW - tm.CellW - buttonWidth
 			}
-			PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
+			w.noteTitleCut(PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW), tm)
 		}
 
 		// Draw blur button on far right when blur item is focused
@@ -4173,6 +4179,10 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	event.X, event.Y = w.frameLocalOrOut(event.X, event.Y)
 
+	// A window answers moves itself, so it makes for its own title bar the
+	// offer the base makes for everything that does not.
+	w.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
+
 	w.mu.RLock()
 	content := w.content
 	pressedButton := w.pressedButton
@@ -4630,4 +4640,31 @@ func (w *Window) KeyContext() *core.KeyContext {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.keyContext
+}
+
+// noteTitleCut records that the title bar had to cut the window's name short,
+// which is what makes the bar worth asking about: the name is the one thing a
+// title bar is for, and a cut one is the thing a reader cannot make out.
+func (w *Window) noteTitleCut(cut bool, tm TitleBarMetrics) {
+	w.mu.Lock()
+	w.titleCut = cut
+	w.titleBandH = tm.RowH
+	w.mu.Unlock()
+}
+
+// TooltipAt implements core.TooltipSource: the window answers for its own
+// title bar, and only when the name there was cut short. Everything below the
+// bar is content, and the trinkets in it answer for themselves.
+func (w *Window) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	w.mu.RLock()
+	cut, bandH, title := w.titleCut, w.titleBandH, w.title
+	w.mu.RUnlock()
+	if !cut || title == "" || bandH <= 0 {
+		return "", core.UnitRect{}, false
+	}
+	band := core.UnitRect{Width: w.Bounds().Width, Height: bandH}
+	if !band.Contains(local) {
+		return "", core.UnitRect{}, false
+	}
+	return title, band, true
 }

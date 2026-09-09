@@ -279,18 +279,22 @@ func PaintTearHandleSlot(p *core.Painter, tm TitleBarMetrics, x core.Unit, glyph
 // "..." butts against the right limit — the right side keeps no mirrored
 // reserve. A span of zero or less clips the title entirely. (This is the
 // former Window.paintTitleText, verbatim at scale 1.0.)
-func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts style.CellStyle, leftUsed, rightLimit, barWidth core.Unit) {
+//
+// It reports whether the title was CUT to fit, which is what says a reader
+// cannot see the whole name and would want it offered.
+func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts style.CellStyle, leftUsed, rightLimit, barWidth core.Unit) bool {
 	leftEdge := leftUsed + tm.CellW
 	avail := rightLimit - leftEdge
 	if avail <= 0 || title == "" {
-		return
+		return avail <= 0 && title != ""
 	}
 	display := title
 	titleW := tm.TitleWidth(display)
-	if titleW > avail {
+	cut := titleW > avail
+	if cut {
 		display = ellipsizeToWidth(title, avail, tm.Font, tm.base)
 		if display == "" {
-			return
+			return true
 		}
 	}
 	// Cut to fit first, prepared for the cell target after, and measured as
@@ -305,6 +309,7 @@ func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts sty
 		x = rightLimit - titleW
 	}
 	p.DrawText(x, tm.YOff, display, ts, tm.Font)
+	return cut
 }
 
 // PaintFocusedTitleDecoration draws the keyboard-focused title as

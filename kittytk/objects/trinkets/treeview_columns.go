@@ -3015,6 +3015,31 @@ func (t *TreeView) colSide(col *TreeColumn, a core.HAlign) core.HSide {
 	return core.ResolveHAlign(a, core.DirInherit, t.colDirection(col))
 }
 
+// headingAt answers for a column heading the pointer is over, when the column
+// is too narrow to have drawn the whole of it. A narrow column is exactly the
+// one whose heading is worth asking about: it is the only thing saying what
+// the cells under it are.
+func (t *TreeView) headingAt(local core.UnitPoint, headerH core.Unit, metrics core.CellMetrics) (string, core.UnitRect, bool) {
+	pad := metrics.UnitsPerCellWidth / 2
+	lay := t.columnLayout()
+	for _, sp := range lay.spans {
+		clip, ok := lay.spanClip(sp, headerH)
+		if !ok || local.X < clip.X || local.X >= clip.X+clip.Width {
+			continue
+		}
+		text := t.keyCaption
+		if sp.col != nil {
+			text = sp.col.Caption
+		}
+		avail := clip.Width - pad
+		if text == "" || avail <= 0 || t.MeasureText(t.CellRun(text)) <= avail {
+			return "", core.UnitRect{}, false
+		}
+		return text, clip, true
+	}
+	return "", core.UnitRect{}, false
+}
+
 // TooltipAt answers for the CELL under the pointer rather than for the tree as
 // a whole. A tree is made of parts, and the part being read is the one whose
 // text was cut to fit the column it sits in.
@@ -3026,8 +3051,11 @@ func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 	metrics := t.EffectiveCellMetrics()
 	rowH := metrics.UnitsPerCellHeight
 	headerH := t.headerHeight()
-	if rowH <= 0 || local.Y < headerH {
+	if rowH <= 0 {
 		return "", core.UnitRect{}, false
+	}
+	if local.Y < headerH {
+		return t.headingAt(local, headerH, metrics)
 	}
 	visible := int((local.Y - headerH) / rowH)
 	at := t.scrollOffset + visible
