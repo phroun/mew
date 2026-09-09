@@ -51,3 +51,85 @@ func TestAChildThatFitsKeepsItsOwnWidth(t *testing.T) {
 		t.Errorf("a child aligned to the leading edge sits at %d", got.X)
 	}
 }
+
+// placeInHBox lays items out in a horizontal box and returns where each
+// landed. The main axis is horizontal, which is the one the sizing pass
+// settles.
+func placeInHBox(c *dirContainer, width core.Unit, items ...core.Trinket) []core.UnitRect {
+	l := NewBoxLayout(core.Horizontal)
+	l.SetSpacing(0)
+	for _, it := range items {
+		c.AddChild(it)
+		l.AddTrinket(it)
+	}
+	l.Layout(c, core.UnitRect{Width: width, Height: 100})
+	out := make([]core.UnitRect, len(items))
+	for i, it := range items {
+		out[i] = it.Bounds()
+	}
+	return out
+}
+
+// What a trinket asks for is what it would LIKE, not the least it can do
+// with. A row whose wishes come to more than it has brings them down together
+// rather than handing each its wish and drawing the last of them past the end
+// -- which shows two panels and a sliver of a third instead of three narrow
+// ones, and leaves a caption believing it had room it never had.
+func TestARowTooNarrowForItsWishesBringsThemDown(t *testing.T) {
+	const rowW = core.Unit(400)
+	a := newAlignedTrinket(500, 16, core.Alignment{})
+	b := newAlignedTrinket(300, 16, core.Alignment{})
+
+	got := placeInHBox(newDirContainer(core.DirLTR), rowW, a, b)
+
+	var total core.Unit
+	for i, r := range got {
+		if r.Width <= 0 {
+			t.Errorf("item %d was squeezed out of the row entirely", i)
+		}
+		total += r.Width
+	}
+	if total > rowW {
+		t.Errorf("the row handed out %d across a row %d wide", total, rowW)
+	}
+	// Each keeps the same SHARE of what it asked for: 500 and 300 come back
+	// in the ratio 5:3. Taking the shortfall equally instead would leave the
+	// narrower one a third of its wish while the wider kept three fifths,
+	// cutting most from the item that had least to spare.
+	if got[0].Width*3 != got[1].Width*5 {
+		t.Errorf("500 and 300 came back as %d and %d, not in proportion",
+			got[0].Width, got[1].Width)
+	}
+	if last := got[len(got)-1]; last.X+last.Width > rowW {
+		t.Errorf("the row ends at %d, past its own %d", last.X+last.Width, rowW)
+	}
+}
+
+// A row with room for every wish grants them all untouched.
+func TestARowWithRoomGrantsEveryWish(t *testing.T) {
+	a := newAlignedTrinket(100, 16, core.Alignment{})
+	b := newAlignedTrinket(80, 16, core.Alignment{})
+
+	got := placeInHBox(newDirContainer(core.DirLTR), 400, a, b)
+	if got[0].Width != 100 || got[1].Width != 80 {
+		t.Errorf("a row with room gave out %d and %d, not 100 and 80", got[0].Width, got[1].Width)
+	}
+}
+
+// A row with something elastic in it takes the deficit out of THAT, not out
+// of the captions beside it: an expanding item is there to absorb, and cutting
+// a caption while a spacer sits at full size loses words nobody needed to.
+func TestARowSpendsItsElasticBeforeItsCaptions(t *testing.T) {
+	caption := newAlignedTrinket(300, 16, core.Alignment{})
+	elastic := newAlignedTrinket(300, 16, core.Alignment{})
+	elastic.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeFixed))
+
+	got := placeInHBox(newDirContainer(core.DirLTR), 400, caption, elastic)
+
+	if got[0].Width != 300 {
+		t.Errorf("the caption was cut to %d with an expanding item beside it", got[0].Width)
+	}
+	if got[1].Width >= 300 {
+		t.Errorf("the expanding item kept %d and gave up nothing", got[1].Width)
+	}
+}

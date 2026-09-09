@@ -463,4 +463,8 @@ type stretchItem struct {
 	minimum core.Unit
 	maximum core.Unit
 	stretch int
+	// floor is the least this item can actually do with. minimum is what it
+	// ASKED for, which a row may have to go below when it has not got room
+	// for every wish in it (see shrinkToFit).
+	floor core.Unit
 }

@@ -600,10 +600,75 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 			minimum: hint.Width,
 			maximum: item.Trinket.MaximumSize().Width,
 			stretch: stretch,
+			floor:   item.Trinket.MinimumSize().Width,
 		}
 	}
 
-	return calculateStretch(contentWidth-totalSpacing, stretchItems, q)
+	available := contentWidth - totalSpacing
+	shrinkToFit(stretchItems, available)
+	return calculateStretch(available, stretchItems, q)
+}
+
+// shrinkToFit brings a row's items down together when what they asked for
+// comes to more than the row has and nothing in the row can absorb it.
+//
+// What a trinket asks for is what it would LIKE, not the least it can do
+// with: that is what MinimumSize says. Handing every item its wish regardless
+// leaves the last of them drawn past the end of the row -- so a row of three
+// panels shows two and a bit of the third rather than three narrow ones. And
+// since a trinket cuts its text to its OWN bounds, one given room that is not
+// there believes it had room for all of it, so a caption too long for the row
+// runs off the side instead of eliding.
+//
+// A row with something elastic in it is left alone: calculateStretch already
+// takes the deficit out of whatever stretches, which is where it should come
+// from -- a caption is not cut while a spacer beside it sits at full size.
+func shrinkToFit(items []stretchItem, available core.Unit) {
+	var wanted, elastic core.Unit
+	for _, it := range items {
+		if it.stretch > 0 {
+			return
+		}
+		wanted += it.minimum
+		if room := it.minimum - it.floor; room > 0 {
+			elastic += room
+		}
+	}
+	over := wanted - available
+	if over <= 0 || elastic <= 0 {
+		return
+	}
+	if over > elastic {
+		over = elastic
+	}
+	// Taken in proportion to what each item can give, so the one that asked
+	// for most gives most and one already at its narrowest gives nothing.
+	var taken core.Unit
+	for i := range items {
+		room := items[i].minimum - items[i].floor
+		if room <= 0 {
+			continue
+		}
+		cut := (over * room) / elastic
+		items[i].minimum -= cut
+		taken += cut
+	}
+	// Whatever integer division left behind comes off whichever item still
+	// has most to give, so the row lands exactly on the width it has.
+	for rest := over - taken; rest > 0; {
+		widest := -1
+		for i := range items {
+			if items[i].minimum > items[i].floor &&
+				(widest < 0 || items[i].minimum > items[widest].minimum) {
+				widest = i
+			}
+		}
+		if widest < 0 {
+			break
+		}
+		items[widest].minimum--
+		rest--
+	}
 }
 
 // verticalItemWidth returns the width an item will receive in a

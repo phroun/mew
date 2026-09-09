@@ -132,14 +132,16 @@ func TestMainWindowPaint(t *testing.T) {
 	out2 := g2.dump()
 	t.Logf("main window (Selection tab):\n%s", out2)
 
-	// ("Font Options:" etc. exist but sit below the 20-row test
-	// viewport - the panes clip, same as the imperative version.)
+	// The three panes across the top come to more than the window is wide, so
+	// they are brought down to share it and their text wraps sooner. What
+	// falls past the 20-row test viewport the panes clip, which is why only
+	// the row of panes and the heading under it are looked for here.
 	for _, want := range []string{
-		"The quick brown fox",
-		"Checkboxes:",
-		"[x] Enable feature A",
+		"The quick brown",
+		"Pack my box",
+		"Enable the",
+		"Prefer the",
 		"Radio buttons:",
-		"( ) Option 1",
 	} {
 		if !strings.Contains(out2, want) {
 			t.Errorf("selection tab missing %q", want)
