@@ -27,7 +27,10 @@ type TreeColumn struct {
 	Caption string
 
 	// Width is the current width in UNITS, as every other measurement in
-	// this toolkit is; Min/MaxWidth bound drag-resizing. MaxWidth -1 does
+	// this toolkit is; Min/MaxWidth bound it, whether it is being dragged
+	// or stretched over the room at the end of the run. A column held at
+	// its maximum cuts its cells short rather than growing, and each cut
+	// cell offers the whole of what it holds on hover. MaxWidth -1 does
 	// not bound; a maximum below the minimum loses to it, a minimum being
 	// the stronger statement.
 	//
@@ -1116,14 +1119,23 @@ func (t *TreeView) columnLayout() treeColLayout {
 	// The last span before the right flank (the very last span when
 	// nothing is pinned right) stretches over any trailing blank width
 	// - nothing sits between it and the region's edge, so its content
-	// must not ellipsize while free space goes unused. The blank's
-	// NATURAL size is recorded first: the fit-mode drag pool feeds on
-	// it (widths[] stay natural throughout).
+	// must not ellipsize while free space goes unused. A column with a
+	// MaxWidth stops there instead and leaves the rest blank: a stated
+	// maximum is a statement about the column, not only about how far it
+	// may be dragged, and stretching past it would be the one place the
+	// tree ignored it. The blank's NATURAL size is recorded first: the
+	// fit-mode drag pool feeds on it (widths[] stay natural throughout).
 	if idx := n - 1 - fr; idx >= 0 {
 		last := &lay.spans[idx]
 		if end := last.x + last.w; end < lay.scrollR {
 			lay.blankW = lay.scrollR - end
-			last.w = lay.scrollR - last.x
+			grown := lay.scrollR - last.x
+			if last.col != nil {
+				if m := last.col.maxWidth(); m >= 0 && grown > m {
+					grown = snapColWidth(m, q)
+				}
+			}
+			last.w = grown
 		}
 	}
 
