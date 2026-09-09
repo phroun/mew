@@ -87,6 +87,10 @@ type Window struct {
 	// so the paint is what knows.
 	titleCut   bool
 	titleBandH core.Unit
+	// titleTextAt is where the name was drawn, in the window's own units. A
+	// title bar centres its name, so a note anchored to the whole band would
+	// stand at the far left of the window rather than on the name.
+	titleTextAt core.UnitRect
 	flags WindowFlags
 	state WindowState
 
@@ -2687,7 +2691,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		if titleFocus == TitleFocusBlur {
 			rightLimit = bounds.Width - buttonWidth
 		}
-		w.noteTitleCut(PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width), tm)
+		cut, at := PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
+		w.noteTitleCut(cut, at, tm)
 	}
 
 	// Draw blur button on far right when blur item is focused
@@ -2968,7 +2973,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			if titleFocus == TitleFocusBlur {
 				rightLimit = innerW - tm.CellW - buttonWidth
 			}
-			w.noteTitleCut(PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW), tm)
+			cut, at := PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
+			// tp is the frame's inner painter; the note is placed in the
+			// window's own coordinates, so the border comes back on.
+			at.X += bx
+			at.Y += by
+			w.noteTitleCut(cut, at, tm)
 		}
 
 		// Draw blur button on far right when blur item is focused
@@ -4645,10 +4655,11 @@ func (w *Window) KeyContext() *core.KeyContext {
 // noteTitleCut records that the title bar had to cut the window's name short,
 // which is what makes the bar worth asking about: the name is the one thing a
 // title bar is for, and a cut one is the thing a reader cannot make out.
-func (w *Window) noteTitleCut(cut bool, tm TitleBarMetrics) {
+func (w *Window) noteTitleCut(cut bool, at core.UnitRect, tm TitleBarMetrics) {
 	w.mu.Lock()
 	w.titleCut = cut
 	w.titleBandH = tm.RowH
+	w.titleTextAt = at
 	w.mu.Unlock()
 }
 
@@ -4657,7 +4668,7 @@ func (w *Window) noteTitleCut(cut bool, tm TitleBarMetrics) {
 // bar is content, and the trinkets in it answer for themselves.
 func (w *Window) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
 	w.mu.RLock()
-	cut, bandH, title := w.titleCut, w.titleBandH, w.title
+	cut, bandH, title, at := w.titleCut, w.titleBandH, w.title, w.titleTextAt
 	w.mu.RUnlock()
 	if !cut || title == "" || bandH <= 0 {
 		return "", core.UnitRect{}, false
@@ -4666,5 +4677,8 @@ func (w *Window) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
 	if !band.Contains(local) {
 		return "", core.UnitRect{}, false
 	}
-	return title, band, true
+	if at.Width <= 0 {
+		at = band
+	}
+	return title, at, true
 }

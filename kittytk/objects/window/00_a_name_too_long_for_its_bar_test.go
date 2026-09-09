@@ -48,8 +48,21 @@ func TestANameTooLongForItsBarIsOffered(t *testing.T) {
 	if text != longWindowName {
 		t.Errorf("it offered %q, not the window's name", text)
 	}
-	if at.Height <= 0 || at.Width != win.Bounds().Width {
-		t.Errorf("it named %+v rather than the title band", at)
+	// The note stands on the NAME, not on the band: a title bar centres its
+	// name, and a note anchored to the whole band would sit at the far left
+	// of the window with the buttons rather than on the words.
+	band := win.Bounds().Width
+	if at.Height <= 0 {
+		t.Errorf("it named %+v, which has no height", at)
+	}
+	if at.Width >= band {
+		t.Errorf("it named the whole bar (%+v) rather than the name in it", at)
+	}
+	if at.X <= 0 {
+		t.Errorf("the note stands at %d, at the bar's own left edge", at.X)
+	}
+	if at.X+at.Width > band {
+		t.Errorf("the name is said to run to %d, past the bar's %d", at.X+at.Width, band)
 	}
 
 	// Below the bar is content, and the trinkets in it answer for themselves.
@@ -63,5 +76,40 @@ func TestANameThatFitsIsNotOffered(t *testing.T) {
 	win := paintedWindow(t, 800)
 	if text, _, ok := win.TooltipAt(titleMid(win)); ok {
 		t.Errorf("a bar showing the whole name offered %q anyway", text)
+	}
+}
+
+// A bar wide enough to centre its name puts the name in the middle, and a
+// note about it belongs there too rather than out at the bar's left edge.
+func TestTheNoteFollowsACentredName(t *testing.T) {
+	px, err := raster.New(900, 300)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	core.SetTextMeasurer(px)
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	// Wide enough to centre the name, then narrowed until it is just cut --
+	// the anchor follows the drawn text either way.
+	win := NewWindow(longWindowName)
+	win.SetBounds(core.UnitRect{Width: 900, Height: 200})
+	win.Layout()
+	win.Paint(core.NewPainter(px))
+
+	win.mu.RLock()
+	at, cut := win.titleTextAt, win.titleCut
+	win.mu.RUnlock()
+	if cut {
+		t.Skip("900 units is still too narrow for this name")
+	}
+	if at.Width <= 0 {
+		t.Fatal("the bar recorded no place for its name")
+	}
+	// Centred on the bar, to within the frame's own border: the point is that
+	// the name is in the middle rather than out at an edge.
+	mid, want := at.X+at.Width/2, core.Unit(900)/2
+	cell := win.titleBarMetrics().CellW
+	if d := mid - want; d > cell || d < -cell {
+		t.Errorf("the name is centred on %d; the bar's middle is %d", mid, want)
 	}
 }
