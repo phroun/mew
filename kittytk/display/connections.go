@@ -318,9 +318,11 @@ func connectionsShellScript() string {
 		"      idc=new column id=identity caption=\"Identity\" width=" +
 		strconv.Itoa(identityWidth) + "\n" +
 		// Declared last so the four shown ones keep the indices the pinning
-		// counts, and never drawn: they exist to be sorted on.
-		"      stampc=new column id=stamp hidden\n" +
-		"      bytesc=new column id=bytes hidden numeric\n" +
+		// counts, and never drawn: they exist to be sorted on. Held out of the
+		// [=] chooser as well -- offering to show a column that exists to be
+		// invisible would put two more of everything in the list.
+		"      stampc=new column id=stamp caption=\"Stamp\" hidden !optional\n" +
+		"      bytesc=new column id=bytes caption=\"Bytes\" hidden !optional numeric\n" +
 		"    }\n" +
 		"    bottom=new panel layout=grid columns={\n" +
 		"      new band id=body stretch=1\n" +

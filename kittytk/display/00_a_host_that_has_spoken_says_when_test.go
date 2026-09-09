@@ -140,6 +140,20 @@ func TestTheShownColumnsSortOnWhatTheyWereAbbreviatedFrom(t *testing.T) {
 	if !columns[at["bytes"]].Numeric {
 		t.Error("byte counts sort as text, so 999b comes after 1.0K")
 	}
+	// Neither is offered in the [=] chooser. A column that exists to be
+	// invisible is not one the user has any reason to be asked about, and a
+	// column listed there is named by its caption -- so an unnamed one would
+	// put two blank lines in the menu and show a column of raw values if
+	// either were picked.
+	for _, id := range []string{"stamp", "bytes"} {
+		col := columns[at[id]]
+		if col.Optional {
+			t.Errorf("the %s column is offered in the chooser", id)
+		}
+		if col.Caption == "" {
+			t.Errorf("the %s column has no name", id)
+		}
+	}
 	// The pinning counts along the shown columns, so the hidden pair must not
 	// sit among the ones being counted.
 	for _, id := range []string{"stamp", "bytes"} {
