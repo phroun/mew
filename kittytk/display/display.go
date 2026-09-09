@@ -112,6 +112,12 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 		promptLocal: cfg.PromptLocal,
 	}
 
+	// Serving is what gives the desktop connections to show, so this is where
+	// the Connections item earns its place -- not in DefaultConfig, which a
+	// host is free not to use, and which would have left a hand-configured
+	// server with no way to see who it had let in.
+	desktop.SetConnectionsOpener(NewConnectionsOpener(desktop))
+
 	var ln net.Listener
 	var err error
 	switch {

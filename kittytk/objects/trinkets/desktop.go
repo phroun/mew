@@ -2117,6 +2117,10 @@ func (d *Desktop) SetConnectionsOpener(open func()) {
 	d.updateMenuBarContent()
 }
 
+// ConnectionsOpener returns what SetConnectionsOpener installed, or nil when
+// nothing has -- which is what decides whether the item is offered.
+func (d *Desktop) ConnectionsOpener() func() { return d.connectionsOpener() }
+
 // connectionsOpener is what the menu items ask for; nil means no item.
 func (d *Desktop) connectionsOpener() func() {
 	d.mu.RLock()

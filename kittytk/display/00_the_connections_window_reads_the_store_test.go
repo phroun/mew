@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // storeWith writes an authorizations file and returns a store over it.
@@ -111,5 +113,26 @@ func TestAnUnnamedClientSaysSo(t *testing.T) {
 	rows := connectionsRows(storeWith(t, "allow client sha256:aaa"), nil)
 	if len(rows) != 2 || rows[1].name != "(unnamed)" {
 		t.Errorf("an unnamed client shows as %+v", rows[1:])
+	}
+}
+
+// Serving is what gives a desktop connections to show, so serving is what
+// installs the item -- through any route to a server, not only through the
+// convenience config a host is free not to use.
+func TestServingInstallsTheItem(t *testing.T) {
+	d := trinkets.NewDesktop()
+	if d.ConnectionsOpener() != nil {
+		t.Fatal("a desktop nobody is serving for offered the item")
+	}
+
+	sock := filepath.Join(t.TempDir(), "d.sock")
+	srv, err := ServeConfig(d, Config{Endpoint: sock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	if d.ConnectionsOpener() == nil {
+		t.Error("a served desktop has connections to show and no way to show them")
 	}
 }

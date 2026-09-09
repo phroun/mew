@@ -24,10 +24,6 @@ import (
 // $KITTYTK_PROMPT_LOCAL=1 to also prompt for local (unix/loopback)
 // connections - handy for trying the prompt on one machine.
 func DefaultConfig(desktop *trinkets.Desktop, endpoint string) Config {
-	// The desktop can only offer Connections where something answers for who
-	// has connected, and this is that something: a host with a display server
-	// gets the menu item, a bare desktop does not.
-	desktop.SetConnectionsOpener(NewConnectionsOpener(desktop))
 	return Config{
 		Endpoint:    endpoint,
 		Token:       os.Getenv("KITTYTK_TOKEN"),
