@@ -46,6 +46,7 @@ func (l *Label) SetText(text string) {
 	l.text = text
 	l.SetAccessibleName(text)
 	l.Update()
+	l.InvalidateLayout()
 }
 
 // Alignment returns the text alignment.
@@ -81,6 +82,7 @@ func (l *Label) WordWrap() bool {
 func (l *Label) SetWordWrap(wrap bool) {
 	l.wordWrap = wrap
 	l.Update()
+	l.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.

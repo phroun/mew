@@ -80,6 +80,7 @@ func (s *LineSeparator) Title() string {
 func (s *LineSeparator) SetTitle(title string) {
 	s.title = title
 	s.Update()
+	s.InvalidateLayout()
 }
 
 // Orientation returns the separator orientation.
@@ -92,6 +93,7 @@ func (s *LineSeparator) SetOrientation(o core.Orientation) {
 	s.orientation = o
 	s.applyOrientationPolicy()
 	s.Update()
+	s.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.

@@ -21,6 +21,10 @@ type Panel struct {
 	fixedWidth core.Unit
 
 	// Appearance
+	// layingOut guards against a layout pass that reaches a child which asks
+	// for another one from inside it.
+	layingOut bool
+
 	background    style.CellStyle
 	backgroundSet bool // true if SetBackground was called
 	border        bool
@@ -121,6 +125,17 @@ func (p *Panel) childAtInterior(pos core.UnitPoint) core.Trinket {
 
 // Layout arranges children within this container.
 func (p *Panel) Layout() {
+	// A layout can reach a child that answers by changing its own content --
+	// a resize handler that rewrites a caption, say -- and that asks for the
+	// arrangement to be done again from the top. The pass already running is
+	// the one doing it, so it finishes rather than starting over inside
+	// itself.
+	if p.layingOut {
+		return
+	}
+	p.layingOut = true
+	defer func() { p.layingOut = false }()
+
 	if p.layoutManager != nil {
 		bounds := p.Bounds()
 		// Use local coordinates - children are positioned relative to

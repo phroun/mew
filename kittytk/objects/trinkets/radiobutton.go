@@ -53,6 +53,7 @@ func (r *RadioButton) SetText(text string) {
 	r.text = text
 	r.SetAccessibleName(text)
 	r.Update()
+	r.InvalidateLayout()
 }
 
 // IsChecked returns whether the radio button is checked.
@@ -99,6 +100,7 @@ func (r *RadioButton) WordWrap() bool {
 func (r *RadioButton) SetWordWrap(wrap bool) {
 	r.wordWrap = wrap
 	r.Update()
+	r.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.

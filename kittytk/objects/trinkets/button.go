@@ -81,6 +81,7 @@ func (b *Button) SetText(text string) {
 	b.text = text
 	b.SetAccessibleName(text)
 	b.Update()
+	b.InvalidateLayout()
 }
 
 // Icon returns the button icon.
@@ -92,12 +93,14 @@ func (b *Button) Icon() *style.Icon {
 func (b *Button) SetIcon(icon *style.Icon) {
 	b.icon = icon
 	b.Update()
+	b.InvalidateLayout()
 }
 
 // SetIconSize sets the icon size.
 func (b *Button) SetIconSize(size style.IconSize) {
 	b.iconSize = size
 	b.Update()
+	b.InvalidateLayout()
 }
 
 // IsCheckable returns whether the button is checkable.

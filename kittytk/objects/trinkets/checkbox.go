@@ -57,6 +57,7 @@ func (c *Checkbox) SetText(text string) {
 	c.text = text
 	c.SetAccessibleName(text)
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // IsChecked returns whether the checkbox is checked.
@@ -147,6 +148,7 @@ func (c *Checkbox) WordWrap() bool {
 func (c *Checkbox) SetWordWrap(wrap bool) {
 	c.wordWrap = wrap
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.

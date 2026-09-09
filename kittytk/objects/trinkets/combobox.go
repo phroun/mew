@@ -356,6 +356,7 @@ func (c *ComboBox) AddItem(text string) {
 		c.SetCurrentIndex(0)
 	}
 	c.Update()
+	c.InvalidateLayout() // the widest item is what the box asks to be
 }
 
 // AddItems adds multiple items to the combo box.
@@ -381,6 +382,7 @@ func (c *ComboBox) InsertItem(index int, text string) {
 		c.currentIndex++
 	}
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // RemoveItem removes an item at the given index.
@@ -401,6 +403,7 @@ func (c *ComboBox) RemoveItem(index int) {
 		c.currentIndex--
 	}
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // Clear removes all items.
@@ -409,6 +412,7 @@ func (c *ComboBox) Clear() {
 	c.currentIndex = -1
 	c.editText = ""
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // Count returns the number of items.

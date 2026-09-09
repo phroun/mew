@@ -4975,6 +4975,10 @@ func (d *Desktop) ChildAt(pos core.UnitPoint) core.Trinket {
 }
 
 // Layout arranges children within the desktop.
+// IsLayoutRoot marks the desktop as where a child's change stops climbing: it
+// is the size of the screen it is on, whatever it holds.
+func (d *Desktop) IsLayoutRoot() bool { return true }
+
 func (d *Desktop) Layout() {
 	d.layoutChildren()
 }

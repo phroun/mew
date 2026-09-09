@@ -1958,6 +1958,12 @@ func (w *Window) ChildAt(pos core.UnitPoint) core.Trinket {
 }
 
 // Layout implements core.Container.
+// IsLayoutRoot marks a window as where a child's change stops climbing: a
+// window is the size the manager or the user gave it, not the size of what it
+// holds, so a caption growing inside one rearranges the window and nothing
+// beyond it.
+func (w *Window) IsLayoutRoot() bool { return true }
+
 func (w *Window) Layout() {
 	w.layoutContent()
 
