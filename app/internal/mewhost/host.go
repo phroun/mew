@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/objects/app"
