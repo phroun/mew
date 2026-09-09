@@ -11,7 +11,7 @@ require (
 	github.com/phroun/key-sequence-processor v0.1.11
 	github.com/phroun/khatool v0.1.1
 	github.com/phroun/kittytk v0.1.31-alpha
-	github.com/phroun/pawscript v0.2.12-alpha
+	github.com/phroun/pawscript v0.2.13-alpha
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.41.0
 )
