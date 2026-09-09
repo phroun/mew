@@ -188,6 +188,9 @@ type PopupOverlay struct {
 	// Inert marks a paint-only popup the pointer passes through (see
 	// core.PopupRequest).
 	Inert bool
+	// Fade is how solid this overlay is drawn over time (see
+	// core.PopupRequest). Nil is solid.
+	Fade *core.Fade
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event core.MousePressEvent) bool
 	// HandleMouseMove function to handle mouse movement (returns true if handled)
@@ -1964,6 +1967,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		Anchor:             request.Anchor,
 		Paint:              request.Paint,
 		Inert:              request.Inert,
+		Fade:               request.Fade,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,

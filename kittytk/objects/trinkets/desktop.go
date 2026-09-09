@@ -270,11 +270,17 @@ type Desktop struct {
 	// lets the next one come without waiting.
 	tooltipPending *core.TooltipRequest
 	tooltipTimer   *DesktopTimer
+	// tooltipLeaving is a note still fading off the layer, and
+	// tooltipLeavingTimer the wait for it to finish so it can be taken off.
+	tooltipLeaving      *desktopTooltip
+	tooltipLeavingTimer *DesktopTimer
 	pointerMovedAt time.Time
 	tooltipShownAt time.Time
 	// tooltipDwell overrides how long the pointer rests before a note
-	// appears; zero takes tooltipDwellDefault.
+	// appears, and tooltipFade how long one takes to arrive and to leave.
+	// Zero takes tooltipDwellDefault and tooltipFadeDur.
 	tooltipDwell time.Duration
+	tooltipFade  time.Duration
 
 	// Focus manager
 	focusManager *core.GlobalFocusManager

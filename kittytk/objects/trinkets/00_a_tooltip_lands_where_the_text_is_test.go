@@ -68,6 +68,7 @@ func onScreen(t *testing.T) (*Desktop, *window.WindowManager, *Label) {
 	// These tests are about what a note looks like and where it goes, not
 	// about how long the pointer waits for it: the dwell is its own test.
 	d.tooltipDwell = time.Nanosecond
+	d.tooltipFade = time.Nanosecond
 
 	win := window.NewWindow("Connections")
 	panel := NewPanel()
@@ -301,6 +302,7 @@ func TestATornOutWindowKeepsItsTooltipOnItsOwnSurface(t *testing.T) {
 
 	// And it is withdrawn from the layer it was raised into.
 	d.HideTooltip(label)
+	d.ProcessTimers()
 	if len(layer.gone) != 1 || layer.gone[0] != tooltipPopupID {
 		t.Errorf("the window's layer was told to drop %v", layer.gone)
 	}
@@ -316,6 +318,7 @@ func TestATooltipLeavesThePopupLayer(t *testing.T) {
 		t.Fatal("a graphical desktop raised no popup")
 	}
 	d.HideTooltip(label)
+	d.ProcessTimers()
 	if tooltipOverlay(wm) != nil {
 		t.Error("the tooltip was withdrawn and the popup layer is still holding it")
 	}

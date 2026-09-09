@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -136,6 +137,12 @@ type WebGPURenderer struct {
 	rotationDeactivationTime    time.Time
 	rotationAngleAtDeactivation float64
 	rotationEnabled             bool
+
+	// overlayFading says the last frame drew an overlay part way through a
+	// fade, so another frame is owed even if nothing else changed. This is
+	// what makes a fade run at the surface's own rate: the frame that draws
+	// it asks for the next one.
+	overlayFading atomic.Bool
 
 	// Per-window surfaces for compositing
 	windowSurfaces       map[uint32]*WindowSurface // windowID -> surface
@@ -1563,7 +1570,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			bounds := winBounds
 			cleanup, _, err := r.drawOverlay(renderPass, osWindow,
 				outsetBounds(bounds, overlayStrokeOffset),
-				func(p *core.Painter) { hw.PaintTearHalo(p, bounds) }, scale)
+				func(p *core.Painter) { hw.PaintTearHalo(p, bounds) }, scale, 1)
 			if err == nil {
 				overlayCleanups = append(overlayCleanups, cleanup)
 			}
@@ -1610,7 +1617,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				surfaceSize, framePpuW, framePpuH, frameAspect, overlayShadowSpec); err == nil && cleanup != nil {
 				overlayCleanups = append(overlayCleanups, cleanup)
 			}
-			if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
+			if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale, 1); err == nil {
 				overlayCleanups = append(overlayCleanups, cleanup)
 				if caret.Requested() {
 					frameCaret = caret
@@ -1623,16 +1630,31 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 
 	// Step 5: Popups — the topmost layer, each over its drop shadow
 	// (unioned with its opening control, e.g. the combo box).
+	now := time.Now()
+	fading := false
 	for _, popupIface := range childWindowList.Popups {
 		bounds, anchor, paint, ok := overlayBoundsAndPaint(popupIface)
 		if !ok {
 			continue
 		}
+		// A layer's opacity is read at the instant of THIS frame, and a
+		// fade that has not arrived owes another frame. A layer faded to
+		// nothing is simply not drawn.
+		opacity := 1.0
+		if f := overlayFade(popupIface); f != nil {
+			opacity = f.At(now)
+			if !f.Done(now) {
+				fading = true
+			}
+		}
+		if opacity <= 0 {
+			continue
+		}
 		if cleanup, err := r.drawShadow(renderPass, desktopBindGroup, bounds, anchor,
-			surfaceSize, framePpuW, framePpuH, frameAspect, overlayShadowSpec); err == nil && cleanup != nil {
+			surfaceSize, framePpuW, framePpuH, frameAspect, overlayShadowSpec.faded(opacity)); err == nil && cleanup != nil {
 			overlayCleanups = append(overlayCleanups, cleanup)
 		}
-		if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
+		if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale, opacity); err == nil {
 			overlayCleanups = append(overlayCleanups, cleanup)
 			if caret.Requested() {
 				frameCaret = caret
@@ -1641,6 +1663,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			fmt.Fprintf(os.Stderr, "compositor: popup layer failed: %v\n", err)
 		}
 	}
+	r.overlayFading.Store(fading)
 	renderPass.End()
 
 	// The frame's caret goes to the platform, which owns the surface.
@@ -1770,7 +1793,7 @@ func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.
 // values, which is what makes the whole composited scene rotate rigidly.
 func (r *WebGPURenderer) writeCombinedUniforms(buffer *wgpu.Buffer, bounds core.UnitRect, surfaceSize core.UnitSize, aspect float32) {
 	x, y, w, h := windowNDC(bounds, surfaceSize)
-	r.writeCombinedUniformsNDC(buffer, x, y, w, h, aspect)
+	r.writeCombinedUniformsNDC(buffer, x, y, w, h, aspect, 1)
 }
 
 // writeCombinedUniformsNDC is the shared core: it writes the blit uniform
@@ -1779,7 +1802,7 @@ func (r *WebGPURenderer) writeCombinedUniforms(buffer *wgpu.Buffer, bounds core.
 // the overlay path pins it to whole pixels (overlayNDC) for a 1:1 blit.
 // Every layer gets the same effect values, which is what makes the whole
 // composited scene rotate rigidly.
-func (r *WebGPURenderer) writeCombinedUniformsNDC(buffer *wgpu.Buffer, x, y, w, h, aspect float32) {
+func (r *WebGPURenderer) writeCombinedUniformsNDC(buffer *wgpu.Buffer, x, y, w, h, aspect float32, opacity float64) {
 	angle, enabledF, scale, _ := r.effectParams()
 	data := combinedUniformData{
 		angle, enabledF, scale, aspect,
@@ -1788,6 +1811,7 @@ func (r *WebGPURenderer) writeCombinedUniformsNDC(buffer *wgpu.Buffer, x, y, w, 
 		// stays zeroed.
 	}
 	data.setNoTiling()
+	data.setOpacity(opacity)
 	r.queue.WriteBuffer(buffer, 0, combinedUniformBytes(&data))
 }
 
@@ -1822,7 +1846,7 @@ func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surface
 // pixels by overlayNDC so its texture blits 1:1, sidestepping the
 // fractional-pixel edges the int-unit windowNDC produces at fractional
 // pixels-per-unit.
-func (r *WebGPURenderer) createOverlayUniformBuffer(x, y, w, h, aspect float32) (*wgpu.Buffer, *wgpu.BindGroup, error) {
+func (r *WebGPURenderer) createOverlayUniformBuffer(x, y, w, h, aspect float32, opacity float64) (*wgpu.Buffer, *wgpu.BindGroup, error) {
 	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
 		Size:  combinedUniformSize,
 		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
@@ -1831,7 +1855,7 @@ func (r *WebGPURenderer) createOverlayUniformBuffer(x, y, w, h, aspect float32) 
 		return nil, nil, err
 	}
 
-	r.writeCombinedUniformsNDC(buffer, x, y, w, h, aspect)
+	r.writeCombinedUniformsNDC(buffer, x, y, w, h, aspect, opacity)
 
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Layout: r.blitUniformLayout,
@@ -2441,6 +2465,7 @@ func (r *WebGPURenderer) drawOverlay(
 	bounds core.UnitRect,
 	paint func(*core.Painter),
 	scale int,
+	opacity float64,
 ) (func(), core.TextCaret, error) {
 	backendImg := osWindow.backend.Image()
 	if backendImg == nil {
@@ -2548,7 +2573,7 @@ func (r *WebGPURenderer) drawOverlay(
 	topPx := osWindow.backend.UnitToPxY(bounds.Y - overlayStrokeOffset)
 	qx, qy, qw, qh := overlayNDC(leftPx, topPx, texW, texH, backendBounds.Dx(), backendBounds.Dy())
 	uniformBuffer, uniformBindGroup, err := r.createOverlayUniformBuffer(
-		qx, qy, qw, qh, aspect)
+		qx, qy, qw, qh, aspect, opacity)
 	if err != nil {
 		bindGroup.Release()
 		textureView.Release()
@@ -2568,4 +2593,36 @@ func (r *WebGPURenderer) drawOverlay(
 		texture.Release()
 	}
 	return cleanup, caret, nil
+}
+
+// LayersAnimating reports that an overlay drawn last frame was part way
+// through a fade, so the surface owes another frame. The platform asks after
+// every present (see scheduleAnimationFrame); a renderer that never fades
+// anything simply does not answer.
+func (r *WebGPURenderer) LayersAnimating() bool { return r.overlayFading.Load() }
+
+// overlayFade reads a popup overlay's Fade, which says how solid it is drawn
+// at a given instant. Read by reflection for the same reason its bounds are:
+// the compositor is handed overlays as bare interfaces, and an overlay that
+// declares no Fade is solid.
+func overlayFade(overlay interface{}) *core.Fade {
+	v := reflect.ValueOf(overlay)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	f := v.FieldByName("Fade")
+	if !f.IsValid() {
+		return nil
+	}
+	fade, ok := f.Interface().(*core.Fade)
+	if !ok {
+		return nil
+	}
+	return fade
 }

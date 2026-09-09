@@ -37,6 +37,9 @@ const tooltipWrapCells = 60
 const (
 	tooltipDwellDefault = 500 * time.Millisecond
 	tooltipFollowOn     = 1500 * time.Millisecond
+	// tooltipFadeDur is how long a note takes to arrive and to leave. The
+	// compositor runs it at the surface's own rate; nothing here ticks it.
+	tooltipFadeDur = 250 * time.Millisecond
 )
 
 // desktopTooltip is what is on the screen for whom.
@@ -49,6 +52,9 @@ type desktopTooltip struct {
 	// from the same one it was raised into: a torn-out window has a layer
 	// of its own, and the desktop's would not know about this note.
 	layer core.PopupController
+	// shown is the request the layer is holding, kept so a fade-out can
+	// hand back the very same note with nothing but its fade changed.
+	shown *core.PopupRequest
 }
 
 // ShowTooltip implements core.TooltipHandler: the desktop takes anything that
@@ -92,11 +98,14 @@ func (d *Desktop) ShowTooltip(req core.TooltipRequest) bool {
 func (d *Desktop) revealTooltip(req core.TooltipRequest) bool {
 	mm := d.tooltipFace()
 	lines := tooltipLines(req.Text, d.tooltipWrapWidth(mm), mm)
-	layer := d.raiseTooltipPopup(req, lines, mm)
+	// A note still fading out is replaced rather than left to expire: the
+	// layer holds one tooltip, and this is now that one.
+	d.cancelTooltipDeparture()
+	layer, popup := d.raiseTooltipPopup(req, lines, mm)
 	if layer == nil {
 		return false
 	}
-	d.tooltip = &desktopTooltip{from: req.From, lines: lines, layer: layer}
+	d.tooltip = &desktopTooltip{from: req.From, lines: lines, layer: layer, shown: popup}
 	d.RequestUpdate()
 	return true
 }
@@ -161,6 +170,14 @@ func (d *Desktop) tooltipDelay() time.Duration {
 	return tooltipDwellDefault
 }
 
+// tooltipFadeFor is how long a note takes to arrive and to leave.
+func (d *Desktop) tooltipFadeFor() time.Duration {
+	if d.tooltipFade > 0 {
+		return d.tooltipFade
+	}
+	return tooltipFadeDur
+}
+
 // notePointerMoved restarts the dwell: the pointer is what the clock is on.
 func (d *Desktop) notePointerMoved() { d.pointerMovedAt = time.Now() }
 
@@ -186,9 +203,49 @@ func (d *Desktop) HideTooltip(from core.Trinket) {
 		}
 	}
 	if t.layer != nil {
-		t.layer.UnregisterPopup(tooltipPopupID)
+		d.fadeTooltipOut(t)
 	}
 	d.RequestUpdate()
+}
+
+// fadeTooltipOut leaves the note on the layer for as long as it takes to go,
+// turned around from wherever its arrival had got to -- a note taken down
+// half way in leaves from half in rather than snapping to solid first.
+//
+// The layer is holding the same request throughout: only its fade changes,
+// so nothing is re-measured or re-placed on the way out.
+func (d *Desktop) fadeTooltipOut(t *desktopTooltip) {
+	if t.shown == nil || t.shown.Fade == nil {
+		t.layer.UnregisterPopup(tooltipPopupID)
+		return
+	}
+	now := time.Now()
+	out := t.shown.Fade.Reverse(now, 0, d.tooltipFadeFor())
+	t.shown.Fade = &out
+	t.layer.RegisterPopup(t.shown)
+
+	d.cancelTooltipDeparture()
+	d.tooltipLeaving = t
+	d.tooltipLeavingTimer = d.StartTimer(d.tooltipFadeFor(), func() {
+		d.tooltipLeavingTimer = nil
+		if d.tooltipLeaving != t {
+			return
+		}
+		d.tooltipLeaving = nil
+		t.layer.UnregisterPopup(tooltipPopupID)
+		d.RequestUpdate()
+	})
+}
+
+// cancelTooltipDeparture stops waiting for a note to finish leaving. It does
+// NOT take the note off the layer: either a new one is about to replace it
+// under the same id, or it has gone already.
+func (d *Desktop) cancelTooltipDeparture() {
+	if d.tooltipLeavingTimer != nil {
+		d.StopTimer(d.tooltipLeavingTimer)
+		d.tooltipLeavingTimer = nil
+	}
+	d.tooltipLeaving = nil
 }
 
 // forgetTooltipPopup is what the desktop does when the popup layer discards
@@ -313,13 +370,13 @@ func tooltipStatusText(text string) string {
 
 // raiseTooltipPopup puts the classic tooltip on the popup layer, placed
 // against the text it stands for and shifted to stay on the screen.
-func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm MenuMetrics) core.PopupController {
+func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm MenuMetrics) (core.PopupController, *core.PopupRequest) {
 	if req.From == nil {
-		return nil
+		return nil, nil
 	}
 	pc := d.popupHost(req.From)
 	if pc == nil {
-		return nil
+		return nil, nil
 	}
 	metrics := d.EffectiveCellMetrics()
 
@@ -351,7 +408,7 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm 
 	scheme := d.GetScheme()
 	face := scheme.GetTooltip()
 	border := scheme.GetTooltipBorder()
-	pc.RegisterPopup(&core.PopupRequest{
+	popup := &core.PopupRequest{
 		ID:     tooltipPopupID,
 		Bounds: box,
 		// No anchor. A drop-down and the control it opened from cast one
@@ -368,8 +425,12 @@ func (d *Desktop) raiseTooltipPopup(req core.TooltipRequest, lines []string, mm 
 		// The layer clears every popup on a press outside them. Without
 		// this the desktop would go on believing it is showing one.
 		OnDismiss: func() { d.forgetTooltipPopup() },
-	})
-	return pc
+		// It arrives rather than appearing. The fade is a value the
+		// compositor reads at each frame, so nothing here has to tick it.
+		Fade: &core.Fade{Start: time.Now(), Dur: d.tooltipFadeFor(), From: 0, To: 1},
+	}
+	pc.RegisterPopup(popup)
+	return pc, popup
 }
 
 // tooltipOrigin places the box against the anchor the way the asker asked, and

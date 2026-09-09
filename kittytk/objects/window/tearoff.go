@@ -652,6 +652,7 @@ func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 		Anchor:             request.Anchor,
 		Paint:              request.Paint,
 		Inert:              request.Inert,
+		Fade:               request.Fade,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,

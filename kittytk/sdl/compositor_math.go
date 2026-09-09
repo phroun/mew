@@ -120,6 +120,19 @@ type shadowSpec struct {
 // painted into a surface (core.Painter.DropShadow) for anything nested
 // inside one, such as an MDI child in its parent window's texture. One
 // definition, so the two cannot drift apart in look.
+// faded is this shadow at a layer's opacity, so a note's shadow comes and
+// goes with the note rather than snapping in under it.
+func (s shadowSpec) faded(opacity float64) shadowSpec {
+	if opacity >= 1 {
+		return s
+	}
+	if opacity < 0 {
+		opacity = 0
+	}
+	s.alpha *= float32(opacity)
+	return s
+}
+
 func toShadowSpec(s core.DropShadowStyle) shadowSpec {
 	return shadowSpec{
 		offsetX: s.OffsetX,

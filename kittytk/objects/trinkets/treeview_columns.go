@@ -1789,6 +1789,32 @@ func (t *TreeView) treeRunX(sp colSpan, at, w core.Unit) core.Unit {
 	return sp.x + core.LeadingX(t, sp.w, at, w)
 }
 
+// cellTextRoom is how much of a span is left for a cell's text once whatever
+// stands in front of it is out of the way: the indent, expander and icon in
+// the key column, half a pitch of padding in a data column.
+//
+// The painter asks this and so does the tooltip, because they must not answer
+// it differently. A cell one of them thinks fits and the other cuts draws an
+// ellipsis and then offers nothing to expand -- which is exactly what a word
+// cut to "co…" did.
+func (t *TreeView) cellTextRoom(sp colSpan, item *TreeItem) core.Unit {
+	room := sp.w - t.cellTextInset(sp, item)
+	if room < 0 {
+		return 0
+	}
+	return room
+}
+
+// cellTextInset is how far into a span a cell's text begins. A nil item is a
+// HEADING rather than a row: a caption stands behind no indent, expander or
+// icon, so it is padded like any data cell whichever column it heads.
+func (t *TreeView) cellTextInset(sp colSpan, item *TreeItem) core.Unit {
+	if sp.col == nil && item != nil {
+		return t.treeCellTextInset(item)
+	}
+	return t.EffectiveCellMetrics().UnitsPerCellWidth / 2
+}
+
 // treeExpanderRect is the cell the expander glyph stands in: past the pad and
 // the item's indent. The painter draws it there and the mouse looks for it
 // there, so both ask here.
@@ -1824,15 +1850,12 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	}
 	// Past the apparatus: the icon's cell, then everything left of the span
 	// for the caption.
-	at := t.treeCellTextInset(item)
+	at := t.cellTextInset(sp, item)
 	if item.Icon != nil && len(item.Icon.Cells) > 0 {
 		cell := item.Icon.Cells[0]
 		p.DrawCell(t.treeRunX(sp, at-2*cw, cw), itemY, cell.Char, cell.Style)
 	}
-	avail := sp.w - at
-	if avail < 0 {
-		avail = 0
-	}
+	avail := t.cellTextRoom(sp, item)
 	text = ellipsizeText(font, t.EffectiveCellMetrics(), text, avail)
 	text = t.CellRun(text)
 	p.DrawText(t.treeRunX(sp, at, t.MeasureText(text)), itemY, text, textStyle, font)
@@ -1887,10 +1910,7 @@ func ellipsizeText(font *core.Font, m core.CellMetrics, text string, avail core.
 func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.Unit, s style.CellStyle, font *core.Font, side core.HSide) {
 	metrics := t.EffectiveCellMetrics()
 	pad := metrics.UnitsPerCellWidth / 2
-	avail := sp.w - pad
-	if avail < 0 {
-		avail = 0
-	}
+	avail := t.cellTextRoom(sp, nil)
 	text = ellipsizeText(font, metrics, text, avail)
 	text = core.CellRun(text, t.colDirection(sp.col))
 	tw := t.MeasureText(text)
@@ -3019,8 +3039,7 @@ func (t *TreeView) colSide(col *TreeColumn, a core.HAlign) core.HSide {
 // is too narrow to have drawn the whole of it. A narrow column is exactly the
 // one whose heading is worth asking about: it is the only thing saying what
 // the cells under it are.
-func (t *TreeView) headingAt(local core.UnitPoint, headerH core.Unit, metrics core.CellMetrics) (string, core.UnitRect, bool) {
-	pad := metrics.UnitsPerCellWidth / 2
+func (t *TreeView) headingAt(local core.UnitPoint, headerH core.Unit) (string, core.UnitRect, bool) {
 	lay := t.columnLayout()
 	for _, sp := range lay.spans {
 		clip, ok := lay.spanClip(sp, headerH)
@@ -3031,7 +3050,8 @@ func (t *TreeView) headingAt(local core.UnitPoint, headerH core.Unit, metrics co
 		if sp.col != nil {
 			text = sp.col.Caption
 		}
-		avail := clip.Width - pad
+		// The same room the painter measured against (see cellTextRoom).
+		avail := t.cellTextRoom(sp, nil)
 		if text == "" || avail <= 0 || t.MeasureText(t.CellRun(text)) <= avail {
 			return "", core.UnitRect{}, false
 		}
@@ -3055,7 +3075,7 @@ func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 		return "", core.UnitRect{}, false
 	}
 	if local.Y < headerH {
-		return t.headingAt(local, headerH, metrics)
+		return t.headingAt(local, headerH)
 	}
 	visible := int((local.Y - headerH) / rowH)
 	at := t.scrollOffset + visible
@@ -3071,21 +3091,29 @@ func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 			continue
 		}
 		text := item.Text
-		avail := clip.Width
-		if sp.col == nil {
-			// The key column's cell begins past the indent, the expander and
-			// the icon, so that is what its text has to fit in.
-			avail -= t.treeCellTextInset(item)
-		} else {
+		if sp.col != nil {
 			text = item.Value(sp.col.ID)
 		}
+		// The same room the painter measured against, so a cell it cut is a
+		// cell this offers.
+		avail := t.cellTextRoom(sp, item)
 		if text == "" || avail <= 0 || t.MeasureText(t.CellRun(text)) <= avail {
 			return "", core.UnitRect{}, false
 		}
+		// The note stands where the TEXT does, not where the span does: in
+		// the key column the caption begins past the indent, the expander
+		// and the icon, and a note at the span's edge would sit out to the
+		// left of the word it is expanding.
+		inset := t.cellTextInset(sp, item)
+		x := t.treeRunX(sp, inset, sp.w-inset)
+		width := clip.X + clip.Width - x
+		if x < clip.X {
+			x, width = clip.X, clip.Width
+		}
 		return text, core.UnitRect{
-			X:      clip.X,
+			X:      x,
 			Y:      headerH + core.Unit(visible)*rowH,
-			Width:  clip.Width,
+			Width:  width,
 			Height: rowH,
 		}, true
 	}

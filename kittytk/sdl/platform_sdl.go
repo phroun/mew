@@ -1056,9 +1056,24 @@ func (p *Platform) scheduleAnimationFrame(s *sdlSurface) {
 	if !animating {
 		animating = time.Since(p.rotationDeactivationTime).Seconds() < 0.5
 	}
+	if !animating {
+		// A layer part way through a fade owes another frame, which is what
+		// runs a fade at the surface's own rate rather than at a timer's.
+		if a, ok := p.renderer.(layerAnimator); ok {
+			animating = a.LayersAnimating()
+		}
+	}
 	if animating {
 		s.Invalidate(core.UnitRect{})
 	}
+}
+
+// layerAnimator is a renderer that draws layers which change of their own
+// accord between frames -- a fading overlay -- and so needs the next frame
+// asked for even when nothing else on the screen has changed. A renderer with
+// nothing of the sort does not implement it.
+type layerAnimator interface {
+	LayersAnimating() bool
 }
 
 // frameDebug reports slow presents under KITTYTK_FRAME_DEBUG. It used to

@@ -257,6 +257,13 @@ type PopupRequest struct {
 	Anchor UnitRect
 	// Paint function to render the popup
 	Paint func(p *Painter)
+	// Fade is how solid this popup is drawn over time, for one that comes
+	// and goes rather than appearing outright. Nil is solid.
+	//
+	// The compositor asks it what it comes to at the instant of each frame
+	// and keeps drawing frames until it is done, so a fade runs at the
+	// surface's own rate rather than at any timer's.
+	Fade *Fade
 	// Inert marks a popup that is drawn and nothing else: the pointer
 	// passes through it to whatever it is lying over, so a press inside
 	// its bounds reaches the thing underneath instead of being swallowed

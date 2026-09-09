@@ -51,10 +51,18 @@ struct CombinedUniforms {
     tile_offset: vec2<f32>,
     tile_repeat: vec2<f32>,
 
+    // How solid this layer is drawn, for a layer that fades in or out.
+    //
+    // ZERO READS AS SOLID. Every layer shares this block, and a layer that
+    // never thought about opacity leaves the word zero -- taken at face
+    // value that would make it invisible, which is the same trap the tile
+    // words above carry a warning about. A layer that means to be gone is
+    // not drawn at all, so nothing needs to say zero.
+    opacity: f32,
+
     // Trailing padding. WGSL sizes the fields above at 136 bytes; padding
     // to 144 keeps the Go side a round [36]float32 and the binding size a
     // multiple of 16, which every backend's uniform rules are happy with.
-    pad0: f32,
     pad1: f32,
 }
 
@@ -153,10 +161,18 @@ struct CombinedUniforms {
     tile_offset: vec2<f32>,
     tile_repeat: vec2<f32>,
 
+    // How solid this layer is drawn, for a layer that fades in or out.
+    //
+    // ZERO READS AS SOLID. Every layer shares this block, and a layer that
+    // never thought about opacity leaves the word zero -- taken at face
+    // value that would make it invisible, which is the same trap the tile
+    // words above carry a warning about. A layer that means to be gone is
+    // not drawn at all, so nothing needs to say zero.
+    opacity: f32,
+
     // Trailing padding. WGSL sizes the fields above at 136 bytes; padding
     // to 144 keeps the Go side a round [36]float32 and the binding size a
     // multiple of 16, which every backend's uniform rules are happy with.
-    pad0: f32,
     pad1: f32,
 }
 
@@ -192,6 +208,12 @@ fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f3
         }
         if (uniforms.tile_repeat.y < 0.5 && (uv.y < 0.0 || uv.y > 1.0)) {
             return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        }
+        // Zero reads as solid (see the block's opacity field). The blend
+        // is SrcAlpha/OneMinusSrcAlpha, so scaling alpha alone is the
+        // whole of fading a layer.
+        if (uniforms.opacity > 0.0) {
+            return vec4<f32>(tex.rgb, tex.a * uniforms.opacity);
         }
         return tex;
     }
@@ -306,6 +328,21 @@ func (d *combinedUniformData) setTiling(tileX, tileY, offX, offY, repeatX, repea
 // setNoTiling is the ordinary layer's mapping: sample the texture once
 // across the quad, with no rejection.
 func (d *combinedUniformData) setNoTiling() { d.setTiling(1, 1, 0, 0, 1, 1) }
+
+// combinedUniformOpacityWord is where the block's opacity sits, in the room
+// the trailing padding used to occupy. Zero reads as solid, so a layer with
+// nothing to say about opacity leaves it alone (see the WGSL declaration).
+const combinedUniformOpacityWord = 34
+
+// setOpacity states how solid this layer is drawn. Anything at or below zero
+// is left as the block's own zero, which the shader reads as solid: a layer
+// that means to be gone is not drawn at all.
+func (d *combinedUniformData) setOpacity(o float64) {
+	if o <= 0 || o >= 1 {
+		return
+	}
+	d[combinedUniformOpacityWord] = float32(o)
+}
 
 // combinedUniformBytes views the block as raw bytes for WriteBuffer.
 func combinedUniformBytes(d *combinedUniformData) []byte {
