@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/trinkets"
 )
 
@@ -134,5 +136,51 @@ func TestServingInstallsTheItem(t *testing.T) {
 
 	if d.ConnectionsOpener() == nil {
 		t.Error("a served desktop has connections to show and no way to show them")
+	}
+}
+
+// The window opens. Every failure inside showConnections is silent -- the menu
+// item simply does nothing -- so the only way to know it works is to build one
+// and look at what came back.
+//
+// It failed here on the protocol registry's own wrappers: a column comes back
+// as an unexported *wireColumn and an item as a *wireItem, so asking for either
+// by type never succeeded and the guard rejected a window that was fine.
+func TestTheWindowActuallyOpens(t *testing.T) {
+	d := trinkets.NewDesktop()
+	// A backend is what gives a desktop its window manager, and without one
+	// nothing can be shown -- so a check that skipped this would pass on a
+	// desktop that cannot open anything at all.
+	b, err := raster.NewScaled(800, 400, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 8000, Height: 4000})
+	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 8000, Height: 4000})
+
+	store := storeWith(t, "allow app sha256:aaa Editor", "allow client sha256:bbb")
+	nicks := tempNicknames(t)
+	if err := nicks.set("sha256:aaa", "the laptop"); err != nil {
+		t.Fatal(err)
+	}
+
+	win := showConnections(d, store, nicks)
+	if win == nil {
+		t.Fatal("the window did not open, so choosing the menu item does nothing")
+	}
+	if got := win.Title(); got != "Connections" {
+		t.Errorf("opened a window titled %q", got)
+	}
+
+	// And it is on the desktop, not merely constructed.
+	var found bool
+	for _, w := range d.WindowManager().Windows() {
+		if w == win {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the window was built but never shown")
 	}
 }

@@ -152,10 +152,14 @@ func showConnections(d *trinkets.Desktop, store *authStore, nicks *nicknameStore
 	if err != nil {
 		return nil
 	}
+	// Only what this needs a Go handle for. The protocol registry hands back
+	// its own wrappers for a column and an item -- unexported, so nothing
+	// outside the trinkets package can name their type -- and asking for one
+	// by type simply fails. The column is addressed by the name the script
+	// bound it to instead, which is all the second batch needs.
 	win, _ := factory.byID[reply.IDs["w"]].(*window.Window)
 	tree, _ := factory.byID[reply.IDs["tree"]].(*trinkets.TreeView)
-	col, _ := factory.byID[reply.IDs["col"]].(*trinkets.TreeColumn)
-	if win == nil || tree == nil || col == nil {
+	if win == nil || tree == nil {
 		return nil
 	}
 
@@ -170,8 +174,10 @@ func showConnections(d *trinkets.Desktop, store *authStore, nicks *nicknameStore
 	}
 
 	// The second column, and the map from a row back to the peer it names --
-	// which is what says whether a rename means anything on that row.
-	renameable := map[*trinkets.TreeItem]string{}
+	// which is what says whether a rename means anything on that row. Keyed by
+	// the wire id a protocol-built item keeps, since the row objects here are
+	// the registry's wrappers rather than the tree's own items.
+	renameable := map[core.ObjectID]string{}
 	var cells strings.Builder
 	cells.WriteString("set col children={\n")
 	for i, r := range rows {
@@ -179,9 +185,7 @@ func showConnections(d *trinkets.Desktop, store *authStore, nicks *nicknameStore
 			fmt.Fprintf(&cells, "  new cell item=%d value=%s\n",
 				id, protocol.Quote(r.detail))
 			if r.identity != "" {
-				if it, _ := factory.byID[id].(*trinkets.TreeItem); it != nil {
-					renameable[it] = r.identity
-				}
+				renameable[core.ObjectID(id)] = r.identity
 			}
 		}
 		for j, c := range r.children {
@@ -203,12 +207,15 @@ func showConnections(d *trinkets.Desktop, store *authStore, nicks *nicknameStore
 		if column != nil {
 			return // only the key column carries the nickname
 		}
-		id, ok := renameable[item]
+		if item == nil {
+			return
+		}
+		id, ok := renameable[item.ID]
 		if !ok {
 			return
 		}
 		_ = nicks.set(id, value)
-		if strings.TrimSpace(value) == "" && item != nil {
+		if strings.TrimSpace(value) == "" {
 			item.Text = "(unnamed)"
 			tree.Update()
 		}
