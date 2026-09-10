@@ -7,14 +7,24 @@ package display
 // connected shares it. The connection is given a host object under the name
 // `host`, alongside its application and its store:
 //
-//	set host dark  / set host !dark   the terminal's theme, dark or light
+//	set host dark / set host !dark    the terminal's theme, dark or light
 //	set host desktop                  show the desktop (mew's show_desktop)
 //	set host !desktop                 hide it again    (mew's hide_desktop)
-//	set host desktopfont=tuesday   tuesday, or default
-//	set host status="Ready"        the desktop's status bar
+//	set host desktopfont=tuesday      tuesday, or default
+//	set host status="Ready"           the desktop's status bar
+//	ask host dark / ask host desktop  which way either of those is set
 //
-// Any app connected can set any of these. There is no surface to configure who
-// may, so it stays what the bare verbs it replaces already allowed.
+// And the things it DOES, which hold no value afterwards to set or to ask for:
+//
+//	do host tile / do host cascade    arrange the desktop's windows
+//	do host rawkey                    pass the next key straight through
+//	do host cut / copy / paste / selectall
+//
+// The edit actions reach whatever has the focus, which may belong to another
+// app -- as the bare verbs they replace always did.
+//
+// Any app connected can set or do any of these. There is no surface to
+// configure who may, so it stays what the bare verbs already allowed.
 
 import (
 	"fmt"
@@ -30,6 +40,18 @@ const (
 	AskDesktop = "desktop" // is the desktop showing
 
 	EventHostState = "host_state" // how the display stands
+)
+
+// The things the display does. None of them is a value it then holds: there is
+// no "is it tiled" to ask for, and pasting is over the moment it happens.
+const (
+	DoTile      = "tile"
+	DoCascade   = "cascade"
+	DoRawKey    = "rawkey"
+	DoCut       = "cut"
+	DoCopy      = "copy"
+	DoPaste     = "paste"
+	DoSelectAll = "selectall"
 )
 
 // hostObject is a connection's handle on the display it is connected to. Like
@@ -101,6 +123,32 @@ func (h *hostObject) Set(name string, v *protocol.Value, flag protocol.FlagState
 	return fmt.Errorf("the host has no property %q", name)
 }
 
+// Do performs one of the display's actions. Each reaches the desktop everyone
+// shares, and the edit actions reach whatever has the focus -- which may belong
+// to another app, the way the bare verbs they replace always did.
+func (h *hostObject) Do(action string, _ []*protocol.Arg) error {
+	d := h.conn.server.desktop
+	switch action {
+	case DoTile:
+		if wm := d.WindowManager(); wm != nil {
+			wm.TileWindows()
+		}
+		return nil
+	case DoCascade:
+		if wm := d.WindowManager(); wm != nil {
+			wm.CascadeWindows()
+		}
+		return nil
+	case DoRawKey:
+		d.ActivatePassNextKeyToTrinket()
+		return nil
+	case DoCut, DoCopy, DoPaste, DoSelectAll:
+		editAction(d.FocusedTrinket(), action)
+		return nil
+	}
+	return fmt.Errorf("the host does nothing called %q", action)
+}
+
 // Ask answers a question put to the display. Nothing else reads these back, so
 // an app that means to turn one of them over has to be told which way it is
 // first. Every question is answered with the same event, carrying all of it.
@@ -155,6 +203,15 @@ func init() {
 				"What the desktop's status bar says."),
 			"desktopfont": prop("enum", "desktopfont",
 				"The font the desktop draws in: tuesday, or default."),
+		},
+		Does: map[string]protocol.DoDesc{
+			DoTile:      protocol.NewDoDesc("Arrange the desktop's windows side by side."),
+			DoCascade:   protocol.NewDoDesc("Arrange the desktop's windows in a stack."),
+			DoRawKey:    protocol.NewDoDesc("Pass the next key straight to the focused trinket."),
+			DoCut:       protocol.NewDoDesc("Cut, on whatever has the focus."),
+			DoCopy:      protocol.NewDoDesc("Copy, on whatever has the focus."),
+			DoPaste:     protocol.NewDoDesc("Paste, on whatever has the focus."),
+			DoSelectAll: protocol.NewDoDesc("Select all, on whatever has the focus."),
 		},
 		Asks: map[string]protocol.AskDesc{
 			AskDark: protocol.NewAskDesc("Which way the terminal's theme is set.").

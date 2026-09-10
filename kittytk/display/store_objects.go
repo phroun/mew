@@ -10,7 +10,7 @@ package display
 //	sub store store_blob store_done store_data store_gone store_error
 //	set store blobs={ new blob key="figaro" type=psl data="..." }
 //	ask store inventory                    what is in it
-//	set <blob> feed="..."                  append, as a terminal is fed
+//	do <blob> append bytes="..."           add to the end, as a terminal is fed
 //	set <blob> data="..."                  replace
 //	ask <blob> bytes offset=2048           the chunk that starts there
 //	destroy <blob>                         drop it
@@ -45,6 +45,8 @@ import (
 const (
 	AskInventory = "inventory" // what the store holds
 	AskBytes     = "bytes"     // a blob's contents, a chunk at a time
+
+	DoAppend = "append" // add to the end of a blob
 )
 
 const (
@@ -278,6 +280,10 @@ func (h *blobHandle) write(what string, data []byte, extend bool) error {
 		s.failed(key, err)
 		return nil
 	}
+	// The store says what the blob now is, for a write and an append alike:
+	// every change to a blob is reported that way, and that is the store's
+	// business rather than an answer to the statement that caused it. `do`
+	// expects nothing back; what it changes still reports itself.
 	s.itemChanged(h, it)
 	return nil
 }
@@ -307,6 +313,36 @@ func (h *blobHandle) sendChunk(offset int) error {
 		WithBlob("data", data).
 		WithFlag("last", flagOf(last)))
 	return nil
+}
+
+// Do performs an action on the blob. Nothing ANSWERS it -- an action that
+// wanted an answer would be a question -- but the store goes on reporting what
+// the blob is with store_blob, the way it does for every other change to one,
+// and a refusal arrives as store_error.
+func (h *blobHandle) Do(action string, args []*protocol.Arg) error {
+	switch action {
+	case DoAppend:
+		data, err := blobArg(action, "bytes", args)
+		if err != nil {
+			return err
+		}
+		return h.write(action, data, true)
+	}
+	return fmt.Errorf("a blob does nothing called %q", action)
+}
+
+// blobArg reads one named string argument, which carries bytes.
+func blobArg(call, name string, args []*protocol.Arg) ([]byte, error) {
+	for _, a := range args {
+		if a.Name != name {
+			continue
+		}
+		if a.Value == nil || a.Value.Kind != protocol.StringValue {
+			return nil, fmt.Errorf("%s: %s= expects a string", call, name)
+		}
+		return []byte(a.Value.Str), nil
+	}
+	return nil, fmt.Errorf("%s: expected %s=", call, name)
 }
 
 // Ask answers a question put to the blob.
@@ -449,13 +485,10 @@ func init() {
 				}
 				return h.write("data", []byte(s), false)
 			}).Tip("The item's whole contents, replacing what it held."),
-			"feed": itemProp("feed", func(h *blobHandle, v *protocol.Value, f protocol.FlagState) error {
-				s, err := protocol.AsString("feed", v, f)
-				if err != nil {
-					return err
-				}
-				return h.write("feed", []byte(s), true)
-			}).As("stream").Tip("Append bytes to the item, as a terminal is fed."),
+		},
+		Does: map[string]protocol.DoDesc{
+			DoAppend: protocol.NewDoDesc("Add to the end of the blob, as a terminal is fed. How anything larger than one statement is written; the store reports what the blob then is with store_blob.").
+				Arg("bytes", "blob", "What to add, every byte outside printable ASCII escaped."),
 		},
 		Asks: map[string]protocol.AskDesc{
 			AskBytes: protocol.NewAskDesc("The blob's contents, one chunk at a time.").

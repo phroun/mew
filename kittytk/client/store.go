@@ -15,7 +15,7 @@ package client
 //	conn.OnStore(client.StoreBlob, func(ev *wire.Event) { ... })
 //	conn.Store().List()                          // ask store inventory
 //	conn.Store().Write("figaro", "psl", bundle)  // set store blobs={ new blob ... }
-//	conn.Blob(id).Append(more)                   // set <blob> feed="..."
+//	conn.Blob(id).Append(more)                   // do <blob> append bytes="..."
 //	conn.Blob(id).Read(2048)                     // ask <blob> bytes offset=2048
 //	conn.Blob(id).Drop()                         // destroy <blob>
 //
@@ -96,7 +96,7 @@ type Blob struct{ Handle }
 // too large for one statement is written: Write the first piece, then append the
 // rest.
 func (b Blob) Append(data []byte) error {
-	return b.Set("feed=" + wire.QuoteBlob(data))
+	return b.Do("append bytes=" + wire.QuoteBlob(data))
 }
 
 // Replace writes the blob's whole contents again.

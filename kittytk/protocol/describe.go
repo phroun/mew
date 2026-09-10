@@ -89,36 +89,53 @@ func (p Property) OneOf(words ...string) Property {
 // As overrides the value kind (for raw appliers built without a helper).
 func (p Property) As(kind string) Property { p.Desc.Kind = kind; return p }
 
-// AskDesc is the queryable descriptor for one question an object answers: what
-// it means, what arguments it takes, and what it answers with.
+// CallDesc is the queryable descriptor for one question an object answers or
+// one action it performs: what it means, what arguments it takes, and what it
+// answers with.
 //
-// A question is declared beside the properties and events for the same reason
-// they are: one registration is the source of both behavior and introspection,
-// so a client can find out what it may ask rather than reading the host's code.
-type AskDesc struct {
-	// Doc says what the question means.
+// Both are declared beside the properties and events for the same reason they
+// are: one registration is the source of both behavior and introspection, so a
+// client can find out what it may ask and what it may do rather than reading
+// the host's code.
+type CallDesc struct {
+	// Doc says what the question or the action means.
 	Doc string
 	// Args are the named arguments it takes, in the order worth reading.
 	Args []EventFieldDesc
-	// Answers names the events it answers with.
+	// Answers names the events a question is answered with. An action has
+	// none: `do` expects nothing back, which is the whole of what separates
+	// it from `ask`. Events an action causes reach a client the way any other
+	// change does, through what it subscribed to.
 	Answers []string
 }
 
+// AskDesc is a question an object answers; DoDesc is an action it performs.
+// They are the same shape -- a name, arguments, and the events that come back
+// -- because they are the same statement with a different verb in front of it.
+type (
+	AskDesc = CallDesc
+	DoDesc  = CallDesc
+)
+
 // NewAskDesc builds an AskDesc from its description; add arguments with Arg and
 // the events it answers with using Answering.
-func NewAskDesc(doc string) AskDesc { return AskDesc{Doc: doc} }
+func NewAskDesc(doc string) AskDesc { return CallDesc{Doc: doc} }
+
+// NewDoDesc builds a DoDesc the same way.
+func NewDoDesc(doc string) DoDesc { return CallDesc{Doc: doc} }
 
 // Arg appends one named argument to the descriptor and returns it for chaining.
 // The append copies, for the reason EventDesc.Field does.
-func (a AskDesc) Arg(name, kind, doc string) AskDesc {
+func (a CallDesc) Arg(name, kind, doc string) CallDesc {
 	args := make([]EventFieldDesc, len(a.Args), len(a.Args)+1)
 	copy(args, a.Args)
 	a.Args = append(args, EventFieldDesc{Name: name, Kind: kind, Doc: doc})
 	return a
 }
 
-// Answering names the events the question is answered with.
-func (a AskDesc) Answering(events ...string) AskDesc {
+// Answering names the events a question is answered with. It has no meaning on
+// an action, which answers nothing.
+func (a CallDesc) Answering(events ...string) CallDesc {
 	a.Answers = events
 	return a
 }
@@ -189,8 +206,8 @@ func sortedEventInfos(events map[string]EventDesc) []EventInfo {
 	return out
 }
 
-// sortedAskInfos renders a type's questions in name order.
-func sortedAskInfos(asks map[string]AskDesc) []AskInfo {
+// sortedCallInfos renders a type's questions or actions in name order.
+func sortedCallInfos(asks map[string]CallDesc) []AskInfo {
 	if len(asks) == 0 {
 		return nil
 	}
@@ -228,7 +245,8 @@ func DescribeVocabulary() *Vocabulary {
 			Name:    n,
 			Virtual: spec.Virtual,
 			Hosted:  spec.Hosted,
-			Asks:    sortedAskInfos(spec.Asks),
+			Asks:    sortedCallInfos(spec.Asks),
+			Does:    sortedCallInfos(spec.Does),
 			Props:   sortedPropInfos(spec.Props),
 			Events:  sortedEventInfos(spec.Events),
 		})
@@ -245,6 +263,8 @@ func DescribeVocabulary() *Vocabulary {
 //	prop of="button" name="caption" kind=string default="" doc="..." enum="" members=""
 //	ask of="store" name="inventory" doc="..." answers="store_blob,store_done"
 //	askarg of="blob" ask="bytes" name="offset" kind="int" doc="..."
+//	do of="blob" name="append" doc="..."
+//	doarg of="blob" do="append" name="bytes" kind="blob" doc="..."
 //	event of="button" name="click" doc="..."
 //	eventfield of="button" event="click" name="trinket" kind="uint" doc="..."
 //
@@ -253,6 +273,43 @@ func DescribeVocabulary() *Vocabulary {
 // nesting to carry that relationship. enum= and members= are
 // comma-separated lists: enum= holds the allowed words of an enum, and
 // members= the types a collection accepts (empty means any trinket).
+// writeCallStmts renders a type's questions or actions: one `ask`/`do` line each
+// and an `askarg`/`doarg` line per named argument. The two read alike because
+// they are the same declaration under a different verb -- except that a `do`
+// carries no answers=, an action being a thing done rather than a thing asked.
+func writeCallStmts(sb *strings.Builder, verb, typeName string, calls []AskInfo) {
+	for _, c := range calls {
+		sb.WriteString(verb)
+		sb.WriteString(" of=")
+		sb.WriteString(Quote(typeName))
+		sb.WriteString(" name=")
+		sb.WriteString(Quote(c.Name))
+		sb.WriteString(" doc=")
+		sb.WriteString(Quote(c.Doc))
+		if verb == "ask" {
+			sb.WriteString(" answers=")
+			sb.WriteString(Quote(strings.Join(c.Answers, ",")))
+		}
+		sb.WriteByte('\n')
+		for _, f := range c.Args {
+			sb.WriteString(verb)
+			sb.WriteString("arg of=")
+			sb.WriteString(Quote(typeName))
+			sb.WriteByte(' ')
+			sb.WriteString(verb)
+			sb.WriteByte('=')
+			sb.WriteString(Quote(c.Name))
+			sb.WriteString(" name=")
+			sb.WriteString(Quote(f.Name))
+			sb.WriteString(" kind=")
+			sb.WriteString(Quote(f.Kind))
+			sb.WriteString(" doc=")
+			sb.WriteString(Quote(f.Doc))
+			sb.WriteByte('\n')
+		}
+	}
+}
+
 func EncodeVocabulary(v *Vocabulary) string {
 	var sb strings.Builder
 	for _, p := range v.Common {
@@ -275,30 +332,8 @@ func EncodeVocabulary(v *Vocabulary) string {
 		for _, p := range t.Props {
 			writePropStmt(&sb, "prop", t.Name, p)
 		}
-		for _, a := range t.Asks {
-			sb.WriteString("ask of=")
-			sb.WriteString(Quote(t.Name))
-			sb.WriteString(" name=")
-			sb.WriteString(Quote(a.Name))
-			sb.WriteString(" doc=")
-			sb.WriteString(Quote(a.Doc))
-			sb.WriteString(" answers=")
-			sb.WriteString(Quote(strings.Join(a.Answers, ",")))
-			sb.WriteByte('\n')
-			for _, f := range a.Args {
-				sb.WriteString("askarg of=")
-				sb.WriteString(Quote(t.Name))
-				sb.WriteString(" ask=")
-				sb.WriteString(Quote(a.Name))
-				sb.WriteString(" name=")
-				sb.WriteString(Quote(f.Name))
-				sb.WriteString(" kind=")
-				sb.WriteString(Quote(f.Kind))
-				sb.WriteString(" doc=")
-				sb.WriteString(Quote(f.Doc))
-				sb.WriteByte('\n')
-			}
-		}
+		writeCallStmts(&sb, "ask", t.Name, t.Asks)
+		writeCallStmts(&sb, "do", t.Name, t.Does)
 		for _, e := range t.Events {
 			sb.WriteString("event of=")
 			sb.WriteString(Quote(t.Name))

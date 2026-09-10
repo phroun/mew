@@ -50,10 +50,10 @@ w%d=mdi.d%d
 	}
 
 	// Wire actions work through the handle.
-	if err := mdiH.Set("tile"); err != nil {
+	if err := mdiH.Do("tile"); err != nil {
 		t.Errorf("tile: %v", err)
 	}
-	if err := mdiH.Set(fmt.Sprintf("remove=%d", uint64(pane.Windows()[0].ObjectID()))); err != nil {
+	if err := mdiH.Do(fmt.Sprintf("remove window=%d", uint64(pane.Windows()[0].ObjectID()))); err != nil {
 		t.Errorf("remove: %v", err)
 	}
 	if n := len(pane.Windows()); n != 1 {

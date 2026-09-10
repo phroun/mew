@@ -111,7 +111,7 @@ static void on_theme(void *ud) {
     kt_exec(a->conn, a->dark ? "set host dark" : "set host !dark");
 }
 
-static void on_mdi_set(void *ud) { VerbCtx *v = ud; char s[32]; snprintf(s, sizeof s, "%s", v->verb); kt_set(v->a->conn, v->a->mdi, s); }
+static void on_mdi_do(void *ud) { VerbCtx *v = ud; kt_do(v->a->conn, v->a->mdi, v->verb); }
 
 static void show_about(void *ud) {
     App *a = ((AppCtx *)ud)->a;
@@ -188,10 +188,10 @@ static void on_dock_click(const kt_event *ev, void *ud) {
     App *a = s->a;
     uint64_t win = s->win;
     if (!win) return;
-    /* Our own set does not echo a restore event, so drop the entry here. */
+    /* Our own action does not echo a restore event, so drop the entry here. */
     char args[48];
-    snprintf(args, sizeof args, "restore=%llu", (unsigned long long)win);
-    if (kt_set(a->conn, a->mdi, args) == 0) dock_drop(a, win);
+    snprintf(args, sizeof args, "restore window=%llu", (unsigned long long)win);
+    if (kt_do(a->conn, a->mdi, args) == 0) dock_drop(a, win);
 }
 static void on_mdi_minimize(const kt_event *ev, void *ud) {
     App *a = ud;
@@ -265,11 +265,11 @@ typedef struct {
     uint64_t win;
 } SecApp;
 
-static void on_sec_cut(void *ud) { kt_exec(((SecApp *)ud)->c, "cut"); }
-static void on_sec_copy(void *ud) { kt_exec(((SecApp *)ud)->c, "copy"); }
-static void on_sec_paste(void *ud) { kt_exec(((SecApp *)ud)->c, "paste"); }
-static void on_sec_sall(void *ud) { kt_exec(((SecApp *)ud)->c, "selectall"); }
-static void on_sec_rawkey(void *ud) { kt_exec(((SecApp *)ud)->c, "rawkey"); }
+static void on_sec_cut(void *ud) { kt_exec(((SecApp *)ud)->c, "do host cut"); }
+static void on_sec_copy(void *ud) { kt_exec(((SecApp *)ud)->c, "do host copy"); }
+static void on_sec_paste(void *ud) { kt_exec(((SecApp *)ud)->c, "do host paste"); }
+static void on_sec_sall(void *ud) { kt_exec(((SecApp *)ud)->c, "do host selectall"); }
+static void on_sec_rawkey(void *ud) { kt_exec(((SecApp *)ud)->c, "do host rawkey"); }
 static void on_sec_close(void *ud) {
     SecApp *s = ud;
     if (s->win) kt_destroy(s->c, s->win);
@@ -371,9 +371,9 @@ int main(int argc, char **argv) {
     static VerbCtx v_cut = {0}, v_copy = {0}, v_paste = {0}, v_sall = {0}, v_rawkey = {0},
                    v_announce = {0}, v_speak = {0}, v_tile = {0}, v_cascade = {0};
 #define VC(var, verbstr) var.a = &a; var.verb = verbstr;
-    VC(v_cut, "cut") VC(v_copy, "copy") VC(v_paste, "paste") VC(v_sall, "selectall")
-    VC(v_rawkey, "rawkey") VC(v_announce, "announce_visual")
-    VC(v_speak, "announce_speak") VC(v_tile, "tile") VC(v_cascade, "cascade")
+    VC(v_cut, "do host cut") VC(v_copy, "do host copy") VC(v_paste, "do host paste") VC(v_sall, "do host selectall")
+    VC(v_rawkey, "do host rawkey") VC(v_announce, "announce_visual")
+    VC(v_speak, "announce_speak") VC(v_tile, "do host tile") VC(v_cascade, "do host cascade")
 
     kt_on_command(a.conn, "demo.file.new", open_terminal_window, &actx);
     kt_on_command(a.conn, "demo.edit.cut", on_verb, &v_cut);
@@ -399,12 +399,12 @@ int main(int argc, char **argv) {
     /* MDI */
     static VerbCtx mdi_tile = {0}, mdi_cascade = {0}, mdi_next = {0}, mdi_prev = {0};
     mdi_tile.a = mdi_cascade.a = mdi_next.a = mdi_prev.a = &a;
-    mdi_tile.verb = "tile"; mdi_cascade.verb = "cascade"; mdi_next.verb = "next"; mdi_prev.verb = "prev";
+    mdi_tile.verb = "tile"; mdi_cascade.verb = "cascade"; mdi_next.verb = "next"; mdi_prev.verb = "prior";
     kt_on_command(a.conn, "demo.mdi.spawn", on_mdi_spawn, &actx);
-    kt_on_command(a.conn, "demo.mdi.tile", on_mdi_set, &mdi_tile);
-    kt_on_command(a.conn, "demo.mdi.cascade", on_mdi_set, &mdi_cascade);
-    kt_on_command(a.conn, "demo.mdi.next", on_mdi_set, &mdi_next);
-    kt_on_command(a.conn, "demo.mdi.prev", on_mdi_set, &mdi_prev);
+    kt_on_command(a.conn, "demo.mdi.tile", on_mdi_do, &mdi_tile);
+    kt_on_command(a.conn, "demo.mdi.cascade", on_mdi_do, &mdi_cascade);
+    kt_on_command(a.conn, "demo.mdi.next", on_mdi_do, &mdi_next);
+    kt_on_command(a.conn, "demo.mdi.prev", on_mdi_do, &mdi_prev);
     kt_on(a.conn, a.mdi, "active", on_mdi_active, &a);
     kt_on(a.conn, a.mdi, "minimize", on_mdi_minimize, &a);
     kt_on(a.conn, a.mdi, "restore", on_mdi_drop_ev, &a);

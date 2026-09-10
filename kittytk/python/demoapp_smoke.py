@@ -53,9 +53,11 @@ def main(sock: str) -> int:
     win.set('font="tuesday12"')
     win.set("denomination=32")
 
-    for verb in ['set host status="hi there"', "cut", "copy", "paste", "selectall",
-                 "tile", "cascade", "set host dark", "set host !dark", "set host desktopfont=tuesday",
-                 "set host desktopfont=default", "announce_visual", "announce_speak", "rawkey"]:
+    for verb in ['set host status="hi there"', "do host cut", "do host copy",
+                 "do host paste", "do host selectall", "do host tile",
+                 "do host cascade", "do host rawkey", "set host dark",
+                 "set host !dark", "set host desktopfont=tuesday",
+                 "set host desktopfont=default", "announce_visual", "announce_speak"]:
         conn.exec(verb)
 
     print("OK", flush=True)

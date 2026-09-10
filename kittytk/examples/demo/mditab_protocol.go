@@ -67,10 +67,10 @@ func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ an
 	// Window-management buttons: pure wire actions.
 	commands := application.Commands()
 	commands.Register("demo.mdi.spawn", func() { spawnMDIChild(conn, mdiH) })
-	commands.Register("demo.mdi.tile", func() { _ = mdiH.Set("tile") })
-	commands.Register("demo.mdi.cascade", func() { _ = mdiH.Set("cascade") })
-	commands.Register("demo.mdi.next", func() { _ = mdiH.Set("next") })
-	commands.Register("demo.mdi.prior", func() { _ = mdiH.Set("prior") })
+	commands.Register("demo.mdi.tile", func() { _ = mdiH.Do("tile") })
+	commands.Register("demo.mdi.cascade", func() { _ = mdiH.Do("cascade") })
+	commands.Register("demo.mdi.next", func() { _ = mdiH.Do("next") })
+	commands.Register("demo.mdi.prior", func() { _ = mdiH.Do("prior") })
 
 	// Dock choreography over events: minimize -> add an entry;
 	// restore/remove -> destroy it; entry click -> restore.
@@ -98,7 +98,7 @@ func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ an
 		entry.On("click", func(*protocol.Event) {
 			// D20: our own set never echoes a restore event, so the
 			// initiator drops its dock entry itself.
-			if mdiH.Set(fmt.Sprintf("restore=%d", winID)) == nil {
+			if mdiH.Do(fmt.Sprintf("restore window=%d", winID)) == nil {
 				dropEntry(winID)
 			}
 		})
@@ -163,6 +163,6 @@ wclose=mdi.d%d.p.bp.cl
 	winID := ui.ID("wwin")
 	ui.Button("wnew").OnClick(func() { spawnMDIChild(conn, mdiH) })
 	ui.Button("wclose").OnClick(func() {
-		_ = mdiH.Set(fmt.Sprintf("remove=%d", winID))
+		_ = mdiH.Do(fmt.Sprintf("remove window=%d", winID))
 	})
 }

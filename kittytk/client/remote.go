@@ -231,7 +231,7 @@ func (t *remoteTransport) readLoop() {
 					}
 				}
 				t.replies <- replyOrError{err: fmt.Errorf("%s", msg)}
-			case "proptype", "prop", "propcommon", "ask", "askarg", "eventfield":
+			case "proptype", "prop", "propcommon", "ask", "askarg", "do", "doarg", "eventfield":
 				// describe verb output: buffer until the reply arrives.
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
 			case "event":

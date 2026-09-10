@@ -49,10 +49,39 @@ func TestTheVerbsTheyWereAreGone(t *testing.T) {
 			t.Errorf("%q reads %v", verb, err)
 		}
 	}
-	// The ones with no object of their own are untouched.
-	for _, verb := range []string{"tile", "cascade", "rawkey", "copy"} {
+	// The two that are the app's own are untouched.
+	for _, verb := range []string{"announce_visual", "announce_speak"} {
 		if _, err := conn.Exec(verb); err != nil {
 			t.Errorf("%q: %v", verb, err)
+		}
+	}
+}
+
+// What the display DOES holds no value afterwards, so it is neither a property
+// to set nor a question to ask.
+func TestWhatTheDisplayDoesIsDoneNotSet(t *testing.T) {
+	conn := dialDesktop(t, "Doing App")
+
+	for _, action := range []string{
+		"tile", "cascade", "rawkey", "cut", "copy", "paste", "selectall",
+	} {
+		if err := conn.Host().Do(action); err != nil {
+			t.Errorf("do host %s: %v", action, err)
+		}
+		// Not a property: the same word set is refused.
+		if err := conn.Host().Set(action); err == nil {
+			t.Errorf("set host %s was accepted", action)
+		}
+	}
+
+	// And an action the display has not got is refused rather than dropped.
+	if err := conn.Host().Do("nonsense"); err == nil {
+		t.Error("do host nonsense was accepted")
+	}
+	// The bare verbs they were are gone with them.
+	for _, verb := range []string{"tile", "cascade", "rawkey", "copy"} {
+		if _, err := conn.Exec(verb); err == nil {
+			t.Errorf("%q is still a verb", verb)
 		}
 	}
 }
@@ -200,5 +229,62 @@ func TestTheDisplaySaysHowItStands(t *testing.T) {
 	// And a question it does not answer is refused rather than ignored.
 	if _, err := conn.Exec("ask host nonsense"); err == nil {
 		t.Error("ask host nonsense was accepted")
+	}
+}
+
+// A type declares what it does beside what it holds, so `describe` reports it
+// and a client learns the actions without being taught them. That is the whole
+// reason `do` is one verb rather than a word per action: the language cannot
+// grow a verb a type declares, but it can grow an action.
+func TestDescribeReportsWhatEachTypeDoes(t *testing.T) {
+	conn := dialDesktop(t, "Curious App")
+
+	v, err := conn.Describe()
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	want := map[string][]string{
+		"host":    {"cascade", "copy", "cut", "paste", "rawkey", "selectall", "tile"},
+		"mdipane": {"cascade", "minimize", "next", "prior", "remove", "restore", "tile"},
+		"blob":    {"append"},
+	}
+	seen := map[string]bool{}
+	for _, ty := range v.Types {
+		expect, ok := want[ty.Name]
+		if !ok {
+			continue
+		}
+		seen[ty.Name] = true
+		var got []string
+		for _, d := range ty.Does {
+			got = append(got, d.Name)
+		}
+		if strings.Join(got, ",") != strings.Join(expect, ",") {
+			t.Errorf("%s does %v, want %v", ty.Name, got, expect)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("describe never mentioned %s", name)
+		}
+	}
+
+	// The arguments come with them, so a client knows what to send.
+	for _, ty := range v.Types {
+		if ty.Name != "mdipane" {
+			continue
+		}
+		for _, d := range ty.Does {
+			switch d.Name {
+			case "restore", "minimize", "remove":
+				if len(d.Args) != 1 || d.Args[0].Name != "window" {
+					t.Errorf("mdipane %s takes %v, want one window=", d.Name, d.Args)
+				}
+			default:
+				if len(d.Args) != 0 {
+					t.Errorf("mdipane %s takes %v, want nothing", d.Name, d.Args)
+				}
+			}
+		}
 	}
 }

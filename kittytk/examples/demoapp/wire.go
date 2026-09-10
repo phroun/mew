@@ -345,7 +345,7 @@ func (a *app) wireMenus() {
 	// Edit menu: Cut/Copy/Paste/Select All are supplied by the host's
 	// system Edit menu and act on the focused trinket directly; the client
 	// only contributes the custom Raw Key Input item.
-	c.OnCommand("demo.edit.rawkey", func() { _, _ = c.Exec("rawkey") })
+	c.OnCommand("demo.edit.rawkey", func() { _ = c.Host().Do("rawkey") })
 
 	// View menu. The display's theme is a property with two values, so the item
 	// has to know which way it is set before it can turn it over: it asks, ticks
@@ -406,10 +406,10 @@ func (a *app) wireMDI() {
 
 	c.OnCommand("demo.mdi.spawn", func() { a.spawnMDIChild() })
 	c.OnCommand("demo.mdi.spawnbounded", func() { a.spawnBoundedMDIChild() })
-	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Set("tile") })
-	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Set("cascade") })
-	c.OnCommand("demo.mdi.next", func() { _ = mdi.Set("next") })
-	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Set("prior") })
+	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Do("tile") })
+	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Do("cascade") })
+	c.OnCommand("demo.mdi.next", func() { _ = mdi.Do("next") })
+	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Do("prior") })
 
 	entries := make(map[uint64]client.Handle) // window id -> dock entry
 	dropEntry := func(winID uint64) {
@@ -435,7 +435,7 @@ func (a *app) wireMDI() {
 		entry.On("click", func(*protocol.Event) {
 			// D20: our own set never echoes a restore event, so the
 			// initiator drops its own dock entry.
-			if mdi.Set(fmt.Sprintf("restore=%d", winID)) == nil {
+			if mdi.Do(fmt.Sprintf("restore window=%d", winID)) == nil {
 				dropEntry(winID)
 			}
 		})
@@ -473,7 +473,7 @@ func (a *app) spawnMDIChild() {
 	winID := ui.ID("wwin")
 	ui.Button("wnew").OnClick(func() { a.spawnMDIChild() })
 	ui.Button("wclose").OnClick(func() {
-		_ = a.ui.Object("mdi").Set(fmt.Sprintf("remove=%d", winID))
+		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
 	})
 }
 
@@ -488,7 +488,7 @@ func (a *app) spawnBoundedMDIChild() {
 	}
 	winID := ui.ID("bwwin")
 	ui.Button("bwclose").OnClick(func() {
-		_ = a.ui.Object("mdi").Set(fmt.Sprintf("remove=%d", winID))
+		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
 	})
 }
 
@@ -589,7 +589,7 @@ func (a *app) wireSecondary(n int) {
 	c.OnCommand("demo.app.close", func() { _ = ui.Window("w").Close() })
 	// Cut/Copy/Paste/Select All come from the host's system Edit menu; the
 	// client only wires the custom Raw Key Input item.
-	c.OnCommand("demo.app.rawkey", func() { _, _ = c.Exec("rawkey") })
+	c.OnCommand("demo.app.rawkey", func() { _ = c.Host().Do("rawkey") })
 	c.OnCommand("demo.app.info", func() {
 		_, _ = c.Exec(fmt.Sprintf(
 			`dlg=new messagebox icon=information ok title="About App %d" text="This is Secondary Application #%d\n\nIt has its own menus and status bar."`,

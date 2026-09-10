@@ -55,6 +55,15 @@ func (h Handle) Ask(question string) error {
 	return err
 }
 
+// Do tells the object to do something: h.Do("append bytes=\"...\"") sends
+// `do <target> append bytes="..."`. Nothing comes back from it -- that is what
+// separates an action from a question -- though what it changes may raise the
+// events the object declares.
+func (h Handle) Do(action string) error {
+	_, err := h.c.Exec(fmt.Sprintf("do %s %s", h.addr(), action))
+	return err
+}
+
 // On subscribes to an event from this object.
 func (h Handle) On(event string, fn func(*wire.Event)) {
 	h.c.on(h.id, event, fn)

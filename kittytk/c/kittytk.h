@@ -88,6 +88,11 @@ void kt_ui_free(kt_ui *ui);
 int kt_set(kt_conn *c, uint64_t id, const char *args);
 int kt_destroy(kt_conn *c, uint64_t id);
 
+/* Tell an object to do something: kt_do(c, id, "tile") sends `do <id> tile`.
+   Nothing comes back from it -- that is what separates an action from a
+   question -- though what it changes may raise the object's events. */
+int kt_do(kt_conn *c, uint64_t id, const char *action);
+
 /* --- introspection (describe, D24) ----------------------------------- */
 
 /* One property in a described vocabulary. All strings are owned by the

@@ -642,21 +642,15 @@ func (c *conn) appHasMainWindow(except *window.Window) bool {
 // desktop-reaching actions a remote app can't perform through its own
 // trinket handles - the display does them on the app's behalf:
 //
-//	rawkey            - pass the next key straight to the focused trinket
-//	cut/copy/paste/   - the standard edit actions on the focused trinket
-//	  selectall
-//	tile/cascade      - arrange the desktop's windows
 //	announce_visual   - toggle showing announcements in the status bar
 //	announce_speak    - toggle speaking announcements (macOS `say`)
 //
-// What is left here has no object of its own yet. The edit actions and rawkey
-// reach whatever has the focus, which may be another app's; tile and cascade
-// are the desktop window manager's, and an MDI pane already spells them as
-// properties for the windows it hosts; the two announce toggles are the app's.
-// The display's own -- theme, the desktop font, the status bar, showing and
-// hiding the desktop -- moved onto the host object (see host_object.go).
+// These two are the last of them, and they are here because they are the APP's
+// -- whether this app's announcements are shown or spoken -- while the state
+// they toggle lives on this connection rather than on the Application object.
+// Everything else that was a bare verb has an object now: the display's own
+// state and actions are the host object's (host_object.go).
 func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement {
-	d := c.server.desktop
 	rest := batch[:0:0]
 	for _, stmt := range batch {
 		if stmt.Key != "" {
@@ -664,18 +658,6 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 			continue
 		}
 		switch stmt.Verb {
-		case "rawkey":
-			d.ActivatePassNextKeyToTrinket()
-		case "cut", "copy", "paste", "selectall":
-			editAction(d.FocusedTrinket(), stmt.Verb)
-		case "tile":
-			if wm := d.WindowManager(); wm != nil {
-				wm.TileWindows()
-			}
-		case "cascade":
-			if wm := d.WindowManager(); wm != nil {
-				wm.CascadeWindows()
-			}
 		case "announce_visual":
 			c.announceVisual = !c.announceVisual
 			c.updateAnnounce()

@@ -53,6 +53,26 @@ type asker interface {
 	Ask(question string, args []*Arg) error
 }
 
+// doer is an optional Object capability backing the do verb: the object is told
+// to do something.
+//
+// `set` writes a value the object then holds; `ask` puts a question and the
+// answer comes back. Neither fits a thing simply DONE -- tiling the windows,
+// appending to a blob -- and those were spelled as properties, which reads as
+// state and behaves as a command: `set <mdi> tile` says a pane is tiled the way
+// `set <cb> checked` says a box is checked, and only one of the two is a thing
+// you can ask for afterwards.
+//
+// That is the test between the two verbs. If asking for it means something, it
+// is a property; if asking is nonsense, it is an action.
+//
+// An action expects nothing back -- that is what separates `do` from `ask`. It
+// runs with emission suppressed, as `new` and `set` do, so what a client asked
+// for does not come back at it as events (D20).
+type doer interface {
+	Do(action string, args []*Arg) error
+}
+
 // Session holds connection-scoped interpretation state: alias and
 // template dictionaries (D10/D14), plus — since D19's verbs — the
 // persistent key table and object table. Keys registered by one
@@ -219,6 +239,8 @@ func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) err
 		return nil
 	case "ask":
 		return s.askObject(stmt.Args)
+	case "do":
+		return s.suppressed(f, func() error { return s.doObject(stmt.Args) })
 	case "sub", "unsub":
 		return s.subscribe(stmt.Verb, stmt.Args, f)
 	case "describe":
@@ -277,6 +299,33 @@ func (s *Session) askObject(args []*Arg) error {
 		return err
 	}
 	return a.Ask(question, rest[1:])
+}
+
+// doObject tells an object to do something: `do <target> <action> [args...]`.
+// The action is a bare word, as a question is in `ask`, and what follows it is
+// named arguments -- `do <blob> append bytes="..."`.
+//
+// It runs INSIDE the emission suppression that wraps `new` and `set`, because
+// what it does is a change the client asked for, and D20 says those do not echo
+// back. Nothing comes back from it at all: an action that wanted an answer
+// would be a question.
+func (s *Session) doObject(args []*Arg) error {
+	obj, _, rest, err := s.resolveTarget("do", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 || rest[0].Value != nil || rest[0].Flag != FlagTrue {
+		return fmt.Errorf("do: expected an action after the target")
+	}
+	action := rest[0].Name
+	d, ok := obj.(doer)
+	if !ok {
+		return fmt.Errorf("do: %s does nothing", s.describeTarget(obj))
+	}
+	if err := checkDoName(s.objectTypes[obj.ID()], action); err != nil {
+		return err
+	}
+	return d.Do(action, rest[1:])
 }
 
 // describeTarget names an object for a refusal: its type where the wire built

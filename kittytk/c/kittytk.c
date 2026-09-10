@@ -903,6 +903,13 @@ int kt_set(kt_conn *c, uint64_t id, const char *args) {
     free(src);
     return r;
 }
+int kt_do(kt_conn *c, uint64_t id, const char *action) {
+    char *src = malloc(strlen(action) + 32);
+    sprintf(src, "do %llu %s", (unsigned long long)id, action);
+    int r = kt_exec(c, src);
+    free(src);
+    return r;
+}
 int kt_destroy(kt_conn *c, uint64_t id) {
     char src[32];
     snprintf(src, sizeof src, "destroy %llu", (unsigned long long)id);

@@ -38,12 +38,19 @@ type EventInfo struct {
 }
 
 // AskInfo describes one question a type answers.
-type AskInfo struct {
+type CallInfo struct {
 	Name    string
 	Doc     string
 	Args    []EventFieldDesc
 	Answers []string
 }
+
+// AskInfo is a question a type answers; DoInfo is an action it performs. One
+// shape, because they are the same declaration under a different verb.
+type (
+	AskInfo = CallInfo
+	DoInfo  = CallInfo
+)
 
 // TypeInfo describes one registered type, its type-specific props, and
 // the events it emits (common props are reported once at the vocabulary
@@ -56,6 +63,7 @@ type TypeInfo struct {
 	Hosted bool
 	Props  []PropInfo
 	Asks   []AskInfo
+	Does   []DoInfo
 	Events []EventInfo
 }
 
@@ -68,7 +76,7 @@ type Vocabulary struct {
 
 // DecodeVocabulary parses the flat describe stream (the statements the
 // describe verb emits, one per line) back into a Vocabulary. Lines are
-// proptype/prop/propcommon/ask/askarg/event/eventfield statements; unknown lines
+// proptype/prop/propcommon/ask/askarg/do/doarg/event/eventfield statements; unknown lines
 // are ignored, so a newer host can add statement kinds without breaking
 // an older client.
 func DecodeVocabulary(lines []string) (*Vocabulary, error) {
@@ -99,26 +107,37 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 				if i, ok := byType[of]; ok {
 					v.Types[i].Props = append(v.Types[i].Props, stmtToPropInfo(st))
 				}
-			case "ask":
+			case "ask", "do":
 				of := stmtStr(st, "of")
-				if i, ok := byType[of]; ok {
-					v.Types[i].Asks = append(v.Types[i].Asks, AskInfo{
-						Name:    stmtStr(st, "name"),
-						Doc:     stmtStr(st, "doc"),
-						Answers: splitList(stmtStr(st, "answers")),
-					})
+				i, ok := byType[of]
+				if !ok {
+					continue
 				}
-			case "askarg":
+				c := CallInfo{
+					Name: stmtStr(st, "name"),
+					Doc:  stmtStr(st, "doc"),
+				}
+				if st.Verb == "ask" {
+					c.Answers = splitList(stmtStr(st, "answers"))
+					v.Types[i].Asks = append(v.Types[i].Asks, c)
+				} else {
+					v.Types[i].Does = append(v.Types[i].Does, c)
+				}
+			case "askarg", "doarg":
 				i, ok := byType[stmtStr(st, "of")]
 				if !ok {
 					continue
 				}
+				calls := v.Types[i].Asks
 				name := stmtStr(st, "ask")
-				for j := range v.Types[i].Asks {
-					if v.Types[i].Asks[j].Name != name {
+				if st.Verb == "doarg" {
+					calls, name = v.Types[i].Does, stmtStr(st, "do")
+				}
+				for j := range calls {
+					if calls[j].Name != name {
 						continue
 					}
-					v.Types[i].Asks[j].Args = append(v.Types[i].Asks[j].Args, EventFieldDesc{
+					calls[j].Args = append(calls[j].Args, EventFieldDesc{
 						Name: stmtStr(st, "name"),
 						Kind: stmtStr(st, "kind"),
 						Doc:  stmtStr(st, "doc"),

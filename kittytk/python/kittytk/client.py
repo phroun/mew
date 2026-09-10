@@ -278,6 +278,9 @@ class Conn:
     def set(self, oid: int, args: str):
         self.exec("set %d %s" % (oid, args))
 
+    def do(self, oid: int, action: str):
+        self.exec("do %d %s" % (oid, action))
+
 
 # --- Handles -------------------------------------------------------------
 
@@ -295,6 +298,12 @@ class Handle:
 
     def set(self, args: str):
         self._c.set(self._id, args)
+
+    def do(self, action: str):
+        """Tell the object to do something: h.do("tile") sends `do <id> tile`.
+        Nothing comes back from it -- that is what separates an action from a
+        question -- though what it changes may raise the object's events."""
+        self._c.do(self._id, action)
 
     def destroy(self):
         self._c.exec("destroy %d" % self._id)

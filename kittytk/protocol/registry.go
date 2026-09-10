@@ -279,6 +279,14 @@ type TypeSpec struct {
 	// no type declares is refused rather than quietly doing nothing.
 	Asks map[string]AskDesc
 
+	// Does describes the actions this type performs, keyed by action name,
+	// the way Asks describes its questions. An action is a thing done rather
+	// than a value held: `do <mdi> tile` arranges windows, and there is no
+	// "is it tiled" to ask for or to set. The doing is the target's own Do
+	// method; this is the describing, and an action no type declares is
+	// refused rather than quietly doing nothing.
+	Does map[string]DoDesc
+
 	// Events describes what Bind emits, keyed by event name, so the wire
 	// vocabulary answers for events the way it answers for properties.
 	// Optional; empty for a type that emits none.
@@ -416,16 +424,31 @@ func EventNames(typeName string) []string {
 	return names
 }
 
+// callsOf is the table a verb consults: the questions for ask, the actions for
+// do. Both are declared on the TypeSpec and both are checked the same way.
+func callsOf(spec *TypeSpec, verb string) map[string]CallDesc {
+	if verb == "do" {
+		return spec.Does
+	}
+	return spec.Asks
+}
+
 // AskNames returns the sorted questions a type answers.
-func AskNames(typeName string) []string {
+func AskNames(typeName string) []string { return callNames(typeName, "ask") }
+
+// DoNames returns the sorted actions a type performs.
+func DoNames(typeName string) []string { return callNames(typeName, "do") }
+
+func callNames(typeName, verb string) []string {
 	regMu.RLock()
 	spec := regTypes[typeName]
 	regMu.RUnlock()
 	if spec == nil {
 		return nil
 	}
-	names := make([]string, 0, len(spec.Asks))
-	for n := range spec.Asks {
+	calls := callsOf(spec, verb)
+	names := make([]string, 0, len(calls))
+	for n := range calls {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -434,49 +457,79 @@ func AskNames(typeName string) []string {
 
 // TypeAnswers reports whether a registered type declares a question.
 func TypeAnswers(typeName, question string) bool {
+	return typeDeclares(typeName, "ask", question)
+}
+
+// TypeDoes reports whether a registered type declares an action.
+func TypeDoes(typeName, action string) bool {
+	return typeDeclares(typeName, "do", action)
+}
+
+func typeDeclares(typeName, verb, name string) bool {
 	regMu.RLock()
 	spec := regTypes[typeName]
 	regMu.RUnlock()
 	if spec == nil {
 		return false
 	}
-	_, declared := spec.Asks[question]
+	_, declared := callsOf(spec, verb)[name]
 	return declared
 }
 
 // AnyTypeAnswers reports whether ANY registered type declares a question. It is
 // the question to ask about an object the HOST registered, which has no type to
 // check against.
-func AnyTypeAnswers(question string) bool {
+func AnyTypeAnswers(question string) bool { return anyTypeDeclares("ask", question) }
+
+// AnyTypeDoes is the same for an action.
+func AnyTypeDoes(action string) bool { return anyTypeDeclares("do", action) }
+
+func anyTypeDeclares(verb, name string) bool {
 	regMu.RLock()
 	defer regMu.RUnlock()
 	for _, spec := range regTypes {
-		if _, declared := spec.Asks[question]; declared {
+		if _, declared := callsOf(spec, verb)[name]; declared {
 			return true
 		}
 	}
 	return false
 }
 
-// checkAskName rejects a question the target cannot answer, for the same reason
-// a misspelled event name is rejected: accepted and then silently doing nothing
-// is the worst answer available.
+// checkAskName rejects a question the target cannot answer, and checkDoName an
+// action it cannot perform, for the same reason a misspelled event name is
+// rejected: accepted and then silently doing nothing is the worst answer
+// available.
 func checkAskName(typeName, question string) error {
+	return checkCallName("ask", typeName, question)
+}
+
+func checkDoName(typeName, action string) error {
+	return checkCallName("do", typeName, action)
+}
+
+// callWords are the words a refusal is written in, so an action reads as an
+// action and a question as a question.
+var callWords = map[string][3]string{
+	"ask": {"answers", "answers no question called", "answers no questions at all, so it cannot answer"},
+	"do":  {"does", "does nothing called", "does nothing at all, so it cannot do"},
+}
+
+func checkCallName(verb, typeName, name string) error {
+	w := callWords[verb]
 	if typeName == "" {
-		if AnyTypeAnswers(question) {
+		if anyTypeDeclares(verb, name) {
 			return nil
 		}
-		return fmt.Errorf("ask: nothing answers a question called %q", question)
+		return fmt.Errorf("%s: nothing %s %q", verb, w[0], name)
 	}
-	if TypeAnswers(typeName, question) {
+	if typeDeclares(typeName, verb, name) {
 		return nil
 	}
-	if names := AskNames(typeName); len(names) > 0 {
-		return fmt.Errorf("ask: %s answers no question called %q; it answers %s",
-			typeName, question, strings.Join(names, ", "))
+	if names := callNames(typeName, verb); len(names) > 0 {
+		return fmt.Errorf("%s: %s %s %q; it %s %s",
+			verb, typeName, w[1], name, w[0], strings.Join(names, ", "))
 	}
-	return fmt.Errorf("ask: %s answers no questions at all, so it cannot answer %q",
-		typeName, question)
+	return fmt.Errorf("%s: %s %s %q", verb, typeName, w[2], name)
 }
 
 // TypeEmits reports whether a registered type declares an event. An
@@ -656,6 +709,17 @@ func (o *registryObject) Ask(question string, args []*Arg) error {
 		return fmt.Errorf("ask: a %s answers no questions", o.typeName)
 	}
 	return a.Ask(question, args)
+}
+
+// Do forwards an action to the target, if it performs any.
+func (o *registryObject) Do(action string, args []*Arg) error {
+	d, ok := o.target.(interface {
+		Do(string, []*Arg) error
+	})
+	if !ok {
+		return fmt.Errorf("do: a %s does nothing", o.typeName)
+	}
+	return d.Do(action, args)
 }
 
 // property resolves a name against this type's own table and, for a

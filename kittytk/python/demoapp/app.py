@@ -95,11 +95,11 @@ class App:
         c = self.conn
         c.on_command("demo.file.new", self.open_terminal_window)
 
-        c.on_command("demo.edit.cut", lambda: c.exec("cut"))
-        c.on_command("demo.edit.copy", lambda: c.exec("copy"))
-        c.on_command("demo.edit.paste", lambda: c.exec("paste"))
-        c.on_command("demo.edit.selectall", lambda: c.exec("selectall"))
-        c.on_command("demo.edit.rawkey", lambda: c.exec("rawkey"))
+        c.on_command("demo.edit.cut", lambda: c.exec("do host cut"))
+        c.on_command("demo.edit.copy", lambda: c.exec("do host copy"))
+        c.on_command("demo.edit.paste", lambda: c.exec("do host paste"))
+        c.on_command("demo.edit.selectall", lambda: c.exec("do host selectall"))
+        c.on_command("demo.edit.rawkey", lambda: c.exec("do host rawkey"))
 
         # The display's theme is a property with two values and nothing reads
         # it back, so the item keeps its own account: the display starts dark,
@@ -114,8 +114,8 @@ class App:
         c.on_command("demo.view.speak", lambda: c.exec("announce_speak"))
 
         c.on_command("demo.window.new", lambda: open_secondary(self.path))
-        c.on_command("demo.window.tile", lambda: c.exec("tile"))
-        c.on_command("demo.window.cascade", lambda: c.exec("cascade"))
+        c.on_command("demo.window.tile", lambda: c.exec("do host tile"))
+        c.on_command("demo.window.cascade", lambda: c.exec("do host cascade"))
 
         c.on_command("demo.basic.ok", lambda: self.set_status("OK button clicked!"))
         c.on_command("demo.basic.cancel", lambda: self.set_status("Cancel button clicked!"))
@@ -129,9 +129,9 @@ class App:
         status = ui.label("mdistatus")
 
         c.on_command("demo.mdi.spawn", self.spawn_mdi_child)
-        c.on_command("demo.mdi.tile", lambda: mdi.set("tile"))
-        c.on_command("demo.mdi.cascade", lambda: mdi.set("cascade"))
-        c.on_command("demo.mdi.next", lambda: mdi.set("next"))
+        c.on_command("demo.mdi.tile", lambda: mdi.do("tile"))
+        c.on_command("demo.mdi.cascade", lambda: mdi.do("cascade"))
+        c.on_command("demo.mdi.next", lambda: mdi.do("next"))
         c.on_command("demo.mdi.prev", lambda: mdi.set("prev"))
 
         entries = {}  # window id -> dock entry handle
@@ -157,7 +157,7 @@ class App:
 
             def on_click(_ev):
                 try:
-                    mdi.set("restore=%d" % win_id)
+                    mdi.do("restore window=%d" % win_id)
                     drop_entry(win_id)
                 except Exception:
                     pass
@@ -183,7 +183,7 @@ class App:
             return
         win_id = ui.id("wwin")
         ui.button("wnew").on_click(self.spawn_mdi_child)
-        ui.button("wclose").on_click(lambda: self.ui.object("mdi").set("remove=%d" % win_id))
+        ui.button("wclose").on_click(lambda: self.ui.object("mdi").do("remove window=%d" % win_id))
 
     def open_protocol_window(self):
         try:
