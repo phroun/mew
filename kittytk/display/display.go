@@ -12,6 +12,7 @@ package display
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -454,6 +455,14 @@ func (s *Server) serveConn(nc net.Conn) {
 	for {
 		batch, err := readBatch(scanner)
 		if err != nil {
+			var bad *badBatch
+			if errors.As(err, &bad) {
+				// The client said something the language could not read. Say
+				// so and read the next batch: a refusal is not a disconnect.
+				dbg("batch refused for app=%q: %v", appName, bad)
+				c.send(protocol.EncodeError(bad.Error()))
+				continue
+			}
 			dbg("batch read ended for app=%q: %v", appName, err)
 			return // disconnect -> deferred teardown
 		}
@@ -467,9 +476,29 @@ func (s *Server) serveConn(nc net.Conn) {
 	}
 }
 
+// badBatch is a batch the language could not read: one of its statements did
+// not parse. The batch does not run, and the connection carries on.
+//
+// The two failures a read can have are different in kind. Framing is the
+// transport's: the scanner finds statement boundaries by the language's own
+// brace and string awareness, and if that fails the byte stream is no longer
+// trustworthy and there is nothing to do but hang up. Parsing is the
+// language's, and a client that sends a statement the parser refuses is in the
+// same position as one that sends a property an object has not got -- it has
+// said something wrong, not something unreadable.
+type badBatch struct{ err error }
+
+func (b *badBatch) Error() string { return b.err.Error() }
+func (b *badBatch) Unwrap() error { return b.err }
+
 // readBatch collects statements until the D22 end terminator.
+//
+// A malformed statement poisons the batch it is in, but the rest of the batch
+// is still read: the statements are framed whether or not they parse, so
+// consuming to the terminator leaves the stream in step for the next one.
 func readBatch(scanner *protocol.Scanner) ([]*protocol.Statement, error) {
 	var batch []*protocol.Statement
+	var bad error
 	for {
 		text, err := scanner.Next()
 		if err != nil {
@@ -477,12 +506,16 @@ func readBatch(scanner *protocol.Scanner) ([]*protocol.Statement, error) {
 		}
 		script, err := protocol.Parse(text)
 		if err != nil {
-			// A malformed statement poisons the batch; report at
-			// execution time by injecting a marker error.
-			return nil, fmt.Errorf("parse: %w", err)
+			if bad == nil {
+				bad = fmt.Errorf("parse: %w", err)
+			}
+			continue
 		}
 		for _, stmt := range script.Statements {
 			if stmt.Verb == "end" && stmt.Key == "" {
+				if bad != nil {
+					return nil, &badBatch{bad}
+				}
 				return batch, nil
 			}
 			batch = append(batch, stmt)
