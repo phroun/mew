@@ -181,6 +181,23 @@ type Desktop struct {
 	// System menu (always present, upper-left)
 	systemMenu *Menu
 
+	// Narration and the announcement trace: what becomes of an accessibility
+	// announcement. There is ONE AccessibilityManager with ONE OnAnnounce
+	// handler, and announcements come from every trinket on the desktop
+	// whoever put it there -- so this is the desktop's setting, not any one
+	// app's or any one connection's.
+	//
+	// narrate speaks them. announceTrace writes them into the status bar,
+	// which is a debugging affordance rather than an accessibility one: it
+	// shows what WOULD be said.
+	//
+	// speaker is how this host speaks, since the desktop itself knows no way
+	// to. A host that has one installs it (SetSpeaker); until one does,
+	// narration is a setting that reaches nothing.
+	narrate       bool
+	announceTrace bool
+	speaker       func(string)
+
 	// soleAppChromeSuppression, when enabled (SetSoleAppChromeSuppression), lets
 	// the sole-single-window-app condition hide the desktop chrome (Ψ menu, menu
 	// bar, status bar). Opt-in per host: a TUI host turns it on so a lone
@@ -548,6 +565,19 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.AddItem(NewMenuItem("&About Desktop").SetOnTriggered(func() {
 		d.showAboutDesktop()
 	}))
+
+	// Narration: whether the desktop speaks what it announces. It belongs to
+	// the desktop rather than to whichever app is in front -- there is one
+	// announcement handler and announcements come from everywhere -- so the Ψ
+	// menu is where it is turned on.
+	narration := NewMenuItem("&Narration").SetCheckable(true)
+	narration.SetOnTriggered(func() { d.SetNarration(!d.Narration()) })
+	menu.AddItem(narration)
+
+	// The tick has to be right whoever last changed it, which may be a client
+	// over the wire rather than this item.
+	menu.SetOnAboutToShow(func() { narration.SetChecked(d.Narration()) })
+
 	if open := d.connectionsOpener(); open != nil {
 		menu.AddItem(NewMenuItem("&Connections...").
 			SetCommand(core.CmdDesktopConnections).SetOnTriggered(open))
@@ -1222,6 +1252,92 @@ func (d *Desktop) AccessibilityManager() *core.AccessibilityManager {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.accessibilityManager
+}
+
+// SetSpeaker installs how this host speaks an announcement. The desktop knows
+// no way to on its own, so narration reaches nothing until a host offers one.
+func (d *Desktop) SetSpeaker(speak func(string)) {
+	d.mu.Lock()
+	d.speaker = speak
+	d.mu.Unlock()
+	d.applyAnnounce()
+}
+
+// Narration reports whether announcements are spoken.
+func (d *Desktop) Narration() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.narrate
+}
+
+// SetNarration turns speaking announcements on or off, and says so: a person
+// who needs this on cannot see the menu item's tick.
+func (d *Desktop) SetNarration(on bool) {
+	d.mu.Lock()
+	changed := d.narrate != on
+	d.narrate = on
+	d.mu.Unlock()
+	d.applyAnnounce()
+	if !changed {
+		return
+	}
+	if am := d.AccessibilityManager(); am != nil {
+		if on {
+			am.AnnouncePolite("Narration on")
+		} else {
+			am.AnnouncePolite("Narration off")
+		}
+	}
+}
+
+// AnnouncementTrace reports whether announcements are written to the status
+// bar as they happen.
+func (d *Desktop) AnnouncementTrace() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.announceTrace
+}
+
+// SetAnnouncementTrace turns the status-bar trace on or off. It shows what
+// would be said, for someone watching rather than listening.
+func (d *Desktop) SetAnnouncementTrace(on bool) {
+	d.mu.Lock()
+	d.announceTrace = on
+	d.mu.Unlock()
+	d.applyAnnounce()
+}
+
+// applyAnnounce installs the one handler the AccessibilityManager has, or
+// clears it when nothing is asked for.
+func (d *Desktop) applyAnnounce() {
+	am := d.AccessibilityManager()
+	if am == nil {
+		return
+	}
+	d.mu.RLock()
+	narrate, trace := d.narrate, d.announceTrace
+	d.mu.RUnlock()
+	if !narrate && !trace {
+		am.OnAnnounce = nil
+		return
+	}
+	am.OnAnnounce = func(a core.AccessibilityAnnouncement) {
+		d.mu.RLock()
+		narrate, trace, speak := d.narrate, d.announceTrace, d.speaker
+		d.mu.RUnlock()
+		if trace {
+			if sb := d.StatusBar(); sb != nil {
+				prefix := "\U0001F4E2"
+				if a.Priority == "assertive" {
+					prefix = "⚠️"
+				}
+				sb.SetText(fmt.Sprintf("%s [%s] %s", prefix, a.Priority, a.Message))
+			}
+		}
+		if narrate && a.Vocal && speak != nil {
+			speak(a.Message)
+		}
+	}
 }
 
 // Theme returns the current theme.
@@ -2157,7 +2273,10 @@ func (d *Desktop) SetConnectionsOpener(open func()) {
 	}
 	item := NewMenuItem("&Connections...").SetCommand(core.CmdDesktopConnections)
 	item.SetOnTriggered(open)
-	menu.InsertItem(1, item) // directly under About Desktop, which is item 0
+	// Item 0 is About Desktop and item 1 is Narration, so Connections goes
+	// third -- the order createSystemMenu builds when the opener was already
+	// installed.
+	menu.InsertItem(2, item)
 	if commands != nil {
 		menu.BindCommands(commands)
 	}

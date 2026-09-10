@@ -2,10 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/app"
@@ -140,72 +138,19 @@ func createMenus(desktop *trinkets.Desktop, application *app.Application) []*tri
 		showAboutDialog(desktop, application)
 	})
 
-	// Accessibility announcement routing. Replica discipline (slice
-	// 4): the handlers OWN these booleans - the app's record of the
-	// toggle intent - instead of reading the menu item's display-side
-	// Checked state. Both flip on the same activation, so the check
-	// mark and the behavior stay in step without a cross-seam read.
-	var showVisualAnnouncements, speakAnnouncements bool
-	var (
-		speechMu  sync.Mutex
-		speechCmd *exec.Cmd
-	)
-	updateAccessibilityHandler := func() {
-		am := desktop.AccessibilityManager()
-		if am == nil {
-			return
-		}
-		if !showVisualAnnouncements && !speakAnnouncements {
-			am.OnAnnounce = nil
-			return
-		}
-		am.OnAnnounce = func(announcement core.AccessibilityAnnouncement) {
-			if showVisualAnnouncements {
-				if statusBar := desktop.StatusBar(); statusBar != nil {
-					prefix := "📢"
-					if announcement.Priority == "assertive" {
-						prefix = "⚠️"
-					}
-					statusBar.SetText(fmt.Sprintf("%s [%s] %s", prefix, announcement.Priority, announcement.Message))
-				}
-			}
-			// Speech is throttled at the source (navigation announcements
-			// mark themselves non-vocal while the user arrows quickly); the
-			// status bar above still shows every one.
-			if speakAnnouncements && announcement.Vocal && runtime.GOOS == "darwin" {
-				go func(msg string) {
-					speechMu.Lock()
-					if speechCmd != nil && speechCmd.Process != nil {
-						_ = speechCmd.Process.Kill()
-						_ = speechCmd.Wait()
-					}
-					speechCmd = exec.Command("say", "-r", "250", msg)
-					speechMu.Unlock()
-					_ = speechCmd.Run()
-					speechMu.Lock()
-					speechCmd = nil
-					speechMu.Unlock()
-				}(announcement.Message)
-			}
-		}
-	}
+	// Accessibility announcement routing belongs to the desktop: there is one
+	// announcement handler and announcements come from every trinket on it, so
+	// an app that kept its own copy of the setting would be fighting whatever
+	// else set it. These items turn the desktop's own over.
+	//
+	// Narration is spoken by whatever speaker the host installed
+	// (Desktop.SetSpeaker); an in-process demo with none has the setting and
+	// nothing to say it with.
 	commands.Register("demo.view.announce", func() {
-		showVisualAnnouncements = !showVisualAnnouncements
-		updateAccessibilityHandler()
-		if showVisualAnnouncements {
-			if am := desktop.AccessibilityManager(); am != nil {
-				am.AnnouncePolite("Visual announcements enabled")
-			}
-		}
+		desktop.SetAnnouncementTrace(!desktop.AnnouncementTrace())
 	})
 	commands.Register("demo.view.speak", func() {
-		speakAnnouncements = !speakAnnouncements
-		updateAccessibilityHandler()
-		if speakAnnouncements {
-			if am := desktop.AccessibilityManager(); am != nil {
-				am.AnnouncePolite("Text to speech enabled")
-			}
-		}
+		desktop.SetNarration(!desktop.Narration())
 	})
 
 	return menus

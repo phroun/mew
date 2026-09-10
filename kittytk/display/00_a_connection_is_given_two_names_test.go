@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,8 +23,9 @@ import (
 	"github.com/phroun/kittytk/wire"
 )
 
-// dialDesktop runs a headless desktop and returns a connection to it.
-func dialDesktop(t *testing.T, appName string) *client.Conn {
+// servedDesktop runs a headless desktop with a display server on a socket, and
+// hands back the desktop, the socket, and how to stop it.
+func servedDesktop(t *testing.T) (*trinkets.Desktop, string, func()) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
@@ -49,23 +51,37 @@ func dialDesktop(t *testing.T, appName string) *client.Conn {
 		t.Fatal("desktop did not start")
 	}
 
+	var once sync.Once
+	return desktop, sock, func() {
+		once.Do(func() {
+			srv.Close()
+			desktop.Quit()
+			select {
+			case <-exited:
+			case <-time.After(5 * time.Second):
+				t.Error("desktop did not exit")
+			}
+		})
+	}
+}
+
+// dialSocket connects an app to a desktop already running.
+func dialSocket(t *testing.T, sock, appName string) *client.Conn {
+	t.Helper()
 	conn, err := client.Dial(sock, appName, func(string) {})
 	if err != nil {
-		srv.Close()
-		desktop.Quit()
 		t.Fatalf("dial: %v", err)
 	}
-	t.Cleanup(func() {
-		conn.Close()
-		srv.Close()
-		desktop.Quit()
-		select {
-		case <-exited:
-		case <-time.After(5 * time.Second):
-			t.Error("desktop did not exit")
-		}
-	})
+	t.Cleanup(func() { conn.Close() })
 	return conn
+}
+
+// dialDesktop runs a headless desktop and returns a connection to it.
+func dialDesktop(t *testing.T, appName string) *client.Conn {
+	t.Helper()
+	_, sock, done := servedDesktop(t)
+	t.Cleanup(done)
+	return dialSocket(t, sock, appName)
 }
 
 func TestTheNamesAreThereBeforeAnythingIsSaid(t *testing.T) {

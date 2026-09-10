@@ -205,6 +205,10 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 	}
 	s.promptLocal.Store(cfg.PromptLocal)
 	s.preTrustedOnly.Store(cfg.PreTrustedOnly)
+	// Narration is the desktop's setting; speaking it is this host's doing.
+	if runtime.GOOS == "darwin" {
+		desktop.SetSpeaker(speak)
+	}
 	s.onPolicy = cfg.OnPolicyChanged
 	s.policyOrigins = map[string]string{}
 	for name, origin := range cfg.PolicyOrigins {
@@ -311,15 +315,6 @@ type conn struct {
 	// solo marks a connection that asked (via the handshake) to be the
 	// whole display: its main window replaces the desktop entirely.
 	solo bool
-
-	// Accessibility routing state (the "Show/Speak Announcements"
-	// toggles): the connection owns the intent, and installs a desktop
-	// OnAnnounce handler reflecting it. Speech serializes through
-	// speechMu so a new utterance cancels the previous one.
-	announceVisual bool
-	announceSpeak  bool
-	speechMu       sync.Mutex
-	speechCmd      *exec.Cmd
 
 	// What the store was asked during a batch and will say when the batch is
 	// over: `set` runs with emission suppressed, so an answer to one waits here
@@ -675,14 +670,15 @@ func (c *conn) appHasMainWindow(except *window.Window) bool {
 // desktop-reaching actions a remote app can't perform through its own
 // trinket handles - the display does them on the app's behalf:
 //
-//	announce_visual   - toggle showing announcements in the status bar
-//	announce_speak    - toggle speaking announcements (macOS `say`)
+//	announce_visual   - toggle the desktop's announcement trace
+//	announce_speak    - toggle narration
 //
-// These two are the last of them, and they are here because they are the APP's
-// -- whether this app's announcements are shown or spoken -- while the state
-// they toggle lives on this connection rather than on the Application object.
-// Everything else that was a bare verb has an object now: the display's own
-// state and actions are the host object's (host_object.go).
+// These two are the last of them. What they toggle is the DESKTOP's -- there is
+// one announcement handler and announcements come from every trinket on it --
+// so they reach Desktop.SetNarration and Desktop.SetAnnouncementTrace, and the
+// Ψ menu's Narration item is the same setting from the other side. They are
+// still bare verbs only because they have not been given their spelling on the
+// host object yet.
 func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement {
 	rest := batch[:0:0]
 	for _, stmt := range batch {
@@ -692,11 +688,11 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 		}
 		switch stmt.Verb {
 		case "announce_visual":
-			c.announceVisual = !c.announceVisual
-			c.updateAnnounce()
+			d := c.server.desktop
+			d.SetAnnouncementTrace(!d.AnnouncementTrace())
 		case "announce_speak":
-			c.announceSpeak = !c.announceSpeak
-			c.updateAnnounce()
+			d := c.server.desktop
+			d.SetNarration(!d.Narration())
 		default:
 			rest = append(rest, stmt)
 		}
@@ -792,50 +788,34 @@ func applyTerminalTheme(w core.Trinket, dark bool) {
 	}
 }
 
-// updateAnnounce installs or clears the desktop's OnAnnounce handler to
-// reflect this connection's visual/speech toggles.
-func (c *conn) updateAnnounce() {
-	am := c.server.desktop.AccessibilityManager()
-	if am == nil {
-		return
-	}
-	if !c.announceVisual && !c.announceSpeak {
-		am.OnAnnounce = nil
-		return
-	}
-	am.OnAnnounce = func(a core.AccessibilityAnnouncement) {
-		if c.announceVisual {
-			if sb := c.server.desktop.StatusBar(); sb != nil {
-				prefix := "\U0001F4E2"
-				if a.Priority == "assertive" {
-					prefix = "⚠️"
-				}
-				sb.SetText(fmt.Sprintf("%s [%s] %s", prefix, a.Priority, a.Message))
-			}
-		}
-		if c.announceSpeak && a.Vocal && runtime.GOOS == "darwin" {
-			c.speak(a.Message)
-		}
-	}
-	// Announce the toggle itself so the change is perceptible.
-	am.AnnouncePolite("Announcements updated")
+// speaking is the one utterance in flight. Narration is the desktop's, so the
+// speech is too: a new announcement cancels the last whichever app raised it.
+var speaking struct {
+	mu  sync.Mutex
+	cmd *exec.Cmd
 }
 
-// speak voices a message via macOS `say`, cancelling any in-flight
-// utterance first (navigation throttling already thinned the stream).
-func (c *conn) speak(msg string) {
+// speak voices a message through macOS `say`, cancelling any in-flight
+// utterance first (navigation throttling has already thinned the stream). It is
+// what the display offers the desktop as its speaker (Desktop.SetSpeaker); a
+// host with a better way to speak installs that instead, and one with no way at
+// all leaves narration reaching nothing.
+func speak(msg string) {
 	go func() {
-		c.speechMu.Lock()
-		if c.speechCmd != nil && c.speechCmd.Process != nil {
-			_ = c.speechCmd.Process.Kill()
-			_ = c.speechCmd.Wait()
+		speaking.mu.Lock()
+		if speaking.cmd != nil && speaking.cmd.Process != nil {
+			_ = speaking.cmd.Process.Kill()
+			_ = speaking.cmd.Wait()
 		}
-		c.speechCmd = exec.Command("say", "-r", "250", msg)
-		c.speechMu.Unlock()
-		_ = c.speechCmd.Run()
-		c.speechMu.Lock()
-		c.speechCmd = nil
-		c.speechMu.Unlock()
+		cmd := exec.Command("say", "-r", "250", msg)
+		speaking.cmd = cmd
+		speaking.mu.Unlock()
+		_ = cmd.Run()
+		speaking.mu.Lock()
+		if speaking.cmd == cmd {
+			speaking.cmd = nil
+		}
+		speaking.mu.Unlock()
 	}()
 }
 
