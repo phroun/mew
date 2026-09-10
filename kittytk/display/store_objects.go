@@ -2,13 +2,14 @@ package display
 
 // The wire face of the app store, in the verbs the protocol already had.
 //
-// The store is an OBJECT, one per connection, whose id the handshake hands over
-// beside the application's. An item on it is an object too. So nothing here
-// needs a verb of its own:
+// The store is an OBJECT, one per connection, registered under the name `store`
+// the moment the connection opens and handed over by id in the handshake beside
+// the application's. An item on it is an object too. So nothing here needs a
+// verb of its own:
 //
-//	sub <store> store_blob store_done store_data store_gone store_error
-//	set <store> blobs={ new blob key="figaro" type=psl data="..." }
-//	ask <store> inventory                  what is in it
+//	sub store store_blob store_done store_data store_gone store_error
+//	set store blobs={ new blob key="figaro" type=psl data="..." }
+//	ask store inventory                    what is in it
 //	set <blob> feed="..."                  append, as a terminal is fed
 //	set <blob> data="..."                  replace
 //	ask <blob> bytes offset=2048           the chunk that starts there
@@ -24,7 +25,7 @@ package display
 // subscribed to. An inventory is a run of store_blob ending in a store_done, and
 // the hook fires on the first subscription of the run -- before the client has
 // subscribed to the type that ends it, which would then be filtered out. So the
-// inventory is asked for: `set <store> list`.
+// inventory is asked for: `ask store inventory`.
 //
 // A key beginning with the cache mark is discardable; that is the only
 // difference. See store.go.

@@ -10,10 +10,11 @@ import (
 // an ObjectID, see ObjectID) and accepts property sets like any window or
 // trinket. The app is never constructed over the wire - the connection
 // already has one - so there is no `new application`; instead the host
-// registers the existing instance into the session (Session.Register) and
-// hands the client its ID in the handshake. The client can then address it:
+// registers the existing instance into the session under the name `app`
+// (Session.RegisterAs) and hands the client its ID in the handshake as well.
+// The client can then address it either way:
 //
-//	set <appID> multiwindow contextonly name="Tools"
+//	set app multiwindow contextonly name="Tools"
 //
 // These three methods make *Application satisfy protocol.Object.
 //

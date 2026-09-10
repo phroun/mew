@@ -14,6 +14,19 @@ import (
 // frames statements out of a byte stream using the language's own
 // brace/string awareness.
 
+// The names a connection's own two given objects answer to from the moment it
+// opens. The handshake still carries their ids, and naming an id is still how
+// anything else the host hands over gets a name; these two are common enough
+// to be waiting.
+//
+// They are session keys, not reserved words: a client that wants either name
+// for something of its own takes it, and the object it displaced is still
+// there under the id the handshake gave.
+const (
+	AppName   = "app"
+	StoreName = "store"
+)
+
 // Reply reports server-assigned IDs for a request: top-level
 // correlation keys plus explicitly surfaced names (D11/D15). Extra
 // carries additional raw wire statements a verb wants delivered ahead

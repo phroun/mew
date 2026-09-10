@@ -43,6 +43,10 @@ const (
 	NumberValue = wire.NumberValue
 	StringValue = wire.StringValue
 	BlockValue  = wire.BlockValue
+
+	// The names a connection's application and store answer to.
+	AppName   = wire.AppName
+	StoreName = wire.StoreName
 )
 
 // Language functions.

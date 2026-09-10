@@ -87,6 +87,22 @@ func (s *Session) Register(obj Object) {
 	}
 }
 
+// RegisterAs registers an object and gives it a name in the key table, so a
+// client addresses it without first naming the id from the handshake: the
+// connection's application answers to `app` and its store to `store` the
+// moment the connection opens.
+//
+// The name is a session key like any other, which means a client that wants
+// it for something of its own takes it - `app=new window` shadows it, the
+// way re-keying anything else does.
+func (s *Session) RegisterAs(name string, obj Object) {
+	if obj == nil {
+		return
+	}
+	s.Register(obj)
+	s.keys[name] = obj.ID()
+}
+
 // Object returns the object registered under id, if any. The host uses it at
 // window-adoption time to resolve wire references such as a window's owner id.
 func (s *Session) Object(id uint64) (Object, bool) {

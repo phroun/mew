@@ -3,7 +3,8 @@ package main
 // The demo's store: what it asks the desktop it has kept for it, and the sample
 // material it puts there.
 //
-// Subscribing pushes the inventory, so the first thing the status bar says is
+// Subscribing opens the flow of answers; asking is what brings one. So the
+// demo subscribes, asks what it has, and the first thing the status bar says is
 // what last run left -- nothing, the first time. Then it writes the samples,
 // each write answering with what the item now is. Nothing here is UI: it is the
 // store seen from an app's end.
@@ -64,12 +65,16 @@ func byteRamp(laps int) []byte {
 // rest are appended.
 const storeChunk = 2048
 
-// stockTheStore subscribes -- which pushes the inventory -- and then writes the
-// samples. It runs off the main path: the window is up and usable while it
-// happens.
+// stockTheStore asks what the store already holds and then writes the samples,
+// waiting for the first answer to finish so what was there is not mixed into
+// what it puts there. It runs off the main path: the window is up and usable
+// while it happens.
 func (a *app) stockTheStore() {
 	a.shelf.reset("before")
 	a.watchStore()
+	if err := a.conn.Store().List(); err != nil {
+		return
+	}
 	go func() {
 		a.shelf.await()
 		a.shelf.reset("after")

@@ -8,15 +8,16 @@ package client
 // difference between what is kept and what is cached: one namespace, and the
 // name says how long the blob lives.
 //
-// Nothing here is a verb of its own. The store is an object whose id arrives in
-// the handshake, a blob in it is an object too, and the protocol's own verbs do
-// the work:
+// Nothing here is a verb of its own. The store is an object the display knows
+// by name from the moment the connection opens, a blob in it is an object too,
+// and the protocol's own verbs do the work:
 //
 //	conn.OnStore(client.StoreBlob, func(ev *wire.Event) { ... })
-//	conn.Store().Write("figaro", "psl", bundle)   // set <store> blobs={ new blob ... }
-//	conn.Blob(id).Append(more)                    // set <blob> feed="..."
-//	conn.Blob(id).Read(2048)                      // ask <blob> bytes offset=2048
-//	conn.Blob(id).Drop()                           // destroy <blob>
+//	conn.Store().List()                          // ask store inventory
+//	conn.Store().Write("figaro", "psl", bundle)  // set store blobs={ new blob ... }
+//	conn.Blob(id).Append(more)                   // set <blob> feed="..."
+//	conn.Blob(id).Read(2048)                     // ask <blob> bytes offset=2048
+//	conn.Blob(id).Drop()                         // destroy <blob>
 //
 // Every one of these SENDS. The answers arrive as events on the store, because a
 // blob comes back in pieces and a call that returned one of them would have to
@@ -46,15 +47,18 @@ const (
 
 // StoreID returns the ObjectID of this connection's store, as reported in the
 // handshake. It is 0 for a connection that has none (an in-process one, which
-// has no handshake).
+// has no handshake). The display also knows the store by name, so `ask store
+// inventory` says the same thing as this id does.
 func (c *Conn) StoreID() uint64 { return c.storeID }
 
 // Store is the connection's store as a handle: an object like any other, so
 // Set and On reach it directly for anything this type does not wrap.
-func (c *Conn) Store() Store { return Store{Handle{c: c, id: c.storeID}} }
+func (c *Conn) Store() Store { return Store{c.given(c.storeID, wire.StoreName)} }
 
 // Blob is one blob of the store by the id an answer named it with. An app never
-// invents one of these: it learns ids from store_blob and store_data events.
+// invents one of these: it learns ids from store_blob and store_data events,
+// and a blob has no name of its own -- the store's keys name what is IN it,
+// not the handles it hands out for writing.
 func (c *Conn) Blob(id uint64) Blob { return Blob{Handle{c: c, id: id}} }
 
 // OnStore registers a handler for one of the store's answers and opens the flow

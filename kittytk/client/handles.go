@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/phroun/kittytk/wire"
 )
@@ -13,6 +14,12 @@ import (
 type Handle struct {
 	c  *Conn
 	id uint64
+	// name is the session key the display already knows this object by, used
+	// in place of the id in the statements sent for it. Only the two objects
+	// the connection is given -- its application and its store -- have one;
+	// everything a client builds is addressed by the id its key surfaced.
+	// Events are routed by id either way.
+	name string
 }
 
 // ID returns the object's wire identity.
@@ -21,22 +28,30 @@ func (h Handle) ID() uint64 { return h.id }
 // Valid reports whether the handle references anything.
 func (h Handle) Valid() bool { return h.c != nil && h.id != 0 }
 
+// addr is how a statement names this object.
+func (h Handle) addr() string {
+	if h.name != "" {
+		return h.name
+	}
+	return strconv.FormatUint(h.id, 10)
+}
+
 // Set applies raw property text to the object: h.Set(`caption="Hi" !enabled`).
 // The typed setters below are preferred; this is the escape hatch
 // that keeps the full vocabulary reachable.
-func (h Handle) Set(args string) error { return h.c.set(h.id, args) }
+func (h Handle) Set(args string) error { return h.c.set(h.addr(), args) }
 
 // Destroy removes the object (detaches trinkets, closes windows).
 func (h Handle) Destroy() error {
-	_, err := h.c.Exec(fmt.Sprintf("destroy %d", h.id))
+	_, err := h.c.Exec("destroy " + h.addr())
 	return err
 }
 
 // Ask puts a question to the object: h.Ask("bytes offset=2048") sends
-// `ask <id> bytes offset=2048`. The answer arrives as the events the question
-// declares it answers with, so register for those before asking.
+// `ask <target> bytes offset=2048`. The answer arrives as the events the
+// question declares it answers with, so register for those before asking.
 func (h Handle) Ask(question string) error {
-	_, err := h.c.Exec(fmt.Sprintf("ask %d %s", h.id, question))
+	_, err := h.c.Exec(fmt.Sprintf("ask %s %s", h.addr(), question))
 	return err
 }
 

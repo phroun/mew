@@ -423,7 +423,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	// (A future step could re-prompt instead of rejecting.)
 	application.SetWireNameChangeAllowed(req.Local || s.store.allowsAllApps(req))
 	c.app = application
-	c.session.Register(application)
+	c.session.RegisterAs(protocol.AppName, application)
 	s.desktop.Post(func() { s.desktop.AddApplication(application) })
 	defer s.desktop.Post(func() { c.teardown() })
 
@@ -434,7 +434,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	// and handed over in the same breath, so an app addresses what it has kept
 	// without a verb of its own.
 	c.store = newStoreObject(c, storeObjectID())
-	c.session.Register(c.store)
+	c.session.RegisterAs(protocol.StoreName, c.store)
 
 	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d store=%d",
 		sessionID, application.ObjectID(), c.store.ID()))

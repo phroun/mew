@@ -114,23 +114,35 @@ func (c *Conn) Closed() <-chan struct{} { return c.closed }
 
 // AppID returns the ObjectID of this connection's application, as reported by
 // the display service in the handshake. It is 0 for in-process connections
-// (which have no handshake). Use it to address application-wide properties -
-// e.g. c.Exec(fmt.Sprintf("set %d multiwindow", c.AppID())), or SetApp.
+// (which have no handshake). The display also knows the application by name,
+// so `set app multiwindow` says the same thing as this id does; the id is
+// what a client wants when it has taken the name for something else.
 func (c *Conn) AppID() uint64 { return c.appID }
 
 // App is this connection's application object as a handle: what app-wide
 // properties are set through, and what it raises events on.
-func (c *Conn) App() Handle { return Handle{c: c, id: c.appID} }
+func (c *Conn) App() Handle { return c.given(c.appID, wire.AppName) }
+
+// given is a handle for one of the two objects the display hands over, which
+// it already knows by name. A connection without a handshake was handed
+// neither, and addressing one by a name the display never registered would
+// only produce a puzzling refusal, so such a handle keeps to the id it has.
+func (c *Conn) given(id uint64, name string) Handle {
+	if id == 0 {
+		return Handle{c: c}
+	}
+	return Handle{c: c, id: id, name: name}
+}
 
 // SetApp applies application-wide properties to this connection's app with the
 // same syntax as any object: SetApp("multiwindow contextonly") sends
-// `set <appID> multiwindow contextonly`. It errors before the handshake has
+// `set app multiwindow contextonly`. It errors before the handshake has
 // assigned an app ID (in-process connections have none).
 func (c *Conn) SetApp(props string) (*wire.Reply, error) {
 	if c.appID == 0 {
 		return nil, fmt.Errorf("SetApp: no application id (in-process connection)")
 	}
-	return c.Exec(fmt.Sprintf("set %d %s", c.appID, props))
+	return c.Exec(fmt.Sprintf("set %s %s", wire.AppName, props))
 }
 
 // markClosed fires the Closed channel exactly once.
@@ -305,9 +317,10 @@ func (c *Conn) stateOf(id uint64) *objState {
 }
 
 // set sends a set statement for one object (fire-and-forget; D20
-// guarantees it will not echo back).
-func (c *Conn) set(id uint64, args string) error {
-	_, err := c.Exec(fmt.Sprintf("set %d %s", id, args))
+// guarantees it will not echo back). target is whatever names it: the id a
+// key surfaced, or the name the display already knows it by.
+func (c *Conn) set(target, args string) error {
+	_, err := c.Exec(fmt.Sprintf("set %s %s", target, args))
 	return err
 }
 
