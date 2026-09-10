@@ -44,9 +44,10 @@ const (
 	StringValue = wire.StringValue
 	BlockValue  = wire.BlockValue
 
-	// The names a connection's application and store answer to.
+	// The names a connection's application, store and host answer to.
 	AppName   = wire.AppName
 	StoreName = wire.StoreName
+	HostName  = wire.HostName
 )
 
 // Language functions.

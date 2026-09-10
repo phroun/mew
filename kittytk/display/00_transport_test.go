@@ -102,7 +102,7 @@ func TestTCPLoopback(t *testing.T) {
 	// it by exec so we don't need to find the trinket.
 	// (The unix test already proves event plumbing; here we just prove
 	// the transport carries a full session.)
-	if _, err := conn.Exec("theme"); err != nil {
+	if err := conn.Host().Set("theme"); err != nil {
 		t.Fatalf("exec over tcp: %v", err)
 	}
 }

@@ -64,6 +64,11 @@ type Conn struct {
 	// through it (see Conn.Store).
 	storeID uint64
 
+	// hostID is this connection's handle on the display, reported in the same
+	// handshake. What it carries belongs to no app in particular: the theme,
+	// the desktop's font and status bar (see Conn.Host).
+	hostID uint64
+
 	// closed fires once when the transport disconnects (remote) or
 	// Close is called, so callers can block on the connection's life.
 	closed    chan struct{}
@@ -122,6 +127,16 @@ func (c *Conn) AppID() uint64 { return c.appID }
 // App is this connection's application object as a handle: what app-wide
 // properties are set through, and what it raises events on.
 func (c *Conn) App() Handle { return c.given(c.appID, wire.AppName) }
+
+// HostID returns the ObjectID of this connection's handle on the display, as
+// reported in the handshake. It is 0 for a connection that has none (an
+// in-process one, which has no handshake).
+func (c *Conn) HostID() uint64 { return c.hostID }
+
+// Host is the display itself as a handle: the terminal's theme, the desktop's
+// font and status bar, whether there is a desktop at all. One of each exists
+// and everyone connected shares it, so what is set here is set for all of them.
+func (c *Conn) Host() Handle { return c.given(c.hostID, wire.HostName) }
 
 // given is a handle for one of the two objects the display hands over, which
 // it already knows by name. A connection without a handshake was handed

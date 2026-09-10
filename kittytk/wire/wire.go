@@ -14,17 +14,19 @@ import (
 // frames statements out of a byte stream using the language's own
 // brace/string awareness.
 
-// The names a connection's own two given objects answer to from the moment it
-// opens. The handshake still carries their ids, and naming an id is still how
-// anything else the host hands over gets a name; these two are common enough
-// to be waiting.
+// The names a connection's given objects answer to from the moment it opens:
+// its application, its store, and its handle on the display everyone shares.
+// The handshake still carries their ids, and naming an id is still how anything
+// else the host hands over gets a name; these three are common enough to be
+// waiting.
 //
-// They are session keys, not reserved words: a client that wants either name
-// for something of its own takes it, and the object it displaced is still
+// They are session keys, not reserved words: a client that wants one of these
+// names for something of its own takes it, and the object it displaced is still
 // there under the id the handshake gave.
 const (
 	AppName   = "app"
 	StoreName = "store"
+	HostName  = "host"
 )
 
 // Reply reports server-assigned IDs for a request: top-level

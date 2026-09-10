@@ -58,9 +58,9 @@ func (a *app) wireMainWindow() {
 	})
 	ui.Checkbox("dfont").OnToggle(func(s protocol.FlagState) {
 		if s == protocol.FlagTrue {
-			_, _ = a.conn.Exec("desktopfont tuesday")
+			_ = a.conn.Host().Set("desktopfont=tuesday")
 		} else {
-			_, _ = a.conn.Exec("desktopfont default")
+			_ = a.conn.Host().Set("desktopfont=default")
 		}
 	})
 	ui.Checkbox("grid").OnToggle(func(s protocol.FlagState) {
@@ -347,7 +347,7 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.edit.rawkey", func() { _, _ = c.Exec("rawkey") })
 
 	// View menu.
-	c.OnCommand("demo.view.theme", func() { _, _ = c.Exec("theme") })
+	c.OnCommand("demo.view.theme", func() { _ = c.Host().Set("theme") })
 	c.OnCommand("demo.view.announce", func() { _, _ = c.Exec("announce_visual") })
 	c.OnCommand("demo.view.speak", func() { _, _ = c.Exec("announce_speak") })
 

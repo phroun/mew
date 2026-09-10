@@ -221,7 +221,7 @@ type Desktop struct {
 	//   - launched ALONE, with no application of its own (see RunOn). A host
 	//     that starts with an app is that app's frame, and goes when it goes;
 	//     a host that starts bare was run as a desktop environment.
-	//   - revealed later, by show_desktop / the `spawndesktop` verb. Asking
+	//   - revealed later, by show_desktop / `set host desktop`. Asking
 	//     for the desktop is asking for somewhere to go back TO, which turns
 	//     an app's frame into a desktop environment after the fact.
 	desktopEnvironment bool
@@ -1638,9 +1638,9 @@ func (d *Desktop) RaiseToFront() {
 // again) and re-homes the window that filled it as an ordinary tearable
 // torn-off window at the same screen rectangle - so it floats over the
 // freshly revealed desktop with its redock handle and can be dragged in to
-// dock. Any client can request this over the protocol (the `spawndesktop`
-// verb); it is a no-op when not in solo mode or when the platform can't
-// host surfaces. Runs on the platform thread.
+// dock. Any client can request this over the protocol (`set host desktop`);
+// it is a no-op when not in solo mode or when the platform can't host
+// surfaces. Runs on the platform thread.
 func (d *Desktop) ExitSoloMode() {
 	d.mu.RLock()
 	solo := d.solo
@@ -1730,7 +1730,7 @@ func (d *Desktop) ExitSoloMode() {
 // torn-off window (preferring an app's main window) and hosts it filling
 // the primary surface borderless, dismissing the desktop. This is the
 // inverse of ExitSoloMode - "promote a detached app" - so any client can
-// toggle the root back to solo over the protocol (the `gosolo` verb). A
+// put the desktop away again over the protocol (`set host !desktop`). A
 // no-op when already solo or when no detached window exists. The primary
 // surface adopts the promoted window's screen rectangle, so the app stays
 // exactly where it was floating rather than snapping to where the desktop

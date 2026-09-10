@@ -1,15 +1,14 @@
-// Command spawndesktop is a throwaway display-protocol client that asks a
-// running display service to reveal a desktop, then exits. It links only
-// client + protocol (no rendering).
+// Command spawndesktop is a throwaway display-protocol client that shows or
+// hides a running display service's desktop, then exits. It links only client +
+// protocol (no rendering).
 //
-// When a solo app owns the whole display, running this converts it into an
-// ordinary torn-off, dockable window with a desktop behind it - without the
-// solo app having to cooperate. Any process on the protocol can request the
-// same; this is just the smallest possible one.
+// When one app's window is filling the whole display, showing the desktop
+// converts it into an ordinary torn-off, dockable window with a desktop behind
+// it - without that app having to cooperate. Any process on the protocol can
+// ask; this is just the smallest possible one.
 //
-//	# desktop is currently a solo app filling the screen
-//	go run ./examples/spawndesktop           # reveal the desktop
-//	go run ./examples/spawndesktop -solo      # the inverse: go back to solo
+//	go run ./examples/spawndesktop           # show the desktop
+//	go run ./examples/spawndesktop -hide     # hide it again
 package main
 
 import (
@@ -21,13 +20,8 @@ import (
 )
 
 func main() {
-	toSolo := flag.Bool("solo", false, "promote a detached app back to solo instead of revealing a desktop")
+	hide := flag.Bool("hide", false, "hide the desktop instead of showing it")
 	flag.Parse()
-
-	verb := "spawndesktop"
-	if *toSolo {
-		verb = "gosolo"
-	}
 
 	path := client.DefaultSocketPath()
 	conn, err := client.Dial(path, "spawndesktop", nil)
@@ -37,8 +31,14 @@ func main() {
 	}
 	defer conn.Close()
 
-	if _, err := conn.Exec(verb); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", verb, err)
+	// Whether the desktop is showing belongs to the display, so it is a
+	// property of the host object -- mew's show_desktop and hide_desktop.
+	prop := "desktop"
+	if *hide {
+		prop = "!desktop"
+	}
+	if err := conn.Host().Set(prop); err != nil {
+		fmt.Fprintf(os.Stderr, "set host %s: %v\n", prop, err)
 		os.Exit(1)
 	}
 }

@@ -119,9 +119,10 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
 	}
-	// The handshake carries the ObjectIDs of the two things this connection
-	// arrives with rather than builds: its Application, and its store (see
-	// Conn.AppID / Conn.SetApp, Conn.StoreID / Conn.Store).
+	// The handshake carries the ObjectIDs of the things this connection arrives
+	// with rather than builds: its Application, its store, and its handle on
+	// the display (see Conn.AppID / Conn.SetApp, Conn.StoreID / Conn.Store,
+	// Conn.HostID / Conn.Host). The display knows each by name as well.
 	for _, a := range script.Statements[0].Args {
 		if a.Value == nil || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
 			continue
@@ -131,6 +132,8 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 			c.appID = uint64(a.Value.Number)
 		case "store":
 			c.storeID = uint64(a.Value.Number)
+		case "host":
+			c.hostID = uint64(a.Value.Number)
 		}
 	}
 	dbg("dial app=%q: welcome received (app id=%d), connection ready", appName, c.appID)

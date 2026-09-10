@@ -296,6 +296,10 @@ type conn struct {
 	// its id, and everything it holds is addressed through it.
 	store *storeObject
 
+	// The connection's handle on the display, as a wire object: what an app
+	// asks for that belongs to nobody's app in particular.
+	host *hostObject
+
 	// Who this connection is, as the folders on disk are keyed: the client's
 	// identity and the name the app was ADMITTED under. The app may rename
 	// itself over the wire where its trust allows; its shelf does not move
@@ -436,10 +440,15 @@ func (s *Server) serveConn(nc net.Conn) {
 	c.store = newStoreObject(c, storeObjectID())
 	c.session.RegisterAs(protocol.StoreName, c.store)
 
-	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d store=%d",
-		sessionID, application.ObjectID(), c.store.ID()))
-	dbg("welcome sent session=%d app=%q id=%d store=%d",
-		sessionID, appName, application.ObjectID(), c.store.ID())
+	// And its handle on the display, registered the same way: one object per
+	// connection onto the one desktop they all share.
+	c.host = newHostObject(c, hostObjectID())
+	c.session.RegisterAs(protocol.HostName, c.host)
+
+	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d store=%d host=%d",
+		sessionID, application.ObjectID(), c.store.ID(), c.host.ID()))
+	dbg("welcome sent session=%d app=%q id=%d store=%d host=%d",
+		sessionID, appName, application.ObjectID(), c.store.ID(), c.host.ID())
 
 	// Batch loop: read until end, execute on the UI thread, reply.
 	for {
@@ -637,13 +646,15 @@ func (c *conn) appHasMainWindow(except *window.Window) bool {
 //	cut/copy/paste/   - the standard edit actions on the focused trinket
 //	  selectall
 //	tile/cascade      - arrange the desktop's windows
-//	spawndesktop      - leave solo mode: reveal a desktop, solo window
-//	                    becomes a torn-off dockable window
-//	gosolo            - the inverse: promote a detached app back to solo
-//	theme             - toggle the dark/light terminal theme (+ retheme)
-//	desktopfont NAME  - set the desktop font (tuesday | default)
 //	announce_visual   - toggle showing announcements in the status bar
 //	announce_speak    - toggle speaking announcements (macOS `say`)
+//
+// What is left here has no object of its own yet. The edit actions and rawkey
+// reach whatever has the focus, which may be another app's; tile and cascade
+// are the desktop window manager's, and an MDI pane already spells them as
+// properties for the windows it hosts; the two announce toggles are the app's.
+// The display's own -- theme, the desktop font, the status bar, showing and
+// hiding the desktop -- moved onto the host object (see host_object.go).
 func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement {
 	d := c.server.desktop
 	rest := batch[:0:0]
@@ -655,10 +666,6 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 		switch stmt.Verb {
 		case "rawkey":
 			d.ActivatePassNextKeyToTrinket()
-		case "status":
-			if sb := d.StatusBar(); sb != nil {
-				sb.SetText(argString(stmt, "text"))
-			}
 		case "cut", "copy", "paste", "selectall":
 			editAction(d.FocusedTrinket(), stmt.Verb)
 		case "tile":
@@ -669,18 +676,6 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 			if wm := d.WindowManager(); wm != nil {
 				wm.CascadeWindows()
 			}
-		case "spawndesktop":
-			// Leave solo mode: reveal a desktop and turn the solo window
-			// into a torn-off, dockable window. Any client may request it.
-			d.ExitSoloMode()
-		case "gosolo":
-			// The inverse: promote a detached app back to solo (fill the
-			// display, dismiss the desktop).
-			d.EnterSoloFromDesktop()
-		case "theme":
-			toggleTerminalTheme(d)
-		case "desktopfont":
-			d.SetFont(namedDesktopFont(firstWord(stmt)))
 		case "announce_visual":
 			c.announceVisual = !c.announceVisual
 			c.updateAnnounce()

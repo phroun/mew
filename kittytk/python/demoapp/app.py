@@ -45,7 +45,7 @@ class App:
         self.conn.close()
 
     def set_status(self, text: str):
-        self.conn.exec("status text=" + quote(text))
+        self.conn.exec("set host status=" + quote(text))
 
     # --- primary application ---------------------------------------------
 
@@ -70,7 +70,7 @@ class App:
         ui.checkbox("wfont").on_toggle(wfont)
 
         def dfont(state):
-            self.conn.exec("desktopfont tuesday" if state == FlagState.TRUE else "desktopfont default")
+            self.conn.exec("set host desktopfont=tuesday" if state == FlagState.TRUE else "set host desktopfont=default")
         ui.checkbox("dfont").on_toggle(dfont)
 
         def grid(state):
@@ -101,7 +101,7 @@ class App:
         c.on_command("demo.edit.selectall", lambda: c.exec("selectall"))
         c.on_command("demo.edit.rawkey", lambda: c.exec("rawkey"))
 
-        c.on_command("demo.view.theme", lambda: c.exec("theme"))
+        c.on_command("demo.view.theme", lambda: c.exec("set host theme"))
         c.on_command("demo.view.announce", lambda: c.exec("announce_visual"))
         c.on_command("demo.view.speak", lambda: c.exec("announce_speak"))
 

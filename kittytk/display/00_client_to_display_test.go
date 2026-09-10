@@ -363,12 +363,10 @@ mb=new menubar children={new menu caption="File" children={new menuitem caption=
 	}
 }
 
-// The spawndesktop / gosolo app-verbs are consumed by the display (they
-// reach the desktop's solo toggle), not passed through to the protocol
-// session - which would reject them as unknown verbs. Their visual effect
-// needs a real platform (covered by trinkets msPlatform tests); here we only
-// assert the wiring accepts them.
-func TestSpawnDesktopVerbsAccepted(t *testing.T) {
+// Showing and hiding the desktop is a property of the host object. Its visual
+// effect needs a real platform (covered by trinkets msPlatform tests); here we
+// only assert the wiring accepts both directions.
+func TestShowingAndHidingTheDesktopIsAccepted(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
 	desktop := trinkets.NewDesktop()
@@ -401,9 +399,9 @@ func TestSpawnDesktopVerbsAccepted(t *testing.T) {
 	}
 	defer conn.Close()
 
-	for _, verb := range []string{"spawndesktop", "gosolo"} {
-		if _, err := conn.Exec(verb); err != nil {
-			t.Errorf("%s verb rejected: %v", verb, err)
+	for _, prop := range []string{"desktop", "!desktop"} {
+		if err := conn.Host().Set(prop); err != nil {
+			t.Errorf("set host %s rejected: %v", prop, err)
 		}
 	}
 }

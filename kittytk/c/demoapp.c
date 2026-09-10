@@ -47,7 +47,7 @@ typedef struct App {
 static void set_status(App *a, const char *text) {
     char *q = kt_quote(text);
     char *src = malloc(strlen(q) + 16);
-    sprintf(src, "status text=%s", q);
+    sprintf(src, "set host status=%s", q);
     kt_exec(a->conn, src);
     free(src);
     free(q);
@@ -71,7 +71,7 @@ static void on_wfont(const kt_event *ev, void *ud) {
 static void on_dfont(const kt_event *ev, void *ud) {
     App *a = ud;
     kt_exec(a->conn, kt_event_flag(ev, "checked") == KT_FLAG_TRUE
-            ? "desktopfont tuesday" : "desktopfont default");
+            ? "set host desktopfont=tuesday" : "set host desktopfont=default");
 }
 static void on_grid(const kt_event *ev, void *ud) {
     App *a = ud;
@@ -361,7 +361,7 @@ int main(int argc, char **argv) {
                    v_theme = {0}, v_announce = {0}, v_speak = {0}, v_tile = {0}, v_cascade = {0};
 #define VC(var, verbstr) var.a = &a; var.verb = verbstr;
     VC(v_cut, "cut") VC(v_copy, "copy") VC(v_paste, "paste") VC(v_sall, "selectall")
-    VC(v_rawkey, "rawkey") VC(v_theme, "theme") VC(v_announce, "announce_visual")
+    VC(v_rawkey, "rawkey") VC(v_theme, "set host theme") VC(v_announce, "announce_visual")
     VC(v_speak, "announce_speak") VC(v_tile, "tile") VC(v_cascade, "cascade")
 
     kt_on_command(a.conn, "demo.file.new", open_terminal_window, &actx);
