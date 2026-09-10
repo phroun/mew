@@ -136,13 +136,14 @@ func (s *Session) Execute(script *Script, f Factory) (*Reply, error) {
 }
 
 func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) error {
-	// Surfacing reference: key=path (D15). Also registers the surfaced
-	// name as a session key, so later verbs can use the short name
-	// (`wcb=root.cb` then `sub wcb toggle`).
+	// Surfacing reference: key=path or key=id (D15). Also registers the
+	// surfaced name as a session key, so later verbs can use the short name
+	// (`wcb=root.cb` then `sub wcb toggle`; `store=1099511627777` then
+	// `ask store inventory`).
 	if stmt.Verb == "" {
-		id, ok := s.keys[stmt.Ref]
-		if !ok {
-			return fmt.Errorf("surfacing %s=%s: unknown key path %q", stmt.Key, stmt.Ref, stmt.Ref)
+		id, err := s.surfaced(stmt)
+		if err != nil {
+			return err
 		}
 		st.reply.IDs[stmt.Key] = id
 		s.keys[stmt.Key] = id
@@ -302,6 +303,27 @@ func (s *Session) resolveTarget(verb string, args []*Arg) (Object, string, []*Ar
 		return nil, "", nil, fmt.Errorf("%s: no object with id %d in this session", verb, id)
 	}
 	return obj, keyPath, args[1:], nil
+}
+
+// surfaced resolves a `key=path` or `key=id` statement to the object the
+// name is about to stand for. A path is one this session already knows; an
+// id must name an object this session holds, which is what keeps a client
+// to the objects it built and the ones the host registered for it -- ids
+// are a global counter, so another connection's are perfectly guessable and
+// reach nothing.
+func (s *Session) surfaced(stmt *Statement) (uint64, error) {
+	if stmt.Ref != "" {
+		id, ok := s.keys[stmt.Ref]
+		if !ok {
+			return 0, fmt.Errorf("surfacing %s=%s: unknown key path %q", stmt.Key, stmt.Ref, stmt.Ref)
+		}
+		return id, nil
+	}
+	if _, ok := s.objects[stmt.RefID]; !ok {
+		return 0, fmt.Errorf("surfacing %s=%d: no object with id %d in this session",
+			stmt.Key, stmt.RefID, stmt.RefID)
+	}
+	return stmt.RefID, nil
 }
 
 // forget drops an object and every key that referenced it.

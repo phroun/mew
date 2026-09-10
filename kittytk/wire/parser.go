@@ -78,11 +78,19 @@ type Arg struct {
 //	verb args...             (Key="", Verb=verb)
 //	key=verb args...         (Key=key, Verb=verb)
 //	key=path                 (Key=key, Verb="", Ref=path - D15 surfacing)
+//	key=id                   (Key=key, Verb="", RefID=id - D15 surfacing)
+//
+// The two surfacing forms name the same thing from the two directions a
+// client can already reach an object: a key path it built, or an id the
+// host handed it (the app and the store arrive in the handshake as bare
+// numbers). Either way the name goes in the session's key table, so what
+// follows addresses it the way it addresses anything else.
 type Statement struct {
-	Key  string
-	Verb string
-	Ref  string
-	Args []*Arg
+	Key   string
+	Verb  string
+	Ref   string
+	RefID uint64
+	Args  []*Arg
 }
 
 // Script is a sequence of statements (a request body or a {} block).
@@ -416,6 +424,23 @@ func (p *parser) parseStatement(inBlock bool) (*Statement, error) {
 	if !p.eof() && p.peek() == '=' {
 		p.advance() // '='
 		p.skipInline()
+		// key=id: a name for an object the host handed over as a number.
+		// Nothing follows it - an id is not a verb, so there is nothing
+		// for arguments to apply to.
+		if !p.eof() && isNumberStart(p.peek()) {
+			v, err := p.parseNumber()
+			if err != nil {
+				return nil, err
+			}
+			if !v.IsInt || v.Number < 0 {
+				return nil, p.errf("%q= expected an object id", first)
+			}
+			if !p.atStatementEnd(inBlock) {
+				return nil, p.errf("%q=%d takes nothing after it: an id is not a command",
+					first, uint64(v.Number))
+			}
+			return &Statement{Key: first, RefID: uint64(v.Number)}, nil
+		}
 		if p.eof() || !isWordStart(p.peek()) {
 			return nil, p.errf("expected command or reference after %q=", first)
 		}
