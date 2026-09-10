@@ -395,7 +395,7 @@ mb=new menubar children={
         new menuitem caption="&Toolbar" checkable checked
         new menuitem caption="&Status Bar" checkable checked
         new menuitem separator
-        new menuitem caption="&Light/Dark Theme" shortcut="^T" action=demo.view.theme
+        new menuitem caption="&Light/Dark Theme" shortcut="^T" checkable checked action=demo.view.theme
         new menuitem separator
         new menuitem caption="Show A&nnouncements in Status Bar" checkable action=demo.view.announce
         new menuitem caption="Speak Announcements" checkable action=demo.view.speak

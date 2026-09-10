@@ -40,6 +40,7 @@ typedef struct App {
     int mdi_count;
     int dock_seq;
     DockSlot dock[MAX_DOCK];
+    int dark;                 /* what the View menu believes the theme is */
     volatile int quit;
     pthread_mutex_t mu;
 } App;
@@ -100,6 +101,15 @@ static void spawn_mdi_child(App *a);
 
 typedef struct { App *a; } AppCtx;
 static void on_mdi_spawn(void *ud) { spawn_mdi_child(((AppCtx *)ud)->a); }
+
+/* The display's theme is a property with two values and nothing reads it back,
+   so the item keeps its own account: the display starts dark, which is what the
+   item is built ticked to say. */
+static void on_theme(void *ud) {
+    App *a = ((AppCtx *)ud)->a;
+    a->dark = !a->dark;
+    kt_exec(a->conn, a->dark ? "set host dark" : "set host !dark");
+}
 
 static void on_mdi_set(void *ud) { VerbCtx *v = ud; char s[32]; snprintf(s, sizeof s, "%s", v->verb); kt_set(v->a->conn, v->a->mdi, s); }
 
@@ -315,6 +325,7 @@ int main(int argc, char **argv) {
 
     App a;
     memset(&a, 0, sizeof a);
+    a.dark = 1;               /* the display starts dark; the menu item is ticked */
     pthread_mutex_init(&a.mu, NULL);
     char *path = kt_default_socket_path();
     a.path = path;
@@ -358,10 +369,10 @@ int main(int argc, char **argv) {
     static AppCtx actx;
     actx.a = &a;
     static VerbCtx v_cut = {0}, v_copy = {0}, v_paste = {0}, v_sall = {0}, v_rawkey = {0},
-                   v_theme = {0}, v_announce = {0}, v_speak = {0}, v_tile = {0}, v_cascade = {0};
+                   v_announce = {0}, v_speak = {0}, v_tile = {0}, v_cascade = {0};
 #define VC(var, verbstr) var.a = &a; var.verb = verbstr;
     VC(v_cut, "cut") VC(v_copy, "copy") VC(v_paste, "paste") VC(v_sall, "selectall")
-    VC(v_rawkey, "rawkey") VC(v_theme, "set host theme") VC(v_announce, "announce_visual")
+    VC(v_rawkey, "rawkey") VC(v_announce, "announce_visual")
     VC(v_speak, "announce_speak") VC(v_tile, "tile") VC(v_cascade, "cascade")
 
     kt_on_command(a.conn, "demo.file.new", open_terminal_window, &actx);
@@ -370,7 +381,7 @@ int main(int argc, char **argv) {
     kt_on_command(a.conn, "demo.edit.paste", on_verb, &v_paste);
     kt_on_command(a.conn, "demo.edit.selectall", on_verb, &v_sall);
     kt_on_command(a.conn, "demo.edit.rawkey", on_verb, &v_rawkey);
-    kt_on_command(a.conn, "demo.view.theme", on_verb, &v_theme);
+    kt_on_command(a.conn, "demo.view.theme", on_theme, &actx);
     kt_on_command(a.conn, "demo.view.announce", on_verb, &v_announce);
     kt_on_command(a.conn, "demo.view.speak", on_verb, &v_speak);
     kt_on_command(a.conn, "demo.window.new", on_new_window, &actx);

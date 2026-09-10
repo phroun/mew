@@ -745,10 +745,9 @@ func editAction(w core.Trinket, verb string) {
 	}
 }
 
-// toggleTerminalTheme flips the active dark/light terminal theme and
+// setTerminalTheme puts the display in the dark or the light terminal theme and
 // repaints; embedded terminals follow via their own palette.
-func toggleTerminalTheme(d *trinkets.Desktop) {
-	dark := style.ActiveTermTheme() == style.TermThemeLight
+func setTerminalTheme(d *trinkets.Desktop, dark bool) {
 	if dark {
 		style.SetActiveTermTheme(style.TermThemeDark)
 	} else {

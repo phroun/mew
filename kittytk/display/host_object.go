@@ -7,9 +7,9 @@ package display
 // connected shares it. The connection is given a host object under the name
 // `host`, alongside its application and its store:
 //
-//	set host theme                 toggle the terminal's dark/light theme
-//	set host desktop               show the desktop  (mew's show_desktop)
-//	set host !desktop              hide it again     (mew's hide_desktop)
+//	set host dark  / set host !dark   the terminal's theme, dark or light
+//	set host desktop                  show the desktop (mew's show_desktop)
+//	set host !desktop                 hide it again    (mew's hide_desktop)
 //	set host desktopfont=tuesday   tuesday, or default
 //	set host status="Ready"        the desktop's status bar
 //
@@ -21,6 +21,15 @@ import (
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/style"
+)
+
+// The questions the display answers, and the event it answers them with.
+const (
+	AskDark    = "dark"    // is the terminal in the dark theme
+	AskDesktop = "desktop" // is the desktop showing
+
+	EventHostState = "host_state" // how the display stands
 )
 
 // hostObject is a connection's handle on the display it is connected to. Like
@@ -48,19 +57,14 @@ func (h *hostObject) Append(slot string, _ protocol.Object) error {
 func (h *hostObject) Set(name string, v *protocol.Value, flag protocol.FlagState) error {
 	d := h.conn.server.desktop
 
-	// theme is an action rather than a state: asserting it is the whole of the
-	// request, so `!theme` is refused rather than quietly doing nothing.
-	action := func(fn func()) error {
-		if v != nil || flag != protocol.FlagTrue {
-			return fmt.Errorf("%s: an action is asserted, not set", name)
-		}
-		fn()
-		return nil
-	}
-
 	switch name {
-	case "theme":
-		return action(func() { toggleTerminalTheme(d) })
+	case "dark":
+		b, err := protocol.AsBool("dark", v, flag)
+		if err != nil {
+			return err
+		}
+		setTerminalTheme(d, b)
+		return nil
 	case "desktop":
 		// mew's show_desktop and hide_desktop, on the wire. Showing gives the
 		// primary surface back to the desktop and re-homes the window that
@@ -97,6 +101,28 @@ func (h *hostObject) Set(name string, v *protocol.Value, flag protocol.FlagState
 	return fmt.Errorf("the host has no property %q", name)
 }
 
+// Ask answers a question put to the display. Nothing else reads these back, so
+// an app that means to turn one of them over has to be told which way it is
+// first. Every question is answered with the same event, carrying all of it.
+func (h *hostObject) Ask(question string, _ []*protocol.Arg) error {
+	switch question {
+	case AskDark, AskDesktop:
+		h.answer()
+		return nil
+	}
+	return fmt.Errorf("the host answers no question called %q", question)
+}
+
+// answer says how the display stands, naming itself as the source so one
+// subscription hears it.
+func (h *hostObject) answer() {
+	d := h.conn.server.desktop
+	h.conn.queueAnswer(protocol.NewEvent(EventHostState).
+		WithUint("host", h.id).
+		WithFlag("dark", flagOf(style.ActiveTermTheme() == style.TermThemeDark)).
+		WithFlag("desktop", flagOf(d.IsDesktopEnvironment())))
+}
+
 // hostObjectIDs numbers the host objects, one per connection, kept clear of
 // every other kind of wire id the way the store's are.
 var hostObjectIDs atomic.Uint64
@@ -120,8 +146,8 @@ func init() {
 		Hosted: true,
 		ID:     func(target any) uint64 { return target.(*hostObject).ID() },
 		Props: map[string]protocol.Property{
-			"theme": prop("flag", "theme",
-				"Turn the terminal's theme over, dark to light or back."),
+			"dark": prop("flag", "dark",
+				"The terminal's theme: dark, or light when negated."),
 			"desktop": prop("flag", "desktop",
 				"Show the desktop, docking the window that filled the display; "+
 					"negated, hide it again."),
@@ -129,6 +155,20 @@ func init() {
 				"What the desktop's status bar says."),
 			"desktopfont": prop("enum", "desktopfont",
 				"The font the desktop draws in: tuesday, or default."),
+		},
+		Asks: map[string]protocol.AskDesc{
+			AskDark: protocol.NewAskDesc("Which way the terminal's theme is set.").
+				Answering(EventHostState),
+			AskDesktop: protocol.NewAskDesc("Whether the desktop is showing.").
+				Answering(EventHostState),
+		},
+		Events: map[string]protocol.EventDesc{
+			EventHostState: protocol.NewEventDesc(
+				"How the display stands. Every question is answered with this, so one "+
+					"answer says all of it.").
+				Field("host", "uint", "The display answering.").
+				Field("dark", "flag", "The terminal's theme: asserted for dark, negated for light.").
+				Field("desktop", "flag", "Whether the desktop is showing."),
 		},
 	})
 }

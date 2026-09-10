@@ -101,7 +101,15 @@ class App:
         c.on_command("demo.edit.selectall", lambda: c.exec("selectall"))
         c.on_command("demo.edit.rawkey", lambda: c.exec("rawkey"))
 
-        c.on_command("demo.view.theme", lambda: c.exec("set host theme"))
+        # The display's theme is a property with two values and nothing reads
+        # it back, so the item keeps its own account: the display starts dark,
+        # which is what the item is built ticked to say.
+        theme = {"dark": True}
+
+        def flip_theme():
+            theme["dark"] = not theme["dark"]
+            c.exec("set host dark" if theme["dark"] else "set host !dark")
+        c.on_command("demo.view.theme", flip_theme)
         c.on_command("demo.view.announce", lambda: c.exec("announce_visual"))
         c.on_command("demo.view.speak", lambda: c.exec("announce_speak"))
 

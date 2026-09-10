@@ -350,3 +350,17 @@ func (u *UI) ID(name string) uint64 { return u.ids[name] }
 
 // Has reports whether a name was surfaced.
 func (u *UI) Has(name string) bool { _, ok := u.ids[name]; return ok }
+
+// The event the display answers its questions with, and the questions it
+// answers. Nothing else reads these back, so an app that means to turn one of
+// them over asks first.
+const (
+	HostState = "host_state"
+
+	AskDark    = "dark"
+	AskDesktop = "desktop"
+)
+
+// OnHost registers a handler for what the display says about itself and opens
+// the flow for it. Subscribing does not ask: see Handle.Ask.
+func (c *Conn) OnHost(event string, fn func(*wire.Event)) { c.Host().On(event, fn) }

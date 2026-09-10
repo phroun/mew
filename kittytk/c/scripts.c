@@ -286,7 +286,7 @@ char *main_menu_script(void) {
         "  }\n"
         "  new menu caption=\"&View\" children={\n"
         "    new menuitem caption=\"&Toolbar\" checkable checked\n"
-        "    new menuitem caption=\"&Light/Dark Theme\" shortcut=\"^T\" action=demo.view.theme\n"
+        "    new menuitem caption=\"&Light/Dark Theme\" shortcut=\"^T\" checkable checked action=demo.view.theme\n"
         "    new menuitem separator\n"
         "    new menuitem caption=\"Show A&nnouncements in Status Bar\" checkable action=demo.view.announce\n"
         "    new menuitem caption=\"Speak Announcements\" checkable action=demo.view.speak\n"

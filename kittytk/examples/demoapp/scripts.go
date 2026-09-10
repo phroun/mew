@@ -815,6 +815,9 @@ lilv=w.t.li.liv.lisp.lilp.lilv
 	// chrome by the display when the build's targets are taken.
 	b.WriteString(mainMenuScript())
 	b.WriteString(mainStatusScript)
+	// The theme item's tick has to be put right from what the display answers,
+	// so the client needs to be able to address it.
+	b.WriteString("\nmdark=mb.vm.vdark\n")
 	return b.String()
 }
 
@@ -834,11 +837,11 @@ mb=new menubar children={
 	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.edit.rawkey
 	}
-	new menu caption="&View" wellknown="view" children={
+	vm=new menu caption="&View" wellknown="view" children={
 		new menuitem caption="&Toolbar" checkable checked
 		new menuitem caption="&Status Bar" checkable checked
 		new menuitem separator
-		new menuitem caption="&Light/Dark Theme" shortcut="^T" action=demo.view.theme
+		vdark=new menuitem caption="&Light/Dark Theme" shortcut="^T" checkable action=demo.view.theme
 		new menuitem separator
 		new menuitem caption="Show A&nnouncements in Status Bar" checkable action=demo.view.announce
 		new menuitem caption="Speak Announcements" checkable action=demo.view.speak

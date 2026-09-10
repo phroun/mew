@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
     kt_set(c, win, "denomination=32");
 
     const char *verbs[] = {"set host status=\"hi there\"", "cut", "copy", "paste", "selectall",
-                          "tile", "cascade", "set host theme", "set host desktopfont=tuesday",
+                          "tile", "cascade", "set host dark", "set host !dark", "set host desktopfont=tuesday",
                           "set host desktopfont=default", "announce_visual", "announce_speak", "rawkey"};
     for (size_t i = 0; i < sizeof verbs / sizeof verbs[0]; i++)
         if (kt_exec(c, verbs[i]) != 0) { printf("FAIL app verb %s\n", verbs[i]); return 1; }

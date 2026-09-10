@@ -259,7 +259,7 @@ func TestDemoBuildsOverService(t *testing.T) {
 	}
 	// And every property of the display itself.
 	for _, prop := range []string{
-		`status="hi there"`, "theme", "desktopfont=tuesday", "desktopfont=default",
+		`status="hi there"`, "dark", "!dark", "desktopfont=tuesday", "desktopfont=default",
 	} {
 		if err := conn.Host().Set(prop); err != nil {
 			t.Errorf("set host %s: %v", prop, err)

@@ -331,9 +331,10 @@ func (a *app) wireDenomination(win client.Handle) {
 	ui.Button("dnn").OnClick(preset(8, 32))
 }
 
-// wireMenus registers the primary application's command handlers. The
-// desktop-reaching actions (edit ops, theme, tiling, announcements) go
-// out as display app-verbs; the rest are handled here in the client.
+// wireMenus registers the primary application's command handlers. The theme
+// and the desktop font are properties of the display; the other
+// desktop-reaching actions (edit ops, tiling, announcements) go out as display
+// app-verbs; the rest are handled here in the client.
 func (a *app) wireMenus() {
 	c := a.conn
 
@@ -346,8 +347,28 @@ func (a *app) wireMenus() {
 	// only contributes the custom Raw Key Input item.
 	c.OnCommand("demo.edit.rawkey", func() { _, _ = c.Exec("rawkey") })
 
-	// View menu.
-	c.OnCommand("demo.view.theme", func() { _ = c.Host().Set("theme") })
+	// View menu. The display's theme is a property with two values, so the item
+	// has to know which way it is set before it can turn it over: it asks, ticks
+	// itself from the answer, and keeps count from there.
+	dark := true
+	c.OnHost(client.HostState, func(ev *protocol.Event) {
+		dark = ev.Flag("dark") == protocol.FlagTrue
+		tick := "checked"
+		if !dark {
+			tick = "!checked"
+		}
+		_ = a.ui.Object("mdark").Set(tick)
+	})
+	_ = c.Host().Ask(client.AskDark)
+
+	c.OnCommand("demo.view.theme", func() {
+		dark = !dark
+		prop := "dark"
+		if !dark {
+			prop = "!dark"
+		}
+		_ = c.Host().Set(prop)
+	})
 	c.OnCommand("demo.view.announce", func() { _, _ = c.Exec("announce_visual") })
 	c.OnCommand("demo.view.speak", func() { _, _ = c.Exec("announce_speak") })
 
