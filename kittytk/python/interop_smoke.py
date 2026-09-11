@@ -73,6 +73,93 @@ def main(sock: str) -> int:
         return 1
     print("DESCRIBE ok types=%d" % len(vocab.types), flush=True)
 
+    # The other two objects the handshake handed over.
+    if conn.store_id == 0 or conn.host_id == 0:
+        print("FAIL handshake: store=%d host=%d" % (conn.store_id, conn.host_id),
+              flush=True)
+        return 1
+
+    # The display answers what it is asked.
+    said = threading.Event()
+    dark = []
+
+    def on_host(ev):
+        dark.append(ev.flag("dark") == kittytk.FlagState.TRUE)
+        said.set()
+
+    conn.on_host(kittytk.HOST_STATE, on_host)
+    conn.host().ask(kittytk.ASK_DARK)
+    if not said.wait(5):
+        print("FAIL ask host dark: no answer", flush=True)
+        return 1
+    print("ASK ok dark=%d" % int(dark[0]), flush=True)
+
+    # The store: write a blob of every byte there is, in two pieces, and read
+    # it back. Anything the wire mangled shows up as a mismatch.
+    ramp = bytes(i % 256 for i in range(512))
+    blob_id = []
+    read_back = bytearray()
+    got_blob = threading.Event()
+    read_done = threading.Event()
+    listed = threading.Event()
+
+    def on_blob(ev):
+        blob_id.append(ev.uint("blob"))
+        got_blob.set()
+
+    def on_data(ev):
+        read_back.extend(ev.blob("data") or b"")
+        if ev.flag("last") == kittytk.FlagState.TRUE:
+            read_done.set()
+
+    conn.on_store(kittytk.STORE_BLOB, on_blob)
+    conn.on_store(kittytk.STORE_DATA, on_data)
+    conn.on_store(kittytk.STORE_DONE, lambda ev: listed.set())
+
+    conn.store().write("py-interop", "bin", ramp[:256])
+    if not got_blob.wait(5):
+        print("FAIL store write: no blob id", flush=True)
+        return 1
+    blob = conn.blob(blob_id[0])
+    blob.append(ramp[256:])
+    blob.read(0)
+    if not read_done.wait(5):
+        print("FAIL store read: never finished", flush=True)
+        return 1
+    if bytes(read_back) != ramp:
+        print("FAIL store read: %d bytes back, not the %d written"
+              % (len(read_back), len(ramp)), flush=True)
+        return 1
+    conn.store().list()
+    if not listed.wait(5):
+        print("FAIL store inventory: no answer", flush=True)
+        return 1
+    print("STORE ok bytes=%d" % len(read_back), flush=True)
+
+    # The vocabulary says what a type does and answers, not just what it holds.
+    vocab = conn.describe()
+    host = next((t for t in vocab.types if t.name == "host"), None)
+    blob_t = next((t for t in vocab.types if t.name == "blob"), None)
+    if host is None or not host.hosted:
+        print("FAIL describe: the host type is not reported as hosted", flush=True)
+        return 1
+    if not any(d.name == "tile" for d in host.does):
+        print("FAIL describe: the host does no tile", flush=True)
+        return 1
+    if not any(a.name == "dark" for a in host.asks):
+        print("FAIL describe: the host answers no dark", flush=True)
+        return 1
+    append = blob_t and next((d for d in blob_t.does if d.name == "append"), None)
+    if append is None or len(append.args) != 1 or append.args[0].name != "bytes":
+        print("FAIL describe: a blob's append takes %r"
+              % (append and [a.name for a in append.args]), flush=True)
+        return 1
+    if not any(e.name == "store_blob" and e.fields for e in
+               next(t for t in vocab.types if t.name == "store").events):
+        print("FAIL describe: the store's events carry no fields", flush=True)
+        return 1
+    print("VOCAB ok", flush=True)
+
     print("READY", flush=True)  # host may now drive input
 
     if not got_toggle.wait(10) or not got_command.wait(10):

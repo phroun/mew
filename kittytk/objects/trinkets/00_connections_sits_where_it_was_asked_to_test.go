@@ -28,9 +28,10 @@ func indexOf(rows []string, want string) int {
 	return -1
 }
 
-// The desktop's own menu carries Connections whatever any app says, directly
-// under About Desktop -- the two things that are about this machine rather
-// than about whatever is running on it.
+// The desktop's own menu carries Connections whatever any app says, in the
+// group under About Desktop -- the things that are about this machine rather
+// than about whatever is running on it. Narration leads that group, so
+// Connections is the row after it.
 func TestConnectionsSitsUnderAboutDesktop(t *testing.T) {
 	d := NewDesktop()
 
@@ -45,13 +46,14 @@ func TestConnectionsSitsUnderAboutDesktop(t *testing.T) {
 	// builder works.
 	rows := menuLayout(d.systemMenu)
 	about := indexOf(rows, "About Desktop")
+	narration := indexOf(rows, "Narration")
 	conn := indexOf(rows, "Connections")
-	if about < 0 || conn < 0 {
+	if about < 0 || narration < 0 || conn < 0 {
 		t.Fatalf("menu is %v", rows)
 	}
-	if conn != about+1 {
-		t.Errorf("Connections is at %d and About Desktop at %d; it should be the "+
-			"next row: %v", conn, about, rows)
+	if narration != about+1 || conn != narration+1 {
+		t.Errorf("the group under About Desktop reads %v; About Desktop is at %d, "+
+			"Narration at %d and Connections at %d", rows, about, narration, conn)
 	}
 }
 
@@ -116,8 +118,8 @@ func TestTheItemJoinsTheMenuTheDesktopAlreadyHas(t *testing.T) {
 	if indexOf(rows, "Zoom") < 0 {
 		t.Errorf("an item added before the opener was lost: %v", rows)
 	}
-	if indexOf(rows, "Connections") != indexOf(rows, "About Desktop")+1 {
-		t.Errorf("Connections did not land under About Desktop: %v", rows)
+	if indexOf(rows, "Connections") != indexOf(rows, "Narration")+1 {
+		t.Errorf("Connections did not land in the group under About Desktop: %v", rows)
 	}
 
 	// Installing again must not stack a second copy.

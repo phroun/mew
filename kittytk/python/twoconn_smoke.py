@@ -28,7 +28,7 @@ def main() -> int:
         '  }\n'
         '}\n')
     for _ in range(20):
-        c2.exec("tile")
+        c2.exec("do host tile")
 
     print("OK")
     sys.stdout.flush()

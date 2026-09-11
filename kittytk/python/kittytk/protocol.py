@@ -103,6 +103,27 @@ def quote(s: str) -> str:
     return ''.join(out)
 
 
+def quote_blob(data: bytes) -> str:
+    """Render arbitrary bytes as a protocol string literal, escaping every one
+    that is not printable ASCII.
+
+    quote() takes text and lets anything printable through, which is right for
+    text and wrong for a blob: a blob may hold NUL, and bytes that are not
+    valid UTF-8 do not survive being read back as text."""
+    out = ['"']
+    for b in data:
+        if b == 0x22:
+            out.append('\\"')
+        elif b == 0x5c:
+            out.append('\\\\')
+        elif 0x20 <= b < 0x7f:
+            out.append(chr(b))
+        else:
+            out.append('\\x%02x' % b)
+    out.append('"')
+    return ''.join(out)
+
+
 # --- Scanner: frame statements out of a byte stream ----------------------
 
 _SP, _TAB, _CR, _NL = ord(' '), ord('\t'), ord('\r'), ord('\n')
@@ -459,10 +480,45 @@ class PropInfo:
 
 
 @dataclass
+class ArgInfo:
+    """One named argument of a question or an action, or one field of an
+    event."""
+    name: str
+    kind: str = ""
+    doc: str = ""
+
+
+@dataclass
+class CallInfo:
+    """One question a type answers or one action it performs. They are the
+    same shape because they are the same declaration with a different verb in
+    front of it -- except that an action answers nothing, so its answers list
+    is always empty."""
+    name: str
+    doc: str = ""
+    args: List[ArgInfo] = field(default_factory=list)
+    answers: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EventInfo:
+    """One event a type raises, and what it carries."""
+    name: str
+    doc: str = ""
+    fields: List[ArgInfo] = field(default_factory=list)
+
+
+@dataclass
 class TypeInfo:
     name: str
     virtual: bool = False
+    # hosted marks a type the wire cannot construct: the host registers an
+    # instance and hands over its ID, and `new <name>` is refused.
+    hosted: bool = False
     props: List[PropInfo] = field(default_factory=list)
+    asks: List[CallInfo] = field(default_factory=list)
+    does: List[CallInfo] = field(default_factory=list)
+    events: List[EventInfo] = field(default_factory=list)
 
 
 @dataclass
@@ -496,18 +552,40 @@ def _stmt_prop_info(stmt: Statement) -> PropInfo:
     )
 
 
+def _stmt_arg_info(stmt: Statement) -> ArgInfo:
+    return ArgInfo(
+        name=_stmt_str(stmt, "name"),
+        kind=_stmt_str(stmt, "kind"),
+        doc=_stmt_str(stmt, "doc"),
+    )
+
+
 def decode_vocabulary(lines: List[str]) -> Vocabulary:
-    """Parse the flat describe stream (proptype/prop/propcommon statements,
-    one per line) into a Vocabulary. Unknown lines are ignored."""
+    """Parse the flat describe stream into a Vocabulary: proptype, prop,
+    propcommon, ask, askarg, do, doarg, event and eventfield statements, one
+    per line. Unknown lines are ignored."""
     vocab = Vocabulary()
     by_type: Dict[str, int] = {}
+
+    def calls(stmt: Statement, verb: str):
+        """The list a line belongs in: a type's questions or its actions."""
+        of = _stmt_str(stmt, "of")
+        if of not in by_type:
+            return None
+        ty = vocab.types[by_type[of]]
+        return ty.asks if verb == "ask" else ty.does
+
     for line in lines:
         if not line.strip():
             continue
         for stmt in parse(line).statements:
             if stmt.verb == "proptype":
                 name = _stmt_str(stmt, "name")
-                vocab.types.append(TypeInfo(name=name, virtual=_stmt_flag(stmt, "virtual")))
+                vocab.types.append(TypeInfo(
+                    name=name,
+                    virtual=_stmt_flag(stmt, "virtual"),
+                    hosted=_stmt_flag(stmt, "hosted"),
+                ))
                 by_type[name] = len(vocab.types) - 1
             elif stmt.verb == "propcommon":
                 vocab.common.append(_stmt_prop_info(stmt))
@@ -515,6 +593,42 @@ def decode_vocabulary(lines: List[str]) -> Vocabulary:
                 of = _stmt_str(stmt, "of")
                 if of in by_type:
                     vocab.types[by_type[of]].props.append(_stmt_prop_info(stmt))
+            elif stmt.verb in ("ask", "do"):
+                into = calls(stmt, stmt.verb)
+                if into is None:
+                    continue
+                answers = _stmt_str(stmt, "answers") if stmt.verb == "ask" else ""
+                into.append(CallInfo(
+                    name=_stmt_str(stmt, "name"),
+                    doc=_stmt_str(stmt, "doc"),
+                    answers=answers.split(",") if answers else [],
+                ))
+            elif stmt.verb in ("askarg", "doarg"):
+                verb = "ask" if stmt.verb == "askarg" else "do"
+                into = calls(stmt, verb)
+                if into is None:
+                    continue
+                named = _stmt_str(stmt, verb)
+                for call in into:
+                    if call.name == named:
+                        call.args.append(_stmt_arg_info(stmt))
+                        break
+            elif stmt.verb == "event":
+                of = _stmt_str(stmt, "of")
+                if of in by_type:
+                    vocab.types[by_type[of]].events.append(EventInfo(
+                        name=_stmt_str(stmt, "name"),
+                        doc=_stmt_str(stmt, "doc"),
+                    ))
+            elif stmt.verb == "eventfield":
+                of = _stmt_str(stmt, "of")
+                if of not in by_type:
+                    continue
+                named = _stmt_str(stmt, "event")
+                for ev in vocab.types[by_type[of]].events:
+                    if ev.name == named:
+                        ev.fields.append(_stmt_arg_info(stmt))
+                        break
     return vocab
 
 
@@ -553,6 +667,20 @@ class Event:
             return None
         return a.value.str
 
+    def blob(self, name: str):
+        """The field's bytes, for a value the host wrote with every byte
+        outside printable ASCII escaped -- a blob read back from the store,
+        say. None when the field is not a string.
+
+        Each \\xNN unescapes to one code point in 0..255, so latin-1 is what
+        turns the string back into the bytes that were sent; utf-8 would
+        re-encode everything above 0x7f into two bytes and hand back something
+        longer than what was written."""
+        s = self.text(name)
+        if s is None:
+            return None
+        return s.encode("latin-1", "replace")
+
     def word(self, name: str):
         a = self._field(name)
         if a is None or a.value is None or a.value.kind != ValueKind.WORD:
@@ -566,10 +694,17 @@ class Event:
         return a.flag
 
     def trinket(self):
-        v = self.uint("trinket")
-        if v is not None:
-            return v
-        return self.uint("window")
+        """The ObjectID of whatever raised this, for routing it to a handler.
+
+        Window events name their source window= rather than trinket=, a
+        store's name it store=, and the display's name it host=. All of them
+        are ObjectIDs, and subscriptions key on the source whichever word
+        names it."""
+        for name in ("trinket", "window", "store", "host"):
+            v = self.uint(name)
+            if v is not None:
+                return v
+        return None
 
     def encode(self) -> str:
         out = ["event ", self.type]

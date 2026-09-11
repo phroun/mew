@@ -290,7 +290,7 @@ wdoc=mdi.d1
 
 	// Minimize by id-directed action; the pane reports it with title.
 	*events = nil
-	min, _ := protocol.Parse(fmt.Sprintf("set mdi minimize=%d", docID))
+	min, _ := protocol.Parse(fmt.Sprintf("do mdi minimize window=%d", docID))
 	if _, err := session.Execute(min, f); err != nil {
 		t.Fatalf("minimize: %v", err)
 	}
@@ -347,8 +347,8 @@ wentry=dock.e1`, docID))
 		t.Errorf("dock entries after destroy = %d", dock.EntryCount())
 	}
 
-	// Flag actions parse and run (tile with one window: no crash).
-	tile, _ := protocol.Parse(`set mdi tile`)
+	// Actions parse and run (tile with one window: no crash).
+	tile, _ := protocol.Parse(`do mdi tile`)
 	if _, err := session.Execute(tile, f); err != nil {
 		t.Fatalf("tile: %v", err)
 	}

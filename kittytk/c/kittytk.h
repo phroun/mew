@@ -38,6 +38,13 @@ typedef struct kt_event kt_event;
  * as \xNN). Returns a malloc'd string; caller frees. */
 char *kt_quote(const char *s);
 
+/* Render arbitrary bytes as a protocol string, escaping every one that is not
+   printable ASCII. kt_quote takes a C string and lets high bytes through,
+   which is right for text and wrong for a blob: a blob may hold NUL, and bytes
+   that are not valid UTF-8 do not survive being read back as text. Caller
+   frees. */
+char *kt_quote_blob(const void *data, size_t n);
+
 /* --- connection ------------------------------------------------------ */
 
 /* The conventional endpoint ($KITTYTK_DISPLAY, else
@@ -93,6 +100,54 @@ int kt_destroy(kt_conn *c, uint64_t id);
    question -- though what it changes may raise the object's events. */
 int kt_do(kt_conn *c, uint64_t id, const char *action);
 
+/* Put a question to an object: kt_ask(c, id, "bytes offset=2048") sends
+   `ask <id> bytes offset=2048`. The answer arrives as the events the question
+   declares it answers with, so register for those (kt_on) before asking. */
+int kt_ask(kt_conn *c, uint64_t id, const char *question);
+
+/* --- the two other objects the connection is handed -------------------- */
+
+/* Its store, and its handle on the display, by the ObjectIDs the handshake
+   carried. The display knows them by the names "store" and "host" too, so a
+   hand-written statement can say the name; these are what reach them when a
+   client has taken one of those names for something of its own. 0 before the
+   handshake, and on a host that offered neither. */
+uint64_t kt_store_id(kt_conn *c);
+uint64_t kt_host_id(kt_conn *c);
+
+/* --- the store --------------------------------------------------------- */
+
+/* The events the store answers with. All of them name the store as their
+   source, so one kt_on(c, kt_store_id(c), ...) per type hears everything. */
+#define KT_STORE_BLOB  "store_blob"  /* one blob: what it is and how big */
+#define KT_STORE_DONE  "store_done"  /* the end of an inventory */
+#define KT_STORE_DATA  "store_data"  /* one chunk of a blob being read back */
+#define KT_STORE_GONE  "store_gone"  /* a blob is no longer there */
+#define KT_STORE_ERROR "store_error" /* what went wrong, and with which key */
+
+/* A key beginning with this names something the desktop may throw away at any
+   moment, the way `#` names a temporary table in SQL. */
+#define KT_CACHE_MARK "#"
+
+/* Put a blob in the store under key, replacing whatever it held. type is one
+   of txt, psl, bin, ini or conf. The answer is a KT_STORE_BLOB naming the id
+   the blob can be addressed by, which is how something larger than one
+   statement is continued -- see kt_blob_append. */
+int kt_store_write(kt_conn *c, const char *key, const char *type,
+                   const void *data, size_t n);
+
+/* Ask what the store holds: a KT_STORE_BLOB per blob, then a KT_STORE_DONE
+   saying how many there were. */
+int kt_store_list(kt_conn *c);
+
+/* Add to the end of a blob, replace it whole, ask for the chunk starting at
+   offset, or take it out of the store. A blob id is learned from an answer;
+   an app never invents one. */
+int kt_blob_append(kt_conn *c, uint64_t blob, const void *data, size_t n);
+int kt_blob_replace(kt_conn *c, uint64_t blob, const void *data, size_t n);
+int kt_blob_read(kt_conn *c, uint64_t blob, long long offset);
+int kt_blob_drop(kt_conn *c, uint64_t blob);
+
 /* --- introspection (describe, D24) ----------------------------------- */
 
 /* One property in a described vocabulary. All strings are owned by the
@@ -105,11 +160,46 @@ typedef struct {
     char *enums;    /* comma-separated allowed words, "" unless kind is enum */
 } kt_prop;
 
+/* One named argument of a question or an action, or one field of an event. */
+typedef struct {
+    char *name;
+    char *kind;
+    char *doc;
+} kt_field;
+
+/* One question a type answers or one action it performs. They are the same
+ * shape because they are the same declaration with a different verb in front
+ * of it -- except that an action answers nothing, so `answers` is "". */
+typedef struct {
+    char   *name;
+    char   *doc;
+    char   *answers;  /* comma-separated event names; "" for an action */
+    kt_field *args;
+    int       nargs;
+} kt_call;
+
+/* One event a type raises, and what it carries. */
+typedef struct {
+    char   *name;
+    char   *doc;
+    kt_field *fields;
+    int       nfields;
+} kt_event_info;
+
 typedef struct {
     char    *name;
     int      is_virtual;
+    /* is_hosted marks a type the wire cannot construct: the host registers an
+     * instance and hands over its ID, and `new <name>` is refused. */
+    int      is_hosted;
     kt_prop *props;
     int      nprops;
+    kt_call *asks;    /* the questions it answers (ask) */
+    int      nasks;
+    kt_call *does;    /* the actions it performs (do) */
+    int      ndoes;
+    kt_event_info *events;
+    int      nevents;
 } kt_type;
 
 typedef struct {
@@ -119,10 +209,10 @@ typedef struct {
     int      ntypes;
 } kt_vocab;
 
-/* Query the host's wire vocabulary: the supported trinket types and,
- * for each, the properties it accepts with each property's kind,
- * default, and a brief description. NULL on error. Free with
- * kt_vocab_free. */
+/* Query the host's wire vocabulary: the supported trinket types and, for each,
+ * the properties it accepts with each property's kind, default and a brief
+ * description, the questions it answers, the actions it performs, and the
+ * events it raises. NULL on error. Free with kt_vocab_free. */
 kt_vocab *kt_describe(kt_conn *c);
 void kt_vocab_free(kt_vocab *v);
 

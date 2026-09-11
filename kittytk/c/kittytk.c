@@ -163,6 +163,30 @@ char *kt_quote(const char *s) {
     return buf_dup(&b);
 }
 
+/* kt_quote_blob renders arbitrary bytes as a protocol string, escaping every
+ * one of them that is not printable ASCII. kt_quote takes a C string and lets
+ * high bytes through, which is right for text and wrong for a blob: a blob may
+ * hold NUL, and bytes that are not valid UTF-8 do not survive being read back
+ * as text. Takes a length for the same reason. */
+char *kt_quote_blob(const void *data, size_t n) {
+    const unsigned char *p = (const unsigned char *)data;
+    kt_buf b = {0};
+    buf_put(&b, '"');
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = p[i];
+        if (c == '"') { buf_put(&b, '\\'); buf_put(&b, '"'); }
+        else if (c == '\\') { buf_put(&b, '\\'); buf_put(&b, '\\'); }
+        else if (c >= 0x20 && c < 0x7f) buf_put(&b, (char)c);
+        else {
+            char tmp[5];
+            snprintf(tmp, sizeof tmp, "\\x%02x", c);
+            for (char *t = tmp; *t; t++) buf_put(&b, *t);
+        }
+    }
+    buf_put(&b, '"');
+    return buf_dup(&b);
+}
+
 /* --- config paths (mirror the Go & Python clients) ------------------- */
 /* Only the TLS build (identity + known_hosts) needs these. */
 #ifdef KT_TLS
@@ -426,8 +450,12 @@ kt_flag kt_event_flag(const kt_event *ev, const char *name) {
 }
 uint64_t kt_event_trinket(const kt_event *ev, int *ok) {
     uint64_t v;
-    if (kt_event_uint(ev, "trinket", &v)) { if (ok) *ok = 1; return v; }
-    if (kt_event_uint(ev, "window", &v)) { if (ok) *ok = 1; return v; }
+    /* Window events name their source window= rather than trinket=, a store's
+     * name it store=, and the display's name it host=. All of them are
+     * ObjectIDs, and subscriptions key on the source whichever word names it. */
+    static const char *named[] = {"trinket", "window", "store", "host"};
+    for (size_t i = 0; i < sizeof named / sizeof named[0]; i++)
+        if (kt_event_uint(ev, named[i], &v)) { if (ok) *ok = 1; return v; }
     if (ok) *ok = 0;
     return 0;
 }
@@ -460,6 +488,8 @@ struct kt_conn {
     int reof;
 
     uint64_t app_id; /* Application ObjectID from the handshake (0 until set) */
+    uint64_t store_id; /* this connection's store, from the same handshake */
+    uint64_t host_id;  /* this connection's handle on the display */
 
     kt_mutex write_mu;
 
@@ -714,11 +744,22 @@ static void *read_loop(void *arg) {
             c->reply_ready = 1;
             kt_cond_signal(&c->rcv);
             kt_mutex_unlock(&c->rmu);
-        } else if (strcmp(st->verb, "event") == 0) {
+        } else if (strcmp(st->verb, "event") == 0 && st->n > 0
+                   && !st->args[0].has_value) {
+            /* Two different lines start with this word: an event the display
+             * raised, whose type is the bare word after it, and a describe
+             * stream's record of an event a type CAN raise, which leads with
+             * of="...". The first argument tells them apart. */
             enqueue_event(c, text);
         } else if (strcmp(st->verb, "proptype") == 0 ||
                    strcmp(st->verb, "prop") == 0 ||
-                   strcmp(st->verb, "propcommon") == 0) {
+                   strcmp(st->verb, "propcommon") == 0 ||
+                   strcmp(st->verb, "ask") == 0 ||
+                   strcmp(st->verb, "askarg") == 0 ||
+                   strcmp(st->verb, "do") == 0 ||
+                   strcmp(st->verb, "doarg") == 0 ||
+                   strcmp(st->verb, "event") == 0 ||
+                   strcmp(st->verb, "eventfield") == 0) {
             /* describe verb output: buffer until the reply. */
             kt_mutex_lock(&c->rmu);
             c->desc = realloc(c->desc, (c->desc_n + 1) * sizeof(char *));
@@ -839,6 +880,27 @@ static int stmt_flag_true(const kt_stmt *st, const char *name) {
             return st->args[i].flag == KT_FLAG_TRUE;
     return 0;
 }
+static void fill_field(kt_field *a, const kt_stmt *st) {
+    a->name = strdup(stmt_str(st, "name"));
+    a->kind = strdup(stmt_str(st, "kind"));
+    a->doc  = strdup(stmt_str(st, "doc"));
+}
+static void field_free(kt_field *a) { free(a->name); free(a->kind); free(a->doc); }
+
+/* type_named finds the type a describe line belongs to, or NULL. */
+static kt_type *type_named(kt_vocab *v, const char *name) {
+    for (int k = 0; k < v->ntypes; k++)
+        if (strcmp(v->types[k].name, name) == 0) return &v->types[k];
+    return NULL;
+}
+
+/* call_named finds a question or action by name within one list. */
+static kt_call *call_named(kt_call *calls, int n, const char *name) {
+    for (int i = 0; i < n; i++)
+        if (strcmp(calls[i].name, name) == 0) return &calls[i];
+    return NULL;
+}
+
 static void fill_prop(kt_prop *p, const kt_stmt *st) {
     p->name  = strdup(stmt_str(st, "name"));
     p->kind  = strdup(stmt_str(st, "kind"));
@@ -860,18 +922,62 @@ kt_vocab *kt_describe(kt_conn *c) {
         } else if (strcmp(st->verb, "proptype") == 0) {
             v->types = realloc(v->types, (v->ntypes + 1) * sizeof(kt_type));
             kt_type *t = &v->types[v->ntypes++];
+            memset(t, 0, sizeof *t);
             t->name = strdup(stmt_str(st, "name"));
             t->is_virtual = stmt_flag_true(st, "virtual");
-            t->props = NULL; t->nprops = 0;
+            t->is_hosted = stmt_flag_true(st, "hosted");
         } else if (strcmp(st->verb, "prop") == 0) {
-            const char *of = stmt_str(st, "of");
-            for (int k = 0; k < v->ntypes; k++)
-                if (strcmp(v->types[k].name, of) == 0) {
-                    kt_type *t = &v->types[k];
-                    t->props = realloc(t->props, (t->nprops + 1) * sizeof(kt_prop));
-                    fill_prop(&t->props[t->nprops++], st);
-                    break;
+            kt_type *t = type_named(v, stmt_str(st, "of"));
+            if (t) {
+                t->props = realloc(t->props, (t->nprops + 1) * sizeof(kt_prop));
+                fill_prop(&t->props[t->nprops++], st);
+            }
+        } else if (strcmp(st->verb, "ask") == 0 || strcmp(st->verb, "do") == 0) {
+            kt_type *t = type_named(v, stmt_str(st, "of"));
+            if (t) {
+                int is_ask = strcmp(st->verb, "ask") == 0;
+                kt_call **list = is_ask ? &t->asks : &t->does;
+                int *n = is_ask ? &t->nasks : &t->ndoes;
+                *list = realloc(*list, (*n + 1) * sizeof(kt_call));
+                kt_call *call = &(*list)[(*n)++];
+                memset(call, 0, sizeof *call);
+                call->name = strdup(stmt_str(st, "name"));
+                call->doc = strdup(stmt_str(st, "doc"));
+                call->answers = strdup(is_ask ? stmt_str(st, "answers") : "");
+            }
+        } else if (strcmp(st->verb, "askarg") == 0 || strcmp(st->verb, "doarg") == 0) {
+            kt_type *t = type_named(v, stmt_str(st, "of"));
+            if (t) {
+                int is_ask = strcmp(st->verb, "askarg") == 0;
+                kt_call *call = is_ask
+                    ? call_named(t->asks, t->nasks, stmt_str(st, "ask"))
+                    : call_named(t->does, t->ndoes, stmt_str(st, "do"));
+                if (call) {
+                    call->args = realloc(call->args, (call->nargs + 1) * sizeof(kt_field));
+                    fill_field(&call->args[call->nargs++], st);
                 }
+            }
+        } else if (strcmp(st->verb, "event") == 0) {
+            kt_type *t = type_named(v, stmt_str(st, "of"));
+            if (t) {
+                t->events = realloc(t->events, (t->nevents + 1) * sizeof(kt_event_info));
+                kt_event_info *e = &t->events[t->nevents++];
+                memset(e, 0, sizeof *e);
+                e->name = strdup(stmt_str(st, "name"));
+                e->doc = strdup(stmt_str(st, "doc"));
+            }
+        } else if (strcmp(st->verb, "eventfield") == 0) {
+            kt_type *t = type_named(v, stmt_str(st, "of"));
+            if (t) {
+                const char *named = stmt_str(st, "event");
+                for (int j = 0; j < t->nevents; j++)
+                    if (strcmp(t->events[j].name, named) == 0) {
+                        kt_event_info *e = &t->events[j];
+                        e->fields = realloc(e->fields, (e->nfields + 1) * sizeof(kt_field));
+                        fill_field(&e->fields[e->nfields++], st);
+                        break;
+                    }
+            }
         }
         stmt_free(st);
     }
@@ -888,9 +994,27 @@ void kt_vocab_free(kt_vocab *v) {
     for (int i = 0; i < v->ncommon; i++) prop_free(&v->common[i]);
     free(v->common);
     for (int i = 0; i < v->ntypes; i++) {
-        for (int j = 0; j < v->types[i].nprops; j++) prop_free(&v->types[i].props[j]);
-        free(v->types[i].props);
-        free(v->types[i].name);
+        kt_type *t = &v->types[i];
+        for (int j = 0; j < t->nprops; j++) prop_free(&t->props[j]);
+        free(t->props);
+        kt_call *lists[2] = {t->asks, t->does};
+        int counts[2] = {t->nasks, t->ndoes};
+        for (int l = 0; l < 2; l++)
+            for (int j = 0; j < counts[l]; j++) {
+                kt_call *call = &lists[l][j];
+                for (int k = 0; k < call->nargs; k++) field_free(&call->args[k]);
+                free(call->args);
+                free(call->name); free(call->doc); free(call->answers);
+            }
+        free(t->asks); free(t->does);
+        for (int j = 0; j < t->nevents; j++) {
+            kt_event_info *e = &t->events[j];
+            for (int k = 0; k < e->nfields; k++) field_free(&e->fields[k]);
+            free(e->fields);
+            free(e->name); free(e->doc);
+        }
+        free(t->events);
+        free(t->name);
     }
     free(v->types);
     free(v);
@@ -903,6 +1027,17 @@ int kt_set(kt_conn *c, uint64_t id, const char *args) {
     free(src);
     return r;
 }
+uint64_t kt_store_id(kt_conn *c) { return c ? c->store_id : 0; }
+uint64_t kt_host_id(kt_conn *c) { return c ? c->host_id : 0; }
+
+int kt_ask(kt_conn *c, uint64_t id, const char *question) {
+    char *src = malloc(strlen(question) + 32);
+    sprintf(src, "ask %llu %s", (unsigned long long)id, question);
+    int r = kt_exec(c, src);
+    free(src);
+    return r;
+}
+
 int kt_do(kt_conn *c, uint64_t id, const char *action) {
     char *src = malloc(strlen(action) + 32);
     sprintf(src, "do %llu %s", (unsigned long long)id, action);
@@ -915,6 +1050,54 @@ int kt_destroy(kt_conn *c, uint64_t id) {
     snprintf(src, sizeof src, "destroy %llu", (unsigned long long)id);
     return kt_exec(c, src);
 }
+
+/* --- the store (mirrors the Go client's Store/Blob) ------------------- */
+
+int kt_store_write(kt_conn *c, const char *key, const char *type,
+                   const void *data, size_t n) {
+    if (!c) return -1;
+    char *qk = kt_quote(key), *qd = kt_quote_blob(data, n);
+    size_t len = strlen(qk) + strlen(qd) + strlen(type) + 64;
+    char *args = malloc(len);
+    snprintf(args, len, "blobs={ new blob key=%s type=%s data=%s }", qk, type, qd);
+    int r = kt_set(c, c->store_id, args);
+    free(args); free(qk); free(qd);
+    return r;
+}
+
+int kt_store_list(kt_conn *c) {
+    if (!c) return -1;
+    return kt_ask(c, c->store_id, "inventory");
+}
+
+int kt_blob_append(kt_conn *c, uint64_t blob, const void *data, size_t n) {
+    char *qd = kt_quote_blob(data, n);
+    size_t len = strlen(qd) + 32;
+    char *action = malloc(len);
+    snprintf(action, len, "append bytes=%s", qd);
+    int r = kt_do(c, blob, action);
+    free(action); free(qd);
+    return r;
+}
+
+int kt_blob_replace(kt_conn *c, uint64_t blob, const void *data, size_t n) {
+    char *qd = kt_quote_blob(data, n);
+    size_t len = strlen(qd) + 32;
+    char *args = malloc(len);
+    snprintf(args, len, "data=%s", qd);
+    int r = kt_set(c, blob, args);
+    free(args); free(qd);
+    return r;
+}
+
+int kt_blob_read(kt_conn *c, uint64_t blob, long long offset) {
+    char q[48];
+    snprintf(q, sizeof q, "bytes offset=%lld", offset);
+    return kt_ask(c, blob, q);
+}
+
+int kt_blob_drop(kt_conn *c, uint64_t blob) { return kt_destroy(c, blob); }
+
 
 /* --- subscriptions & handlers --------------------------------------- */
 
@@ -1245,13 +1428,18 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     kt_stmt *st = parse_statement(welcome);
     int ok = st && strcmp(st->verb, "welcome") == 0;
     if (ok) {
-        /* The handshake carries this connection's Application ObjectID, so the
-         * app can address application-wide properties (kt_app_id/kt_set_app). */
+        /* The handshake carries the ObjectIDs of the things this connection
+         * arrives with rather than builds: its Application, its store, and its
+         * handle on the display. The display knows each by name as well
+         * ("app", "store", "host"), so a statement written by hand can say the
+         * name instead; these are what reach them when a client has taken one
+         * of those names for something of its own. */
         for (int i = 0; i < st->n; i++) {
-            if (st->args[i].name && strcmp(st->args[i].name, "app") == 0
-                && st->args[i].kind == 0) {
-                c->app_id = (uint64_t)st->args[i].ival;
-            }
+            if (!st->args[i].name || st->args[i].kind != 0) continue;
+            uint64_t id = (uint64_t)st->args[i].ival;
+            if (strcmp(st->args[i].name, "app") == 0) c->app_id = id;
+            else if (strcmp(st->args[i].name, "store") == 0) c->store_id = id;
+            else if (strcmp(st->args[i].name, "host") == 0) c->host_id = id;
         }
     }
     stmt_free(st);

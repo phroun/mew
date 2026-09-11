@@ -87,9 +87,15 @@ class Conn:
         self._closed_flag = False
         self.closed = threading.Event()  # set when the connection ends
 
-        # This connection's Application ObjectID, from the handshake (0 until
-        # the welcome is parsed). Address app-wide properties by it: set_app.
+        # The ObjectIDs of the things this connection arrives with rather than
+        # builds: its Application, its store, and its handle on the display.
+        # All 0 until the welcome is parsed. The display knows each by name as
+        # well ("app", "store", "host"), so a statement written by hand can say
+        # the name; these are what reach them when a client has taken one of
+        # those names for something of its own.
         self._app_id = 0
+        self._store_id = 0
+        self._host_id = 0
 
     # --- lifecycle -------------------------------------------------------
 
@@ -122,14 +128,21 @@ class Conn:
                                     and a.value.kind == protocol.ValueKind.STRING:
                                 msg = a.value.str
                         self._replies.put(("error", msg, None))
-                    elif stmt.verb in ("proptype", "prop", "propcommon"):
+                    elif stmt.verb in ("proptype", "prop", "propcommon",
+                                       "ask", "askarg", "do", "doarg",
+                                       "eventfield"):
                         # describe verb output: buffer until the reply.
                         self._pending_desc.append(text.strip())
                     elif stmt.verb == "event":
+                        # Two different lines start with this word: an event
+                        # the display raised, and a describe stream's record of
+                        # an event a type CAN raise. The first parses as an
+                        # event and the second does not, which is what tells
+                        # them apart.
                         try:
                             self._events.put(protocol.parse_event(text))
                         except Exception:  # noqa: BLE001
-                            pass
+                            self._pending_desc.append(text.strip())
         except (EOFError, OSError, ValueError):
             pass
         finally:
@@ -189,6 +202,42 @@ class Conn:
         service in the handshake. Use it to address application-wide
         properties, e.g. conn.exec("set %d multiwindow" % conn.app_id)."""
         return self._app_id
+
+    @property
+    def store_id(self) -> int:
+        """This connection's store ObjectID, from the same handshake. The
+        display knows it as "store" too."""
+        return self._store_id
+
+    @property
+    def host_id(self) -> int:
+        """This connection's handle on the display, from the same handshake.
+        The display knows it as "host" too: the terminal's theme, the desktop's
+        font and status bar, whether the desktop is showing."""
+        return self._host_id
+
+    def store(self) -> "Store":
+        """The connection's store as a handle."""
+        return Store(self, self._store_id)
+
+    def blob(self, oid: int) -> "Blob":
+        """One blob of the store, by the id an answer named it with. An app
+        never invents one: it learns ids from store_blob and store_data."""
+        return Blob(self, oid)
+
+    def host(self) -> "Handle":
+        """The display itself as a handle."""
+        return Handle(self, self._host_id)
+
+    def on_store(self, event: str, fn: Callable[[Event], None]):
+        """Register a handler for one of the store's answers and open the flow
+        for it. Subscribing does not ask what is in the store -- Store.list
+        does that."""
+        self.store().on(event, fn)
+
+    def on_host(self, event: str, fn: Callable[[Event], None]):
+        """Register a handler for what the display says about itself."""
+        self.host().on(event, fn)
 
     def set_app(self, props: str) -> Dict[str, int]:
         """Apply application-wide properties with the same syntax as any
@@ -281,6 +330,9 @@ class Conn:
     def do(self, oid: int, action: str):
         self.exec("do %d %s" % (oid, action))
 
+    def ask(self, oid: int, question: str):
+        self.exec("ask %d %s" % (oid, question))
+
 
 # --- Handles -------------------------------------------------------------
 
@@ -304,6 +356,12 @@ class Handle:
         Nothing comes back from it -- that is what separates an action from a
         question -- though what it changes may raise the object's events."""
         self._c.do(self._id, action)
+
+    def ask(self, question: str):
+        """Put a question to the object: h.ask("bytes offset=2048") sends
+        `ask <id> bytes offset=2048`. The answer arrives as the events the
+        question declares it answers with, so register for those first."""
+        self._c.ask(self._id, question)
 
     def destroy(self):
         self._c.exec("destroy %d" % self._id)
@@ -389,6 +447,73 @@ class Window(Handle):
         self.set("title=" + protocol.quote(s))
 
 
+# --- The store -----------------------------------------------------------
+
+# A key beginning with this names something the desktop may throw away at any
+# moment, the way `#` names a temporary table in SQL. That is the only
+# difference between what is kept and what is cached: one namespace, and the
+# name says how long the blob lives.
+CACHE_MARK = "#"
+
+# The events the store answers with. All of them name the store as their
+# source, so one subscription hears everything.
+STORE_BLOB = "store_blob"    # one blob: what it is and how big
+STORE_DONE = "store_done"    # the end of an inventory
+STORE_DATA = "store_data"    # one chunk of a blob being read back
+STORE_GONE = "store_gone"    # a blob is no longer there
+STORE_ERROR = "store_error"  # what went wrong, and with which key
+
+# What the display says about itself, and the questions it answers.
+HOST_STATE = "host_state"
+ASK_DARK = "dark"
+ASK_DESKTOP = "desktop"
+
+
+class Store(Handle):
+    """The app's whole store on the desktop: a flat set of names, each holding
+    one blob. Every one of these SENDS; the answers arrive as events on the
+    store, because a blob comes back in pieces."""
+
+    def write(self, key: str, typ: str, data: bytes):
+        """Put a blob in the store, replacing whatever the key held.
+
+        A key is a NAME, not a path: no slashes, nothing that is only digits,
+        nothing unprintable, and `#` only at the front. typ is one of txt, psl,
+        bin, ini or conf. The answer is a store_blob naming the id the blob can
+        be addressed by, which is how something larger than one statement is
+        continued -- see Blob.append."""
+        self.set("blobs={ new blob key=%s type=%s data=%s }" % (
+            protocol.quote(key), typ, protocol.quote_blob(data)))
+
+    def list(self):
+        """Ask what the store holds: a store_blob per blob, then a store_done
+        saying how many there were."""
+        self.ask("inventory")
+
+
+class Blob(Handle):
+    """One blob of the store, by the id an answer named it with."""
+
+    def append(self, data: bytes):
+        """Add to the end, as a terminal is fed. It is how something too large
+        for one statement is written: write the first piece, append the rest."""
+        self.do("append bytes=" + protocol.quote_blob(data))
+
+    def replace(self, data: bytes):
+        """Write the blob's whole contents again."""
+        self.set("data=" + protocol.quote_blob(data))
+
+    def read(self, offset: int):
+        """Ask for the chunk that starts at offset. The answer says where it
+        starts and whether it is the last; ask again from the end of what
+        arrived until it is."""
+        self.ask("bytes offset=%d" % offset)
+
+    def drop(self):
+        """Take the blob out of the store, which is the whole of what it was."""
+        self.destroy()
+
+
 class UI:
     """Handle access to one build's surfaced names."""
 
@@ -456,12 +581,19 @@ def _dial(endpoint_str: str, app_name: str, dispatch, solo: bool,
         sock.close()
         raise ConnectionError("handshake: unexpected response %r" % welcome)
 
-    # The handshake carries this connection's Application ObjectID, so the app
-    # can address application-wide properties (see Conn.app_id / Conn.set_app).
+    # The handshake carries the ObjectIDs of the things this connection arrives
+    # with rather than builds (see Conn.app_id / store_id / host_id).
     for a in script.statements[0].args:
-        if (a.name == "app" and a.value is not None
-                and a.value.kind == protocol.ValueKind.NUMBER and a.value.is_int):
-            conn._app_id = int(a.value.number)
+        if (a.value is None or a.value.kind != protocol.ValueKind.NUMBER
+                or not a.value.is_int):
+            continue
+        oid = int(a.value.number)
+        if a.name == "app":
+            conn._app_id = oid
+        elif a.name == "store":
+            conn._store_id = oid
+        elif a.name == "host":
+            conn._host_id = oid
 
     conn._start()
     return conn
