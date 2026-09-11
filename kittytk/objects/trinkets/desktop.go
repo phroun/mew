@@ -2591,8 +2591,12 @@ func (d *Desktop) appendStandardAppItems(menu *Menu, appName string) {
 // Others, Show All. When leadingSeparator is true a separator first
 // offsets them from the menu's own items (as in the desktop's app
 // menu); the standalone Psi menu passes false.
+//
+// The separator only appears when there is something above it to offset from:
+// an app that declared no app-menu items would otherwise open with a stray rule
+// as its first row, the same way appendQuitSection guards Quit's.
 func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator bool) {
-	if leadingSeparator {
+	if leadingSeparator && len(menu.Items()) > 0 {
 		menu.AddSeparator()
 	}
 
@@ -2619,13 +2623,33 @@ func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator
 // that declared no app-menu items (the synthesized "≡" menu) would otherwise
 // open with a stray separator as its first row, with nothing but Quit below.
 func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
-	// Connections sits directly above Quit, and the separator that already
-	// offsets Quit offsets it too -- so the app's own items, then the
-	// desktop's one, then a rule, then Quit.
-	if open := d.connectionsOpener(); open != nil && d.appShowsConnections() {
-		if len(menu.Items()) > 0 {
-			menu.AddSeparator()
+	// The desktop's own items sit directly above Quit, in one section: the
+	// app's items, a rule, what the desktop offers, a rule, Quit.
+	//
+	// Narration is there whatever the app thinks, because it is the route to
+	// turning narration on and a person who needs it cannot be asked to find an
+	// app that opted in. Connections is offered only where the app asked for it
+	// -- the Ψ menu carries that one for everybody.
+	if len(menu.Items()) > 0 {
+		menu.AddSeparator()
+	}
+	narration := NewMenuItem("&Narration").SetCheckable(true)
+	narration.SetChecked(d.Narration())
+	narration.SetOnTriggered(func() { d.SetNarration(!d.Narration()) })
+	menu.AddItem(narration)
+
+	// The tick has to be right whoever last changed it -- the Ψ menu's own
+	// item, another app's, or a client over the wire. Anything the menu was
+	// already going to do on the way open still happens.
+	prior := menu.OnAboutToShow()
+	menu.SetOnAboutToShow(func() {
+		if prior != nil {
+			prior()
 		}
+		narration.SetChecked(d.Narration())
+	})
+
+	if open := d.connectionsOpener(); open != nil && d.appShowsConnections() {
 		menu.AddItem(NewMenuItem("&Connections...").SetOnTriggered(open))
 	}
 	if len(menu.Items()) > 0 {

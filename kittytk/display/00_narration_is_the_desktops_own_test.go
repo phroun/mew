@@ -174,3 +174,132 @@ func refreshPsi(t *testing.T, d *trinkets.Desktop) {
 		}
 	})
 }
+
+// appMenuItems is what the app's own menu holds, in order, with the menu's
+// about-to-show hook run first -- which is what opening it would do.
+func appMenuItems(t *testing.T, d *trinkets.Desktop) []*trinkets.MenuItem {
+	t.Helper()
+	var items []*trinkets.MenuItem
+	onUI(d, func() {
+		bar := d.MenuBar()
+		if bar == nil {
+			return
+		}
+		for _, m := range bar.Menus() {
+			if m == nil || m.RawTitle() == "Ψ" {
+				continue
+			}
+			if fn := m.OnAboutToShow(); fn != nil {
+				fn()
+			}
+			for _, it := range m.Items() {
+				if it != nil {
+					items = append(items, it)
+				}
+			}
+			return // the app's menu leads the bar
+		}
+	})
+	if len(items) == 0 {
+		t.Fatal("no app menu on the bar")
+	}
+	return items
+}
+
+func appMenuItem(t *testing.T, d *trinkets.Desktop, text string) *trinkets.MenuItem {
+	t.Helper()
+	for _, it := range appMenuItems(t, d) {
+		if it.Text == text {
+			return it
+		}
+	}
+	var rows []string
+	for _, it := range appMenuItems(t, d) {
+		rows = append(rows, it.Text)
+	}
+	t.Fatalf("the app menu has no %q item; it reads %v", text, rows)
+	return nil
+}
+
+// The route to turning narration on is in every app's own menu, whatever the
+// app declared -- a person who needs it cannot be asked to find an app that
+// opted in, the way Connections asks.
+func TestNarrationIsOnEveryAppsOwnMenu(t *testing.T) {
+	for _, c := range []struct{ name, build string }{
+		{"an app that declared no menus", `w=new window title="W" width=200 height=120`},
+		{"an app that declared its own", `w=new window title="W" width=200 height=120
+mb=new menubar children={
+	new menu caption="&Mine" wellknown="app" children={
+		new menuitem caption="&New" action=x.new
+	}
+}`},
+	} {
+		desktop, sock, done := servedDesktop(t)
+		conn := dialSocket(t, sock, "Menu App")
+		if _, err := conn.Exec(c.build); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+
+		item := appMenuItem(t, desktop, "Narration")
+		if !item.Checkable {
+			t.Errorf("%s: the Narration item carries no tick", c.name)
+		}
+		// It reaches the same setting the Ψ menu does.
+		onUI(desktop, func() { item.Trigger() })
+		if !desktop.Narration() {
+			t.Errorf("%s: the app menu's item did not turn narration on", c.name)
+		}
+		// And the tick is right when something else changed it.
+		desktop.SetNarration(false)
+		if appMenuItem(t, desktop, "Narration").Checked {
+			t.Errorf("%s: the tick did not catch up", c.name)
+		}
+		done()
+	}
+}
+
+// A menu opens on an item, not on a rule. The separator that offsets the
+// system's items only belongs there when the app put something above it.
+func TestAnAppMenuDoesNotOpenWithASeparator(t *testing.T) {
+	desktop, sock, done := servedDesktop(t)
+	defer done()
+
+	conn := dialSocket(t, sock, "Plain App")
+	if _, err := conn.Exec(`w=new window title="W" width=200 height=120`); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	items := appMenuItems(t, desktop)
+	if items[0].Separator {
+		var rows []string
+		for _, it := range items {
+			if it.Separator {
+				rows = append(rows, "----")
+			} else {
+				rows = append(rows, it.Text)
+			}
+		}
+		t.Errorf("the menu opens with a rule: %v", rows)
+	}
+
+	// An app that declared its own items still gets the offset, because now
+	// there is something to offset from.
+	desktop2, sock2, done2 := servedDesktop(t)
+	defer done2()
+	conn2 := dialSocket(t, sock2, "Declaring App")
+	if _, err := conn2.Exec(`w=new window title="W" width=200 height=120
+mb=new menubar children={
+	new menu caption="&Mine" wellknown="app" children={
+		new menuitem caption="&New" action=x.new
+	}
+}`); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	rows := appMenuItems(t, desktop2)
+	if rows[0].Separator {
+		t.Error("the declared menu opens with a rule")
+	}
+	if len(rows) < 2 || !rows[1].Separator {
+		t.Error("the system's items are not offset from the app's own")
+	}
+}
