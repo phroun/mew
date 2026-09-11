@@ -29,6 +29,23 @@ const (
 	HostName  = "host"
 )
 
+// InitVerb names the statement that follows the welcome, saying what objects
+// this connection was handed and what each is called:
+//
+//	welcome version=1 session=6
+//	init app=6 store=1099511627777 host=2199023255553
+//
+// It is a statement of its own because then it needs no marker: every field of
+// it is an object, whereas the welcome carries integers that are not ids and
+// will carry more as it grows. A display that hands over a fourth object adds
+// a field here and every client can already reach it, without one of them
+// being taught the name.
+//
+// The names are the session keys the host bound with Session.RegisterAs, so
+// this is a report of what a client can already say rather than a second
+// namespace.
+const InitVerb = "init"
+
 // Reply reports server-assigned IDs for a request: top-level
 // correlation keys plus explicitly surfaced names (D11/D15). Extra
 // carries additional raw wire statements a verb wants delivered ahead

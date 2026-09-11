@@ -18,6 +18,7 @@ package client
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/phroun/kittytk/wire"
@@ -54,20 +55,16 @@ type Conn struct {
 	// Command sink for action= dispatch (the app's registry).
 	dispatch func(commandID string)
 
-	// appID is this connection's Application ObjectID, reported by the
-	// display service in the handshake (0 for in-process connections, which
-	// have no handshake). Address app-wide properties by it - see SetApp.
-	appID uint64
-
-	// storeID is this connection's store ObjectID, reported in the same
-	// handshake. Everything the app has kept on the desktop is addressed
-	// through it (see Conn.Store).
-	storeID uint64
-
-	// hostID is this connection's handle on the display, reported in the same
-	// handshake. What it carries belongs to no app in particular: the theme,
-	// the desktop's font and status bar (see Conn.Host).
-	hostID uint64
+	// given is every object the display has handed this connection, by the
+	// name it knows it by: its application, its store, its handle on the
+	// display, and whatever else a display offers. Empty for an in-process
+	// connection, which has no handshake.
+	//
+	// One record rather than a field per object, so a display that hands over
+	// something new reaches a client that was never taught its name -- and so
+	// an init arriving later replaces what a name meant rather than leaving
+	// two answers. Guarded by mu: the read loop writes it.
+	given map[string]uint64
 
 	// closed fires once when the transport disconnects (remote) or
 	// Close is called, so callers can block on the connection's life.
@@ -122,27 +119,76 @@ func (c *Conn) Closed() <-chan struct{} { return c.closed }
 // (which have no handshake). The display also knows the application by name,
 // so `set app multiwindow` says the same thing as this id does; the id is
 // what a client wants when it has taken the name for something else.
-func (c *Conn) AppID() uint64 { return c.appID }
+func (c *Conn) AppID() uint64 { return c.Init(wire.AppName) }
 
 // App is this connection's application object as a handle: what app-wide
 // properties are set through, and what it raises events on.
-func (c *Conn) App() Handle { return c.given(c.appID, wire.AppName) }
+func (c *Conn) App() Handle { return c.Given(wire.AppName) }
+
+// handOver records an init statement: every field of it is an object the
+// display has handed this connection, under the name it knows it by. A name
+// already in hand is replaced, because the display saying it again is the
+// display saying what that name means NOW.
+//
+// It runs at the handshake and again whenever one arrives afterwards, so this
+// is read from the connection's own goroutine as well as the caller's.
+func (c *Conn) handOver(stmt *wire.Statement) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.given == nil {
+		c.given = map[string]uint64{}
+	}
+	for _, a := range stmt.Args {
+		if a.Value == nil || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
+			continue
+		}
+		c.given[a.Name] = uint64(a.Value.Number)
+	}
+}
+
+// Init is the ObjectID of a thing the display handed this connection, by the
+// name it knows it by -- "app", "store", "host", and whatever a display offers
+// beyond them. 0 for a name it has not handed over.
+//
+// The name is also a session key the display bound, so `set <name> ...` says
+// the same thing as this id does; this is what reaches the object when a
+// client has taken that name for something of its own.
+func (c *Conn) Init(name string) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.given[name]
+}
+
+// InitNames is every name the display has handed over, sorted.
+func (c *Conn) InitNames() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	names := make([]string, 0, len(c.given))
+	for n := range c.given {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Given is a handle on one of them, by name.
+func (c *Conn) Given(name string) Handle { return c.handed(c.Init(name), name) }
 
 // HostID returns the ObjectID of this connection's handle on the display, as
 // reported in the handshake. It is 0 for a connection that has none (an
 // in-process one, which has no handshake).
-func (c *Conn) HostID() uint64 { return c.hostID }
+func (c *Conn) HostID() uint64 { return c.Init(wire.HostName) }
 
 // Host is the display itself as a handle: the terminal's theme, the desktop's
 // font and status bar, whether there is a desktop at all. One of each exists
 // and everyone connected shares it, so what is set here is set for all of them.
-func (c *Conn) Host() Handle { return c.given(c.hostID, wire.HostName) }
+func (c *Conn) Host() Handle { return c.Given(wire.HostName) }
 
-// given is a handle for one of the two objects the display hands over, which
+// handed is a handle for one of the objects the display hands over, which
 // it already knows by name. A connection without a handshake was handed
 // neither, and addressing one by a name the display never registered would
 // only produce a puzzling refusal, so such a handle keeps to the id it has.
-func (c *Conn) given(id uint64, name string) Handle {
+func (c *Conn) handed(id uint64, name string) Handle {
 	if id == 0 {
 		return Handle{c: c}
 	}
@@ -154,7 +200,7 @@ func (c *Conn) given(id uint64, name string) Handle {
 // `set app multiwindow contextonly`. It errors before the handshake has
 // assigned an app ID (in-process connections have none).
 func (c *Conn) SetApp(props string) (*wire.Reply, error) {
-	if c.appID == 0 {
+	if c.AppID() == 0 {
 		return nil, fmt.Errorf("SetApp: no application id (in-process connection)")
 	}
 	return c.Exec(fmt.Sprintf("set %s %s", wire.AppName, props))

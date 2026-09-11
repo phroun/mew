@@ -119,24 +119,29 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
 	}
-	// The handshake carries the ObjectIDs of the things this connection arrives
-	// with rather than builds: its Application, its store, and its handle on
-	// the display (see Conn.AppID / Conn.SetApp, Conn.StoreID / Conn.Store,
-	// Conn.HostID / Conn.Host). The display knows each by name as well.
-	for _, a := range script.Statements[0].Args {
-		if a.Value == nil || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
-			continue
-		}
-		switch a.Name {
-		case "app":
-			c.appID = uint64(a.Value.Number)
-		case "store":
-			c.storeID = uint64(a.Value.Number)
-		case "host":
-			c.hostID = uint64(a.Value.Number)
-		}
+	// Then an init statement: what this connection was handed, one field per
+	// object. Every field of it is an object, so a client reads them all
+	// without being taught the names -- a display that hands over a fourth
+	// thing is reachable here with no client change (see Conn.Init).
+	//
+	// This first one is read here so the ids are in hand before Dial returns.
+	// Later ones arrive on the read loop like anything else: the display can
+	// hand over something new, or hand the same name a new object, whenever it
+	// has reason to.
+	init, err := rt.scanner.Next()
+	if err != nil {
+		dbg("dial app=%q: reading init failed: %v", appName, err)
+		nc.Close()
+		return nil, fmt.Errorf("handshake: reading init: %w", err)
 	}
-	dbg("dial app=%q: welcome received (app id=%d), connection ready", appName, c.appID)
+	initScript, err := wire.Parse(init)
+	if err != nil || len(initScript.Statements) == 0 ||
+		initScript.Statements[0].Verb != wire.InitVerb {
+		nc.Close()
+		return nil, fmt.Errorf("handshake: unexpected init %q", init)
+	}
+	c.handOver(initScript.Statements[0])
+	dbg("dial app=%q: handed %v, connection ready", appName, c.InitNames())
 
 	go rt.readLoop()
 	go rt.eventLoop()
@@ -158,9 +163,10 @@ type remoteTransport struct {
 	writeMu sync.Mutex
 	replies chan replyOrError
 
-	// pendingDesc accumulates the describe verb's flat vocabulary
-	// statements (proptype/prop/propcommon) that arrive ahead of the
-	// reply terminating the batch; attached to that reply's Extra.
+	// pendingDesc accumulates the describe verb's flat vocabulary statements
+	// (proptype/prop/propcommon/ask/askarg/do/doarg/event/eventfield) that
+	// arrive ahead of the reply terminating the batch; attached to that
+	// reply's Extra.
 	pendingDesc []string
 
 	// events are delivered on their own goroutine so a handler that
@@ -234,6 +240,12 @@ func (t *remoteTransport) readLoop() {
 			case "proptype", "prop", "propcommon", "ask", "askarg", "do", "doarg", "eventfield":
 				// describe verb output: buffer until the reply arrives.
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
+			case wire.InitVerb:
+				// The display handing over something: a new object, or a new
+				// object under a name already in hand. It is not only a
+				// handshake step -- the display says it whenever it has
+				// something to give.
+				t.conn.handOver(stmt)
 			case "event":
 				// One verb, two things: an event RECORD opens with a bare type
 				// word, and the describe stream's description of one names the

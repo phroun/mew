@@ -487,9 +487,13 @@ struct kt_conn {
     size_t rpos, rlen;
     int reof;
 
-    uint64_t app_id; /* Application ObjectID from the handshake (0 until set) */
-    uint64_t store_id; /* this connection's store, from the same handshake */
-    uint64_t host_id;  /* this connection's handle on the display */
+    /* given: every object the display has handed this connection, by the name
+     * it knows it by -- its application, its store, its handle on the display,
+     * and whatever else a display offers. One record rather than a field per
+     * object, so a display that hands over something new reaches a client that
+     * was never taught its name. Guarded by rmu: the read loop writes it. */
+    kt_pair *given;
+    int      ngiven;
 
     kt_mutex write_mu;
 
@@ -608,6 +612,43 @@ static int read_byte(kt_conn *c) {
 }
 
 /* Frame the next statement (mirror of the Go Scanner). */
+/* hand_over records an init statement: every field of it is an object the
+ * display has handed this connection, under the name it knows it by. A name
+ * already in hand is replaced, because the display saying it again is the
+ * display saying what that name means NOW. */
+static void hand_over(kt_conn *c, const kt_stmt *st) {
+    kt_mutex_lock(&c->rmu);
+    for (int i = 0; i < st->n; i++) {
+        if (!st->args[i].name || !st->args[i].has_value || st->args[i].kind != 0)
+            continue;
+        uint64_t id = (uint64_t)st->args[i].ival;
+        int found = 0;
+        for (int j = 0; j < c->ngiven; j++)
+            if (strcmp(c->given[j].name, st->args[i].name) == 0) {
+                c->given[j].id = id;
+                found = 1;
+                break;
+            }
+        if (!found) {
+            c->given = realloc(c->given, (c->ngiven + 1) * sizeof(kt_pair));
+            c->given[c->ngiven].name = strdup(st->args[i].name);
+            c->given[c->ngiven].id = id;
+            c->ngiven++;
+        }
+    }
+    kt_mutex_unlock(&c->rmu);
+}
+
+uint64_t kt_init(kt_conn *c, const char *name) {
+    if (!c || !name) return 0;
+    uint64_t id = 0;
+    kt_mutex_lock(&c->rmu);
+    for (int j = 0; j < c->ngiven; j++)
+        if (strcmp(c->given[j].name, name) == 0) { id = c->given[j].id; break; }
+    kt_mutex_unlock(&c->rmu);
+    return id;
+}
+
 static char *scan_next(kt_conn *c) {
     kt_buf b = {0};
     int depth = 0, in_string = 0, escaped = 0, saw = 0;
@@ -744,6 +785,11 @@ static void *read_loop(void *arg) {
             c->reply_ready = 1;
             kt_cond_signal(&c->rcv);
             kt_mutex_unlock(&c->rmu);
+        } else if (strcmp(st->verb, "init") == 0) {
+            /* The display handing over something: a new object, or a new
+             * object under a name already in hand. Not only a handshake step
+             * -- the display says it whenever it has something to give. */
+            hand_over(c, st);
         } else if (strcmp(st->verb, "event") == 0 && st->n > 0
                    && !st->args[0].has_value) {
             /* Two different lines start with this word: an event the display
@@ -849,13 +895,13 @@ uint64_t kt_ui_id(const kt_ui *ui, const char *name) {
     return 0;
 }
 
-uint64_t kt_app_id(kt_conn *c) { return c ? c->app_id : 0; }
+uint64_t kt_app_id(kt_conn *c) { return kt_init(c, "app"); }
 
 int kt_set_app(kt_conn *c, const char *props) {
-    if (!c || !c->app_id) return -1;
+    if (!c || !kt_init(c, "app")) return -1;
+    /* By the name the display knows it by, as the Go and Python clients do. */
     char buf[512];
-    snprintf(buf, sizeof(buf), "set %llu %s",
-             (unsigned long long)c->app_id, props ? props : "");
+    snprintf(buf, sizeof(buf), "set app %s", props ? props : "");
     return kt_exec(c, buf);
 }
 void kt_ui_free(kt_ui *ui) {
@@ -1027,8 +1073,8 @@ int kt_set(kt_conn *c, uint64_t id, const char *args) {
     free(src);
     return r;
 }
-uint64_t kt_store_id(kt_conn *c) { return c ? c->store_id : 0; }
-uint64_t kt_host_id(kt_conn *c) { return c ? c->host_id : 0; }
+uint64_t kt_store_id(kt_conn *c) { return kt_init(c, "store"); }
+uint64_t kt_host_id(kt_conn *c) { return kt_init(c, "host"); }
 
 int kt_ask(kt_conn *c, uint64_t id, const char *question) {
     char *src = malloc(strlen(question) + 32);
@@ -1060,14 +1106,14 @@ int kt_store_write(kt_conn *c, const char *key, const char *type,
     size_t len = strlen(qk) + strlen(qd) + strlen(type) + 64;
     char *args = malloc(len);
     snprintf(args, len, "blobs={ new blob key=%s type=%s data=%s }", qk, type, qd);
-    int r = kt_set(c, c->store_id, args);
+    int r = kt_set(c, kt_init(c, "store"), args);
     free(args); free(qk); free(qd);
     return r;
 }
 
 int kt_store_list(kt_conn *c) {
     if (!c) return -1;
-    return kt_ask(c, c->store_id, "inventory");
+    return kt_ask(c, kt_init(c, "store"), "inventory");
 }
 
 int kt_blob_append(kt_conn *c, uint64_t blob, const void *data, size_t n) {
@@ -1428,25 +1474,27 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     kt_stmt *st = parse_statement(welcome);
     int ok = st && strcmp(st->verb, "welcome") == 0;
     if (ok) {
-        /* The handshake carries the ObjectIDs of the things this connection
-         * arrives with rather than builds: its Application, its store, and its
-         * handle on the display. The display knows each by name as well
-         * ("app", "store", "host"), so a statement written by hand can say the
-         * name instead; these are what reach them when a client has taken one
-         * of those names for something of its own. */
-        for (int i = 0; i < st->n; i++) {
-            if (!st->args[i].name || st->args[i].kind != 0) continue;
-            uint64_t id = (uint64_t)st->args[i].ival;
-            if (strcmp(st->args[i].name, "app") == 0) c->app_id = id;
-            else if (strcmp(st->args[i].name, "store") == 0) c->store_id = id;
-            else if (strcmp(st->args[i].name, "host") == 0) c->host_id = id;
-        }
     }
     stmt_free(st);
     free(welcome);
     if (!ok) { KTDBG("dial app=%s: bad welcome", app_name); goto fail; }
-    KTDBG("dial app=%s: welcome received (app id=%llu), connection ready",
-          app_name, (unsigned long long)c->app_id);
+
+    /* Then an init statement: what this connection was handed, one field per
+     * object. Every field of it is an object, so a client reads them all
+     * without being taught the names -- a display that hands over a fourth
+     * thing is reachable with no client change (kt_init).
+     *
+     * This first one is read here so the ids are in hand before kt_dial
+     * returns. Later ones arrive on the read loop like anything else. */
+    char *init = scan_next(c);
+    if (!init) { KTDBG("dial app=%s: reading init failed", app_name); goto fail; }
+    kt_stmt *ist = parse_statement(init);
+    int iok = ist && strcmp(ist->verb, "init") == 0;
+    if (iok) hand_over(c, ist);
+    stmt_free(ist);
+    free(init);
+    if (!iok) { KTDBG("dial app=%s: bad init", app_name); goto fail; }
+    KTDBG("dial app=%s: handed %d objects, connection ready", app_name, c->ngiven);
 
     kt_thread_create(&c->rthread, read_loop, c);
     kt_thread_create(&c->ethread, event_loop, c);
@@ -1500,5 +1548,7 @@ void kt_close(kt_conn *c) {
     /* (handler/sub tables reclaimed at process exit in demo/smoke usage.) */
     for (int i = 0; i < c->desc_n; i++) free(c->desc[i]);
     free(c->desc);
+    for (int i = 0; i < c->ngiven; i++) free(c->given[i].name);
+    free(c->given);
     free(c);
 }

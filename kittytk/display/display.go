@@ -441,8 +441,17 @@ func (s *Server) serveConn(nc net.Conn) {
 	c.host = newHostObject(c, hostObjectID())
 	c.session.RegisterAs(protocol.HostName, c.host)
 
-	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d store=%d host=%d",
-		sessionID, application.ObjectID(), c.store.ID(), c.host.ID()))
+	c.send(fmt.Sprintf("welcome version=1 session=%d", sessionID))
+	// And then what this connection was handed, one field per object. Every
+	// field of this statement is an object, which is why it is a statement of
+	// its own: the welcome carries integers that are not ids, so a client
+	// cannot tell them apart by shape. A display that hands over a fourth
+	// object adds a field here and needs no client taught about it.
+	c.send(fmt.Sprintf("%s %s=%d %s=%d %s=%d",
+		protocol.InitVerb,
+		protocol.AppName, application.ObjectID(),
+		protocol.StoreName, c.store.ID(),
+		protocol.HostName, c.host.ID()))
 	dbg("welcome sent session=%d app=%q id=%d store=%d host=%d",
 		sessionID, appName, application.ObjectID(), c.store.ID(), c.host.ID())
 

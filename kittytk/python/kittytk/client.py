@@ -87,15 +87,18 @@ class Conn:
         self._closed_flag = False
         self.closed = threading.Event()  # set when the connection ends
 
-        # The ObjectIDs of the things this connection arrives with rather than
-        # builds: its Application, its store, and its handle on the display.
-        # All 0 until the welcome is parsed. The display knows each by name as
-        # well ("app", "store", "host"), so a statement written by hand can say
-        # the name; these are what reach them when a client has taken one of
-        # those names for something of its own.
-        self._app_id = 0
-        self._store_id = 0
-        self._host_id = 0
+        # Every object the display has handed this connection, by the name it
+        # knows it by: its application, its store, its handle on the display,
+        # and whatever else a display offers. Empty for a connection with no
+        # handshake.
+        #
+        # One record rather than an attribute per object, so a display that
+        # hands over something new reaches a client that was never taught its
+        # name -- and so an init arriving later replaces what a name meant
+        # rather than leaving two answers. Guarded by _given_lock: the read
+        # thread writes it.
+        self._given: Dict[str, int] = {}
+        self._given_lock = threading.Lock()
 
     # --- lifecycle -------------------------------------------------------
 
@@ -133,6 +136,12 @@ class Conn:
                                        "eventfield"):
                         # describe verb output: buffer until the reply.
                         self._pending_desc.append(text.strip())
+                    elif stmt.verb == "init":
+                        # The display handing over something: a new object, or
+                        # a new object under a name already in hand. Not only a
+                        # handshake step -- the display says it whenever it has
+                        # something to give.
+                        self._hand_over(stmt)
                     elif stmt.verb == "event":
                         # Two different lines start with this word: an event
                         # the display raised, and a describe stream's record of
@@ -196,29 +205,61 @@ class Conn:
         ids, _ = self._exec_raw(src)
         return ids
 
+    def _hand_over(self, stmt):
+        """Record an init statement: every field of it is an object the display
+        has handed this connection, under the name it knows it by. A name
+        already in hand is replaced, because the display saying it again is the
+        display saying what that name means NOW."""
+        with self._given_lock:
+            for a in stmt.args:
+                if (a.value is None or a.value.kind != protocol.ValueKind.NUMBER
+                        or not a.value.is_int):
+                    continue
+                self._given[a.name] = int(a.value.number)
+
+    def init(self, name: str) -> int:
+        """The ObjectID of a thing the display handed this connection, by the
+        name it knows it by -- "app", "store", "host", and whatever a display
+        offers beyond them. 0 for a name it has not handed over.
+
+        The name is also a session key the display bound, so `set <name> ...`
+        says the same thing as this id does; this is what reaches the object
+        when a client has taken that name for something of its own."""
+        with self._given_lock:
+            return self._given.get(name, 0)
+
+    def init_names(self):
+        """Every name the display has handed over, sorted."""
+        with self._given_lock:
+            return sorted(self._given)
+
+    def given(self, name: str) -> "Handle":
+        """A handle on one of them, by name."""
+        return Handle(self, self.init(name))
+
     @property
     def app_id(self) -> int:
         """This connection's Application ObjectID, as reported by the display
         service in the handshake. Use it to address application-wide
         properties, e.g. conn.exec("set %d multiwindow" % conn.app_id)."""
-        return self._app_id
+        return self.init("app")
 
     @property
     def store_id(self) -> int:
-        """This connection's store ObjectID, from the same handshake. The
-        display knows it as "store" too."""
-        return self._store_id
+        """This connection's store ObjectID. The display knows it as "store"
+        too."""
+        return self.init("store")
 
     @property
     def host_id(self) -> int:
-        """This connection's handle on the display, from the same handshake.
-        The display knows it as "host" too: the terminal's theme, the desktop's
-        font and status bar, whether the desktop is showing."""
-        return self._host_id
+        """This connection's handle on the display. The display knows it as
+        "host" too: the terminal's theme, the desktop's font and status bar,
+        whether the desktop is showing."""
+        return self.init("host")
 
     def store(self) -> "Store":
         """The connection's store as a handle."""
-        return Store(self, self._store_id)
+        return Store(self, self.init("store"))
 
     def blob(self, oid: int) -> "Blob":
         """One blob of the store, by the id an answer named it with. An app
@@ -227,7 +268,7 @@ class Conn:
 
     def host(self) -> "Handle":
         """The display itself as a handle."""
-        return Handle(self, self._host_id)
+        return Handle(self, self.init("host"))
 
     def on_store(self, event: str, fn: Callable[[Event], None]):
         """Register a handler for one of the store's answers and open the flow
@@ -243,9 +284,9 @@ class Conn:
         """Apply application-wide properties with the same syntax as any
         object: set_app("multiwindow contextonly") sends
         `set <app_id> multiwindow contextonly`."""
-        if not self._app_id:
+        if not self.init("app"):
             raise RuntimeError("set_app: no application id from the handshake")
-        return self.exec("set %d %s" % (self._app_id, props))
+        return self.exec("set app %s" % props)
 
     def describe(self) -> protocol.Vocabulary:
         """Query the host's wire vocabulary (D24): the supported trinket
@@ -581,19 +622,18 @@ def _dial(endpoint_str: str, app_name: str, dispatch, solo: bool,
         sock.close()
         raise ConnectionError("handshake: unexpected response %r" % welcome)
 
-    # The handshake carries the ObjectIDs of the things this connection arrives
-    # with rather than builds (see Conn.app_id / store_id / host_id).
-    for a in script.statements[0].args:
-        if (a.value is None or a.value.kind != protocol.ValueKind.NUMBER
-                or not a.value.is_int):
-            continue
-        oid = int(a.value.number)
-        if a.name == "app":
-            conn._app_id = oid
-        elif a.name == "store":
-            conn._store_id = oid
-        elif a.name == "host":
-            conn._host_id = oid
+    # Then an init statement: what this connection was handed, one field per
+    # object. Every field of it is an object, so a client reads them all
+    # without being taught the names (see Conn.init).
+    #
+    # This first one is read here so the ids are in hand before dial returns.
+    # Later ones arrive on the read thread like anything else.
+    init = conn._scanner.next()
+    init_script = protocol.parse(init)
+    if not init_script.statements or init_script.statements[0].verb != "init":
+        sock.close()
+        raise ConnectionError("handshake: unexpected init %r" % init)
+    conn._hand_over(init_script.statements[0])
 
     conn._start()
     return conn

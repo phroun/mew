@@ -105,13 +105,24 @@ int kt_do(kt_conn *c, uint64_t id, const char *action);
    declares it answers with, so register for those (kt_on) before asking. */
 int kt_ask(kt_conn *c, uint64_t id, const char *question);
 
-/* --- the two other objects the connection is handed -------------------- */
+/* --- the objects the connection is handed ------------------------------ */
 
-/* Its store, and its handle on the display, by the ObjectIDs the handshake
-   carried. The display knows them by the names "store" and "host" too, so a
-   hand-written statement can say the name; these are what reach them when a
-   client has taken one of those names for something of its own. 0 before the
-   handshake, and on a host that offered neither. */
+/* The display sends an `init` statement after the welcome, one field per
+   object it has handed this connection: its application, its store, its handle
+   on the display, and whatever else that display offers. Every field of it is
+   an object, so a client reads them all without being taught the names.
+
+   kt_init is the ObjectID under one of those names, 0 for a name the display
+   has not handed over. The name is also a session key the display bound, so
+   `set <name> ...` says the same thing as the id does; the id is what reaches
+   the object when a client has taken that name for something of its own.
+
+   init is not only a handshake step: the display says it again whenever it has
+   something new to give, or a new object to put under a name already in hand,
+   and this answers with what that name means now. */
+uint64_t kt_init(kt_conn *c, const char *name);
+
+/* The three this header wraps, by name. */
 uint64_t kt_store_id(kt_conn *c);
 uint64_t kt_host_id(kt_conn *c);
 

@@ -48,6 +48,7 @@ const (
 	AppName   = wire.AppName
 	StoreName = wire.StoreName
 	HostName  = wire.HostName
+	InitVerb  = wire.InitVerb
 )
 
 // Language functions.

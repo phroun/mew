@@ -49,11 +49,11 @@ const (
 // handshake. It is 0 for a connection that has none (an in-process one, which
 // has no handshake). The display also knows the store by name, so `ask store
 // inventory` says the same thing as this id does.
-func (c *Conn) StoreID() uint64 { return c.storeID }
+func (c *Conn) StoreID() uint64 { return c.Init(wire.StoreName) }
 
 // Store is the connection's store as a handle: an object like any other, so
 // Set and On reach it directly for anything this type does not wrap.
-func (c *Conn) Store() Store { return Store{c.given(c.storeID, wire.StoreName)} }
+func (c *Conn) Store() Store { return Store{c.Given(wire.StoreName)} }
 
 // Blob is one blob of the store by the id an answer named it with. An app never
 // invents one of these: it learns ids from store_blob and store_data events,
