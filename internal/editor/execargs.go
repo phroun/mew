@@ -2,11 +2,11 @@ package editor
 
 import (
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/phroun/argwild"
+	"github.com/phroun/pawscript"
 )
 
 // The exec command line.
@@ -579,13 +579,12 @@ func (spec execSpec) sizePolicy() ptySizePolicy {
 func operandArgs(v argwild.Value) []string {
 	switch v.Kind {
 	case argwild.KindPSL:
-		// The block parses to pawscript's own list type, so range over it
-		// reflectively rather than asserting one concrete slice shape.
-		rv := reflect.ValueOf(v.PSL)
-		if rv.IsValid() && rv.Kind() == reflect.Slice {
-			out := make([]string, 0, rv.Len())
-			for i := 0; i < rv.Len(); i++ {
-				out = append(out, fmt.Sprintf("%v", rv.Index(i).Interface()))
+		// The block parses to a node; its ordered items are the arguments, and
+		// anything named in it is not one.
+		if block, ok := v.PSL.(*pawscript.PSLNode); ok && block.Len() > 0 {
+			out := make([]string, 0, block.Len())
+			for _, item := range block.Items {
+				out = append(out, fmt.Sprintf("%v", item))
 			}
 			return out
 		}

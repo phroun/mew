@@ -251,11 +251,11 @@ discouraged.
 
 ## Reaching a bundle from Go
 
-`pawscript.PSLNode` presents both collections of a PSL list at once, which is
-what reading a bundle needs:
+`pawscript.ParsePSL` returns a `PSLNode`, which presents both collections of a
+PSL list at once — which is what reading a bundle needs:
 
 ```go
-n, err := pawscript.ParsePSLNode(text)
+n, err := pawscript.ParsePSL(text)
 n.Get("_bundle")    // the keyed metadata
 n.Len(), n.Item(i)  // the ordered records
 n.Child(i)          // an ordered record as a node in its own right
@@ -263,12 +263,8 @@ n.Map()             // the keyed members as a PSLMap
 ```
 
 `SerializePSLNode` goes back the other way, so a bundle survives a round trip
-with its records in place.
-
-`ParsePSL` is the wrapper to avoid here: it returns a `PSLMap`, which is a Go
-`map[string]interface{}` and so holds keyed members only. A bundle always has
-`_bundle` and `_hash`, and read through that call every ordered record in it
-would be dropped — silently, with no error.
+with its records in place, and a node nests inside a document being built by
+hand as well.
 
 One serializer behaviour to know: **keyed members are sorted on emit**, so
 declaration order among keyed records is not something to rely on. Ordered

@@ -166,11 +166,8 @@ func switchValue(sw argwild.Switch) (string, error) {
 func evalScriptFromValue(v argwild.Value) string {
 	if v.Kind == argwild.KindPSL {
 		var items []interface{}
-		switch t := v.PSL.(type) {
-		case pawscript.PSLList:
-			items = t
-		case []interface{}:
-			items = t
+		if block, ok := v.PSL.(*pawscript.PSLNode); ok {
+			items = block.Items
 		}
 		if items != nil {
 			parts := make([]string, 0, len(items))

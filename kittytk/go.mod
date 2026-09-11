@@ -9,7 +9,7 @@ require (
 	github.com/go-text/typesetting v0.3.4
 	github.com/gogpu/gputypes v0.5.1
 	github.com/gogpu/wgpu v0.30.32
-	github.com/phroun/argwild v0.0.1
+	github.com/phroun/argwild v0.0.2-0.20260911022044-972e1048d2bf
 	github.com/phroun/direct-key-handler v0.3.38
 	github.com/phroun/key-sequence-processor v0.1.11
 	github.com/phroun/khatool v0.1.1
@@ -30,7 +30,7 @@ require (
 	github.com/gogpu/naga v0.17.16 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
-	github.com/phroun/pawscript v0.2.13-alpha // indirect
+	github.com/phroun/pawscript v0.2.15-alpha // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/net v0.57.0 // indirect
