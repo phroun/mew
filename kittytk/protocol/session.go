@@ -351,7 +351,7 @@ func (s *Session) resolveTarget(verb string, args []*Arg) (Object, string, []*Ar
 	keyPath := ""
 	switch {
 	case head.Name == "" && head.Value != nil && head.Value.Kind == NumberValue && head.Value.IsInt:
-		id = uint64(head.Value.Number)
+		id = uint64(head.Value.Int)
 	case head.Name != "" && head.Value == nil && head.Flag == FlagTrue:
 		known, ok := s.keys[head.Name]
 		if !ok {

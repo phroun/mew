@@ -65,7 +65,7 @@ func (m *MDIPane) hostedWindow(action string, args []*protocol.Arg) (*window.Win
 		if a.Value == nil || a.Value.Kind != protocol.NumberValue || !a.Value.IsInt {
 			return nil, fmt.Errorf("%s: window= expects an object id", action)
 		}
-		id := uint64(a.Value.Number)
+		id := uint64(a.Value.Int)
 		w := findMDIWindow(m, id)
 		if w == nil {
 			return nil, fmt.Errorf("%s: no window %d in this pane", action, id)

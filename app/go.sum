@@ -54,6 +54,8 @@ github.com/phroun/pawscript v0.2.14-alpha.0.20260911021457-131c1b5f8f18 h1:S/P9N
 github.com/phroun/pawscript v0.2.14-alpha.0.20260911021457-131c1b5f8f18/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 github.com/phroun/pawscript v0.2.15-alpha h1:wgx4jzNyeGQlxu9OgcOyyKfEFJ0NjhfkeF8eYWkQUGw=
 github.com/phroun/pawscript v0.2.15-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
+github.com/phroun/pawscript v0.2.16-alpha h1:QIRO46f9TjZonGazO1kzWBNECW2AimPbFWy9xaX5d+Y=
+github.com/phroun/pawscript v0.2.16-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 github.com/phroun/purfecterm v0.2.55 h1:0BiXrjD/WJUEGepdOD+RTKt1O3gmYXolevYPlHj4z7g=
 github.com/phroun/purfecterm v0.2.55/go.mod h1:h73M3We0YKjCYQAUCqQx+Y5zwj2TBV89yo9GD55CGwI=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=

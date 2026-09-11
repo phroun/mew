@@ -23,7 +23,7 @@ func NewEvent(eventType string) *Event {
 // WithUint adds an integer field (object IDs, indices).
 func (e *Event) WithUint(name string, v uint64) *Event {
 	e.Fields = append(e.Fields, &Arg{Name: name, Value: &Value{
-		Kind: NumberValue, Number: float64(v), IsInt: true,
+		Kind: NumberValue, Number: float64(v), Int: int64(v), IsInt: true,
 	}})
 	return e
 }
@@ -31,7 +31,7 @@ func (e *Event) WithUint(name string, v uint64) *Event {
 // WithInt adds an integer field.
 func (e *Event) WithInt(name string, v int) *Event {
 	e.Fields = append(e.Fields, &Arg{Name: name, Value: &Value{
-		Kind: NumberValue, Number: float64(v), IsInt: true,
+		Kind: NumberValue, Number: float64(v), Int: int64(v), IsInt: true,
 	}})
 	return e
 }
@@ -71,10 +71,10 @@ func (e *Event) field(name string) *Arg {
 // Uint reads an integer field (false if absent or not an integer).
 func (e *Event) Uint(name string) (uint64, bool) {
 	a := e.field(name)
-	if a == nil || a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt || a.Value.Number < 0 {
+	if a == nil || a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt || a.Value.Int < 0 {
 		return 0, false
 	}
-	return uint64(a.Value.Number), true
+	return uint64(a.Value.Int), true
 }
 
 // Int reads an integer field.
@@ -83,7 +83,7 @@ func (e *Event) Int(name string) (int, bool) {
 	if a == nil || a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt {
 		return 0, false
 	}
-	return int(a.Value.Number), true
+	return int(a.Value.Int), true
 }
 
 // Text reads a string field.
@@ -169,7 +169,7 @@ func (e *Event) Encode() string {
 			sb.WriteString(a.Value.Word)
 		case NumberValue:
 			if a.Value.IsInt {
-				fmt.Fprintf(&sb, "%d", int64(a.Value.Number))
+				fmt.Fprintf(&sb, "%d", a.Value.Int)
 			} else {
 				fmt.Fprintf(&sb, "%g", a.Value.Number)
 			}

@@ -39,7 +39,7 @@ class ValueKind(enum.IntEnum):
 class Value:
     kind: ValueKind
     word: str = ""
-    number: float = 0.0
+    number: float = 0.0  # an int when is_int, a float otherwise
     is_int: bool = False
     str: str = ""
     block: Optional["Script"] = None
@@ -361,11 +361,19 @@ class _Parser:
         if digits == 0:
             raise self._errf("malformed number")
         text = ''.join(out)
+        # A whole number is read as an integer, so an id or a nanosecond stamp
+        # arrives with every digit it was sent with. Python integers are
+        # unbounded, so nothing here has to widen.
+        if not dot:
+            try:
+                return Value(kind=ValueKind.NUMBER, number=int(text), is_int=True)
+            except ValueError:
+                pass
         try:
             f = float(text)
         except ValueError:
             raise self._errf("malformed number %r" % text)
-        return Value(kind=ValueKind.NUMBER, number=f, is_int=not dot)
+        return Value(kind=ValueKind.NUMBER, number=f, is_int=False)
 
     def parse_value(self, in_block: bool) -> Value:
         self.skip_inline()

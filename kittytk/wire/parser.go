@@ -50,8 +50,9 @@ const (
 type Value struct {
 	Kind   ValueKind
 	Word   string  // WordValue
-	Number float64 // NumberValue
-	IsInt  bool    // NumberValue: no fractional part written
+	Number float64 // NumberValue: as a float, which is exact only below 2^53
+	Int    int64   // NumberValue: the exact value, when IsInt says there is one
+	IsInt  bool    // NumberValue: written with no fractional part, and it fits
 	Str    string  // StringValue (unescaped)
 	Block  *Script // BlockValue
 
@@ -318,11 +319,21 @@ func (p *parser) parseNumber() (*Value, error) {
 	if digits == 0 {
 		return nil, p.errf("malformed number")
 	}
-	f, err := strconv.ParseFloat(sb.String(), 64)
-	if err != nil {
-		return nil, p.errf("malformed number %q", sb.String())
+	text := sb.String()
+	// A whole number is read as an integer first, so an id or a nanosecond
+	// stamp arrives with every digit it was sent with -- a float64 stops being
+	// able to tell two integers apart at 2^53. One too large even for an
+	// int64 is a float, and says so: IsInt means the exact value is there.
+	if !dot {
+		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return &Value{Kind: NumberValue, Number: float64(i), Int: i, IsInt: true}, nil
+		}
 	}
-	return &Value{Kind: NumberValue, Number: f, IsInt: !dot}, nil
+	f, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return nil, p.errf("malformed number %q", text)
+	}
+	return &Value{Kind: NumberValue, Number: f}, nil
 }
 
 func (p *parser) parseValue(inBlock bool) (*Value, error) {
@@ -432,14 +443,14 @@ func (p *parser) parseStatement(inBlock bool) (*Statement, error) {
 			if err != nil {
 				return nil, err
 			}
-			if !v.IsInt || v.Number < 0 {
+			if !v.IsInt || v.Int < 0 {
 				return nil, p.errf("%q= expected an object id", first)
 			}
 			if !p.atStatementEnd(inBlock) {
 				return nil, p.errf("%q=%d takes nothing after it: an id is not a command",
-					first, uint64(v.Number))
+					first, uint64(v.Int))
 			}
-			return &Statement{Key: first, RefID: uint64(v.Number)}, nil
+			return &Statement{Key: first, RefID: uint64(v.Int)}, nil
 		}
 		if p.eof() || !isWordStart(p.peek()) {
 			return nil, p.errf("expected command or reference after %q=", first)

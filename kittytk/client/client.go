@@ -142,7 +142,7 @@ func (c *Conn) handOver(stmt *wire.Statement) {
 		if a.Value == nil || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
 			continue
 		}
-		c.given[a.Name] = uint64(a.Value.Number)
+		c.given[a.Name] = uint64(a.Value.Int)
 	}
 }
 

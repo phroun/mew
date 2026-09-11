@@ -84,7 +84,7 @@ func DecodeReply(stmt *Statement) (*Reply, error) {
 		if a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt {
 			return nil, fmt.Errorf("reply %s: expected integer id", a.Name)
 		}
-		r.IDs[a.Name] = uint64(a.Value.Number)
+		r.IDs[a.Name] = uint64(a.Value.Int)
 	}
 	return r, nil
 }

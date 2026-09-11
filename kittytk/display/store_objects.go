@@ -352,7 +352,7 @@ func (h *blobHandle) Ask(question string, args []*protocol.Arg) error {
 		offset := 0
 		for _, a := range args {
 			if a.Name == "offset" && a.Value != nil && a.Value.Kind == protocol.NumberValue {
-				offset = int(a.Value.Number)
+				offset = int(a.Value.Int)
 			}
 		}
 		return h.sendChunk(offset)

@@ -787,7 +787,7 @@ func AsInt(name string, v *Value, flag FlagState) (int, error) {
 	if flag != FlagNone || v == nil || v.Kind != NumberValue || !v.IsInt {
 		return 0, fmt.Errorf("%s: expected an integer", name)
 	}
-	return int(v.Number), nil
+	return int(v.Int), nil
 }
 
 // AsFloat requires a numeric (int or float).

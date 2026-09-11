@@ -86,7 +86,7 @@ func gridTrackProp(name string, into func(*core.GridPlacement, int, string)) pro
 		case f == protocol.FlagNone && v != nil && v.Kind == protocol.WordValue:
 			into(&p, 0, v.Word)
 		case f == protocol.FlagNone && v != nil && v.Kind == protocol.NumberValue && v.IsInt:
-			n := int(v.Number)
+			n := int(v.Int)
 			if n < 0 {
 				return fmt.Errorf("%s: %d is below 0", name, n)
 			}
