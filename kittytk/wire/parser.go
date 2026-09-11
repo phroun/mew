@@ -1,9 +1,15 @@
 // Package protocol implements the KittyTK display-protocol command
-// language (plan decisions D10-D17): named properties (nothing
-// positional), alias dictionaries, correlation keys with hierarchical
-// scoping and explicit surfacing, three-valued boolean flags,
-// children blocks, macro templates, and the six-type value system
-// (flag, enum, numeric, identifier, {}, "string").
+// language (plan decisions D10-D17): named properties, alias
+// dictionaries, correlation keys with hierarchical scoping and
+// explicit surfacing, three-valued boolean flags, children blocks,
+// macro templates, and the six-type value system (flag, enum,
+// numeric, identifier, {}, "string").
+//
+// A value may also be written with no name, as an operand of the verb:
+// a target reference, a filter's field and what it is matched against.
+// D10's rule is about PROPERTIES -- a property always travels under its
+// name, which is what makes the alias dictionaries worth having -- and
+// a property statement refuses an operand (Session.applyArgs).
 //
 // This package is transport-agnostic: it parses command text into
 // records. Sessions, sockets, alias application, and template
@@ -405,20 +411,18 @@ func (p *parser) parseArgs(inBlock bool) ([]*Arg, error) {
 			} else {
 				args = append(args, &Arg{Name: name, Flag: FlagTrue})
 			}
-		case isNumberStart(ch):
-			// A bare number is an anonymous argument. The only legal
-			// use is as a verb's target reference (D19: `set 1042
-			// caption=...`); interpreters reject it anywhere else, so
-			// D10's nothing-positional rule still holds for
-			// properties.
-			val, err := p.parseNumber()
+		default:
+			// An operand: a value with no name, in the order it was
+			// written. A verb that takes operands reads them by
+			// position -- a target reference (`set 1042 caption=...`),
+			// a filter's field and value, a block to nest. One that
+			// does not refuses them, which is where D10's
+			// named-properties rule holds: see Session.applyArgs.
+			val, err := p.parseValue(inBlock)
 			if err != nil {
 				return nil, err
 			}
 			args = append(args, &Arg{Value: val})
-		default:
-			// D10: nothing positional - bare values are not allowed.
-			return nil, p.errf("unexpected %q: values must be named (name=value)", ch)
 		}
 	}
 	return args, nil

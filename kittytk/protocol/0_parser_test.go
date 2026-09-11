@@ -157,7 +157,10 @@ func TestParseNumbers(t *testing.T) {
 func TestParseErrors(t *testing.T) {
 	cases := []string{
 		`new button caption="unterminated`,
-		`new button "positional string"`, // D10: values must be named
+		// A positional string parses -- it is an operand like any
+		// other -- and `new` refuses it when it applies its
+		// properties, which TestAPropertyStatementRefusesAnOperand
+		// holds.
 		`new panel children={new button`, // unterminated block
 		`new button x=`,                  // missing value
 	}

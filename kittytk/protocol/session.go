@@ -600,7 +600,10 @@ func (s *Session) applyArgs(obj Object, args []*Arg, f Factory, st *execState, k
 	for _, a := range args {
 		name := a.Name
 		if name == "" {
-			// Anonymous numbers exist only for verb targets (D19).
+			// A property statement takes no operands: a property
+			// travels under its name (D10), which is what the alias
+			// dictionaries are for. Verbs that DO take operands read
+			// them before they ever reach here.
 			return fmt.Errorf("unnamed value: properties must be named (name=value)")
 		}
 		// Alias substitution (lexical, property-name position, D10/D18):

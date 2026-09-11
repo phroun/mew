@@ -76,11 +76,11 @@ is exact and needs no agreement at all.
 
 ## A sort
 
-An ordered run of levels. Each level names a field, and may say `desc` and,
-for strings, a collation:
+An ordered run of levels, written as a block. Each level's statement names a
+field, and may say `desc` and, for strings, a collation:
 
 ```
-sort=( (name, fold), (size, desc), (modified, desc) )
+sort={ name fold; size desc; modified desc }
 ```
 
 The first level that separates two records decides. A level settles only what
@@ -96,28 +96,51 @@ what makes a position mean exactly one record.
 
 ## A filter
 
-A tree in prefix form, written as a PSL list. No infix, no precedence, nothing
-to parse beyond PSL itself — an implementation is a switch on the first item:
+A block of statements. No infix, no precedence, and nothing to parse that the
+wire language does not already parse — an implementation is a switch on the
+verb:
 
 ```
-filter=( and,
-         ( eq, kind, folder ),
-         ( ge, size, 1024 ),
-         ( not, ( starts, name, "." ) ) )
+filter={
+  eq kind folder
+  ge size 1024
+  not { starts name "." }
+}
 ```
+
+**A block is an AND**: every statement in it must hold. That is the common
+case, so it costs no nesting, and `or { … }`, `and { … }` and `not { … }` are
+statements in their own right when the shape is not a plain conjunction:
+
+```
+filter={
+  or { eq kind folder; eq kind disk }
+  ge size 1024
+}
+```
+
+A predicate is `<op> <field> <value>`: the operator is the verb, the field is a
+bare word, and the value is an operand. Values written with no name are read in
+the order they were written, which is what lets a filter read as a filter
+instead of inventing an argument name for every operand.
 
 | | |
 |---|---|
 | `eq` `ne` `lt` `le` `gt` `ge` | comparison, by the core above |
+| `in` | one field against a set: `in kind { folder; disk }` |
 | `contains` `starts` `ends` | strings only, collation-aware |
-| `and` `or` `not` | any number of operands |
+| `and` `or` `not` | a block of predicates |
+
+A text op carries its collation where it differs from the default:
+`contains title "report" collate=fold`.
 
 `eq kind folder` and `eq kind "folder"` are different questions, because a
-symbol and a string are different values. The data says which it is.
+symbol and a string are different values. So a filter needs no type
+annotations: the value's own spelling says what it is.
 
 **There is no presence operator.** `undefined` is a value with a rank, so
-`( eq, thumbnail, undefined )` already asks whether a record has the field —
-one less thing to specify and one less thing to learn.
+`eq thumbnail undefined` already asks whether a record has the field — one less
+thing to specify and one less thing to learn.
 
 For the same reason there is no `nulls first` knob: `undefined` sits at the
 bottom of the rank, and `desc` lifts it to the top along with everything else.
