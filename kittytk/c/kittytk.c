@@ -283,6 +283,187 @@ typedef struct {
 
 typedef struct { char *verb; kt_arg *args; int n; } kt_stmt;
 
+/* --- ordering two values the same way at both ends -------------------
+ *
+ * A view's records come from more than one place at once, and each end orders
+ * what it holds before the results are folded together -- so both ends must
+ * compute the SAME order from the same spec without conferring.
+ *
+ * docs/sort-and-filter.md is the spec, ../testdata/compare.wire the corpus
+ * every implementation of it answers. wire/compare.go is the Go side and
+ * python/kittytk/protocol.py the Python one; all three answer case for case.
+ */
+
+/* A value's rank, which its type decides before anything in it is read. */
+enum {
+    KT_RANK_UNDEFINED = 0,
+    KT_RANK_NIL,
+    KT_RANK_FALSE,
+    KT_RANK_TRUE,
+    KT_RANK_NUMBER,   /* int and float share one rank and interleave by value */
+    KT_RANK_SYMBOL,
+    KT_RANK_STRING,
+    KT_RANK_BYTES,
+    KT_RANK_UNORDERED /* no order of its own; the sort's last level settles it */
+};
+
+/* The collations a string may be compared under. A symbol and a blob take
+ * none: a symbol is an identifier, and a blob is not text. */
+#define KT_COLLATE_EXACT   "exact"
+#define KT_COLLATE_FOLD    "fold"
+#define KT_COLLATE_NATURAL "natural"
+
+static int kt_sign(long long n) { return n < 0 ? -1 : (n > 0 ? 1 : 0); }
+
+/* rank_of: where a value sits before its contents matter. A value that is not
+ * there at all is undefined, which is the bottom of the order. */
+static int rank_of(const kt_arg *v) {
+    if (!v || !v->has_value) return KT_RANK_UNDEFINED;
+    switch (v->kind) {
+    case 0: case 1: return KT_RANK_NUMBER;
+    case 2: return KT_RANK_STRING;   /* the wire cannot tell a blob from text */
+    case 3:
+        if (!strcmp(v->sval, "undefined")) return KT_RANK_UNDEFINED;
+        if (!strcmp(v->sval, "nil")) return KT_RANK_NIL;
+        if (!strcmp(v->sval, "false")) return KT_RANK_FALSE;
+        if (!strcmp(v->sval, "true")) return KT_RANK_TRUE;
+        return KT_RANK_SYMBOL;
+    }
+    return KT_RANK_UNORDERED;
+}
+
+static int fold_char(int c) { return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c; }
+static int is_ascii_digit(int c) { return c >= '0' && c <= '9'; }
+
+/* utf8_next reads one codepoint, so strings compare rune by rune rather than
+ * byte by byte. A byte that is not a well-formed start is its own value. */
+static unsigned utf8_next(const char *s, size_t len, size_t *i) {
+    unsigned char c = (unsigned char)s[*i];
+    unsigned cp = c;
+    int extra = 0;
+    if (c >= 0xF0) { cp = c & 0x07u; extra = 3; }
+    else if (c >= 0xE0) { cp = c & 0x0Fu; extra = 2; }
+    else if (c >= 0xC0) { cp = c & 0x1Fu; extra = 1; }
+    if (*i + (size_t)extra >= len) extra = 0;
+    for (int k = 0; k < extra; k++) {
+        unsigned char n = (unsigned char)s[*i + 1 + (size_t)k];
+        if ((n & 0xC0) != 0x80) { extra = 0; cp = c; break; }
+        cp = (cp << 6) | (n & 0x3Fu);
+    }
+    *i += 1 + (size_t)extra;
+    return cp;
+}
+
+/* compare_runes: codepoint order, one rune against one. */
+static int compare_runes(const char *a, size_t alen, const char *b, size_t blen, int fold) {
+    size_t i = 0, j = 0;
+    while (i < alen && j < blen) {
+        unsigned x = utf8_next(a, alen, &i), y = utf8_next(b, blen, &j);
+        if (fold) { x = (unsigned)fold_char((int)x); y = (unsigned)fold_char((int)y); }
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return kt_sign((long long)(alen - i) - (long long)(blen - j));
+}
+
+/* compare_digit_runs: two runs of digits as numbers, however long they are --
+ * with the leading zeros gone the longer run is the larger number, and equal
+ * lengths compare digit by digit. Runs of the same value are then separated by
+ * the zeros themselves, so 01 and 1 are not the same string. */
+static int compare_digit_runs(const char *a, size_t alen, const char *b, size_t blen) {
+    size_t ai = 0, bi = 0;
+    while (ai + 1 < alen && a[ai] == '0') ai++;
+    while (bi + 1 < blen && b[bi] == '0') bi++;
+    size_t an = alen - ai, bn = blen - bi;
+    if (an != bn) return an < bn ? -1 : 1;
+    for (size_t k = 0; k < an; k++)
+        if (a[ai + k] != b[bi + k]) return a[ai + k] < b[bi + k] ? -1 : 1;
+    return kt_sign((long long)alen - (long long)blen);
+}
+
+/* compare_natural: a run of ASCII digits is a number, everything else a folded
+ * rune, so file9 comes before file10. */
+static int compare_natural(const char *a, size_t alen, const char *b, size_t blen) {
+    size_t i = 0, j = 0;
+    while (i < alen && j < blen) {
+        if (is_ascii_digit((unsigned char)a[i]) && is_ascii_digit((unsigned char)b[j])) {
+            size_t si = i, sj = j;
+            while (i < alen && is_ascii_digit((unsigned char)a[i])) i++;
+            while (j < blen && is_ascii_digit((unsigned char)b[j])) j++;
+            int c = compare_digit_runs(a + si, i - si, b + sj, j - sj);
+            if (c) return c;
+            continue;
+        }
+        unsigned x = utf8_next(a, alen, &i), y = utf8_next(b, blen, &j);
+        x = (unsigned)fold_char((int)x);
+        y = (unsigned)fold_char((int)y);
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return kt_sign((long long)(alen - i) - (long long)(blen - j));
+}
+
+/* compare_numbers: exact for two integers however large they are, and exact
+ * for an integer against a float -- neither is converted to the other, since
+ * casting the integer loses digits and casting the float loses the fraction
+ * that decides it. */
+static int compare_float_to_int(double f, long long i) {
+    if (f != f) return 0; /* NaN compares equal to everything */
+    if (f >= 9223372036854775808.0) return 1;
+    if (f < -9223372036854775808.0) return -1;
+    long long w = (long long)f; /* a cast truncates toward zero, which is what
+                                 * the whole part is; no libm needed for it */
+    if (w != i) return w < i ? -1 : 1;
+    double frac = f - (double)w;
+    return frac > 0 ? 1 : (frac < 0 ? -1 : 0);
+}
+
+static int compare_numbers(const kt_arg *a, const kt_arg *b) {
+    if (a->kind == 0 && b->kind == 0)
+        return a->ival < b->ival ? -1 : (a->ival > b->ival ? 1 : 0);
+    if (a->kind == 0) return -compare_float_to_int(b->fval, a->ival);
+    if (b->kind == 0) return compare_float_to_int(a->fval, b->ival);
+    return a->fval < b->fval ? -1 : (a->fval > b->fval ? 1 : 0);
+}
+
+/* kt_compare_value orders two values: -1, 0 or 1. The collation applies to the
+ * string rank alone, and NULL means exact. */
+static int kt_compare_value(const kt_arg *a, const kt_arg *b, const char *collation) {
+    int ra = rank_of(a), rb = rank_of(b);
+    if (ra != rb) return ra < rb ? -1 : 1;
+    switch (ra) {
+    case KT_RANK_NUMBER: return compare_numbers(a, b);
+    case KT_RANK_SYMBOL: return compare_runes(a->sval, a->slen, b->sval, b->slen, 0);
+    case KT_RANK_STRING:
+        if (collation && !strcmp(collation, KT_COLLATE_FOLD))
+            return compare_runes(a->sval, a->slen, b->sval, b->slen, 1);
+        if (collation && !strcmp(collation, KT_COLLATE_NATURAL))
+            return compare_natural(a->sval, a->slen, b->sval, b->slen);
+        return compare_runes(a->sval, a->slen, b->sval, b->slen, 0);
+    case KT_RANK_BYTES: {
+        size_t n = a->slen < b->slen ? a->slen : b->slen;
+        int c = n ? memcmp(a->sval, b->sval, n) : 0;
+        if (c) return c < 0 ? -1 : 1;
+        return kt_sign((long long)a->slen - (long long)b->slen);
+    }
+    }
+    return 0;
+}
+
+/* kt_compare_levels walks the levels in order and answers on the first that
+ * separates the two runs, so each level settles only what the ones above it
+ * left equal. The caller appends the record's key as a final level. */
+typedef struct { int descending; const char *collation; } kt_level;
+
+static int kt_compare_levels(const kt_arg *const *a, const kt_arg *const *b,
+                             const kt_level *levels, int n) {
+    for (int i = 0; i < n; i++) {
+        int c = kt_compare_value(a[i], b[i], levels[i].collation);
+        if (!c) continue;
+        return levels[i].descending ? -c : c;
+    }
+    return 0;
+}
+
+
 struct kt_event { const char *type; const kt_arg *fields; int n; };
 
 static void stmt_free(kt_stmt *s) {

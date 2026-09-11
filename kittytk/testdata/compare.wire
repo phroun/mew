@@ -1,0 +1,92 @@
+# The corpus every implementation of the comparison core answers.
+#
+# One statement per case, written in the wire language so each client reads it
+# with its own parser: `a` and `b` are the two values, `want` is -1, 0 or 1, and
+# `collate` names the collation for the string rank (exact when absent).
+#
+# The rank order under test:
+#
+#   undefined < nil < false < true < int|float < symbol < string < bytes
+#
+# Bytes are absent here: the wire has no spelling that tells a blob from a
+# string on receipt, so that rank is covered by each language's own tests.
+#
+# See docs/sort-and-filter.md.
+
+# --- the ranks, each against the one above it ---
+case a=undefined b=nil want=-1
+case a=nil b=false want=-1
+case a=false b=true want=-1
+case a=true b=0 want=-1
+case a=0 b=apple want=-1
+case a=zebra b="apple" want=-1
+case a=undefined b="" want=-1
+case a=nil b=nil want=0
+case a=undefined b=undefined want=0
+case a=true b=true want=0
+case a=false b=false want=0
+
+# --- numbers: int and float share one rank and interleave by value ---
+case a=1 b=2 want=-1
+case a=2 b=1 want=1
+case a=2 b=2 want=0
+case a=-5 b=3 want=-1
+case a=2 b=2.0 want=0
+case a=2 b=2.5 want=-1
+case a=2.5 b=3 want=-1
+case a=-2.5 b=-2 want=-1
+case a=1.5 b=1.5 want=0
+
+# --- numbers past where a float can tell two integers apart ---
+case a=9007199254740992 b=9007199254740993 want=-1
+case a=9007199254740993 b=9007199254740992 want=1
+case a=9007199254740993 b=9007199254740993 want=0
+case a=1700000000123456789 b=1700000000123456788 want=1
+case a=9223372036854775807 b=-9223372036854775808 want=1
+case a=9007199254740993 b=9007199254740992.0 want=1
+
+# --- symbols: identifiers, compared exactly, never folded ---
+case a=apple b=banana want=-1
+case a=Apple b=apple want=-1
+case a=apple b=Apple want=1
+case a=apple b=apple want=0
+case a=file10 b=file9 want=-1
+case a=Apple b=apple collate=fold want=-1
+
+# --- strings under exact: codepoint order ---
+case a="apple" b="banana" want=-1
+case a="Apple" b="apple" want=-1
+case a="apple" b="apple" want=0
+case a="apple" b="applesauce" want=-1
+case a="" b="a" want=-1
+case a="" b="" want=0
+case a="file10" b="file9" want=-1
+
+# --- strings under fold: ASCII case is not a difference ---
+case a="Apple" b="apple" collate=fold want=0
+case a="APPLE" b="apple" collate=fold want=0
+case a="Apple" b="banana" collate=fold want=-1
+case a="apple" b="Banana" collate=fold want=-1
+case a="Zebra" b="apple" collate=fold want=1
+# Folding moves a letter past punctuation: _ is 0x5F, and A folded is 0x61.
+case a="_" b="A" want=1
+case a="_" b="A" collate=fold want=-1
+case a="file10" b="file9" collate=fold want=-1
+
+# --- strings under natural: a run of digits is a number ---
+case a="file9" b="file10" collate=natural want=-1
+case a="file10" b="file9" collate=natural want=1
+case a="file9" b="file9" collate=natural want=0
+case a="file09" b="file9" collate=natural want=1
+case a="file9" b="file09" collate=natural want=-1
+case a="2" b="10" collate=natural want=-1
+case a="a2b" b="a10b" collate=natural want=-1
+case a="a2b" b="a2c" collate=natural want=-1
+case a="chapter 2 part 10" b="chapter 2 part 9" collate=natural want=1
+case a="File9" b="file10" collate=natural want=-1
+case a="9" b="chapter" collate=natural want=-1
+case a="99999999999999999999999" b="99999999999999999999998" collate=natural want=1
+case a="99999999999999999999999" b="9999999999999999999999" collate=natural want=1
+case a="00000000000000000000001" b="1" collate=natural want=1
+case a="v1.10" b="v1.9" collate=natural want=1
+case a="x" b="x1" collate=natural want=-1

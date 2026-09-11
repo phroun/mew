@@ -43,6 +43,7 @@ class Value:
     is_int: bool = False
     str: str = ""
     block: Optional["Script"] = None
+    blob: bool = False  # a STRING built from bytes rather than text
 
 
 @dataclass
@@ -750,3 +751,162 @@ def parse_event(src: str) -> Event:
     if not st.args or st.args[0].value is not None or st.args[0].flag != FlagState.TRUE:
         raise ValueError("event: missing type word")
     return Event(st.args[0].name, st.args[1:])
+
+
+# --- ordering two values the same way at both ends ---------------------------
+#
+# docs/sort-and-filter.md is the spec, testdata/compare.wire the corpus every
+# implementation of it answers. See wire/compare.go for the Go side; the two
+# must agree case for case.
+
+# The four words that are values rather than symbols.
+WORD_UNDEFINED = "undefined"
+WORD_NIL = "nil"
+WORD_TRUE = "true"
+WORD_FALSE = "false"
+
+# The collations a string may be compared under. A symbol and a blob take none.
+COLLATE_EXACT = "exact"      # codepoint order, rune by rune
+COLLATE_FOLD = "fold"        # ASCII case folded, then exact
+COLLATE_NATURAL = "natural"  # digit runs as numbers, then fold
+
+# A value's rank, which its type decides before anything in it is read.
+RANK_UNDEFINED = 0
+RANK_NIL = 1
+RANK_FALSE = 2
+RANK_TRUE = 3
+RANK_NUMBER = 4   # int and float share one rank and interleave by value
+RANK_SYMBOL = 5
+RANK_STRING = 6
+RANK_BYTES = 7
+RANK_UNORDERED = 8  # no order of its own; the sort's last level settles it
+
+
+def rank(v: Optional[Value]) -> int:
+    """Where a value sits before its contents matter."""
+    if v is None:
+        return RANK_UNDEFINED
+    if v.kind == ValueKind.WORD:
+        return {
+            WORD_UNDEFINED: RANK_UNDEFINED,
+            WORD_NIL: RANK_NIL,
+            WORD_FALSE: RANK_FALSE,
+            WORD_TRUE: RANK_TRUE,
+        }.get(v.word, RANK_SYMBOL)
+    if v.kind == ValueKind.NUMBER:
+        return RANK_NUMBER
+    if v.kind == ValueKind.STRING:
+        return RANK_BYTES if v.blob else RANK_STRING
+    return RANK_UNORDERED
+
+
+def compare(a: Optional[Value], b: Optional[Value], collation: str = COLLATE_EXACT) -> int:
+    """Order two values: -1, 0 or 1.
+
+    The collation applies to the string rank alone. Values of different ranks
+    are decided by the ranks; the ranks holding one value each, and the
+    unordered rank, compare equal and leave the answer to the sort's last level.
+    """
+    ra, rb = rank(a), rank(b)
+    if ra != rb:
+        return _sign(ra - rb)
+    if ra == RANK_NUMBER:
+        return _compare_numbers(a.number, b.number)
+    if ra == RANK_SYMBOL:
+        return _compare_runes(a.word, b.word)
+    if ra == RANK_STRING:
+        return _collate(a.str, b.str, collation)
+    if ra == RANK_BYTES:
+        return _compare_bytes(a.str, b.str)
+    return 0
+
+
+def compare_levels(a: List[Optional[Value]], b: List[Optional[Value]],
+                   levels: List[tuple]) -> int:
+    """Walk the levels in order and answer on the first that separates the two.
+
+    Each level is (descending, collation), so a level settles only what the ones
+    above it left equal. The caller appends the record's key as a final level.
+    """
+    for i, level in enumerate(levels):
+        if i >= len(a) or i >= len(b):
+            break
+        descending, collation = level
+        c = compare(a[i], b[i], collation)
+        if c == 0:
+            continue
+        return -c if descending else c
+    return 0
+
+
+def _collate(a: str, b: str, collation: str) -> int:
+    if collation == COLLATE_FOLD:
+        return _compare_folded(a, b)
+    if collation == COLLATE_NATURAL:
+        return _compare_natural(a, b)
+    return _compare_runes(a, b)
+
+
+def _compare_runes(a: str, b: str) -> int:
+    # Python strings are sequences of codepoints already.
+    return -1 if a < b else (1 if a > b else 0)
+
+
+def _fold(s: str) -> str:
+    # ASCII case only: a fold that reached further would be one two
+    # implementations could disagree about.
+    return ''.join(chr(ord(c) + 32) if 'A' <= c <= 'Z' else c for c in s)
+
+
+def _compare_folded(a: str, b: str) -> int:
+    return _compare_runes(_fold(a), _fold(b))
+
+
+def _compare_natural(a: str, b: str) -> int:
+    i = j = 0
+    while i < len(a) and j < len(b):
+        if a[i] in '0123456789' and b[j] in '0123456789':
+            si, sj = i, j
+            while i < len(a) and a[i] in '0123456789':
+                i += 1
+            while j < len(b) and b[j] in '0123456789':
+                j += 1
+            c = _compare_digit_runs(a[si:i], b[sj:j])
+            if c != 0:
+                return c
+            continue
+        x, y = _fold(a[i]), _fold(b[j])
+        if x != y:
+            return -1 if x < y else 1
+        i += 1
+        j += 1
+    return _sign((len(a) - i) - (len(b) - j))
+
+
+def _compare_digit_runs(a: str, b: str) -> int:
+    """Two runs of digits as numbers, however long: with the leading zeros gone
+    the longer run is the larger number, and equal lengths compare digit by
+    digit. Runs of the same value are then separated by the zeros themselves."""
+    sa, sb = a.lstrip('0') or '0', b.lstrip('0') or '0'
+    if len(sa) != len(sb):
+        return _sign(len(sa) - len(sb))
+    if sa != sb:
+        return -1 if sa < sb else 1
+    return _sign(len(a) - len(b))
+
+
+def _compare_bytes(a: str, b: str) -> int:
+    """Bytes compare unsigned. A blob's characters are its bytes, latin-1."""
+    ba, bb = a.encode('latin-1', 'replace'), b.encode('latin-1', 'replace')
+    return -1 if ba < bb else (1 if ba > bb else 0)
+
+
+def _compare_numbers(a, b) -> int:
+    """Exact for integers however large: Python integers are unbounded, and an
+    int against a float compares without either being converted -- Python's own
+    comparison already does that exactly."""
+    return -1 if a < b else (1 if a > b else 0)
+
+
+def _sign(n: int) -> int:
+    return -1 if n < 0 else (1 if n > 0 else 0)
