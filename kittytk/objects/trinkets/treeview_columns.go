@@ -287,11 +287,89 @@ func (t *TreeView) SetOnSortRequested(fn func(sorted bool, sortedBy int, descend
 	t.onSortRequested = fn
 }
 
+// SortLevel is one level of a visual sort: which column it reads, and
+// which way that column runs. By is -1 for the key (tree) column, else a
+// declared data-column index.
+//
+// A sort is an ordered run of these. The first level decides; rows it
+// finds equal are settled by the second, and so on. Rows equal on every
+// level keep the order the app gave them, the sort being stable -- so
+// "by size, then by name" is two levels, and the answer does not depend
+// on what the rows happened to be sorted by before.
+type SortLevel struct {
+	By         int
+	Descending bool
+}
+
 // Sorted returns the view's sort state: whether visual sorting is
-// active, which column it is on (-1 = the key column, else a declared
-// data-column index), and the direction.
+// active, which column its FIRST level is on (-1 = the key column, else
+// a declared data-column index), and that level's direction. A sort of
+// more than one level is read with SortLevels.
 func (t *TreeView) Sorted() (sorted bool, sortedBy int, descending bool) {
-	return t.sorted, t.sortedBy, t.sortDescending
+	first := t.primarySort()
+	return t.sorted, first.By, first.Descending
+}
+
+// SortLevels returns the ordered run of levels the sort walks. The
+// result is a copy: changing it changes nothing until it is handed to
+// SetSortLevels.
+func (t *TreeView) SortLevels() []SortLevel {
+	return append([]SortLevel{}, t.sortLevels...)
+}
+
+// SetSortLevels replaces the run of sort levels, the first being the one
+// the header indicator sits on. Handing it nothing turns sorting off.
+func (t *TreeView) SetSortLevels(levels ...SortLevel) {
+	t.sortLevels = append([]SortLevel{}, levels...)
+	t.sorted = len(t.sortLevels) > 0
+	t.resortKeepingSelection()
+}
+
+// AddSortLevel adds a level beneath the ones already there -- "and then
+// by this one". A column already in the run keeps its place and takes
+// the new direction, because one column cannot be two levels of one
+// sort.
+func (t *TreeView) AddSortLevel(by int, descending bool) {
+	for i, lv := range t.sortLevels {
+		if lv.By == by {
+			t.sortLevels[i].Descending = descending
+			t.sorted = true
+			t.resortKeepingSelection()
+			return
+		}
+	}
+	t.sortLevels = append(t.sortLevels, SortLevel{By: by, Descending: descending})
+	t.sorted = true
+	t.resortKeepingSelection()
+}
+
+// primarySort is the first level of the sort -- the one the indicator
+// sits on and the one the header cycle turns. A view with no levels
+// reads as the key column ascending, which is where a first activation
+// starts from.
+func (t *TreeView) primarySort() SortLevel {
+	if len(t.sortLevels) == 0 {
+		return SortLevel{}
+	}
+	return t.sortLevels[0]
+}
+
+// setPrimarySort replaces the first level, leaving any levels beneath it
+// where they are.
+func (t *TreeView) setPrimarySort(lv SortLevel) {
+	if len(t.sortLevels) == 0 {
+		t.sortLevels = []SortLevel{lv}
+	} else {
+		t.sortLevels[0] = lv
+	}
+	t.resortKeepingSelection()
+}
+
+// setSortEnabled turns the sort on or off without disturbing the levels
+// it runs, so a view can be handed its levels and then told to use them.
+func (t *TreeView) setSortEnabled(on bool) {
+	t.sorted = on
+	t.resortKeepingSelection()
 }
 
 // SetSorted sets the sort state. Sorting is VISUAL, built into the
@@ -301,8 +379,10 @@ func (t *TreeView) Sorted() (sorted bool, sortedBy int, descending bool) {
 // work off that list. Selection tracks the ITEM across the reorder,
 // and events keep reporting item identity - the app can stay entirely
 // unaware sorting is happening.
+// A sort set this way has one level; SetSortLevels sets more.
 func (t *TreeView) SetSorted(sorted bool, sortedBy int, descending bool) {
-	t.sorted, t.sortedBy, t.sortDescending = sorted, sortedBy, descending
+	t.sorted = sorted
+	t.sortLevels = []SortLevel{{By: sortedBy, Descending: descending}}
 	t.resortKeepingSelection()
 }
 
@@ -327,14 +407,14 @@ func (t *TreeView) resortKeepingSelection() {
 	t.Update()
 }
 
-// sortTarget resolves which column the sort actually runs on and how:
+// sortTarget resolves which column a level actually runs on and how:
 // the chosen column's SortProxy redirects to the column holding the
 // real sort values (the indicator stays on the chosen column), and the
 // target's Numeric flag selects float comparison. idx -1 = key column.
-func (t *TreeView) sortTarget() (idx int, numeric bool) {
+func (t *TreeView) sortTarget(by int) (idx int, numeric bool) {
 	idx = -1
-	if t.sortedBy >= 0 && t.sortedBy < len(t.columns) {
-		idx = t.sortedBy
+	if by >= 0 && by < len(t.columns) {
+		idx = by
 		if p := t.columns[idx].SortProxy; p >= 0 && p < len(t.columns) && p != idx {
 			idx = p
 		}
@@ -354,37 +434,45 @@ func (t *TreeView) sortKeyFor(it *TreeItem, idx int) string {
 
 // visualSiblings returns one sibling run in VISUAL order: the logical
 // slice untouched when unsorted; a sorted copy otherwise (stable, so
-// equal keys keep the app's order; descending reverses). Text columns
-// compare case-insensitively; numeric targets compare the cached
-// numeric equivalents. Children sort within their parent - the
-// hierarchy is never flattened away, exactly like Finder's list view.
+// rows equal on every level keep the app's order). Children sort within
+// their parent - the hierarchy is never flattened away, exactly like
+// Finder's list view.
 func (t *TreeView) visualSiblings(items []*TreeItem) []*TreeItem {
-	if !t.sorted || len(items) < 2 {
+	if !t.sorted || len(items) < 2 || len(t.sortLevels) == 0 {
 		return items
 	}
 	out := make([]*TreeItem, len(items))
 	copy(out, items)
-	idx, numeric := t.sortTarget()
-	if numeric {
-		id := t.columns[idx].ID
-		sort.SliceStable(out, func(i, j int) bool {
-			a, b := out[i].NumericValue(id), out[j].NumericValue(id)
-			if t.sortDescending {
-				return b < a
-			}
-			return a < b
-		})
-		return out
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		a := strings.ToLower(t.sortKeyFor(out[i], idx))
-		b := strings.ToLower(t.sortKeyFor(out[j], idx))
-		if t.sortDescending {
-			return b < a
-		}
-		return a < b
-	})
+	sort.SliceStable(out, func(i, j int) bool { return t.sortLess(out[i], out[j]) })
 	return out
+}
+
+// sortLess walks the levels in order and answers on the first that
+// separates the two rows, so each level settles only what the ones
+// above it left equal. Text columns compare case-insensitively; numeric
+// targets compare the cached numeric equivalents.
+func (t *TreeView) sortLess(a, b *TreeItem) bool {
+	for _, level := range t.sortLevels {
+		idx, numeric := t.sortTarget(level.By)
+		var less, more bool
+		if numeric {
+			id := t.columns[idx].ID
+			x, y := a.NumericValue(id), b.NumericValue(id)
+			less, more = x < y, y < x
+		} else {
+			x := strings.ToLower(t.sortKeyFor(a, idx))
+			y := strings.ToLower(t.sortKeyFor(b, idx))
+			less, more = x < y, y < x
+		}
+		if !less && !more {
+			continue // equal here: the next level decides
+		}
+		if level.Descending {
+			return more
+		}
+		return less
+	}
+	return false
 }
 
 // columnIndex returns c's declared index (-1 for nil = the key column).
@@ -422,7 +510,7 @@ func (t *TreeView) treeHostColumn() *TreeColumn {
 // sortIndicatorFor reports whether the indicator sits on this span's
 // column (nil col = the key column).
 func (t *TreeView) sortIndicatorFor(col *TreeColumn) bool {
-	return t.sorted && t.sortedBy == t.columnIndex(col)
+	return t.sorted && t.primarySort().By == t.columnIndex(col)
 }
 
 // headerSortClick handles activating a column header (mouse click or
@@ -435,9 +523,10 @@ func (t *TreeView) headerSortClick(col *TreeColumn) {
 		return
 	}
 	by := t.columnIndex(col)
+	first := t.primarySort()
 	sorted, descending := true, false
-	if t.sorted && t.sortedBy == by {
-		if !t.sortDescending {
+	if t.sorted && first.By == by {
+		if !first.Descending {
 			descending = true // second activation: reverse
 		} else {
 			sorted = false // third: back to unsorted
@@ -510,7 +599,7 @@ func (t *TreeView) headerStopLabel(idx int) string {
 	}
 	state := "not sorted"
 	if t.sortIndicatorFor(col) {
-		if t.sortDescending {
+		if t.primarySort().Descending {
 			state = "sorted descending"
 		} else {
 			state = "sorted ascending"
@@ -1355,7 +1444,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			capSide := t.colSide(sp.col, core.AlignLayoutNatural)
 			if t.sortIndicatorFor(sp.col) {
 				arrow := "▲"
-				if t.sortDescending {
+				if t.primarySort().Descending {
 					arrow = "▼"
 				}
 				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, t.colSide(sp.col, core.AlignLayoutOpposite))
@@ -2877,8 +2966,8 @@ func (t *TreeView) sortCommandColumn() (*TreeColumn, bool) {
 			return nil, false
 		}
 	}
-	if t.sorted && t.sortedBy >= 0 && t.sortedBy < len(t.columns) {
-		col := t.columns[t.sortedBy]
+	if t.sorted && t.primarySort().By >= 0 && t.primarySort().By < len(t.columns) {
+		col := t.columns[t.primarySort().By]
 		if col.Sortable {
 			return col, true
 		}
@@ -2924,7 +3013,7 @@ func (t *TreeView) ToggleSortAscending() bool {
 	if !ok {
 		return false
 	}
-	if t.sorted && t.sortedBy == t.columnIndex(col) && !t.sortDescending {
+	if t.sorted && t.primarySort().By == t.columnIndex(col) && !t.primarySort().Descending {
 		return t.applySort(col, false, false)
 	}
 	return t.applySort(col, true, false)
@@ -2935,7 +3024,7 @@ func (t *TreeView) ToggleSortDescending() bool {
 	if !ok {
 		return false
 	}
-	if t.sorted && t.sortedBy == t.columnIndex(col) && t.sortDescending {
+	if t.sorted && t.primarySort().By == t.columnIndex(col) && t.primarySort().Descending {
 		return t.applySort(col, false, false)
 	}
 	return t.applySort(col, true, true)
@@ -2948,11 +3037,11 @@ func (t *TreeView) SortModeNext() bool {
 	if !ok {
 		return false
 	}
-	on := t.sorted && t.sortedBy == t.columnIndex(col)
+	on := t.sorted && t.primarySort().By == t.columnIndex(col)
 	switch {
 	case !on:
 		return t.applySort(col, true, false)
-	case !t.sortDescending:
+	case !t.primarySort().Descending:
 		return t.applySort(col, true, true)
 	default:
 		return t.applySort(col, false, false)
@@ -2964,11 +3053,11 @@ func (t *TreeView) SortModePrior() bool {
 	if !ok {
 		return false
 	}
-	on := t.sorted && t.sortedBy == t.columnIndex(col)
+	on := t.sorted && t.primarySort().By == t.columnIndex(col)
 	switch {
 	case !on:
 		return t.applySort(col, true, true)
-	case t.sortDescending:
+	case t.primarySort().Descending:
 		return t.applySort(col, true, false)
 	default:
 		return t.applySort(col, false, false)

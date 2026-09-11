@@ -132,11 +132,11 @@ func TestTreeSortProxyColumn(t *testing.T) {
 
 	// A self- or out-of-range proxy is ignored rather than looping.
 	size.SortProxy = 0
-	if idx, _ := tv.sortTarget(); idx != 0 {
+	if idx, _ := tv.sortTarget(tv.primarySort().By); idx != 0 {
 		t.Errorf("self proxy resolved to %d, want 0", idx)
 	}
 	size.SortProxy = 99
-	if idx, _ := tv.sortTarget(); idx != 0 {
+	if idx, _ := tv.sortTarget(tv.primarySort().By); idx != 0 {
 		t.Errorf("out-of-range proxy resolved to %d, want 0", idx)
 	}
 }

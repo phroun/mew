@@ -436,13 +436,17 @@ func treeViewProps() map[string]protocol.Property {
 			t.SetFixedColumns(t.fixedBegin, n)
 		}).Tip("Visible columns pinned outside horizontal scrolling, counted from where the run ends.").Def("0"),
 		"sorted": boolProp("sorted", func(t *TreeView, b bool) {
-			t.SetSorted(b, t.sortedBy, t.sortDescending)
+			t.setSortEnabled(b)
 		}).Tip("Show the sort indicator.").Def("false"),
 		"sortedby": intProp("sortedby", func(t *TreeView, n int) {
-			t.SetSorted(t.sorted, n, t.sortDescending)
+			first := t.primarySort()
+			first.By = n
+			t.setPrimarySort(first)
 		}).Tip("Sort column: -1 = the key column, else a column index.").Def("-1"),
 		"descending": boolProp("descending", func(t *TreeView, b bool) {
-			t.SetSorted(t.sorted, t.sortedBy, b)
+			first := t.primarySort()
+			first.Descending = b
+			t.setPrimarySort(first)
 		}).Tip("Sort direction indicator points down.").Def("false"),
 
 		"columns": protocol.NewCollection(func(parent, child any) error {

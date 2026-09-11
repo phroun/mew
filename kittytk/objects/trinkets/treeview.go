@@ -184,13 +184,13 @@ type TreeView struct {
 	clickEditY    core.Unit
 
 	// Sort state (visual; the trinket reorders its row list, the app's
-	// item order is untouched): sorted=false means unsorted; sortedBy
-	// is -1 for the key (tree) column or a declared data-column index;
-	// sortDescending flips the direction. Activating a header cycles
-	// ascending -> descending -> unsorted.
+	// item order is untouched): sorted=false means unsorted, and
+	// sortLevels is the ordered run the comparison walks -- first level
+	// decides, the next settles its ties, and so on. The first level is
+	// the one the header indicator sits on and the one a header
+	// activation cycles: ascending -> descending -> unsorted.
 	sorted          bool
-	sortedBy        int
-	sortDescending  bool
+	sortLevels      []SortLevel
 	onSortRequested func(sorted bool, sortedBy int, descending bool)
 
 	// Column-chooser button/menu state (the [=] in the header corner).
