@@ -9,7 +9,7 @@ require (
 	github.com/go-text/typesetting v0.3.4
 	github.com/gogpu/gputypes v0.5.1
 	github.com/gogpu/wgpu v0.30.32
-	github.com/phroun/argwild v0.0.2-0.20260911022044-972e1048d2bf
+	github.com/phroun/argwild v0.0.2
 	github.com/phroun/direct-key-handler v0.3.38
 	github.com/phroun/key-sequence-processor v0.1.11
 	github.com/phroun/khatool v0.1.1

@@ -8,6 +8,8 @@ github.com/phroun/argwild v0.0.2-0.20260911021828-6ac6466af782 h1:HbdGzu2dO2Xg60
 github.com/phroun/argwild v0.0.2-0.20260911021828-6ac6466af782/go.mod h1:kExdjBitfwcRn5dWxiZDpTwWXVQLZ+Gun/S5/JNK5TQ=
 github.com/phroun/argwild v0.0.2-0.20260911022044-972e1048d2bf h1:WyHa7ewN9cKA2z+6e8OAj1tp10cR/hgJMHd88Q1dsuU=
 github.com/phroun/argwild v0.0.2-0.20260911022044-972e1048d2bf/go.mod h1:dqsxrzK504vZApHM56twE7LlFgZtU6vvmfWhtJw4HEA=
+github.com/phroun/argwild v0.0.2 h1:pphU/JUfHtlE9saeXlp0GXGXtZoqU+pmbe61yKsiFfs=
+github.com/phroun/argwild v0.0.2/go.mod h1:dqsxrzK504vZApHM56twE7LlFgZtU6vvmfWhtJw4HEA=
 github.com/phroun/direct-key-handler v0.3.38 h1:IsxJQUbHjF2mv7QjpSzTVMvR+HXme57NGcwJon9EWWA=
 github.com/phroun/direct-key-handler v0.3.38/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/garland v0.1.11 h1:LinO36MzmNjwR4EGRErM3IM1BIz4b8ygzAbPZD0/fA4=

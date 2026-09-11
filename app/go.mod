@@ -27,7 +27,7 @@ require (
 	github.com/gogpu/naga v0.17.16 // indirect
 	github.com/gogpu/wgpu v0.30.32 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
-	github.com/phroun/argwild v0.0.2-0.20260911022044-972e1048d2bf // indirect
+	github.com/phroun/argwild v0.0.2 // indirect
 	github.com/phroun/direct-key-handler v0.3.38 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
 	github.com/phroun/key-sequence-processor v0.1.11 // indirect
