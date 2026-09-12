@@ -1,8 +1,9 @@
 # Objects an application hosts
 
 > **Status: settled in shape, not yet built.** The direction and the rules
-> below are decided. No code implements them yet; the data source (see
-> `data-sources-and-bundles.md`) is the first thing that will.
+> below are decided. No code implements them yet; the data source is the first
+> thing that will — see `live-data-negotiation.md` for how it uses this, and
+> `data-sources-and-bundles.md` for the layering underneath.
 
 Everything so far runs one way. An application says `new`, `set`, `ask`, `do`,
 `destroy`; the display owns the objects those verbs address and answers with
@@ -36,47 +37,41 @@ leaves the connection standing, exactly as it does today.
 
 **The display never says `new` to an application.**
 
-An application creates every object it hosts, and allocates every id in its own
-space. The display addresses what the application has offered it, and when it
-needs another one it *asks* for it:
+An application creates every object it hosts and allocates every id for them,
+because the application is the end that bound data to a trinket in the first
+place. Every case that looked like it needed the display to create something
+turns out not to: two trinkets on one set of data are two objects the
+application made; a re-sort is a property change on one that exists; a tree
+expanding a node asks the object it already has, and the application answers
+with one it made.
 
-```
-do <source> openview            -> the app makes a view and answers with its id
-```
+So a client library needs no type registry and no factory to take part.
+Receiving a statement is: find the object by id, apply a property, answer a
+question, perform an action. That is a few hundred lines in C, not a mirror of
+the toolkit.
 
-That keeps two things true at once. The application stays in charge of its own
-object space — nothing appears in it that it did not make — and a client
-library needs no type registry and no factory to take part. Receiving a
-statement is: find the object by id, apply a property, answer a question,
-perform an action. That is a few hundred lines in C, not a mirror of the
-toolkit.
+## Ids are resolved by whoever receives them
 
-## Ids say who allocated them
+An id means whatever it means **in the receiver's own space**, and the direction
+of travel says whose space that is: a statement arriving at an application is
+about the application's objects, one arriving at the display is about the
+display's. Neither end ever has to ask whose number it is holding, and no range
+has to be reserved anywhere.
 
-The display's ids are already partitioned by kind: trinkets count up from one,
-store ids from `1 << 40`, host ids from `1 << 41`. Application ids extend the
-same idea one bit further out:
-
-```
-id < 1 << 62     allocated by the display
-id >= 1 << 62    allocated by the application
-```
-
-One test, no context needed, and no id means two things depending on which way
-it was travelling. The alternative — a namespace per direction — makes every id
-ambiguous until you know who said it, which is fine until the day something
-forwards one.
+The single place an id crosses is a property whose *value* refers to the other
+side, and that is settled by the property's declared kind rather than by the
+number.
 
 ## How an application's object reaches the display
 
 Through a property, like any other value:
 
 ```
-mysource=new source                 (app -> display: the app makes it)
-set <treeview> source=<mysource>    (app -> display: the trinket is told where its data lives)
+mine=new <type>                   (app -> display: the app makes it)
+set <treeview> data=<mine>        (app -> display: the trinket is told where its data lives)
 ```
 
-The trinket now holds an id in the application's range, so everything it asks
+The trinket now holds an id belonging to the application, so everything it asks
 goes back across the wire. Nothing else about a property changed: a value that
 happens to be an object id is what `action`, `menu` and half the toolkit's
 properties already carry.
@@ -84,7 +79,7 @@ properties already carry.
 ## What this does not change
 
 **The display is still the authority over what is on screen.** An
-application-hosted object is a source of data and answers, not a piece of
+application-hosted object supplies data and answers; it is not a piece of
 chrome. It draws nothing, it owns no pixels, and it cannot reach the desktop
 except by answering what it is asked.
 
@@ -93,8 +88,9 @@ display asking; an application that answers nothing is an application whose
 lists stay empty, which is between it and its own user.
 
 **And it stays refusable.** An application may answer any question with an
-error — it does not have the record, it will not honour that query, the view is
-gone. A refusal is an answer; the display carries on with what it has.
+error — it does not have the record, it will not honour that query, the thing
+being asked about is gone. A refusal is an answer; the display carries on with
+what it has.
 
 ## What it costs
 
