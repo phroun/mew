@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -270,18 +271,25 @@ char *kt_default_socket_path(void) { return kt_default_endpoint(); }
 
 /* --- parsed statement ------------------------------------------------ */
 
+typedef struct kt_script kt_script;
+
 typedef struct {
     char *name;
     kt_flag flag;    /* KT_FLAG_NONE when it has a value */
     int has_value;
-    int kind;        /* 0=int 1=float 2=string 3=word */
+    int kind;        /* 0=int 1=float 2=string 3=word 4=block */
     long long ival;
     double fval;
     char *sval;      /* string (unescaped) or word text; NUL-terminated */
     size_t slen;     /* byte length of sval, so interior NUL (\x00) survives */
+    kt_script *block;/* kind 4: the statements between the braces */
 } kt_arg;
 
 typedef struct { char *verb; kt_arg *args; int n; } kt_stmt;
+
+/* A run of statements: a request body, or what a {} holds. Blocks are how a
+ * filter, a sort and a boundary travel, so the parser here is no longer flat. */
+struct kt_script { kt_stmt *stmts; int n; };
 
 /* --- ordering two values the same way at both ends -------------------
  *
@@ -466,18 +474,39 @@ static int kt_compare_levels(const kt_arg *const *a, const kt_arg *const *b,
 
 struct kt_event { const char *type; const kt_arg *fields; int n; };
 
+static void script_free(kt_script *sc);
+
+static void args_free(kt_arg *args, int n) {
+    for (int i = 0; i < n; i++) {
+        free(args[i].name);
+        free(args[i].sval);
+        script_free(args[i].block);
+    }
+    free(args);
+}
+
+static void stmt_parts_free(kt_stmt *s) {
+    free(s->verb);
+    args_free(s->args, s->n);
+}
+
+static void script_free(kt_script *sc) {
+    if (!sc) return;
+    for (int i = 0; i < sc->n; i++) stmt_parts_free(&sc->stmts[i]);
+    free(sc->stmts);
+    free(sc);
+}
+
 static void stmt_free(kt_stmt *s) {
     if (!s) return;
-    free(s->verb);
-    for (int i = 0; i < s->n; i++) { free(s->args[i].name); free(s->args[i].sval); }
-    free(s->args);
+    stmt_parts_free(s);
     free(s);
 }
 
-/* Flat parser: inbound statements (welcome/reply/error/event) are always
- * `verb arg...` with no nested blocks, so this covers the whole inbound
- * grammar. */
-typedef struct { const char *s; size_t pos, len; } kt_p;
+/* bad marks text the grammar will not read: a statement that does not begin
+ * with a word, an unterminated block, a character where an argument belongs.
+ * The whole statement is then refused rather than half-read. */
+typedef struct { const char *s; size_t pos, len; int bad; } kt_p;
 
 static int p_eof(kt_p *p) { return p->pos >= p->len; }
 static char p_peek(kt_p *p) { return p_eof(p) ? '\0' : p->s[p->pos]; }
@@ -537,9 +566,18 @@ static char *p_string(kt_p *p, size_t *outlen) {  /* assumes current char is '"'
     return s;
 }
 
+static int p_script(kt_p *p, kt_script *out, int in_block);
+
 static void p_value(kt_p *p, kt_arg *a) {
     char c = p_peek(p);
-    if (c == '"') {
+    if (c == '{') {
+        p->pos++;  /* '{' */
+        kt_script *sc = calloc(1, sizeof *sc);
+        p_script(p, sc, 1);
+        if (!p_eof(p) && p_peek(p) == '}') p->pos++;
+        else p->bad = 1;
+        a->kind = 4; a->has_value = 1; a->block = sc;
+    } else if (c == '"') {
         a->kind = 2; a->has_value = 1; a->sval = p_string(p, &a->slen);
     } else if (c == '-' || isdigit((unsigned char)c)) {
         kt_buf b = {0};
@@ -561,35 +599,622 @@ static void p_value(kt_p *p, kt_arg *a) {
     }
 }
 
-static kt_stmt *parse_statement(const char *text) {
-    kt_p p = {text, 0, strlen(text)};
-    p_skip_inline(&p);
-    if (p_eof(&p) || !is_word_start(p_peek(&p))) return NULL;
-    kt_stmt *st = calloc(1, sizeof *st);
-    st->verb = p_word(&p);
+/* One statement: `verb arg...`, ending at a `;`, at the end of the text, or --
+ * inside a block -- at the closing brace. */
+static int p_statement(kt_p *p, kt_stmt *st, int in_block) {
+    p_skip_inline(p);
+    if (p_eof(p) || !is_word_start(p_peek(p))) return 0;
+    memset(st, 0, sizeof *st);
+    st->verb = p_word(p);
     int cap = 0;
     for (;;) {
-        p_skip_inline(&p);
-        if (p_eof(&p) || p_peek(&p) == ';') break;
-        char c = p_peek(&p);
+        p_skip_inline(p);
+        if (p_eof(p) || p_peek(p) == ';') break;
+        char c = p_peek(p);
+        if (in_block && c == '}') break;
         kt_arg a;
         memset(&a, 0, sizeof a);
         if (c == '!' || c == '?') {
-            p.pos++;
-            a.name = p_word(&p);
+            p->pos++;
+            a.name = p_word(p);
             a.flag = (c == '?') ? KT_FLAG_INDET : KT_FLAG_FALSE;
         } else if (is_word_start(c)) {
-            a.name = p_word(&p);
-            p_skip_inline(&p);
-            if (!p_eof(&p) && p_peek(&p) == '=') { p.pos++; p_value(&p, &a); a.flag = KT_FLAG_NONE; }
+            a.name = p_word(p);
+            p_skip_inline(p);
+            if (!p_eof(p) && p_peek(p) == '=') { p->pos++; p_value(p, &a); a.flag = KT_FLAG_NONE; }
             else a.flag = KT_FLAG_TRUE;
-        } else if (c == '-' || isdigit((unsigned char)c)) {
-            p_value(&p, &a);  /* bare number (target ref) */
-        } else break;
+        } else if (c == '-' || isdigit((unsigned char)c) || c == '"' || c == '{') {
+            /* An operand: a value with no name, in the order it was written.
+             * A target reference is one, and so is a filter's field and what
+             * it is matched against. */
+            p_value(p, &a);
+        } else { p->bad = 1; break; }
         if (st->n + 1 > cap) { cap = cap ? cap * 2 : 8; st->args = realloc(st->args, cap * sizeof(kt_arg)); }
         st->args[st->n++] = a;
     }
+    return 1;
+}
+
+/* A run of statements, separated by `;` and by newlines. */
+static int p_script(kt_p *p, kt_script *out, int in_block) {
+    int cap = 0;
+    for (;;) {
+        p_skip_inline(p);
+        while (!p_eof(p) && p_peek(p) == ';') { p->pos++; p_skip_inline(p); }
+        if (p_eof(p)) break;
+        if (in_block && p_peek(p) == '}') break;
+        kt_stmt st;
+        if (!p_statement(p, &st, in_block)) { p->bad = 1; break; }
+        if (out->n + 1 > cap) { cap = cap ? cap * 2 : 4; out->stmts = realloc(out->stmts, cap * sizeof(kt_stmt)); }
+        out->stmts[out->n++] = st;
+    }
+    return 1;
+}
+
+static kt_stmt *parse_statement(const char *text) {
+    kt_p p = {text, 0, strlen(text), 0};
+    kt_stmt *st = calloc(1, sizeof *st);
+    if (!p_statement(&p, st, 0) || p.bad) {
+        stmt_free(st);
+        return NULL;
+    }
     return st;
+}
+
+/* --- a query, in structured form -------------------------------------
+ *
+ * An application hosts a query: one filter and one sort over its own records,
+ * which a display fills windows out of as somebody scrolls. The wire carries
+ * that as text, and every client library would otherwise make its author walk
+ * a statement tree to find out what was being asked. So the walking happens
+ * once, here, and what reaches an application is a struct.
+ *
+ * ../testdata/query.wire is the corpus every implementation of this answers;
+ * wire/query.go is the Go side and python/kittytk/query.py the Python one.
+ */
+
+#define KT_QERR 256
+
+static void qfail(char *err, const char *fmt, ...) {
+    if (!err) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(err, KT_QERR, fmt, ap);
+    va_end(ap);
+}
+
+kt_value kt_vint(const char *name, long long v) {
+    kt_value o; memset(&o, 0, sizeof o);
+    o.name = name; o.kind = KT_V_INT; o.ival = v; o.fval = (double)v;
+    return o;
+}
+kt_value kt_vfloat(const char *name, double v) {
+    kt_value o; memset(&o, 0, sizeof o);
+    o.name = name; o.kind = KT_V_FLOAT; o.fval = v;
+    return o;
+}
+kt_value kt_vstrn(const char *name, const char *s, size_t n) {
+    kt_value o; memset(&o, 0, sizeof o);
+    o.name = name; o.kind = KT_V_STRING; o.sval = s; o.slen = n;
+    return o;
+}
+kt_value kt_vstr(const char *name, const char *s) {
+    return kt_vstrn(name, s, s ? strlen(s) : 0);
+}
+kt_value kt_vword(const char *name, const char *w) {
+    kt_value o; memset(&o, 0, sizeof o);
+    o.name = name; o.kind = KT_V_WORD; o.sval = w; o.slen = w ? strlen(w) : 0;
+    return o;
+}
+
+const kt_value *kt_bag_get(const kt_bag *b, const char *name) {
+    if (!b) return NULL;
+    for (int i = 0; i < b->n; i++)
+        if (b->v[i].name && strcmp(b->v[i].name, name) == 0) return &b->v[i];
+    return NULL;
+}
+
+const kt_value *kt_bag_key(const kt_bag *b) { return kt_bag_get(b, KT_KEY_FIELD); }
+
+/* --- writing a value back out --- */
+
+/* A float in as few digits as read it back exactly, and never in a spelling
+ * that would come back an integer: `3` is an int and `3.0` is a float, and a
+ * boundary that changed type between the two ends would be comparing different
+ * things. Go and Python write the same two rules. */
+static void enc_float(kt_buf *b, double v) {
+    char tmp[64];
+    int prec = 17;
+    for (int i = 1; i <= 17; i++) {
+        snprintf(tmp, sizeof tmp, "%.*g", i, v);
+        if (strtod(tmp, NULL) == v) { prec = i; break; }
+    }
+    snprintf(tmp, sizeof tmp, "%.*g", prec, v);
+    if (!strpbrk(tmp, ".eEnN")) strncat(tmp, ".0", sizeof tmp - strlen(tmp) - 1);
+    buf_puts(b, tmp);
+}
+
+static void enc_value(kt_buf *b, const kt_value *v) {
+    char tmp[64];
+    switch (v->kind) {
+    case KT_V_INT:
+        snprintf(tmp, sizeof tmp, "%lld", v->ival);
+        buf_puts(b, tmp);
+        break;
+    case KT_V_FLOAT:
+        enc_float(b, v->fval);
+        break;
+    case KT_V_STRING: {
+        char *t = kt_quote(v->sval);
+        buf_puts(b, t);
+        free(t);
+        break;
+    }
+    case KT_V_WORD:
+        buf_puts(b, v->sval ? v->sval : "");
+        break;
+    default:
+        buf_puts(b, "undefined");
+        break;
+    }
+}
+
+static void enc_bag(kt_buf *b, const kt_bag *bag) {
+    if (!bag || bag->n == 0) { buf_puts(b, "{}"); return; }
+    buf_puts(b, "{ ");
+    for (int i = 0; i < bag->n; i++) {
+        if (i) buf_puts(b, "; ");
+        buf_puts(b, bag->v[i].name ? bag->v[i].name : "");
+        if (bag->v[i].kind != KT_V_NONE) {
+            buf_put(b, ' ');
+            enc_value(b, &bag->v[i]);
+        }
+    }
+    buf_puts(b, " }");
+}
+
+static int is_group(const char *op) {
+    return !strcmp(op, "and") || !strcmp(op, "or") || !strcmp(op, "not");
+}
+
+static void enc_filter_stmt(kt_buf *b, const kt_filter *f);
+
+static void enc_filter_block(kt_buf *b, const kt_filter *f) {
+    if (f->nchildren == 0) { buf_puts(b, "{}"); return; }
+    buf_puts(b, "{ ");
+    for (int i = 0; i < f->nchildren; i++) {
+        if (i) buf_puts(b, "; ");
+        enc_filter_stmt(b, &f->children[i]);
+    }
+    buf_puts(b, " }");
+}
+
+static void enc_filter_stmt(kt_buf *b, const kt_filter *f) {
+    if (is_group(f->op)) {
+        buf_puts(b, f->op);
+        buf_put(b, ' ');
+        enc_filter_block(b, f);
+        return;
+    }
+    buf_puts(b, f->op);
+    buf_put(b, ' ');
+    buf_puts(b, f->field);
+    for (int i = 0; i < f->nvalues; i++) {
+        buf_put(b, ' ');
+        enc_value(b, &f->values[i]);
+    }
+    if (f->collate && *f->collate) {
+        buf_puts(b, " collate=");
+        buf_puts(b, f->collate);
+    }
+}
+
+static void enc_filter(kt_buf *b, const kt_filter *f) {
+    if (!f) { buf_puts(b, "{}"); return; }
+    if (is_group(f->op)) { enc_filter_block(b, f); return; }
+    buf_puts(b, "{ ");
+    enc_filter_stmt(b, f);
+    buf_puts(b, " }");
+}
+
+static void enc_sort(kt_buf *b, const kt_sortlevel *l, int n) {
+    if (n == 0) { buf_puts(b, "{}"); return; }
+    buf_puts(b, "{ ");
+    for (int i = 0; i < n; i++) {
+        if (i) buf_puts(b, "; ");
+        buf_puts(b, l[i].field);
+        if (l[i].collation && *l[i].collation) { buf_put(b, ' '); buf_puts(b, l[i].collation); }
+        if (l[i].descending) buf_puts(b, " desc");
+    }
+    buf_puts(b, " }");
+}
+
+static void enc_qspec(kt_buf *b, const kt_qspec *s) {
+    int wrote = 0;
+    if (s->source && *s->source) {
+        buf_puts(b, "source=");
+        char *q = kt_quote(s->source);
+        buf_puts(b, q);
+        free(q);
+        wrote = 1;
+    }
+    if (s->fields.n) {
+        if (wrote) buf_put(b, ' ');
+        buf_puts(b, "fields="); enc_bag(b, &s->fields); wrote = 1;
+    }
+    if (s->exclude.n) {
+        if (wrote) buf_put(b, ' ');
+        buf_puts(b, "exclude="); enc_bag(b, &s->exclude); wrote = 1;
+    }
+    if (s->filter) {
+        if (wrote) buf_put(b, ' ');
+        buf_puts(b, "filter="); enc_filter(b, s->filter); wrote = 1;
+    }
+    if (s->nsort) {
+        if (wrote) buf_put(b, ' ');
+        buf_puts(b, "sort="); enc_sort(b, s->sort, s->nsort);
+    }
+}
+
+static void enc_qfill(kt_buf *b, const kt_qfill *f) {
+    char tmp[64];
+    snprintf(tmp, sizeof tmp, "tag=%lld", f->tag);
+    buf_puts(b, tmp);
+    if (f->from.n) { buf_puts(b, " from="); enc_bag(b, &f->from); }
+    if (f->to.n) { buf_puts(b, " to="); enc_bag(b, &f->to); }
+    snprintf(tmp, sizeof tmp, " have=%d need=%d", f->have, f->need);
+    buf_puts(b, tmp);
+    if (f->fields.n) { buf_puts(b, " fields="); enc_bag(b, &f->fields); }
+}
+
+/* --- reading one apart --- */
+
+static void value_release(kt_value *v) {
+    free((void *)v->name);
+    free((void *)v->sval);
+    memset(v, 0, sizeof *v);
+}
+
+static void bag_release(kt_bag *b) {
+    for (int i = 0; i < b->n; i++) value_release((kt_value *)&b->v[i]);
+    free((void *)b->v);
+    b->v = NULL; b->n = 0;
+}
+
+static void filter_release(kt_filter *f) {
+    if (!f) return;
+    free((void *)f->op);
+    free((void *)f->field);
+    free((void *)f->collate);
+    for (int i = 0; i < f->nvalues; i++) value_release((kt_value *)&f->values[i]);
+    free((void *)f->values);
+    for (int i = 0; i < f->nchildren; i++) filter_release((kt_filter *)&f->children[i]);
+    free((void *)f->children);
+    memset(f, 0, sizeof *f);
+}
+
+static void qspec_release(kt_qspec *s) {
+    free((void *)s->source);
+    bag_release(&s->fields);
+    bag_release(&s->exclude);
+    if (s->filter) { filter_release((kt_filter *)s->filter); free((void *)s->filter); }
+    for (int i = 0; i < s->nsort; i++) {
+        free((void *)s->sort[i].field);
+        free((void *)s->sort[i].collation);
+    }
+    free((void *)s->sort);
+    memset(s, 0, sizeof *s);
+}
+
+static void qfill_release(kt_qfill *f) {
+    bag_release(&f->from);
+    bag_release(&f->to);
+    bag_release(&f->fields);
+    memset(f, 0, sizeof *f);
+}
+
+static char *dupn(const char *s, size_t n) {
+    char *o = malloc(n + 1);
+    if (n && s) memcpy(o, s, n);
+    o[n] = '\0';
+    return o;
+}
+
+/* One operand as a value.
+ *
+ * A bare word in argument position is a flag as far as the grammar is
+ * concerned -- that is what `wrap` and `!enabled` are -- so a word written
+ * where a value belongs arrives as a flag carrying its own name, and this is
+ * where it becomes the word it was written as. `!` and `?` say something a
+ * value cannot, so they are refused rather than quietly read as words. */
+static int value_of(const char *what, const kt_arg *a, kt_value *out, char *err) {
+    memset(out, 0, sizeof *out);
+    if (a->has_value) {
+        if (a->name && *a->name) {
+            qfail(err, "%s: no argument called \"%s\"", what, a->name);
+            return 0;
+        }
+        switch (a->kind) {
+        case 0: out->kind = KT_V_INT; out->ival = a->ival; out->fval = (double)a->ival; break;
+        case 1: out->kind = KT_V_FLOAT; out->fval = a->fval; break;
+        case 2: out->kind = KT_V_STRING; out->sval = dupn(a->sval, a->slen); out->slen = a->slen; break;
+        case 3: out->kind = KT_V_WORD; out->sval = dupn(a->sval, a->slen); out->slen = a->slen; break;
+        default:
+            qfail(err, "%s: a block is not a value here", what);
+            return 0;
+        }
+        return 1;
+    }
+    if (a->flag != KT_FLAG_TRUE) {
+        qfail(err, "%s: \"%s\" is asserted, not valued", what, a->name ? a->name : "");
+        return 0;
+    }
+    out->kind = KT_V_WORD;
+    out->sval = strdup(a->name ? a->name : "");
+    out->slen = strlen(out->sval);
+    return 1;
+}
+
+static void bag_push(kt_bag *b, kt_value v) {
+    b->v = realloc((void *)b->v, (b->n + 1) * sizeof(kt_value));
+    ((kt_value *)b->v)[b->n++] = v;
+}
+
+/* A field bag, from a block value. */
+static int parse_bag(const kt_arg *a, kt_bag *out, char *err) {
+    memset(out, 0, sizeof *out);
+    if (!a->has_value || a->kind != 4 || !a->block) {
+        qfail(err, "expected a block of fields");
+        return 0;
+    }
+    for (int i = 0; i < a->block->n; i++) {
+        kt_stmt *st = &a->block->stmts[i];
+        if (!st->verb || !*st->verb) { qfail(err, "a field is a name"); goto bad; }
+        kt_value v;
+        memset(&v, 0, sizeof v);
+        if (st->n == 0) {
+            v.kind = KT_V_NONE;
+        } else if (st->n == 1) {
+            if (!value_of(st->verb, &st->args[0], &v, err)) goto bad;
+        } else {
+            qfail(err, "%s: a field carries one value, not %d", st->verb, st->n);
+            goto bad;
+        }
+        v.name = strdup(st->verb);
+        bag_push(out, v);
+    }
+    return 1;
+bad:
+    bag_release(out);
+    return 0;
+}
+
+static int parse_filter_block(const kt_script *sc, const char *op, kt_filter *out, char *err);
+
+static int parse_predicate(const kt_stmt *st, kt_filter *out, char *err) {
+    static const char *preds[] = {"eq", "ne", "lt", "le", "gt", "ge", "in",
+                                  "contains", "starts", "ends", NULL};
+    memset(out, 0, sizeof *out);
+    if (is_group(st->verb)) {
+        if (st->n != 1 || !st->args[0].has_value || st->args[0].kind != 4) {
+            qfail(err, "%s: takes one block", st->verb);
+            return 0;
+        }
+        if (!parse_filter_block(st->args[0].block, st->verb, out, err)) return 0;
+        if (!strcmp(st->verb, "not") && out->nchildren == 0) {
+            qfail(err, "not: takes something to negate");
+            filter_release(out);
+            return 0;
+        }
+        return 1;
+    }
+    int known = 0;
+    for (int i = 0; preds[i]; i++) if (!strcmp(st->verb, preds[i])) { known = 1; break; }
+    if (!known) {
+        qfail(err, "no filter operator called \"%s\"", st->verb);
+        return 0;
+    }
+    out->op = strdup(st->verb);
+    out->field = strdup("");
+    out->collate = strdup("");
+    for (int i = 0; i < st->n; i++) {
+        const kt_arg *a = &st->args[i];
+        if (a->name && strcmp(a->name, "collate") == 0 && a->has_value) {
+            if (a->kind != 3) { qfail(err, "%s: collate= expects a word", st->verb); goto bad; }
+            free((void *)out->collate);
+            out->collate = dupn(a->sval, a->slen);
+            continue;
+        }
+        if (i == 0) {
+            /* The field, written bare, which is how a filter reads as a filter
+             * rather than naming an argument for every operand. */
+            if (a->has_value || a->flag != KT_FLAG_TRUE) {
+                qfail(err, "%s: names no field", st->verb);
+                goto bad;
+            }
+            free((void *)out->field);
+            out->field = strdup(a->name);
+            continue;
+        }
+        if (a->has_value && a->kind == 4 && !strcmp(out->op, "in")) {
+            /* A set of words, which is what a block can hold: every statement
+             * in it is one bare name. */
+            for (int j = 0; j < a->block->n; j++) {
+                kt_stmt *item = &a->block->stmts[j];
+                if (!item->verb || !*item->verb || item->n != 0) {
+                    qfail(err, "in: a set holds bare names; write other values after the field");
+                    goto bad;
+                }
+                kt_value v;
+                memset(&v, 0, sizeof v);
+                v.name = strdup("");
+                v.kind = KT_V_WORD;
+                v.sval = strdup(item->verb);
+                v.slen = strlen(v.sval);
+                out->values = realloc((void *)out->values, (out->nvalues + 1) * sizeof(kt_value));
+                ((kt_value *)out->values)[out->nvalues++] = v;
+            }
+            continue;
+        }
+        kt_value v;
+        if (!value_of(st->verb, a, &v, err)) goto bad;
+        v.name = strdup("");
+        out->values = realloc((void *)out->values, (out->nvalues + 1) * sizeof(kt_value));
+        ((kt_value *)out->values)[out->nvalues++] = v;
+    }
+    if (!*out->field) { qfail(err, "%s: names no field", st->verb); goto bad; }
+    if (out->nvalues == 0) {
+        qfail(err, "%s %s: nothing to compare against", st->verb, out->field);
+        goto bad;
+    }
+    if (strcmp(out->op, "in") != 0 && out->nvalues > 1) {
+        qfail(err, "%s %s: compares against one value, not %d",
+              st->verb, out->field, out->nvalues);
+        goto bad;
+    }
+    return 1;
+bad:
+    filter_release(out);
+    return 0;
+}
+
+static int parse_filter_block(const kt_script *sc, const char *op, kt_filter *out, char *err) {
+    memset(out, 0, sizeof *out);
+    out->op = strdup(op);
+    out->field = strdup("");
+    out->collate = strdup("");
+    for (int i = 0; sc && i < sc->n; i++) {
+        kt_filter child;
+        if (!parse_predicate(&sc->stmts[i], &child, err)) { filter_release(out); return 0; }
+        out->children = realloc((void *)out->children, (out->nchildren + 1) * sizeof(kt_filter));
+        ((kt_filter *)out->children)[out->nchildren++] = child;
+    }
+    return 1;
+}
+
+/* A filter tree, from a block value. A block is an AND. */
+static int parse_filter_arg(const kt_arg *a, kt_filter **out, char *err) {
+    *out = NULL;
+    if (!a->has_value || a->kind != 4) { qfail(err, "expected a block"); return 0; }
+    kt_filter *f = calloc(1, sizeof *f);
+    if (!parse_filter_block(a->block, "and", f, err)) { free(f); return 0; }
+    *out = f;
+    return 1;
+}
+
+/* Sort levels, from a block value: one statement per level, naming a field and
+ * saying which way and under which collation. */
+static int parse_sort_arg(const kt_arg *a, kt_sortlevel **out, int *n, char *err) {
+    *out = NULL; *n = 0;
+    if (!a->has_value || a->kind != 4) { qfail(err, "expected a block"); return 0; }
+    for (int i = 0; a->block && i < a->block->n; i++) {
+        kt_stmt *st = &a->block->stmts[i];
+        if (!st->verb || !*st->verb) { qfail(err, "a level names a field"); goto bad; }
+        kt_sortlevel lv;
+        memset(&lv, 0, sizeof lv);
+        lv.field = strdup(st->verb);
+        lv.collation = strdup("");
+        for (int j = 0; j < st->n; j++) {
+            const kt_arg *g = &st->args[j];
+            const char *nm = g->name ? g->name : "";
+            if (g->has_value && !strcmp(nm, "collate") && g->kind == 3) {
+                free((void *)lv.collation);
+                lv.collation = dupn(g->sval, g->slen);
+            } else if (g->has_value) {
+                qfail(err, "%s: no argument called \"%s\"", st->verb, nm);
+                free((void *)lv.field); free((void *)lv.collation);
+                goto bad;
+            } else if (!strcmp(nm, "desc")) {
+                lv.descending = g->flag == KT_FLAG_TRUE;
+            } else if (!strcmp(nm, "asc")) {
+                lv.descending = g->flag != KT_FLAG_TRUE;
+            } else if (!strcmp(nm, "exact") || !strcmp(nm, "fold") || !strcmp(nm, "natural")) {
+                free((void *)lv.collation);
+                lv.collation = strdup(nm);
+            } else {
+                qfail(err, "%s: \"%s\" says nothing about a sort level", st->verb, nm);
+                free((void *)lv.field); free((void *)lv.collation);
+                goto bad;
+            }
+        }
+        *out = realloc(*out, (*n + 1) * sizeof(kt_sortlevel));
+        (*out)[(*n)++] = lv;
+    }
+    return 1;
+bad:
+    for (int i = 0; i < *n; i++) { free((void *)(*out)[i].field); free((void *)(*out)[i].collation); }
+    free(*out);
+    *out = NULL; *n = 0;
+    return 0;
+}
+
+/* A query spec, from the arguments of the statement carrying it. */
+static int parse_qspec(const kt_arg *args, int n, kt_qspec *out, char *err) {
+    memset(out, 0, sizeof *out);
+    out->source = strdup("");
+    for (int i = 0; i < n; i++) {
+        const kt_arg *a = &args[i];
+        const char *nm = a->name ? a->name : "";
+        if (!strcmp(nm, "source")) {
+            if (!a->has_value || (a->kind != 2 && a->kind != 3)) {
+                qfail(err, "source: expected a name");
+                goto bad;
+            }
+            free((void *)out->source);
+            out->source = dupn(a->sval, a->slen);
+        } else if (!strcmp(nm, "fields") || !strcmp(nm, "exclude")) {
+            kt_bag bag;
+            if (!parse_bag(a, &bag, err)) goto bad;
+            if (!strcmp(nm, "fields")) { bag_release(&out->fields); out->fields = bag; }
+            else { bag_release(&out->exclude); out->exclude = bag; }
+        } else if (!strcmp(nm, "filter")) {
+            kt_filter *f;
+            if (!parse_filter_arg(a, &f, err)) goto bad;
+            if (out->filter) { filter_release((kt_filter *)out->filter); free((void *)out->filter); }
+            out->filter = f;
+        } else if (!strcmp(nm, "sort")) {
+            kt_sortlevel *lv; int ln;
+            if (!parse_sort_arg(a, &lv, &ln, err)) goto bad;
+            for (int j = 0; j < out->nsort; j++) {
+                free((void *)out->sort[j].field);
+                free((void *)out->sort[j].collation);
+            }
+            free((void *)out->sort);
+            out->sort = lv; out->nsort = ln;
+        }
+    }
+    return 1;
+bad:
+    qspec_release(out);
+    return 0;
+}
+
+/* A fill request, from the arguments after the question word. */
+static int parse_qfill(const kt_arg *args, int n, kt_qfill *out, char *err) {
+    memset(out, 0, sizeof *out);
+    for (int i = 0; i < n; i++) {
+        const kt_arg *a = &args[i];
+        const char *nm = a->name ? a->name : "";
+        if (!strcmp(nm, "tag") || !strcmp(nm, "have") || !strcmp(nm, "need")) {
+            if (!a->has_value || a->kind != 0) {
+                qfail(err, "%s: expected a whole number", nm);
+                goto bad;
+            }
+            if (!strcmp(nm, "tag")) out->tag = a->ival;
+            else if (!strcmp(nm, "have")) out->have = (int)a->ival;
+            else out->need = (int)a->ival;
+        } else if (!strcmp(nm, "from") || !strcmp(nm, "to") || !strcmp(nm, "fields")) {
+            kt_bag bag;
+            if (!parse_bag(a, &bag, err)) goto bad;
+            if (!strcmp(nm, "from")) { bag_release(&out->from); out->from = bag; }
+            else if (!strcmp(nm, "to")) { bag_release(&out->to); out->to = bag; }
+            else { bag_release(&out->fields); out->fields = bag; }
+        }
+    }
+    return 1;
+bad:
+    qfill_release(out);
+    return 0;
 }
 
 /* --- event field readers -------------------------------------------- */
@@ -657,6 +1282,16 @@ typedef struct {
     void *ud;
 } kt_handler;
 
+/* One query this application hosts, and what answers for it. */
+typedef struct {
+    uint64_t id;
+    kt_fill_cb fill;      void *fill_ud;
+    kt_respec_cb respec;  void *respec_ud;
+    kt_hstmt_cb other;    void *other_ud;
+    kt_dropped_cb dropped; void *dropped_ud;
+    kt_qspec spec;
+} kt_hosted;
+
 struct kt_conn {
     kt_socket fd;
 #ifdef KT_TLS
@@ -690,13 +1325,26 @@ struct kt_conn {
     evnode *ehead, *etail;
     int estop;
 
+    /* Statements the display addressed to something this application hosts:
+     * the other direction of the wire. They get a thread of their own rather
+     * than sharing the event one, because answering a fill can take as long as
+     * the records take, and a list nobody is looking at must not hold up a
+     * click. */
+    kt_mutex imu; kt_cond icv;
+    evnode *ihead, *itail;
+    int istop;
+
+    /* What this connection holds on the application's behalf, by the id the
+     * display addresses it by. Guarded by hmu, with the handlers. */
+    kt_hosted *hosted; int nhosted;
+
     kt_mutex hmu;
     kt_handler *handlers; int nh, caph;
     kt_pair *subs; int nsubs, capsubs;
     char **subtypes;
 
     int closed;
-    kt_thread rthread, ethread;
+    kt_thread rthread, ethread, ithread;
 };
 
 /* transport read/write: TLS when negotiated, else the raw socket.
@@ -861,6 +1509,9 @@ static char *scan_next(kt_conn *c) {
     }
 }
 
+static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids,
+                   char ***out_desc, int *out_ndesc);
+
 static void enqueue_event(kt_conn *c, const char *text) {
     evnode *n = malloc(sizeof *n);
     n->text = strdup(text);
@@ -930,6 +1581,386 @@ static void mark_closed(kt_conn *c) {
     c->estop = 1;
     kt_cond_signal(&c->ecv);
     kt_mutex_unlock(&c->emu);
+
+    kt_mutex_lock(&c->imu);
+    c->istop = 1;
+    kt_cond_signal(&c->icv);
+    kt_mutex_unlock(&c->imu);
+}
+
+/* --- hosting a query: the questions, and where the answer is written ---
+ *
+ * The statement is taken apart before the application's callback sees it, so
+ * nothing in that callback parses anything. The answer goes into a sink that
+ * flushes as it fills, so a fill larger than one message is neither held whole
+ * in memory nor one uninterruptible stretch of work.
+ */
+
+/* How much answer accumulates before it goes out on its own. It trades round
+ * trips against how long a record waits: big enough that a fill of a screenful
+ * is one message, small enough that a fill of a million records is not held in
+ * memory. */
+#define KT_FLUSH_BYTES (16 * 1024)
+
+struct kt_fill {
+    kt_conn *c;
+    uint64_t query;
+    long long tag;
+    kt_mutex mu;
+    kt_buf buf;
+    int sent, ordered;
+};
+
+static void enqueue_inbound(kt_conn *c, const char *text) {
+    evnode *n = malloc(sizeof *n);
+    n->text = strdup(text);
+    n->next = NULL;
+    kt_mutex_lock(&c->imu);
+    if (c->itail) c->itail->next = n; else c->ihead = n;
+    c->itail = n;
+    kt_cond_signal(&c->icv);
+    kt_mutex_unlock(&c->imu);
+}
+
+/* The object a statement is addressed to: the leading operand, which is a bare
+ * id. Returns 0 when the statement is addressed to nothing, which is also how
+ * a describe line -- `ask of="..." name="..."` -- is told from a question put
+ * to something this application hosts. */
+static uint64_t hosted_target(const kt_stmt *st) {
+    if (st->n < 1) return 0;
+    const kt_arg *a = &st->args[0];
+    if ((a->name && *a->name) || !a->has_value || a->kind != 0 || a->ival < 0) return 0;
+    return (uint64_t)a->ival;
+}
+
+/* Called under hmu. */
+static kt_hosted *hosted_find(kt_conn *c, uint64_t id) {
+    for (int i = 0; i < c->nhosted; i++)
+        if (c->hosted[i].id == id) return &c->hosted[i];
+    return NULL;
+}
+
+static kt_fill *fill_new(kt_conn *c, uint64_t query, long long tag) {
+    kt_fill *f = calloc(1, sizeof *f);
+    f->c = c;
+    f->query = query;
+    f->tag = tag;
+    kt_mutex_init(&f->mu);
+    return f;
+}
+
+static void fill_release(kt_fill *f) {
+    free(f->buf.p);
+    free(f);
+}
+
+/* Empty the buffer and hand back what was in it. Called under f->mu. */
+static char *fill_take(kt_fill *f) {
+    char *src = buf_dup(&f->buf);
+    free(f->buf.p);
+    memset(&f->buf, 0, sizeof f->buf);
+    return src;
+}
+
+static int fill_send(kt_fill *f, char *src) {
+    int rc = 0;
+    if (src && *src) rc = do_exec(f->c, src, NULL, NULL, NULL);
+    free(src);
+    return rc;
+}
+
+/* The head of an answering statement: which query, and the tag of the fill it
+ * answers, so a late answer is still placeable. */
+static void fill_head(kt_fill *f, kt_buf *b, const char *event) {
+    char tmp[96];
+    snprintf(tmp, sizeof tmp, "event %s query=%llu tag=%lld",
+             event, (unsigned long long)f->query, f->tag);
+    buf_puts(b, tmp);
+}
+
+int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    fill_head(f, &b, "query_record");
+    buf_puts(&b, " fields={ ");
+    buf_puts(&b, KT_KEY_FIELD);
+    buf_put(&b, ' ');
+    enc_value(&b, &key);
+    for (int i = 0; i < n; i++) {
+        buf_puts(&b, "; ");
+        buf_puts(&b, fields[i].name ? fields[i].name : "");
+        if (fields[i].kind != KT_V_NONE) {
+            buf_put(&b, ' ');
+            enc_value(&b, &fields[i]);
+        }
+    }
+    buf_puts(&b, " }");
+    char *stmt = buf_dup(&b);
+    free(b.p);
+
+    kt_mutex_lock(&f->mu);
+    if (f->buf.len) buf_put(&f->buf, '\n');
+    buf_puts(&f->buf, stmt);
+    free(stmt);
+    f->sent++;
+    if (f->buf.len < KT_FLUSH_BYTES) {
+        kt_mutex_unlock(&f->mu);
+        return 0;
+    }
+    char *src = fill_take(f);
+    kt_mutex_unlock(&f->mu);
+    return fill_send(f, src);
+}
+
+void kt_fill_ordered(kt_fill *f) {
+    kt_mutex_lock(&f->mu);
+    f->ordered = 1;
+    kt_mutex_unlock(&f->mu);
+}
+
+int kt_fill_sent(const kt_fill *f) { return f->sent; }
+
+int kt_fill_flush(kt_fill *f) {
+    kt_mutex_lock(&f->mu);
+    char *src = fill_take(f);
+    kt_mutex_unlock(&f->mu);
+    return fill_send(f, src);
+}
+
+/* Append the terminator, send the rest and release the sink. tail is what
+ * distinguishes the three endings; it may be NULL.
+ *
+ * Releasing here is why exactly one ending may be called, and why nothing may
+ * touch the sink afterwards: there is no sink afterwards. */
+static int fill_finish(kt_fill *f, const char *tail) {
+    kt_mutex_lock(&f->mu);
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    fill_head(f, &b, "query_filled");
+    if (f->ordered) buf_puts(&b, " ordered");
+    if (tail) buf_puts(&b, tail);
+    if (f->buf.len) buf_put(&f->buf, '\n');
+    buf_puts(&f->buf, b.p ? b.p : "");
+    free(b.p);
+    char *src = fill_take(f);
+    kt_mutex_unlock(&f->mu);
+    int rc = fill_send(f, src);
+    fill_release(f);
+    return rc;
+}
+
+int kt_fill_done(kt_fill *f, const kt_value *watermark, int n) {
+    if (n <= 0) return fill_finish(f, NULL);
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    buf_puts(&b, " watermark=");
+    kt_bag bag = { watermark, n };
+    enc_bag(&b, &bag);
+    char *tail = buf_dup(&b);
+    free(b.p);
+    int rc = fill_finish(f, tail);
+    free(tail);
+    return rc;
+}
+
+int kt_fill_exhausted(kt_fill *f) { return fill_finish(f, " exhausted"); }
+
+int kt_fill_fail(kt_fill *f, const char *message) {
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    buf_puts(&b, " error=");
+    char *q = kt_quote(message ? message : "");
+    buf_puts(&b, q);
+    free(q);
+    char *tail = buf_dup(&b);
+    free(b.p);
+    int rc = fill_finish(f, tail);
+    free(tail);
+    return rc;
+}
+
+/* Route one statement the display addressed to something this connection
+ * hosts. Runs on the inbound thread: answering a fill executes statements, and
+ * those need the reader free to route their replies. */
+static void dispatch_hosted(kt_conn *c, kt_stmt *st, const char *text) {
+    uint64_t id = hosted_target(st);
+    if (!id) return;
+
+    kt_mutex_lock(&c->hmu);
+    kt_hosted *h = hosted_find(c, id);
+    if (!h) { kt_mutex_unlock(&c->hmu); return; }
+    kt_fill_cb fill = h->fill; void *fill_ud = h->fill_ud;
+    kt_respec_cb respec = h->respec; void *respec_ud = h->respec_ud;
+    kt_hstmt_cb other = h->other; void *other_ud = h->other_ud;
+    kt_dropped_cb dropped = h->dropped; void *dropped_ud = h->dropped_ud;
+    kt_mutex_unlock(&c->hmu);
+
+    const kt_arg *rest = st->n > 1 ? &st->args[1] : NULL;
+    int nrest = st->n - 1;
+    char err[KT_QERR];
+    err[0] = '\0';
+
+    if (strcmp(st->verb, "ask") == 0 && nrest > 0 && !rest[0].has_value
+        && rest[0].flag == KT_FLAG_TRUE && rest[0].name
+        && strcmp(rest[0].name, "fill") == 0) {
+        kt_qfill req;
+        if (!parse_qfill(rest + 1, nrest - 1, &req, err)) {
+            /* The tag is in the request that would not parse, so there is
+             * nothing to stamp a refusal with. Say so where it can be seen
+             * rather than dropping the question on the floor. */
+            kt_fill_fail(fill_new(c, id, 0), err);
+            return;
+        }
+        kt_mutex_lock(&c->hmu);
+        h = hosted_find(c, id);
+        req.spec = h ? &h->spec : NULL;
+        kt_fill *sink = fill_new(c, id, req.tag);
+        kt_mutex_unlock(&c->hmu);
+        if (fill) fill(&req, sink, fill_ud);
+        else kt_fill_fail(sink, "this query has nothing to fill it");
+        qfill_release(&req);
+        return;
+    }
+
+    if (strcmp(st->verb, "set") == 0) {
+        kt_qspec spec;
+        if (parse_qspec(rest, nrest, &spec, err)) {
+            kt_mutex_lock(&c->hmu);
+            h = hosted_find(c, id);
+            if (h) { qspec_release(&h->spec); h->spec = spec; }
+            kt_mutex_unlock(&c->hmu);
+            if (!h) qspec_release(&spec);
+            else if (respec) respec(&spec, respec_ud);
+            return;
+        }
+    }
+
+    if (strcmp(st->verb, "destroy") == 0) {
+        kt_mutex_lock(&c->hmu);
+        for (int i = 0; i < c->nhosted; i++) {
+            if (c->hosted[i].id != id) continue;
+            qspec_release(&c->hosted[i].spec);
+            c->hosted[i] = c->hosted[--c->nhosted];
+            break;
+        }
+        kt_mutex_unlock(&c->hmu);
+        if (dropped) dropped(dropped_ud);
+        return;
+    }
+
+    if (other) {
+        /* The statement as it was scanned, without the newline that separated
+         * it from the next: what reaches a handler is the statement, not the
+         * ragged end of a read. */
+        size_t n = strlen(text);
+        while (n && (text[n - 1] == '\n' || text[n - 1] == '\r')) n--;
+        char *trimmed = dupn(text, n);
+        other(trimmed, other_ud);
+        free(trimmed);
+    }
+}
+
+static void *inbound_loop(void *arg) {
+    kt_conn *c = arg;
+    for (;;) {
+        kt_mutex_lock(&c->imu);
+        while (!c->ihead && !c->istop) kt_cond_wait(&c->icv, &c->imu);
+        if (!c->ihead && c->istop) { kt_mutex_unlock(&c->imu); return NULL; }
+        evnode *n = c->ihead;
+        c->ihead = n->next;
+        if (!c->ihead) c->itail = NULL;
+        kt_mutex_unlock(&c->imu);
+
+        kt_stmt *st = parse_statement(n->text);
+        if (st) { dispatch_hosted(c, st, n->text); stmt_free(st); }
+        free(n->text);
+        free(n);
+    }
+}
+
+uint64_t kt_host_query(kt_conn *c, const char *spec_args, kt_fill_cb cb, void *ud) {
+    if (!c || !cb) return 0;
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    buf_puts(&b, "q=new query");
+    if (spec_args && *spec_args) { buf_put(&b, ' '); buf_puts(&b, spec_args); }
+    char *src = buf_dup(&b);
+    free(b.p);
+
+    kt_ui ids;
+    memset(&ids, 0, sizeof ids);
+    int rc = do_exec(c, src, &ids, NULL, NULL);
+    free(src);
+    if (rc != 0) { free(ids.pairs); return 0; }
+    uint64_t id = kt_ui_id(&ids, "q");
+    for (int i = 0; i < ids.n; i++) free(ids.pairs[i].name);
+    free(ids.pairs);
+    if (!id) return 0;
+
+    /* The spec as the application wrote it, kept so a fill can hand it over
+     * without the application having to have stashed it. */
+    kt_qspec spec;
+    memset(&spec, 0, sizeof spec);
+    kt_buf sb;
+    memset(&sb, 0, sizeof sb);
+    buf_puts(&sb, "spec ");
+    if (spec_args) buf_puts(&sb, spec_args);
+    char *text = buf_dup(&sb);
+    free(sb.p);
+    kt_stmt *st = parse_statement(text);
+    free(text);
+    if (st) {
+        char err[KT_QERR];
+        err[0] = '\0';
+        if (!parse_qspec(st->args, st->n, &spec, err)) memset(&spec, 0, sizeof spec);
+        stmt_free(st);
+    }
+
+    kt_mutex_lock(&c->hmu);
+    c->hosted = realloc(c->hosted, (c->nhosted + 1) * sizeof(kt_hosted));
+    kt_hosted *h = &c->hosted[c->nhosted++];
+    memset(h, 0, sizeof *h);
+    h->id = id;
+    h->fill = cb;
+    h->fill_ud = ud;
+    h->spec = spec;
+    kt_mutex_unlock(&c->hmu);
+    return id;
+}
+
+void kt_query_on_respec(kt_conn *c, uint64_t query, kt_respec_cb cb, void *ud) {
+    kt_mutex_lock(&c->hmu);
+    kt_hosted *h = hosted_find(c, query);
+    if (h) { h->respec = cb; h->respec_ud = ud; }
+    kt_mutex_unlock(&c->hmu);
+}
+
+void kt_query_on_dropped(kt_conn *c, uint64_t query, kt_dropped_cb cb, void *ud) {
+    kt_mutex_lock(&c->hmu);
+    kt_hosted *h = hosted_find(c, query);
+    if (h) { h->dropped = cb; h->dropped_ud = ud; }
+    kt_mutex_unlock(&c->hmu);
+}
+
+void kt_query_on_statement(kt_conn *c, uint64_t query, kt_hstmt_cb cb, void *ud) {
+    kt_mutex_lock(&c->hmu);
+    kt_hosted *h = hosted_find(c, query);
+    if (h) { h->other = cb; h->other_ud = ud; }
+    kt_mutex_unlock(&c->hmu);
+}
+
+int kt_query_destroy(kt_conn *c, uint64_t query) {
+    kt_mutex_lock(&c->hmu);
+    for (int i = 0; i < c->nhosted; i++) {
+        if (c->hosted[i].id != query) continue;
+        qspec_release(&c->hosted[i].spec);
+        c->hosted[i] = c->hosted[--c->nhosted];
+        break;
+    }
+    kt_mutex_unlock(&c->hmu);
+    char src[64];
+    snprintf(src, sizeof src, "destroy %llu", (unsigned long long)query);
+    return do_exec(c, src, NULL, NULL, NULL);
 }
 
 static void *read_loop(void *arg) {
@@ -978,6 +2009,18 @@ static void *read_loop(void *arg) {
              * stream's record of an event a type CAN raise, which leads with
              * of="...". The first argument tells them apart. */
             enqueue_event(c, text);
+        } else if ((strcmp(st->verb, "set") == 0 ||
+                    strcmp(st->verb, "destroy") == 0 ||
+                    strcmp(st->verb, "sub") == 0 ||
+                    strcmp(st->verb, "unsub") == 0 ||
+                    strcmp(st->verb, "ask") == 0 ||
+                    strcmp(st->verb, "do") == 0) && hosted_target(st) != 0) {
+            /* The other direction: the display addressing something this
+             * application hosts. Two different lines start with `ask` and with
+             * `do` -- a question put to a hosted object, and the describe
+             * stream's record of a question a type CAN answer -- and it is
+             * being addressed to an object that tells them apart. */
+            enqueue_inbound(c, text);
         } else if (strcmp(st->verb, "proptype") == 0 ||
                    strcmp(st->verb, "prop") == 0 ||
                    strcmp(st->verb, "propcommon") == 0 ||
@@ -1624,6 +2667,7 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     kt_mutex_init(&c->write_mu);
     kt_mutex_init(&c->rmu); kt_cond_init(&c->rcv);
     kt_mutex_init(&c->emu); kt_cond_init(&c->ecv);
+    kt_mutex_init(&c->imu); kt_cond_init(&c->icv);
     kt_mutex_init(&c->hmu);
 #ifdef KT_TLS
     kt_mutex_init(&c->ssl_mu);
@@ -1679,6 +2723,7 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
 
     kt_thread_create(&c->rthread, read_loop, c);
     kt_thread_create(&c->ethread, event_loop, c);
+    kt_thread_create(&c->ithread, inbound_loop, c);
     return c;
 
 fail:

@@ -1,0 +1,220 @@
+# The corpus every implementation of the query structure answers.
+#
+# A client hands an application a query taken apart -- source, fields, filter,
+# sort -- and a fill taken apart, so that no application parses anything. Three
+# client libraries do that taking apart, and they have to arrive at the same
+# structure from the same text or the same query means two things.
+#
+# Each case is two lines. The first is what arrived:
+#
+#   spec <the arguments of `new query` or of the `set` that restates it>
+#   fill <the arguments after the question word in `ask <q> fill ...`>
+#
+# The second is what it has to come out as, written back from the structure:
+#
+#   want <the same thing, in canonical spelling>
+#   bad            (the text must be refused)
+#
+# `want` is the structure rendered again, so a part dropped on the way in is a
+# part missing on the way out. Where the canonical spelling differs from what
+# arrived, that is the point of the case: what is compared is the structure.
+#
+# See docs/hosting-a-query.md and docs/sort-and-filter.md.
+
+# --- the spec, at its smallest ---
+
+spec source=files
+want source="files"
+
+spec source="my files"
+want source="my files"
+
+spec
+want
+
+# --- fields: a bag of names, and the same bag is how exclusions are written ---
+
+spec source=f fields={ name; size; modified }
+want source="f" fields={ name; size; modified }
+
+spec source=f fields={} exclude={ thumbnail }
+want source="f" exclude={ thumbnail }
+
+# --- the sort ---
+
+spec source=f sort={ name }
+want source="f" sort={ name }
+
+spec source=f sort={ name desc }
+want source="f" sort={ name desc }
+
+spec source=f sort={ name asc }
+want source="f" sort={ name }
+
+spec source=f sort={ name fold; size desc; modified desc }
+want source="f" sort={ name fold; size desc; modified desc }
+
+spec source=f sort={ name natural }
+want source="f" sort={ name natural }
+
+spec source=f sort={ name exact desc }
+want source="f" sort={ name exact desc }
+
+# A collation may also be named, which is how a filter writes one.
+spec source=f sort={ name collate=natural }
+want source="f" sort={ name natural }
+
+# `desc` asserted false is ascending, said out loud.
+spec source=f sort={ name !desc }
+want source="f" sort={ name }
+
+spec source=f sort={ name sideways }
+bad
+
+spec source=f sort={ name desc=1 }
+bad
+
+spec source=f sort=name
+bad
+
+# --- the filter: a block is an AND, so the top of a parsed tree always is ---
+
+spec source=f filter={ eq kind folder }
+want source="f" filter={ eq kind folder }
+
+spec source=f filter={ eq kind folder; ge size 1024 }
+want source="f" filter={ eq kind folder; ge size 1024 }
+
+spec source=f filter={}
+want source="f" filter={}
+
+# A symbol and a string are different questions, and the value's own spelling
+# says which was asked.
+spec source=f filter={ eq kind "folder" }
+want source="f" filter={ eq kind "folder" }
+
+spec source=f filter={ ne kind folder; lt size 10; le size 20; gt size 1; ge size 2 }
+want source="f" filter={ ne kind folder; lt size 10; le size 20; gt size 1; ge size 2 }
+
+spec source=f filter={ or { eq kind folder; eq kind disk } }
+want source="f" filter={ or { eq kind folder; eq kind disk } }
+
+spec source=f filter={ not { starts name "." } }
+want source="f" filter={ not { starts name "." } }
+
+spec source=f filter={ and { eq a 1; or { eq b 2; not { eq c 3 } } } }
+want source="f" filter={ and { eq a 1; or { eq b 2; not { eq c 3 } } } }
+
+# A set written as a block holds bare names; written as operands it holds any
+# value. Both are the same structure, so both come out the same way.
+spec source=f filter={ in kind { folder; disk } }
+want source="f" filter={ in kind folder disk }
+
+spec source=f filter={ in kind folder disk }
+want source="f" filter={ in kind folder disk }
+
+spec source=f filter={ in name "a" "b" 3 }
+want source="f" filter={ in name "a" "b" 3 }
+
+spec source=f filter={ contains title "report" collate=fold }
+want source="f" filter={ contains title "report" collate=fold }
+
+spec source=f filter={ starts name "READ"; ends name ".md" }
+want source="f" filter={ starts name "READ"; ends name ".md" }
+
+# There is no presence operator: undefined is a value with a rank of its own.
+spec source=f filter={ eq thumbnail undefined }
+want source="f" filter={ eq thumbnail undefined }
+
+spec source=f filter={ eq deleted false; ne owner nil }
+want source="f" filter={ eq deleted false; ne owner nil }
+
+spec source=f filter={ lt ratio -2.5 }
+want source="f" filter={ lt ratio -2.5 }
+
+# A whole float stays a float: `3` is an integer and `3.0` is not, and a value
+# that changed type between the two ends would be comparing different things.
+spec source=f filter={ lt ratio 3.0 }
+want source="f" filter={ lt ratio 3.0 }
+
+spec source=f filter={ lt ratio 3 }
+want source="f" filter={ lt ratio 3 }
+
+spec source=f filter={ eq name "say \"hi\"" }
+want source="f" filter={ eq name "say \"hi\"" }
+
+spec source=f filter={ between size 1 2 }
+bad
+
+spec source=f filter={ eq }
+bad
+
+spec source=f filter={ eq kind }
+bad
+
+spec source=f filter={ eq kind folder disk }
+bad
+
+spec source=f filter={ not {} }
+bad
+
+spec source=f filter={ or }
+bad
+
+spec source=f filter={ eq kind folder collate=1 }
+bad
+
+# An asserted name says something a value cannot, so it is not read as one.
+spec source=f filter={ eq kind !folder }
+bad
+
+spec source=f filter={ eq kind ?folder }
+bad
+
+spec source=f filter=name
+bad
+
+# --- everything at once ---
+
+spec source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind folder; eq kind disk }; ge size 1024; not { starts name "." } } sort={ name natural; size desc }
+want source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind folder; eq kind disk }; ge size 1024; not { starts name "." } } sort={ name natural; size desc }
+
+# --- a fill ---
+
+fill tag=0 have=0 need=30
+want tag=0 have=0 need=30
+
+fill tag=4 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
+want tag=4 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
+
+# A boundary is a bag like any other: its fields may be any kind of value, and
+# the key is the one it always carries.
+fill tag=1 from={ kind folder; size 1024; key "abc" } have=0 need=1
+want tag=1 from={ kind folder; size 1024; key "abc" } have=0 need=1
+
+# This window wants fewer fields than the query asks for: the skeleton of a
+# wide stretch rather than everything.
+fill tag=2 have=0 need=200 fields={ name; key }
+want tag=2 have=0 need=200 fields={ name; key }
+
+# An empty boundary is the start of the sequence, and says so by not being there.
+fill tag=3 from={} to={} have=0 need=10
+want tag=3 have=0 need=10
+
+fill tag=5 have=0 need=10 nonsense=1
+want tag=5 have=0 need=10
+
+fill tag=x have=0 need=10
+bad
+
+fill tag=1 have=0 need=10 from={ name "a" "b" }
+bad
+
+fill tag=1 have=0 need=10 from={ !name }
+bad
+
+fill tag=1 have=0 need=10 from={ name !x }
+bad
+
+fill tag=1 have=0 need=10 from=17
+bad

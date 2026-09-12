@@ -1,9 +1,10 @@
 # Sorting and filtering
 
 > **Status: settled.** The comparison core, the sort spec and the filter
-> grammar below are decided and meant to be implemented against. The protocol
-> that carries them — how a view is opened, filled and folded — is still being
-> designed; see `data-sources-and-bundles.md` for that conversation.
+> grammar below are decided, and all three client libraries read them into a
+> structure (`hosting-a-query.md`). The protocol that carries them — how a view
+> is opened, filled and folded — is still being designed; see
+> `live-data-negotiation.md` for that.
 
 A view's records can come from more than one place at once: some held here,
 some known only to an application at the other end of a connection. Neither end

@@ -86,6 +86,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		scanner: wire.NewScanner(nc),
 		replies: make(chan replyOrError, 1),
 		events:  make(chan *wire.Event, 256),
+		inbound: make(chan *wire.Statement, 64),
 	}
 	c.transport = rt
 
@@ -145,6 +146,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 
 	go rt.readLoop()
 	go rt.eventLoop()
+	go rt.inboundLoop()
 	return c, nil
 }
 
@@ -173,6 +175,13 @@ type remoteTransport struct {
 	// executes statements (SetCaption inside OnToggle) cannot
 	// deadlock the reader that must route the reply.
 	events chan *wire.Event
+
+	// inbound carries statements the display addressed to something this
+	// application hosts. They get a goroutine of their own rather than
+	// sharing the event one: answering a fill can take as long as the
+	// records take, and a list nobody is looking at must not hold up a
+	// click.
+	inbound chan *wire.Statement
 
 	closeOnce sync.Once
 }
@@ -208,6 +217,7 @@ func (t *remoteTransport) readLoop() {
 		t.Close()
 		close(t.replies)
 		close(t.events)
+		close(t.inbound)
 		t.conn.markClosed()
 	}()
 	for {
@@ -238,8 +248,23 @@ func (t *remoteTransport) readLoop() {
 				}
 				t.replies <- replyOrError{err: fmt.Errorf("%s", msg)}
 			case "proptype", "prop", "propcommon", "ask", "askarg", "do", "doarg", "eventfield":
+				// Two different lines start with `ask` and with `do`: the
+				// display putting a question to something this application
+				// hosts, and the describe stream's record of a question a
+				// type CAN answer. The first is addressed to an object and so
+				// opens with a bare id; the second opens with of=.
+				if _, _, ok := hostedTarget(stmt); ok {
+					t.inbound <- stmt
+					continue
+				}
 				// describe verb output: buffer until the reply arrives.
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
+			case "set", "destroy", "sub", "unsub":
+				// The other direction: the display addressing something this
+				// application hosts. Queued rather than handled here, because
+				// answering executes statements and the reader has to stay
+				// free to route their replies.
+				t.inbound <- stmt
 			case wire.InitVerb:
 				// The display handing over something: a new object, or a new
 				// object under a name already in hand. It is not only a
@@ -268,5 +293,13 @@ func (t *remoteTransport) readLoop() {
 func (t *remoteTransport) eventLoop() {
 	for ev := range t.events {
 		t.conn.deliver(ev)
+	}
+}
+
+// inboundLoop routes statements the display addressed to what this
+// application hosts, in the order they arrived.
+func (t *remoteTransport) inboundLoop() {
+	for stmt := range t.inbound {
+		t.conn.Inbound(stmt)
 	}
 }

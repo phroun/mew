@@ -1,8 +1,9 @@
 # Objects an application hosts
 
-> **Status: settled in shape, not yet built.** The direction and the rules
-> below are decided. No code implements them yet; the data source is the first
-> thing that will — see `live-data-negotiation.md` for how it uses this, and
+> **Status: settled in shape, and half built.** The direction and the rules
+> below are decided. The first hosted type — a query — is implemented in all
+> three client libraries (`hosting-a-query.md`); the display side that speaks
+> to it is not. See `live-data-negotiation.md` for what it is for, and
 > `data-sources-and-bundles.md` for the layering underneath.
 
 Everything so far runs one way. An application says `new`, `set`, `ask`, `do`,
@@ -37,13 +38,17 @@ leaves the connection standing, exactly as it does today.
 
 **The display never says `new` to an application.**
 
-An application creates every object it hosts and allocates every id for them,
-because the application is the end that bound data to a trinket in the first
-place. Every case that looked like it needed the display to create something
-turns out not to: two trinkets on one set of data are two objects the
-application made; a re-sort is a property change on one that exists; a tree
-expanding a node asks the object it already has, and the application answers
-with one it made.
+An application creates every object it hosts, because the application is the
+end that bound data to a trinket in the first place. Every case that looked
+like it needed the display to create something turns out not to: two trinkets
+on one set of data are two objects the application made; a re-sort is a
+property change on one that exists; a tree expanding a node asks the object it
+already has, and the application answers with one it made.
+
+The application says `new`; the display answers with an id, exactly as it does
+for a button. There is one allocator of ids and it is the display, so no range
+has to be reserved and no collision is possible — the only ids an application
+holds for its own objects are the ones it was handed.
 
 So a client library needs no type registry and no factory to take part.
 Receiving a statement is: find the object by id, apply a property, answer a
@@ -56,7 +61,8 @@ An id means whatever it means **in the receiver's own space**, and the direction
 of travel says whose space that is: a statement arriving at an application is
 about the application's objects, one arriving at the display is about the
 display's. Neither end ever has to ask whose number it is holding, and no range
-has to be reserved anywhere.
+has to be reserved anywhere — which holds trivially when the display is the one
+allocator, and would still hold if it ever stopped being.
 
 The single place an id crosses is a property whose *value* refers to the other
 side, and that is settled by the property's declared kind rather than by the
@@ -95,11 +101,12 @@ what it has.
 ## What it costs
 
 A client library grows a small interpreter: receive a statement, find the
-object, apply or answer. Today a client dispatches events and sends statements,
-and needs none of that. The Go client has most of the pieces already; the C and
-Python ones do not.
+object, apply or answer. Dispatching events and sending statements needs none
+of that, so it is genuinely new ground in all three — and it came to a few
+hundred lines each, most of it taking the query apart so that applications
+never have to.
 
-The way to keep that small is to keep the hosted types few. One — a data source
-— is the whole of what is planned. Each one that follows should have to argue
-for itself, because every one of them is a type three client libraries have to
+The way to keep it small is to keep the hosted types few. One — a query — is
+the whole of what exists, and each one that follows should have to argue for
+itself, because every one of them is a type three client libraries have to
 know.

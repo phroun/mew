@@ -152,34 +152,7 @@ func (e *Event) Encode() string {
 	sb.WriteString(e.Type)
 	for _, a := range e.Fields {
 		sb.WriteByte(' ')
-		if a.Value == nil {
-			switch a.Flag {
-			case FlagFalse:
-				sb.WriteByte('!')
-			case FlagIndeterminate:
-				sb.WriteByte('?')
-			}
-			sb.WriteString(a.Name)
-			continue
-		}
-		sb.WriteString(a.Name)
-		sb.WriteByte('=')
-		switch a.Value.Kind {
-		case WordValue:
-			sb.WriteString(a.Value.Word)
-		case NumberValue:
-			if a.Value.IsInt {
-				fmt.Fprintf(&sb, "%d", a.Value.Int)
-			} else {
-				fmt.Fprintf(&sb, "%g", a.Value.Number)
-			}
-		case StringValue:
-			if a.Value.Blob {
-				sb.WriteString(QuoteBlob([]byte(a.Value.Str)))
-				continue
-			}
-			sb.WriteString(quoteString(a.Value.Str))
-		}
+		sb.WriteString(EncodeArg(a))
 	}
 	return sb.String()
 }

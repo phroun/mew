@@ -1,12 +1,11 @@
 # Live data negotiation
 
-> **Status: a plan.** Worked out in conversation and written down so it is not
-> lost. The comparison core it stands on is settled (`sort-and-filter.md`); the
-> reverse direction it needs is decided in shape (`app-hosted-objects.md`).
-> Nothing here is built, and the open questions at the end are open.
->
-> **Q is a placeholder.** The app-side correspondent of a view has no name yet
-> and is deliberately not being given one here.
+> **Status: a plan, with its first piece built.** The comparison core it stands
+> on is settled (`sort-and-filter.md`), the reverse direction it needs is
+> decided in shape (`app-hosted-objects.md`), and the filling half — the query
+> an application hosts, and the fills it answers — is implemented in all three
+> client libraries (`hosting-a-query.md`). Coverage and invalidation are not
+> built, and the open questions at the end are open.
 
 ## The pieces, and where each one lives
 
@@ -19,12 +18,15 @@ with that application.
 
 **A view** is server-side: one query against one data source, like a cursor.
 
-**Q** is the application's side of that correspondence: an equivalent query,
-the same filter and the same sort, with far less management. It exists only
-when a data source has an application component, and its interface is
-deliberately much smaller than a view's.
+**A query** is the application's side of that correspondence: an equivalent
+sequence, the same filter and the same sort, with far less management. It
+exists only when a data source has an application component, and its interface
+is deliberately much smaller than a view's.
 
-Nothing about views reaches the application. It hears about Q and nothing else.
+The display opens a **view** and manages position, generation, watermark and
+coverage. The application holds a **query**, which is just *which records, in
+what order*. Nothing about views reaches the application; it hears about its
+query and nothing else.
 
 ## The query
 
@@ -46,13 +48,13 @@ Four properties matter:
   it is asked. A refusal is recoverable; an ordering that is quietly a little
   different corrupts everything after it and looks like data.
 
-## Q is deduplicated, and positionless
+## A query is deduplicated, and positionless
 
 **Positionless is what makes dedup safe.** Every fill request carries its own
-boundaries, so Q holds no cursor of its own — nothing about where anybody is
-reading. The watermark belongs to the *view*. Two views scrolled to different
-places can therefore share one Q without interfering. If Q ever grew a
-position, dedup would break the same day.
+boundaries, so a query holds no cursor of its own — nothing about where anybody
+is reading. The watermark belongs to the *view*. Two views scrolled to
+different places can therefore share one query without interfering. If a query
+ever grew a position, dedup would break the same day.
 
 **Dedup by the query as sent.** The server renders a view's filter and sort
 into text to put them on the wire, and renders the same spec the same way every
@@ -60,11 +62,11 @@ time, so the application can key its table on that text — a string compare, no
 a structural walk of two filter trees. That matters most where structural
 comparison is real work and string comparison is not.
 
-**The application counts.** If it hands the same Q back to two requests, it
+**The application counts.** If it hands the same query back to two requests, it
 knows when the last of them goes and drops it at zero.
 
 **Invalidation drops the table entry**, not just the data: the next request
-with that same query text gets a fresh Q rather than matching a stale one.
+with that same query text gets a fresh one rather than matching a stale one.
 
 ## Filling: one interface, and a minimal implementation of it
 
@@ -72,9 +74,9 @@ There are not two interfaces. There is one request, and the least an
 implementation can do with it is trivial.
 
 A fill request carries hints: where the server is, what it already has, how
-many rows it needs, which columns, what to leave out. **A minimal Q ignores all
-of them**, sends every record it has, and says it is exhausted. That answer is
-correct — the server asked for a window and got a superset.
+many rows it needs, which columns, what to leave out. **A minimal query ignores
+all of them**, sends every record it has, and says it is exhausted. That answer
+is correct — the server asked for a window and got a superset.
 
 So the application that onboards in an afternoon implements one thing —
 enumerate my records — and never learns what a boundary, a watermark, a column
@@ -87,7 +89,7 @@ size the author is comfortable shipping, the simple implementation is the
 *fastest* one. Choosing it is an honest promise about **size** — my data fits
 in a message stream and I accept that all of it crosses — not about effort.
 
-What a more capable Q takes over, in order:
+What a more capable query takes over, in order:
 
 1. **Filter** — send only matching records
 2. **Sort** — send them in the query's order
@@ -96,9 +98,9 @@ What a more capable Q takes over, in order:
 5. **Count** — say how many there are without sending them
 
 **3 requires 2**: a window is defined by the order, so nothing can answer a
-window without ordering. The rest are independent. A Q backed by SQL takes all
-five, because they are a `WHERE`, an `ORDER BY`, a `LIMIT`, a `SELECT` list and
-a `COUNT(*)`.
+window without ordering. The rest are independent. A query backed by SQL takes
+all five, because they are a `WHERE`, an `ORDER BY`, a `LIMIT`, a `SELECT` list
+and a `COUNT(*)`.
 
 Two rules make ignoring hints safe:
 
@@ -106,7 +108,7 @@ Two rules make ignoring hints safe:
 - **The answer must say whether it is in order.** This is the one hint that
   cannot be silently ignored, because it changes what the server does with what
   arrived: unordered means the server sorts it, ordered means it merges it
-  as-is. A minimal Q simply never sets the flag.
+  as-is. A minimal query simply never sets the flag.
 
 Everything else — columns, exclusions, boundaries, counts — can be ignored with
 no flag at all, because ignoring them can only produce more data than was asked
@@ -121,7 +123,7 @@ window it can fill itself, and how many rows the window holds:
 from=<boundary>  to=<boundary>  have=<n>  need=<n>
 ```
 
-Q's whole job:
+The query's whole job:
 
 ```
 emit every record of mine in (from..to]        -> k of them
@@ -133,12 +135,12 @@ watermark = the furthest point swept
 It never needs to know where the server's own records sit. Inside `(from..to]`
 it sends all of its own — which the server needs anyway for that range to be
 *correct* — and past `to` it sends exactly the shortfall, because out there the
-server contributes nothing, so every row is one of Q's.
+server contributes nothing, so every row is one of the query's.
 
 **The window is covered, and in one round trip.** The server is complete over
-`(from..to]` because Q sent everything of its own there, and complete from `to`
-to the watermark because Q swept it. Merged row `need` is at or before the
-watermark by construction.
+`(from..to]` because the query sent everything of its own there, and complete
+from `to` to the watermark because the query swept it. Merged row `need` is at
+or before the watermark by construction.
 
 **The watermark is a completeness guarantee, not a position**: *there is
 nothing of mine between your `from` and this point that you do not now have.*
@@ -186,7 +188,7 @@ against those.
 **Coverage is a standing statement, revised — not a log of past fills.** A fill
 is how data arrives; it is not a claim the application has to remember. The
 server says what it currently depends on and revises it as things move, so the
-application's bookkeeping is bounded by the number of live Qs rather than by
+application's bookkeeping is bounded by the number of live queries rather than by
 scroll history.
 
 **A statement is a small set of concerns, each with a handle**:
@@ -204,7 +206,7 @@ per scroll would throw away the application's evidence every time and rebuild it
 from nothing, which is the opposite of the point. The application keeps what
 still applies to the overlap and computes only for what is newly covered.
 
-**Coverage is the union of everything sharing that Q.** One view's extent
+**Coverage is the union of everything sharing that query.** One view's extent
 falling inside another's collapses to one by construction, and their drifting
 apart grows a second extent again — no special rule, and the application never
 hears the word *view*. Extents coalesce when the gap between two is small
@@ -400,4 +402,3 @@ either end chooses to speak is its own.
   wants a low watermark.
 - **The jump into an uncovered middle**, when the user drags the thumb to
   nowhere in particular and there is no watermark to stand on.
-- **What Q is called.**

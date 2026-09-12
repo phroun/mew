@@ -74,6 +74,110 @@ class ParseError(Exception):
         self.msg = msg
 
 
+# --- Building and writing values (mirror of wire/encode.go) --------------
+
+def new_string(s: str) -> Value:
+    """A quoted string value."""
+    return Value(kind=ValueKind.STRING, str=s)
+
+
+def new_blob(b: bytes) -> Value:
+    """A string value carrying bytes rather than text, so every one of them is
+    escaped on the way out."""
+    return Value(kind=ValueKind.STRING, str=b.decode('latin-1'), blob=True)
+
+
+def new_word(w: str) -> Value:
+    """A bare word: an identifier, an enum, or one of the four words that are
+    values (undefined, nil, true, false)."""
+    return Value(kind=ValueKind.WORD, word=w)
+
+
+def new_int(i: int) -> Value:
+    """An exact integer value."""
+    return Value(kind=ValueKind.NUMBER, number=int(i), is_int=True)
+
+
+def new_float(f: float) -> Value:
+    """A floating-point value. A whole float written through here is still a
+    float: new_int is what says an integer was meant."""
+    return Value(kind=ValueKind.NUMBER, number=float(f), is_int=False)
+
+
+def val(v) -> Value:
+    """A Python value as a wire value. A Value passes through, None becomes the
+    word `nil`, and anything with no spelling of its own is rendered as text."""
+    if v is None:
+        return new_word(WORD_NIL)
+    if isinstance(v, Value):
+        return v
+    if isinstance(v, bool):
+        return new_word(WORD_TRUE if v else WORD_FALSE)
+    if isinstance(v, str):
+        return new_string(v)
+    if isinstance(v, (bytes, bytearray)):
+        return new_blob(bytes(v))
+    if isinstance(v, int):
+        return new_int(v)
+    if isinstance(v, float):
+        return new_float(v)
+    return new_string(str(v))
+
+
+def named(name: str, v) -> Arg:
+    """One named value, for building an event's fields or a record's."""
+    return Arg(name=name, value=val(v))
+
+
+def encode_value(v: Optional[Value]) -> str:
+    """One value as wire text."""
+    if v is None:
+        return WORD_UNDEFINED
+    if v.kind == ValueKind.WORD:
+        return v.word
+    if v.kind == ValueKind.NUMBER:
+        if v.is_int:
+            return str(int(v.number))
+        return repr(float(v.number))
+    if v.kind == ValueKind.STRING:
+        return quote_blob(v.str.encode('latin-1', 'replace')) if v.blob else quote(v.str)
+    if v.kind == ValueKind.BLOCK:
+        body = encode_script(v.block)
+        return "{ " + body + " }" if body else "{}"
+    return WORD_UNDEFINED
+
+
+def encode_script(script: Optional["Script"]) -> str:
+    """A run of statements, separated the way a block separates them."""
+    if script is None or not script.statements:
+        return ""
+    return "; ".join(encode_statement(st) for st in script.statements)
+
+
+def encode_statement(st: "Statement") -> str:
+    """One statement: its key if it has one, its verb, and its arguments."""
+    out = []
+    if st.key:
+        out.append(st.key + "=")
+    out.append(st.verb or st.ref)
+    for a in st.args:
+        out.append(" " + encode_arg(a))
+    return ''.join(out)
+
+
+def encode_arg(a: Arg) -> str:
+    """One argument: a flag, an operand, or a named value."""
+    if a.value is None:
+        if a.flag == FlagState.FALSE:
+            return "!" + a.name
+        if a.flag == FlagState.INDETERMINATE:
+            return "?" + a.name
+        return a.name
+    if not a.name:
+        return encode_value(a.value)
+    return a.name + "=" + encode_value(a.value)
+
+
 # --- String quoting (mirror of quoteString) ------------------------------
 
 def quote(s: str) -> str:
@@ -417,11 +521,13 @@ class _Parser:
                     args.append(Arg(name=name, value=val))
                 else:
                     args.append(Arg(name=name, flag=FlagState.TRUE))
-            elif _is_number_start(ch):
-                val = self.parse_number()
-                args.append(Arg(value=val))
             else:
-                raise self._errf("unexpected %r: values must be named (name=value)" % ch)
+                # An operand: a value with no name, in the order it was
+                # written. A verb that takes operands reads them by position --
+                # a target reference (`set 1042 caption=...`), a filter's field
+                # and value, a block to nest. One that does not refuses them,
+                # which is where D10's named-properties rule holds.
+                args.append(Arg(value=self.parse_value(in_block)))
         return args
 
     def parse_statement(self, in_block: bool) -> Statement:
@@ -719,25 +825,7 @@ class Event:
         out = ["event ", self.type]
         for a in self.fields:
             out.append(' ')
-            if a.value is None:
-                if a.flag == FlagState.FALSE:
-                    out.append('!')
-                elif a.flag == FlagState.INDETERMINATE:
-                    out.append('?')
-                out.append(a.name)
-                continue
-            out.append(a.name)
-            out.append('=')
-            v = a.value
-            if v.kind == ValueKind.WORD:
-                out.append(v.word)
-            elif v.kind == ValueKind.NUMBER:
-                if v.is_int:
-                    out.append(str(int(v.number)))
-                else:
-                    out.append(repr(v.number))
-            elif v.kind == ValueKind.STRING:
-                out.append(quote(v.str))
+            out.append(encode_arg(a))
         return ''.join(out)
 
 
