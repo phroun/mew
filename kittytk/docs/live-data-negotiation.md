@@ -216,6 +216,26 @@ states 1–5000 and the application watches all of it. That is the honest price 
 not evicting, and often the right trade: server memory and application
 watch-effort against reload traffic.
 
+**One region is stated as several extents, split by how much each matters.**
+A server holding 5000 rows with 10 of them on screen does not state one extent
+from 1 to 5000. It states the visible ten as an extent of their own and the rest
+as bulk, because a single extent forces the application to answer at the
+resolution of the whole thing: sixteen scattered updates, one near the top and
+one near the bottom, coarsen to *everything between them is stale* — which is
+almost the entire region, and most of it did not change.
+
+**A chunk boundary is a "do not merge across" mark.** Coarsening is always safe,
+but what it costs depends on where it lands. Inside the bulk chunk the server
+just forgets a stretch nobody is looking at. Across the visible chunk it drops
+what is on screen and refills it. So the application may coarsen freely *within*
+a chunk and should avoid spanning two, and splitting the chunks is how the server
+tells it where that line is.
+
+**The split is most of the signal.** Stating a small extent separately already
+says *this one matters*; nothing further has to be spelled. A word naming a
+chunk's hotness may be worth adding later, but it is decoration on top of the
+shape, and an application is free to ignore it.
+
 **Widen eagerly, shrink lazily.** Widening must happen *before* the server
 depends on the new region or it has a silent hole. Shrinking has no correctness
 deadline, so it can ride a heartbeat or piggyback on the next message out; the
@@ -273,6 +293,13 @@ application may coarsen freely — mark ten handles together, or all of them, if
 tracking them separately is more bookkeeping than it wants. That makes the blunt
 implementation a legal one rather than a failure.
 
+**Points coalesce into a range by the same rule extents do**: merge when the gap
+between them is small relative to the span they cover. Dense scatter becomes one
+range, sparse scatter stays a list of points, and sixteen changes are reported as
+however many pieces their spacing actually warrants. Both ends applying the same
+heuristic is the point of writing it down — neither is then surprised by the
+other's granularity.
+
 **Invalidation costs nothing until someone looks.** The application says stale,
 the server drops that region and pulls its watermark back — and issues no fill.
 Whether a replacement is ever requested is the server's decision: a stretch
@@ -291,6 +318,39 @@ unwanted traffic comes through.
 fill describes the world after that fill. Free, since the connection is already
 ordered, but it has to be said or an implementation will answer notices on a
 side channel and reintroduce the race.
+
+## Quantization: both ends are free to be late
+
+Neither end has to speak at the rate its own state changes, and both need that
+freedom for the same reason — the underlying thing moves far faster than anyone
+can use.
+
+**The application accumulates.** An inode watch on a busy directory can fire
+hundreds of times a second; nobody needs to hear about it more than about once.
+So an application may hold notices for a while and submit them together, merging
+what is close enough to merge by the rule above. What it is promising is
+staleness, not error: the server's rows were right when they were sent and are
+some fraction of a second behind now, which is what every row on a screen already
+is.
+
+One rule keeps that safe: **a fill answer is always from current state, and
+supersedes any queued notice about the records it delivers.** Without it, an
+application that answered a fill at full accuracy would then deliver a
+second-old notice saying those very rows are stale, and the server would refill
+what it had just been told the truth about — forever, at the accumulation
+interval. With it, answering a fill discharges the pending notices it covers.
+
+**The server does not re-designate at frame rate.** While a scrollbar thumb is
+flying, the rows it sweeps past are painted and dropped, not cached — so nothing
+in them is depended on, and the rule that coverage must widen *before* the server
+depends on a region means there is nothing to say. When the thumb lands, the
+server caches what is under it and revises once. Thirty frames, one revision, and
+it is correct rather than merely throttled: the rate limit falls out of a rule
+that is already there instead of being policy bolted on beside it.
+
+The same applies to shrinking, which already has no correctness deadline, and to
+the visible chunk, whose boundaries are worth restating once the view has
+settled rather than while it is in motion.
 
 ## Eviction: flesh before skeleton
 
@@ -322,6 +382,11 @@ real backend can actually watch.
 *When* to evict — age, memory pressure, how much hysteresis before a shrink — is
 server policy, not protocol. Stating it as policy lets two implementations
 differ without either being wrong.
+
+So are the quantization intervals on both ends, and where the gap-to-span line
+falls when points coalesce. What the protocol fixes is that coarsening is safe
+and that a chunk boundary is the one place not to coarsen across; how coarsely
+either end chooses to speak is its own.
 
 ## Open questions
 
