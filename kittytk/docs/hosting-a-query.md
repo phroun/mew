@@ -1,4 +1,4 @@
-# Hosting a query
+# Serving a query
 
 > **Status: built in the clients, not yet in the display.** The statements
 > below are what the three client libraries speak today, and
@@ -7,13 +7,24 @@
 > it will be built to, and `sort-and-filter.md` the comparison both ends stand
 > on.
 
-A **query** is an application's side of a data source: one filter and one sort
-over its own records, which a display fills windows out of as somebody scrolls.
-The application makes it, holds it, and answers what is asked of it.
+A **query** is a sequence of an application's own records that a display is
+reading: one filter, one sort, and a window asked for at a time.
 
-It is the first thing an application hosts, so it is the first traffic that
-runs the other way — see `app-hosted-objects.md` for why the verbs go both
-ways and what stays the same when they do.
+**The display opens it.** Only the display knows a query is wanted and what it
+is — the sort comes from the column header somebody clicked, the filter from
+the filter box, the window from the scroll position. The application is the end
+that holds the records, so it serves it.
+
+## Three pairs, and nothing carries two of them
+
+| the request | what answers it | what gates it |
+|---|---|---|
+| `query` | `result` | the request |
+| `ask` | `answer` | the request |
+| `sub`, or an object's mere existence | `event` | the subscription |
+
+That is what keeps a request for records off the event line, so nobody is
+tempted to hand-roll what the library already does for them.
 
 ## What an author writes
 
@@ -22,10 +33,7 @@ parses anything, and the answer is written into a sink that goes out in batches
 as it fills.
 
 ```go
-q, err := conn.HostQuery(&wire.Spec{
-    Source: "files",
-    Sort:   []wire.SortLevel{{Field: "name", Level: wire.Level{Collation: wire.CollateNatural}}},
-}, func(f *client.Fill) {
+src, _ := conn.HostSource("files", func(f *client.Fill) {
     f.Ordered()
     for _, rec := range myRecords(f.From, f.To, f.Need-f.Have) {
         f.Record(rec.ID, wire.Named("name", rec.Name), wire.Named("size", rec.Size))
@@ -34,10 +42,12 @@ q, err := conn.HostQuery(&wire.Spec{
 })
 ```
 
-Python is the same shape (`conn.host_query(spec, fill)`, `f.record(key,
-name=...)`), and C is the same shape with the spec written out as text
-(`kt_host_query(c, "source=\"files\" sort={ name natural }", fill, NULL)`),
-because C has no comfortable way to build a nested tree as a literal.
+Registering a source says nothing on the wire: **a source is a name, not an
+object**. The application tells whatever trinket is to show it `data="files"`,
+and the display opens queries against that name.
+
+Python is the same shape (`conn.host_source(name, fill)`, `f.record(key,
+name=...)`), and so is C (`kt_host_source(c, "files", fill, NULL)`).
 
 **The least an implementation can do is real.** Ignore every hint, send every
 record, say `Exhausted`. The display then holds the whole layer and asks
@@ -46,24 +56,49 @@ is comfortable shipping, that is the *fastest* implementation, not a toy one.
 
 ## The statements
 
-**The application announces the query.** It says `new`, as it does for
-everything else it makes, and the display surfaces an id for it — there is one
-allocator of ids and it is the display, so nothing has to be partitioned and
-neither end ever wonders whose number it is holding.
+**The display opens a query and asks for its first window in one statement**,
+because it never wants a sequence without wanting rows of it.
 
 ```
-q=new query source="files" fields={ name; size } filter={ ge size 1024 } sort={ name natural; size desc }
+DISPLAY → APP   q=new query source="files" filter={ ge size 1024 } sort={ name natural }
+                  have=0 need=30
+                end
+APP → DISPLAY   reply q=9
+                end
+APP → DISPLAY   result 9 fields={ key 17; name "src/parser.go"; size 1024 }
+                result 9 fields={ key 42; name "src/window.go"; size 2048 }
+                result 9 complete ordered watermark={ name "src/window.go"; key 42 }
 ```
 
-**The display asks for a window.**
+**The application names it.** Each end mints ids in its own space and the
+direction a statement travelled says whose space it is in, so nothing collides
+and no range is reserved anywhere. The display has no id to offer for something
+the application holds, so the reply carries the application's.
+
+The reply goes out before any result, and that ordering is not policy: the
+application mints the id, so it writes it before anything that carries it. A
+display need not wait for it, though — it may address a query by the key it
+opened it under, in the same batch:
 
 ```
-ask <q> fill tag=4 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
+DISPLAY → APP   q=new query source="files" have=0 need=5
+                query q have=5 need=10
+                end
 ```
 
-| | |
+**Every window after that is the same, minus the making:**
+
+```
+DISPLAY → APP   query 9 from={ name "build.sh"; key 42 } have=25 need=30
+                end
+APP → DISPLAY   reply
+                end
+APP → DISPLAY   result 9 fields={ … }
+                result 9 complete ordered exhausted
+```
+
+| on a window request | |
 |---|---|
-| `tag` | what the answer is stamped with, so a late one is still placeable. The client library copies it back; an application never sees it |
 | `from` `to` | boundaries. Absent or empty is the start of the sequence |
 | `have` | how much of the window the display can fill from what it already holds |
 | `need` | how many rows the window is |
@@ -73,15 +108,8 @@ The whole of what the application does with that: emit every record of its own
 in `(from..to]`, and if that does not make up the shortfall, keep going past
 `to` until it does.
 
-**The application answers**, in as many messages as it likes:
-
-```
-event query_record query=<q> tag=4 fields={ key 17; name "src/parser.go"; size 1024 }
-event query_record query=<q> tag=4 fields={ key 42; name "src/window.go"; size 2048 }
-event query_filled query=<q> tag=4 ordered watermark={ name "src/window.go"; key 42 }
-```
-
-One terminator ends it, and there are three:
+**A result carries a record, or ends the window.** One `complete` ends it, and
+three things can ride on it:
 
 | | |
 |---|---|
@@ -94,19 +122,29 @@ that cannot be left unsaid and assumed, because it changes what the display
 does with what arrived — ordered, it merges; unordered, it sorts first. Saying
 nothing means unordered, which is always safe.
 
+**Nothing is stamped**, because nothing needs to be. The application's replies
+and its results travel one ordered stream, so a window's results are the ones
+between the reply that accepted it and the result that completes it — and that
+same boundary is what separates the generation before a re-sort from the one
+after it.
+
 **The display restates the sequence** when the user re-sorts or re-filters.
 That is a property change on the query that exists, not a new query:
 
 ```
-set <q> sort={ size desc; name fold } filter={ ge size 1024 }
+DISPLAY → APP   set 9 sort={ size desc; name fold } filter={ ge size 1024 }
+                end
 ```
 
 Everything the application cached against the old spec that was keyed by
 *position* is stale; what was keyed by *record identity* is not. A query that
-ignores the restatement is still correct, because the next fill carries the new
-spec with it.
+ignores the restatement is still correct, because the next window carries the
+new spec with it.
 
-**And the display lets it go** with `destroy <q>`.
+**And the display lets it go** with `destroy 9`, which is how the application
+learns it may drop the records it was holding. That is why a query is an object
+with a lifetime rather than a standing arrangement: without an ending, nothing
+ever tells the application to let go.
 
 ## A field bag
 
@@ -143,11 +181,12 @@ in name "a" "b" 3             operands hold any value
 
 ## Where a larger library plugs in
 
-The client libraries understand `fill`, the restatement and the drop. Anything
-else the display addresses to a query reaches the application whole:
+The client libraries understand the open, the window, the restatement and the
+drop. Anything else the display addresses to a query reaches the application
+whole:
 
 ```go
-q.OnStatement(func(stmt *wire.Statement) { … })
+src.OnStatement(func(q *client.Query, stmt *wire.Statement) { … })
 ```
 
 Coverage and invalidation — the rest of `live-data-negotiation.md` — travel
@@ -163,3 +202,11 @@ itself rather than as the nearest float.
 **A whole float stays a float.** `3` is an integer and `3.0` is not; a value
 that changed type between the two ends would be comparing different things, so
 a float is never written in a spelling that would come back an integer.
+
+## What this costs a client library
+
+Both ends now send replies, because both ends now receive batches. The reply
+path in each client is a few lines, but it comes with a discipline: **an end
+that is waiting for a reply must keep reading**, or two ends waiting on each
+other deadlock. The client libraries answer on a thread of their own for that
+reason, and a display has to do the same.

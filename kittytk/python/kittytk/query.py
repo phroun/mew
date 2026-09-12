@@ -33,16 +33,20 @@ from .protocol import (
     quote,
 )
 
-# The verb an application announces a query with, and the question the display
-# puts to it afterwards.
-QUERY_TYPE = "query"
-ASK_FILL = "fill"
+# The verb a display opens and refills a query with, and the verb the
+# application answers it with.
+#
+# Three pairs, and nothing carries two of them: `query` is answered by
+# `result`, `ask` by `answer`, and `sub` -- or an object's mere existence -- by
+# `event`. So a record arriving for a list can never be mistaken for something
+# a subscription raised.
+QUERY_VERB = "query"      # `query 9 from={ ... } have=25 need=30`
+RESULT_VERB = "result"    # `result 9 fields={ ... }`
 KEY_FIELD = "key"
 
-# The events a query answers with. Both name the query they belong to and carry
-# back the tag of the fill they answer.
-EVENT_QUERY_RECORD = "query_record"
-EVENT_QUERY_FILLED = "query_filled"
+# RESULT_COMPLETE ends a window: everything for it has been sent. A result
+# without it carries a record.
+RESULT_COMPLETE = "complete"
 
 # The operators a filter is built from.
 OP_AND = "and"
@@ -199,9 +203,13 @@ class Fill:
     from_ and to are boundaries: where the display's own knowledge starts and
     how far it runs. Both are empty at the beginning of the sequence. have is
     how much of the window the display can fill from what it already holds, and
-    need is how many rows the window is."""
+    need is how many rows the window is.
 
-    tag: int = 0
+    Nothing stamps it. The application's results and its replies travel one
+    ordered stream, so a window's results are the ones between the reply that
+    accepted it and the result that completes it -- which is also what
+    separates the generation before a re-sort from the one after it."""
+
     from_: Fields = dataclasses.field(default_factory=Fields)
     to: Fields = dataclasses.field(default_factory=Fields)
     have: int = 0
@@ -210,7 +218,7 @@ class Fill:
 
     def encode(self) -> str:
         """The fill as the arguments after the question word."""
-        parts = ["tag=%d" % self.tag]
+        parts = []
         if self.from_:
             parts.append("from=" + self.from_.encode())
         if self.to:
@@ -292,7 +300,7 @@ def parse_fill(args: List[Arg]) -> Fill:
     """A fill request, from the arguments after the question word."""
     f = Fill()
     for a in args:
-        if a.name in ("tag", "have", "need"):
+        if a.name in ("have", "need"):
             if a.value is None or a.value.kind != ValueKind.NUMBER or not a.value.is_int:
                 raise QueryError("%s: expected a whole number" % a.name)
             setattr(f, a.name, int(a.value.number))

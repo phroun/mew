@@ -86,7 +86,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		scanner: wire.NewScanner(nc),
 		replies: make(chan replyOrError, 1),
 		events:  make(chan *wire.Event, 256),
-		inbound: make(chan *wire.Statement, 64),
+		inbound: make(chan []*wire.Statement, 64),
 	}
 	c.transport = rt
 
@@ -176,12 +176,17 @@ type remoteTransport struct {
 	// deadlock the reader that must route the reply.
 	events chan *wire.Event
 
-	// inbound carries statements the display addressed to something this
-	// application hosts. They get a goroutine of their own rather than
-	// sharing the event one: answering a fill can take as long as the
-	// records take, and a list nobody is looking at must not hold up a
-	// click.
-	inbound chan *wire.Statement
+	// inbound carries whole batches the display sent: the other direction of
+	// the wire, where the display asks and this application answers. They get
+	// a goroutine of their own rather than sharing the event one, because
+	// serving a window can take as long as the records take and a list nobody
+	// is looking at must not hold up a click.
+	//
+	// Whole batches rather than statements, because a batch is what gets one
+	// reply -- and the reply is what carries the ids this application minted
+	// for whatever the batch made.
+	inbound   chan []*wire.Statement
+	pendingIn []*wire.Statement
 
 	closeOnce sync.Once
 }
@@ -250,21 +255,28 @@ func (t *remoteTransport) readLoop() {
 			case "proptype", "prop", "propcommon", "ask", "askarg", "do", "doarg", "eventfield":
 				// Two different lines start with `ask` and with `do`: the
 				// display putting a question to something this application
-				// hosts, and the describe stream's record of a question a
-				// type CAN answer. The first is addressed to an object and so
-				// opens with a bare id; the second opens with of=.
-				if _, _, ok := hostedTarget(stmt); ok {
-					t.inbound <- stmt
+				// holds, and the describe stream's record of a question a type
+				// CAN answer. The first is addressed to an object and so opens
+				// with a bare id; the second opens with of=.
+				if _, _, ok := hostedTarget(stmt, nil); ok {
+					t.pendingIn = append(t.pendingIn, stmt)
 					continue
 				}
 				// describe verb output: buffer until the reply arrives.
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
-			case "set", "destroy", "sub", "unsub":
-				// The other direction: the display addressing something this
-				// application hosts. Queued rather than handled here, because
-				// answering executes statements and the reader has to stay
-				// free to route their replies.
-				t.inbound <- stmt
+			case "new", wire.QueryVerb, "set", "destroy", "sub", "unsub":
+				// The other direction: the display making, asking after, or
+				// letting go of something this application holds. Gathered
+				// until the batch ends, because a batch is what gets a reply.
+				t.pendingIn = append(t.pendingIn, stmt)
+			case "end":
+				// The batch is closed. Handled off the reader, because
+				// answering writes and the reader has to stay free to route
+				// what comes back.
+				if len(t.pendingIn) > 0 {
+					t.inbound <- t.pendingIn
+					t.pendingIn = nil
+				}
 			case wire.InitVerb:
 				// The display handing over something: a new object, or a new
 				// object under a name already in hand. It is not only a
@@ -296,10 +308,18 @@ func (t *remoteTransport) eventLoop() {
 	}
 }
 
-// inboundLoop routes statements the display addressed to what this
-// application hosts, in the order they arrived.
+// inboundLoop runs the batches the display sent, in the order they arrived.
 func (t *remoteTransport) inboundLoop() {
-	for stmt := range t.inbound {
-		t.conn.Inbound(stmt)
+	for batch := range t.inbound {
+		t.conn.InboundBatch(batch)
 	}
+}
+
+// Send writes without waiting for anything back, which is what the reverse
+// direction needs: this is the end answering, not asking.
+func (t *remoteTransport) Send(src string) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	_, err := t.nc.Write([]byte(src + "\n"))
+	return err
 }

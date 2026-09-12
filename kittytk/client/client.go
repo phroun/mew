@@ -55,11 +55,16 @@ type Conn struct {
 	// Command sink for action= dispatch (the app's registry).
 	dispatch func(commandID string)
 
-	// hosted is what this connection holds on the application's behalf, by the
-	// id the display addresses it by. Statements arriving for one of these are
-	// the other direction of the wire: the display asking, rather than being
-	// told (client/query.go).
-	hosted map[uint64]*Query
+	// What this application serves, and what the display is currently reading
+	// of it. Statements arriving for one of these are the other direction of
+	// the wire: the display asking, rather than being told (client/query.go).
+	//
+	// lastHostedID names them in this application's own space: each end mints
+	// its own ids, and the direction a statement travelled says whose space it
+	// is in, so the two never have to be told apart.
+	sources      map[string]*Source
+	queries      map[uint64]*Query
+	lastHostedID uint64
 
 	// given is every object the display has handed this connection, by the
 	// name it knows it by: its application, its store, its handle on the
@@ -111,7 +116,8 @@ func newConn(dispatch func(commandID string)) *Conn {
 		handlers:     make(map[uint64]map[string][]func(*wire.Event)),
 		typeHandlers: make(map[string][]func(*wire.Event)),
 		subs:         make(map[subKey]bool),
-		hosted:       make(map[uint64]*Query),
+		sources:      make(map[string]*Source),
+		queries:      make(map[uint64]*Query),
 		dispatch:     dispatch,
 		closed:       make(chan struct{}),
 	}

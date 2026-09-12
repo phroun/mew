@@ -1,4 +1,4 @@
-/* fill_conformance.c - what a C application writes to host a query.
+/* fill_conformance.c - what a C application writes to serve a query.
  *
  * It never parses. The statement the display sent is taken apart before the
  * callback sees it, so the callback reads fields off a struct. And it never
@@ -81,11 +81,12 @@ static void display_write(const char *text) {
     }
 }
 
-/* The display end: read lines, and on `end` answer the batch. */
+/* The display end: every line the application wrote, kept in order. Lines
+   rather than batches, because a socket has no message boundaries -- and what
+   is under test is the text, which is the same either way. */
 static void *display_loop(void *arg) {
     (void)arg;
-    kt_buf batch, line;
-    memset(&batch, 0, sizeof batch);
+    kt_buf line;
     memset(&line, 0, sizeof line);
     for (;;) {
         char ch;
@@ -95,20 +96,7 @@ static void *display_loop(void *arg) {
         char *text = buf_dup(&line);
         free(line.p);
         memset(&line, 0, sizeof line);
-        if (strcmp(text, "end") == 0) {
-            char *whole = buf_dup(&batch);
-            free(batch.p);
-            memset(&batch, 0, sizeof batch);
-            if (*whole) log_batch(whole);
-            /* Every batch is answered, and `new` surfaces the id it asked
-               for -- which is where the query's id comes from. */
-            if (strstr(whole, "q=new query")) display_write("reply q=7\nend\n");
-            else display_write("reply\nend\n");
-            free(whole);
-        } else if (*text) {
-            if (batch.len) buf_put(&batch, '\n');
-            buf_puts(&batch, text);
-        }
+        if (*text) log_batch(text);
         free(text);
     }
     return NULL;
@@ -117,17 +105,17 @@ static void *display_loop(void *arg) {
 /* --- the application -------------------------------------------------- */
 
 static kt_conn *conn;
-static const kt_qfill *seen;      /* the last request, copied out below */
-static long long seen_tag;
+static kt_source *source;
+static uint64_t seen_query;
 static int seen_have, seen_need;
 static char seen_from_name[128], seen_fields[128], seen_source[64];
 static long long seen_from_key, seen_to_key;
 static int seen_sort_levels;
 static int ended_once;
+static int served_windows;
 
-static void copy_request(const kt_qfill *req) {
-    seen = req;
-    seen_tag = req->tag;
+static void copy_request(kt_query *q, const kt_qfill *req) {
+    seen_query = kt_query_id(q);
     seen_have = req->have;
     seen_need = req->need;
     const kt_value *v = kt_bag_get(&req->from, "name");
@@ -147,9 +135,9 @@ static void copy_request(const kt_qfill *req) {
     seen_sort_levels = req->spec ? req->spec->nsort : -1;
 }
 
-static void fill_two(const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_two(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
     (void)ud;
-    copy_request(req);
+    copy_request(q, req);
     kt_fill_ordered(sink);
     kt_value fields[2];
     fields[0] = kt_vstr("name", "src/parser.go");
@@ -162,19 +150,20 @@ static void fill_two(const kt_qfill *req, kt_fill *sink, void *ud) {
     kt_fill_done(sink, mark, 2);
 }
 
-static void fill_simplest(const kt_qfill *req, kt_fill *sink, void *ud) {
-    (void)req; (void)ud;
+static void fill_simplest(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
+    served_windows++;
     kt_fill_record(sink, kt_vstr("", "a"), NULL, 0);
     kt_fill_exhausted(sink);
 }
 
-static void fill_refuses(const kt_qfill *req, kt_fill *sink, void *ud) {
-    (void)req; (void)ud;
+static void fill_refuses(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
     kt_fill_fail(sink, "no records past \"build.sh\"");
 }
 
-static void fill_ends_once(const kt_qfill *req, kt_fill *sink, void *ud) {
-    (void)req; (void)ud;
+static void fill_ends_once(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
     kt_fill_exhausted(sink);
     /* And that is the end of the sink: it was released by the ending it was
        given, so there is nothing here to answer with a second time. */
@@ -183,8 +172,8 @@ static void fill_ends_once(const kt_qfill *req, kt_fill *sink, void *ud) {
 
 #define LONG_RECORDS 400
 
-static void fill_long(const kt_qfill *req, kt_fill *sink, void *ud) {
-    (void)req; (void)ud;
+static void fill_long(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
     kt_fill_ordered(sink);
     char name[128];
     for (int i = 0; i < LONG_RECORDS; i++) {
@@ -200,8 +189,8 @@ static int respec_told;
 static int respec_levels;
 static char respec_op[16];
 
-static void on_respec(const kt_qspec *spec, void *ud) {
-    (void)ud;
+static void on_respec(kt_query *q, const kt_qspec *spec, void *ud) {
+    (void)q; (void)ud;
     respec_told++;
     respec_levels = spec->nsort;
     snprintf(respec_op, sizeof respec_op, "%s",
@@ -211,12 +200,12 @@ static void on_respec(const kt_qspec *spec, void *ud) {
 
 static int dropped_told;
 
-static void on_dropped(void *ud) { (void)ud; dropped_told++; }
+static void on_dropped(kt_query *q, void *ud) { (void)q; (void)ud; dropped_told++; }
 
 static char other_text[256];
 
-static void on_statement(const char *text, void *ud) {
-    (void)ud;
+static void on_statement(kt_query *q, const char *text, void *ud) {
+    (void)q; (void)ud;
     snprintf(other_text, sizeof other_text, "%s", text);
 }
 
@@ -248,7 +237,7 @@ static void ask(const char *text, int n) {
     say(text);
     for (int i = 0; i < 4000; i++) {
         char *so_far = since(n);
-        int done = strstr(so_far, "event query_filled ") != NULL;
+        int done = strstr(so_far, " complete") != NULL;
         free(so_far);
         if (done) return;
         struct timespec ts = {0, 1000000};
@@ -256,8 +245,30 @@ static void ask(const char *text, int n) {
     }
 }
 
-static uint64_t host(kt_fill_cb cb) {
-    return kt_host_query(conn, "source=\"files\" sort={ name natural }", cb, NULL);
+/* serve points the one source at a different handler and opens a query, the
+   way a display would. Returns the id the application minted for it. */
+static uint64_t serve(kt_fill_cb cb, const char *extra) {
+    kt_mutex_lock(&conn->hmu);
+    source->fill = cb;
+    kt_mutex_unlock(&conn->hmu);
+    int n = sent_count();
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    buf_puts(&b, "q=new query source=\"files\" sort={ name natural } ");
+    buf_puts(&b, extra);
+    buf_puts(&b, "\nend");
+    char *src = buf_dup(&b);
+    free(b.p);
+    ask(src, n);
+    free(src);
+    char *first = NULL;
+    kt_mutex_lock(&log_mu);
+    if (nsent > n) first = strdup(sent[n]);
+    kt_mutex_unlock(&log_mu);
+    uint64_t id = 0;
+    if (first && !strncmp(first, "reply q=", 8)) id = strtoull(first + 8, NULL, 10);
+    free(first);
+    return id;
 }
 
 int main(void) {
@@ -280,38 +291,42 @@ int main(void) {
     kt_thread_create(&eth, event_loop, conn);
     kt_thread_create(&ith, inbound_loop, conn);
 
-    /* The query is announced with the spec it was given. */
-    uint64_t q = host(fill_two);
-    expect(q == 7, "the query takes the id the display surfaced");
-    char *announced = since(0);
-    expect_str(announced, "q=new query source=\"files\" sort={ name natural }",
-               "the query is announced with its spec");
-    free(announced);
+    /* Registering a source says nothing on the wire: it is a name, not an
+       object. */
+    source = kt_host_source(conn, "files", fill_two, NULL);
+    expect(source != NULL, "the source was registered");
+    expect_str(kt_source_name(source), "files", "the source knows its name");
+    settle();
+    expect(sent_count() == 0, "registering a source wrote to the wire");
 
-    /* A fill arrives taken apart, and the answer is records then a
-       terminator, all stamped with the tag of the fill they answer. */
+    /* The display opens the query and the application names it, and the reply
+       goes out before any record, because the reply is what names a query the
+       display has not heard of yet. */
     int n = sent_count();
-    ask("ask 7 fill tag=9 from={ name \"README.md\"; key 17 }"
-        " to={ name \"build.sh\"; key 42 } have=30 need=50 fields={ name; size }\nend", n);
-    expect(seen_tag == 9, "the tag came through");
+    uint64_t q = serve(fill_two, "from={ name \"README.md\"; key 17 }"
+                       " to={ name \"build.sh\"; key 42 } have=30 need=50"
+                       " fields={ name; size }");
+    expect(q == 1, "the application named the query");
+    expect(seen_query == q, "the handler was given the query");
     expect(seen_have == 30 && seen_need == 50, "have and need came through");
     expect_str(seen_from_name, "README.md", "the boundary's fields came through");
     expect(seen_from_key == 17 && seen_to_key == 42, "both boundaries' keys came through");
     expect_str(seen_fields, "name,size", "this window's fields came through");
-    expect_str(seen_source, "files", "the spec came with the fill");
-    expect(seen_sort_levels == 1, "the spec's sort came with the fill");
+    expect_str(seen_source, "files", "the spec came with the window");
+    expect(seen_sort_levels == 1, "the spec's sort came with the window");
     char *answer = since(n);
     expect_str(answer,
-        "event query_record query=7 tag=9 fields={ key 17; name \"src/parser.go\"; size 1024 }\n"
-        "event query_record query=7 tag=9 fields={ key 42; name \"src/window.go\"; size 2048 }\n"
-        "event query_filled query=7 tag=9 ordered watermark={ name \"src/window.go\"; key 42 }",
-        "an answer is records then a terminator");
+        "reply q=1\nend\n"
+        "result 1 fields={ key 17; name \"src/parser.go\"; size 1024 }\n"
+        "result 1 fields={ key 42; name \"src/window.go\"; size 2048 }\n"
+        "result 1 complete ordered watermark={ name \"src/window.go\"; key 42 }",
+        "the reply comes before the records");
     free(answer);
 
     /* The display restating the sequence is a new generation of the same
-       query: the spec changes underneath, and the next fill carries it. */
-    kt_query_on_respec(conn, q, on_respec, NULL);
-    say("set 7 sort={ size desc; name fold } filter={ ge size 1024 }\nend");
+       query: the spec changes underneath, and the next window carries it. */
+    kt_source_on_respec(source, on_respec, NULL);
+    say("set 1 sort={ size desc; name fold } filter={ ge size 1024 }\nend");
     for (int i = 0; i < 2000 && !respec_told; i++) {
         struct timespec ts = {0, 1000000};
         nanosleep(&ts, NULL);
@@ -320,93 +335,106 @@ int main(void) {
     expect(respec_levels == 2, "the new sort came through");
     expect_str(respec_op, "ge", "the new filter came through");
     n = sent_count();
-    ask("ask 7 fill tag=10 have=0 need=2\nend", n);
-    expect(seen_sort_levels == 2, "the next fill carried the new spec");
-    free(since(n));
+    ask("query 1 have=0 need=2\nend", n);
+    expect(seen_sort_levels == 2, "the next window carried the new spec");
 
     /* Anything this library does not understand reaches the application
        whole, so what it does not implement is still reachable. */
-    kt_query_on_statement(conn, q, on_statement, NULL);
-    say("do 7 cover handle=3 from={ key 1 } to={ key 200 }\nend");
+    kt_source_on_statement(source, on_statement, NULL);
+    say("do 1 cover handle=3 from={ key 1 } to={ key 200 }\nend");
     for (int i = 0; i < 2000 && !*other_text; i++) {
         struct timespec ts = {0, 1000000};
         nanosleep(&ts, NULL);
     }
-    expect_str(other_text, "do 7 cover handle=3 from={ key 1 } to={ key 200 }",
+    expect_str(other_text, "do 1 cover handle=3 from={ key 1 } to={ key 200 }",
                "what the library does not know reaches the application");
 
-    /* The display letting the query go stops the application answering for
-       it. */
-    kt_query_on_dropped(conn, q, on_dropped, NULL);
-    n = sent_count();
-    say("destroy 7\nend");
+    /* Letting the query go is how the application learns it may drop the
+       records it was holding for it. */
+    kt_source_on_dropped(source, on_dropped, NULL);
+    say("destroy 1\nend");
     for (int i = 0; i < 2000 && !dropped_told; i++) {
         struct timespec t = {0, 1000000};
         nanosleep(&t, NULL);
     }
     expect(dropped_told == 1, "the application was told the query was let go");
-    say("ask 7 fill tag=99 have=0 need=1\nend");
+    n = sent_count();
+    say("query 1 have=0 need=1\nend");
     settle();
-    expect(sent_count() == n, "a query that was let go answered anyway");
+    char *after = since(n);
+    expect(strstr(after, "error text=") == after && strstr(after, "no query of mine") != NULL,
+           "a query that was let go was served anyway");
+    free(after);
+
+    /* A display may address a query it opened in the same batch, without
+       waiting for the reply that names it. */
+    n = sent_count();
+    served_windows = 0;
+    kt_mutex_lock(&conn->hmu);
+    source->fill = fill_simplest;
+    kt_mutex_unlock(&conn->hmu);
+    ask("q=new query source=\"files\" have=0 need=5\nquery q have=5 need=10\nend", n);
+    settle();
+    expect(served_windows == 2, "a query is addressable in the batch that made it");
 
     /* The least an implementation can do: ignore every hint, send everything,
        say so. It says nothing about order, which leaves the display to sort. */
-    q = host(fill_simplest);
     n = sent_count();
-    ask("ask 7 fill tag=1 have=0 need=10\nend", n);
-    answer = since(n);
-    expect_str(answer,
-        "event query_record query=7 tag=1 fields={ key \"a\" }\n"
-        "event query_filled query=7 tag=1 exhausted",
-        "the simplest answer is everything and exhausted");
+    q = serve(fill_simplest, "have=0 need=10");
+    answer = since(n + 2);
+    char tmp[256];
+    snprintf(tmp, sizeof tmp,
+             "result %llu fields={ key \"a\" }\nresult %llu complete exhausted",
+             (unsigned long long)q, (unsigned long long)q);
+    expect_str(answer, tmp, "the simplest answer is everything and exhausted");
     free(answer);
-    kt_query_destroy(conn, q);
 
     /* A refusal is an answer. */
-    q = host(fill_refuses);
     n = sent_count();
-    ask("ask 7 fill tag=2 have=0 need=10\nend", n);
-    answer = since(n);
-    expect_str(answer,
-        "event query_filled query=7 tag=2 error=\"no records past \\\"build.sh\\\"\"",
-        "a refusal is an answer");
+    q = serve(fill_refuses, "have=0 need=10");
+    answer = since(n + 2);
+    snprintf(tmp, sizeof tmp,
+             "result %llu complete error=\"no records past \\\"build.sh\\\"\"",
+             (unsigned long long)q);
+    expect_str(answer, tmp, "a refusal is an answer");
     free(answer);
-    kt_query_destroy(conn, q);
 
-    /* An answer ends once: one ending, one batch, and the sink is gone. */
-    q = host(fill_ends_once);
+    /* An answer ends once: one ending, one message, and the sink is gone. */
     n = sent_count();
-    ask("ask 7 fill tag=3 have=0 need=1\nend", n);
+    q = serve(fill_ends_once, "have=0 need=1");
     settle();
     expect(ended_once == 1, "the handler ran");
-    expect(sent_count() == n + 1, "one ending sent exactly one batch");
-    kt_query_destroy(conn, q);
+    char *once = since(n + 2);
+    snprintf(tmp, sizeof tmp, "result %llu complete exhausted", (unsigned long long)q);
+    expect_str(once, tmp, "one ending is the whole answer");
+    free(once);
 
     /* The answer goes out as it accumulates rather than all at the end, so a
-       fill larger than one message is neither held in memory nor one
+       window larger than one message is neither held in memory nor one
        uninterruptible stretch of work. */
-    q = host(fill_long);
     n = sent_count();
-    ask("ask 7 fill tag=5 have=0 need=400\nend", n);
-    int batches = sent_count() - n;
+    q = serve(fill_long, "have=0 need=400");
+    int batches = sent_count() - n - 2;
     expect(batches > 1, "a long answer goes out in batches");
-    answer = since(n);
+    answer = since(n + 2);
     int lines = *answer ? 1 : 0;
     for (char *p = answer; *p; p++) if (*p == '\n') lines++;
     expect(lines == LONG_RECORDS + 1, "every record arrives, once, with a terminator");
     expect(strstr(answer, "key 0;") != NULL && strstr(answer, "key 399;") != NULL,
            "the first and last records are both there");
-    expect(strstr(answer, "\nevent query_filled query=7 tag=5 ordered") != NULL,
-           "the terminator is last");
+    snprintf(tmp, sizeof tmp, "\nresult %llu complete ordered", (unsigned long long)q);
+    expect(strstr(answer, tmp) != NULL, "the terminator is last");
     free(answer);
-    kt_query_destroy(conn, q);
 
-    /* A statement for an id this connection hosts nothing under is not an
-       error to answer; there is nothing to answer it with. */
+    /* A source this application does not serve is refused, and the refusal is
+       what the batch is answered with. */
     n = sent_count();
-    say("ask 99 fill tag=1 have=0 need=1\nend");
+    say("q=new query source=\"ledgers\" have=0 need=1\nend");
     settle();
-    expect(sent_count() == n, "a statement for nothing hosted is dropped");
+    char *refusal = since(n);
+    expect(strstr(refusal, "error text=") == refusal && strstr(refusal, "ledgers") != NULL,
+           "an unknown source is refused");
+    free(refusal);
 
     printf("checks %d\n", checks);
     printf("DONE\n");

@@ -84,12 +84,19 @@ class Conn:
         self._handlers: Dict[int, Dict[str, List[Callable[[Event], None]]]] = {}
         self._type_handlers: Dict[str, List[Callable[[Event], None]]] = {}
         self._subs = set()
-        # What this connection holds on the application's behalf, by the id the
-        # display addresses it by. Statements arriving for one of these are the
-        # other direction of the wire: the display asking, rather than being
-        # told (the query section below).
-        self._hosted: Dict[int, "Query"] = {}
+        # What this application serves, and what the display is currently
+        # reading of it. Statements arriving for one of these are the other
+        # direction of the wire: the display asking, rather than being told
+        # (the query section below).
+        #
+        # _last_hosted_id names them in this application's own space: each end
+        # mints its own ids, and the direction a statement travelled says whose
+        # space it is in, so the two never have to be told apart.
+        self._sources: Dict[str, "Source"] = {}
+        self._queries: Dict[int, "Query"] = {}
+        self._last_hosted_id = 0
         self._inbound: "queue.Queue" = queue.Queue()
+        self._pending_in: List = []
 
         self._closed_flag = False
         self.closed = threading.Event()  # set when the connection ends
@@ -148,16 +155,24 @@ class Conn:
                         # of a question a type CAN answer. The first is
                         # addressed to an object and so opens with a bare id;
                         # the second opens with of=.
-                        if _hosted_target(stmt) is not None:
-                            self._inbound.put(stmt)
+                        if _hosted_target(stmt, None) is not None:
+                            self._pending_in.append(stmt)
                         else:
                             self._pending_desc.append(text.strip())
-                    elif stmt.verb in ("set", "destroy", "sub", "unsub"):
-                        # The other direction: the display addressing something
-                        # this application hosts. Queued rather than handled
-                        # here, because answering executes statements and the
-                        # reader has to stay free to route their replies.
-                        self._inbound.put(stmt)
+                    elif stmt.verb in ("new", _query.QUERY_VERB, "set",
+                                       "destroy", "sub", "unsub"):
+                        # The other direction: the display making, asking after,
+                        # or letting go of something this application holds.
+                        # Gathered until the batch ends, because a batch is what
+                        # gets a reply.
+                        self._pending_in.append(stmt)
+                    elif stmt.verb == "end":
+                        # The batch is closed. Handled off the reader, because
+                        # answering writes and the reader has to stay free to
+                        # route what comes back.
+                        if self._pending_in:
+                            self._inbound.put(self._pending_in)
+                            self._pending_in = []
                     elif stmt.verb == "init":
                         # The display handing over something: a new object, or
                         # a new object under a name already in hand. Not only a
@@ -187,15 +202,15 @@ class Conn:
             self.deliver(ev)
 
     def _inbound_loop(self):
-        """Statements the display addressed to what this application hosts, in
-        the order they arrived. On a thread of its own rather than sharing the
-        event one: answering a fill can take as long as the records take, and a
-        list nobody is looking at must not hold up a click."""
+        """The batches the display sent, in the order they arrived. On a thread
+        of its own rather than sharing the event one, because serving a window
+        can take as long as the records take and a list nobody is looking at
+        must not hold up a click."""
         while True:
-            stmt = self._inbound.get()
-            if stmt is None:
+            batch = self._inbound.get()
+            if batch is None:
                 return
-            self.inbound(stmt)
+            self.inbound_batch(batch)
 
     def _mark_closed(self):
         with self._lock:
@@ -232,6 +247,18 @@ class Conn:
             if kind == "error":
                 raise RuntimeError(payload)
             return payload, (extra or [])
+
+    def send(self, src: str):
+        """Write without waiting for anything back.
+
+        The reverse direction needs it and the forward one does not: when the
+        display sends a batch, the application answers it, and an answer that
+        waited for an answer of its own would never be written at all."""
+        with self._write_lock:
+            with self._lock:
+                if self._closed_flag:
+                    return
+            self._sock.sendall((src + "\n").encode("utf-8"))
 
     def exec(self, src: str) -> Dict[str, int]:
         """Execute one batch of protocol text; returns the surfaced
@@ -408,65 +435,151 @@ class Conn:
     def ask(self, oid: int, question: str):
         self.exec("ask %d %s" % (oid, question))
 
-    def host_query(self, spec, fill) -> "Query":
-        """Announce a query this application hosts and register what answers its
-        fills. The display addresses it from here on, and every question it puts
-        reaches fill with the statement already taken apart."""
-        if spec is None:
-            raise ValueError("host_query: a query needs a spec")
+    def host_source(self, name: str, fill) -> "Source":
+        """Register a body of records this application can serve, and what
+        answers a window of it.
+
+        Nothing crosses the wire here: a source is a name, not an object, and
+        the display learns of it when a trinket is told `data="<name>"`."""
+        if not name:
+            raise ValueError("host_source: a source needs a name")
         if fill is None:
-            raise ValueError("host_query: a query needs something to fill it")
-        src = "q=new " + _query.QUERY_TYPE
-        args = spec.encode()
-        if args:
-            src += " " + args
-        ids = self.exec(src)
-        oid = ids.get("q", 0)
-        if not oid:
-            raise RuntimeError("host_query: the display surfaced no id for the query")
-        q = Query(self, oid, spec, fill)
+            raise ValueError("host_source: a source needs something to fill it")
+        s = Source(self, name, fill)
         with self._lock:
-            self._hosted[oid] = q
-        return q
+            self._sources[name] = s
+        return s
 
-    def hosted(self, oid: int) -> Optional["Query"]:
-        """The query this connection hosts under an id, and None for an id it hosts
-        nothing under."""
+    def query(self, oid: int):
+        """The query this connection serves under an id, and None for an id it
+        serves nothing under."""
         with self._lock:
-            return self._hosted.get(oid)
+            return self._queries.get(oid)
 
-    def inbound(self, stmt):
-        """Route one statement the display addressed to something this connection
-        hosts. The transport calls it for every such statement.
+    def queries(self):
+        """What this connection is currently serving."""
+        with self._lock:
+            return list(self._queries.values())
 
-        It must not run on the reader: answering a fill executes statements, and
-        those need the reader free to route their replies."""
-        oid = _hosted_target(stmt)
-        if oid is None:
-            return
-        q = self.hosted(oid)
-        if q is None:
-            return
-        rest = stmt.args[1:]
-        if stmt.verb == "ask":
-            if rest and rest[0].value is None and rest[0].flag == FlagState.TRUE \
-                    and rest[0].name == _query.ASK_FILL:
-                q._dispatch_fill(rest[1:])
-                return
-        elif stmt.verb == "set":
+    def _mint_id(self) -> int:
+        """Allocate an id in this application's own space.
+
+        Each end names its own objects and the direction of travel says whose
+        space a statement is in, so these never have to be told apart from the
+        display's: a statement arriving here is about what this application
+        holds."""
+        with self._lock:
+            self._last_hosted_id += 1
+            return self._last_hosted_id
+
+    def inbound_batch(self, stmts):
+        """Run one batch the display sent, answer it, and then produce whatever
+        records it asked for.
+
+        The reply goes out before any result does, because the reply is what
+        names a query the display has not heard of yet. That ordering is not
+        policy: the application mints the id, so it writes it before anything
+        that carries it.
+
+        It must not run on the reader: serving a window writes, and the reader
+        has to stay free."""
+        ids: Dict[str, int] = {}
+        keys: Dict[str, int] = {}
+        pending = []
+        failed = None
+        for stmt in stmts:
             try:
-                spec = _query.parse_spec(rest)
-            except (_query.QueryError, protocol.ParseError):
-                spec = None
-            if spec is not None:
-                q._dispatch_respec(spec)
-                return
-        elif stmt.verb == "destroy":
-            with self._lock:
-                self._hosted.pop(oid, None)
-            q._dispatch_dropped()
+                self._inbound_one(stmt, keys, ids, pending)
+            except (_query.QueryError, protocol.ParseError, ValueError) as e:
+                if failed is None:
+                    failed = str(e)
+        if failed is not None:
+            self.send("error text=" + protocol.quote(failed) + "\nend")
+        else:
+            line = "reply" + "".join(" %s=%d" % (k, ids[k]) for k in sorted(ids))
+            self.send(line + "\nend")
+        for fn in pending:
+            fn()
+
+    def _inbound_one(self, stmt, keys, ids, pending):
+        """Route one statement. Anything meant to answer with records is
+        appended to pending rather than run, so the batch is replied to first."""
+        if stmt.verb == "new":
+            return self._open_query(stmt, keys, ids, pending)
+
+        oid = _hosted_target(stmt, keys)
+        if stmt.verb == _query.QUERY_VERB:
+            if oid is None:
+                raise ValueError("query: expected the query to ask")
+            q = self.query(oid)
+            if q is None:
+                raise ValueError("query %d: no query of mine" % oid)
+            return self._window(q, stmt.args[1:], pending)
+        if oid is None:
+            return  # not addressed to anything this application holds
+        q = self.query(oid)
+        if q is None:
+            raise ValueError("%s %d: no query of mine" % (stmt.verb, oid))
+        rest = stmt.args[1:]
+
+        if stmt.verb == "set":
+            spec = _query.parse_spec(rest)
+            with q._lock:
+                q._spec = spec
+            with q._source._lock:
+                fn = q._source._respec
+            if fn is not None:
+                pending.append(lambda: fn(q, spec))
             return
-        q._dispatch_other(stmt)
+        if stmt.verb == "destroy":
+            with self._lock:
+                self._queries.pop(oid, None)
+            with q._source._lock:
+                fn = q._source._dropped
+            if fn is not None:
+                pending.append(lambda: fn(q))
+            return
+        with q._source._lock:
+            fn = q._source._other
+        if fn is not None:
+            pending.append(lambda: fn(q, stmt))
+
+    def _open_query(self, stmt, keys, ids, pending):
+        """Make a query and ask it for its first window, which is one statement
+        because the display never wants a sequence without wanting rows of it.
+
+        The application names it. The display has no id to offer -- ids here are
+        the application's own -- so the reply is what carries it back."""
+        if not stmt.args or stmt.args[0].value is not None \
+                or stmt.args[0].flag != FlagState.TRUE:
+            raise ValueError("new: expected a type")
+        if stmt.args[0].name != _query.QUERY_VERB:
+            raise ValueError("new: I host nothing called %r" % stmt.args[0].name)
+        args = stmt.args[1:]
+
+        spec = _query.parse_spec(args)
+        with self._lock:
+            source = self._sources.get(spec.source)
+        if source is None:
+            raise ValueError("query: I serve nothing called %r" % spec.source)
+
+        q = Query(self, source, self._mint_id(), spec)
+        with self._lock:
+            self._queries[q.id()] = q
+        if stmt.key:
+            ids[stmt.key] = q.id()
+            keys[stmt.key] = q.id()
+        return self._window(q, args, pending)
+
+    def _window(self, q, args, pending):
+        """Take a request for one window apart and queue serving it."""
+        request = _query.parse_fill(args)
+        with q._lock:
+            spec = q._spec
+        with q._source._lock:
+            fn = q._source._fill
+        f = Fill(q, request, spec)
+        pending.append(lambda: fn(f))
 
 
 # --- Handles -------------------------------------------------------------
@@ -754,61 +867,123 @@ def dial_solo(endpoint: str, app_name: str, dispatch=None, *, token=None,
                  ssl_context=ssl_context)
 
 
-# --- hosting a query ------------------------------------------------------
+# --- serving a query ------------------------------------------------------
 #
 # Everything above points one way: the application says `new`, `set`, `ask`,
-# `do`, and the display answers with events. A query points the other way. The
-# application holds records the display cannot see, so the display asks -- and
-# this is where those questions arrive.
+# `do`, and the display raises events at it. A query points the other way. Only
+# the display knows a query is wanted and what it is -- the sort comes from the
+# column header somebody clicked, the filter from the filter box, the window
+# from the scroll position -- so the display opens it, and the application,
+# which is the end that holds the records, serves it.
 #
-# What an author has to write is one function: given a window of the sequence,
+# What an author writes is one function: given a window of the sequence,
 # produce the records in it. The statement is taken apart before it gets here,
 # so nothing in that function parses anything; and the answer is written into a
 # sink that goes out in batches as it fills, so a million records need not be
 # one message, or one uninterruptible stretch of work.
 #
+# It arrives nowhere near the event line. `query` is answered by `result`,
+# `ask` by `answer`, and `sub` -- or an object's mere existence -- by `event`;
+# nothing carries two of them, so a request for records can never be mistaken
+# for something a subscription raised.
+#
 # docs/hosting-a-query.md is the wire spelling. kittytk/query.py is the
 # structure.
 
-# How much answer accumulates before it goes out on its own. It trades round
-# trips against how long a record waits: big enough that a fill of a screenful
-# is one message, small enough that a fill of a million records is not held in
-# memory.
+# How much answer accumulates before it goes out on its own. It trades write
+# syscalls against how long a record waits: big enough that a window of a
+# screenful is one message, small enough that a window of a million records is
+# not held in memory.
 FLUSH_BYTES = 16 * 1024
 
 
-def _hosted_target(stmt) -> Optional[int]:
-    """The object a statement is addressed to: the leading operand, which is a
-    bare id. None when the statement is addressed to nothing."""
+def _hosted_target(stmt, keys):
+    """The object a statement is addressed to: a bare id, or a key this same
+    batch surfaced -- which is what lets a display open a query and address it
+    again without waiting for the reply. None when it is addressed to nothing."""
     if not stmt.args:
         return None
     a = stmt.args[0]
-    if a.name or a.value is None or a.value.kind != protocol.ValueKind.NUMBER \
-            or not a.value.is_int or a.value.number < 0:
-        return None
-    return int(a.value.number)
+    if a.value is not None and not a.name \
+            and a.value.kind == protocol.ValueKind.NUMBER \
+            and a.value.is_int and a.value.number >= 0:
+        return int(a.value.number)
+    if a.value is None and a.flag == FlagState.TRUE and keys:
+        return keys.get(a.name)
+    return None
+
+
+class Source:
+    """A body of records this application can serve, under the name a display
+    asks for it by.
+
+    It is not an object and has no id. The application says `data="files"` on
+    whatever trinket is to show it, and the display opens queries against that
+    name when somebody scrolls."""
+
+    def __init__(self, conn: "Conn", name: str, fill):
+        self._conn = conn
+        self._name = name
+        self._lock = threading.Lock()
+        self._fill = fill
+        self._respec = None
+        self._dropped = None
+        self._other = None
+
+    def name(self) -> str:
+        """What a display asks for this source by."""
+        return self._name
+
+    def on_respec(self, fn):
+        """A handler for the display restating a query's sequence: a re-sort, a
+        new filter, a different set of fields. Everything cached against the old
+        spec that was keyed by position is stale; what was keyed by record
+        identity is not.
+
+        A source that ignores this is still correct -- the next window carries
+        the new spec -- so it is for applications with something to tear down."""
+        with self._lock:
+            self._respec = fn
+
+    def on_dropped(self, fn):
+        """A handler for the display letting a query go, which is how the
+        application learns it may drop the records it was holding."""
+        with self._lock:
+            self._dropped = fn
+
+    def on_statement(self, fn):
+        """A handler for anything else the display addresses to one of this
+        source's queries: a question this library does not know, an action, a
+        property it does not read. The statement arrives as it parsed.
+
+        This is the seam a fuller library is built on. Coverage and
+        invalidation both travel this way and neither is implemented here."""
+        with self._lock:
+            self._other = fn
 
 
 class Query:
-    """A sequence of an application's own records that a display is reading:
-    one filter, one sort, and a window asked for at a time.
+    """One sequence of a source's records that a display is reading: one
+    filter, one sort, and a window asked for at a time.
 
-    The application makes it -- the display never says `new` to an application
-    -- and holds it for as long as anything is looking."""
+    The display opens it; the application names it, because the ids in every
+    statement that follows are the application's own."""
 
-    def __init__(self, conn: "Conn", oid: int, spec, fill):
+    def __init__(self, conn: "Conn", source: Source, oid: int, spec):
         self._conn = conn
+        self._source = source
         self._id = oid
         self._lock = threading.Lock()
         self._spec = spec
-        self._fill = fill
-        self._respec = None
-        self._other = None
-        self._dropped = None
 
     def id(self) -> int:
-        """What the display addresses this query by."""
+        """What this application calls the query, and what the display
+        addresses it by from the moment the reply carries it."""
         return self._id
+
+    def source(self) -> Source:
+        """Where its records come from."""
+        return self._source
 
     def spec(self):
         """The sequence as it currently stands. It changes when the display
@@ -816,77 +991,10 @@ class Query:
         with self._lock:
             return self._spec
 
-    def on_respec(self, fn):
-        """A handler for the display restating the sequence: a re-sort, a new
-        filter, a different set of fields. Everything cached against the old
-        spec that was keyed by position is stale; what was keyed by record
-        identity is not.
-
-        A query that ignores this is still correct -- the next fill carries the
-        new spec -- so it is for applications with something to tear down."""
-        with self._lock:
-            self._respec = fn
-
-    def on_dropped(self, fn):
-        """A handler for the display letting the query go."""
-        with self._lock:
-            self._dropped = fn
-
-    def on_statement(self, fn):
-        """A handler for anything else the display addresses to this query: a
-        question this library does not know, an action, a property it does not
-        read. The statement arrives as it parsed.
-
-        This is the seam a fuller library is built on. Coverage and
-        invalidation both travel this way and neither is implemented here, so a
-        library that wants them adds them without this module having to grow."""
-        with self._lock:
-            self._other = fn
-
-    def destroy(self):
-        """Tell the display the query is gone and stop answering for it."""
-        with self._conn._lock:
-            self._conn._hosted.pop(self._id, None)
-        self._conn.exec("destroy %d" % self._id)
-
-    # --- what the connection calls ---
-
-    def _dispatch_respec(self, spec):
-        with self._lock:
-            self._spec = spec
-            fn = self._respec
-        if fn is not None:
-            fn(spec)
-
-    def _dispatch_fill(self, args):
-        with self._lock:
-            spec, fn = self._spec, self._fill
-        try:
-            request = _query.parse_fill(args)
-        except (_query.QueryError, protocol.ParseError) as e:
-            # The tag is in the request that would not parse, so there is
-            # nothing to stamp a refusal with. Say so where it can be seen
-            # rather than dropping the question on the floor.
-            Fill(self, _query.Fill(), spec).fail(str(e))
-            return
-        fn(Fill(self, request, spec))
-
-    def _dispatch_dropped(self):
-        with self._lock:
-            fn = self._dropped
-        if fn is not None:
-            fn()
-
-    def _dispatch_other(self, stmt):
-        with self._lock:
-            fn = self._other
-        if fn is not None:
-            fn(stmt)
-
 
 class Fill:
-    """One window of the sequence, asked for -- and where the answer to it is
-    written.
+    """One window of the sequence, asked for -- and where the records that
+    answer it are written.
 
     The reading side is what was asked: from_ and to are where the display's
     own knowledge starts and how far it runs, have is how much of the window it
@@ -899,11 +1007,10 @@ class Fill:
     accumulate, so the answer may be produced over as long as it takes and
     interleaved with other work; nothing has to be held until the end."""
 
-    def __init__(self, q: Query, request, spec):
-        self.query = q
+    def __init__(self, query: Query, request, spec):
+        self.query = query
         self.spec = spec
         self.request = request
-        self.tag = request.tag
         self.from_ = request.from_
         self.to = request.to
         self.have = request.have
@@ -923,18 +1030,13 @@ class Fill:
             f.record(17, name="src/parser.go", size=1024)
 
         The key is what identifies the record, view-independent and permanent;
-        the fields are whatever this fill asked for, which may be fewer than
+        the fields are whatever this window asked for, which may be fewer than
         the query's own list when the display wants the skeleton of a wide
         stretch."""
         bag = _query.Fields([protocol.named(_query.KEY_FIELD, key)])
         for name, v in fields.items():
             bag.append(protocol.named(name, v))
-        ev = Event(_query.EVENT_QUERY_RECORD, [
-            protocol.named("query", self.query.id()),
-            protocol.named("tag", self.tag),
-            protocol.Arg(name="fields", value=bag.block()),
-        ])
-        self._emit(ev.encode())
+        self._emit(self._result(protocol.Arg(name="fields", value=bag.block())))
 
     def ordered(self):
         """Declare that the records are being sent in the query's own order.
@@ -953,11 +1055,11 @@ class Fill:
         It is a completeness guarantee rather than a position, and it is what
         lets the display shrink the window, grow it back and scroll inside it
         without asking anything."""
-        ev = self._terminator()
+        extra = []
         if watermark:
-            ev.fields.append(protocol.Arg(name="watermark",
-                                          value=_query.Fields(watermark).block()))
-        self._finish(ev)
+            extra.append(protocol.Arg(name="watermark",
+                                      value=_query.Fields(watermark).block()))
+        self._finish(extra)
 
     def exhausted(self):
         """Finish with everything there is: no watermark, because there is
@@ -967,17 +1069,13 @@ class Fill:
         hint, send all your records, say this -- and it is not a toy: the
         display then holds the whole layer and asks nothing again until
         something invalidates it."""
-        ev = self._terminator()
-        ev.fields.append(protocol.Arg(name="exhausted", flag=FlagState.TRUE))
-        self._finish(ev)
+        self._finish([protocol.Arg(name="exhausted", flag=FlagState.TRUE)])
 
     def fail(self, message: str):
         """Finish with a refusal: this query cannot be honoured, this window
         cannot be produced, the records are gone. A refusal is an answer -- the
         display carries on with what it has."""
-        ev = self._terminator()
-        ev.fields.append(protocol.named("error", message))
-        self._finish(ev)
+        self._finish([protocol.named("error", message)])
 
     def sent(self) -> int:
         """How many records have gone into the answer so far."""
@@ -989,41 +1087,44 @@ class Fill:
         with self._lock:
             src = self._take()
         if src:
-            self.query._conn.exec(src)
+            self.query._conn.send(src)
 
     # --- the machinery under those ---
 
-    def _terminator(self) -> Event:
-        with self._lock:
-            ordered = self._ordered
-        ev = Event(_query.EVENT_QUERY_FILLED, [
-            protocol.named("query", self.query.id()),
-            protocol.named("tag", self.tag),
-        ])
-        if ordered:
-            ev.fields.append(protocol.Arg(name="ordered", flag=FlagState.TRUE))
-        return ev
+    def _result(self, *extra) -> str:
+        """One result statement, addressed to the query it belongs to the way
+        every other statement addresses an object."""
+        args = [protocol.Arg(value=protocol.new_int(self.query.id()))]
+        args.extend(extra)
+        return protocol.encode_statement(
+            protocol.Statement(verb=_query.RESULT_VERB, args=args))
 
     def _emit(self, stmt: str):
         with self._lock:
             if self._closed:
-                raise RuntimeError("this fill has already been answered")
+                raise RuntimeError("this window has already been answered")
             self._buf.append(stmt)
             self._size += len(stmt) + 1
             self._sent += 1
             if self._size < FLUSH_BYTES:
                 return
             src = self._take()
-        self.query._conn.exec(src)
+        self.query._conn.send(src)
 
-    def _finish(self, ev: Event):
+    def _finish(self, extra):
         with self._lock:
             if self._closed:
-                raise RuntimeError("this fill has already been answered")
-            self._buf.append(ev.encode())
+                raise RuntimeError("this window has already been answered")
+            # `ordered` rides on the terminator, so it can be decided after the
+            # records have been produced rather than promised before.
+            args = [protocol.Arg(name=_query.RESULT_COMPLETE, flag=FlagState.TRUE)]
+            if self._ordered:
+                args.append(protocol.Arg(name="ordered", flag=FlagState.TRUE))
+            args.extend(extra)
+            self._buf.append(self._result(*args))
             self._closed = True
             src = self._take()
-        self.query._conn.exec(src)
+        self.query._conn.send(src)
 
     def _take(self) -> str:
         """Empty the buffer and return what was in it. Called under the lock."""

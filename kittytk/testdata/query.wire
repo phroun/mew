@@ -7,8 +7,8 @@
 #
 # Each case is two lines. The first is what arrived:
 #
-#   spec <the arguments of `new query` or of the `set` that restates it>
-#   fill <the arguments after the question word in `ask <q> fill ...`>
+#   spec <the sequence arguments of `new query` or of the `set` that restates it>
+#   fill <the window arguments of `new query` or of `query <q> ...`>
 #
 # The second is what it has to come out as, written back from the structure:
 #
@@ -181,40 +181,40 @@ want source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind
 
 # --- a fill ---
 
-fill tag=0 have=0 need=30
-want tag=0 have=0 need=30
+fill have=0 need=30
+want have=0 need=30
 
-fill tag=4 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
-want tag=4 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
+fill have=0 need=10 have=x
+bad
+
+fill from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
+want from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
 
 # A boundary is a bag like any other: its fields may be any kind of value, and
 # the key is the one it always carries.
-fill tag=1 from={ kind folder; size 1024; key "abc" } have=0 need=1
-want tag=1 from={ kind folder; size 1024; key "abc" } have=0 need=1
+fill from={ kind folder; size 1024; key "abc" } have=0 need=1
+want from={ kind folder; size 1024; key "abc" } have=0 need=1
 
 # This window wants fewer fields than the query asks for: the skeleton of a
 # wide stretch rather than everything.
-fill tag=2 have=0 need=200 fields={ name; key }
-want tag=2 have=0 need=200 fields={ name; key }
+fill have=0 need=200 fields={ name; key }
+want have=0 need=200 fields={ name; key }
 
 # An empty boundary is the start of the sequence, and says so by not being there.
-fill tag=3 from={} to={} have=0 need=10
-want tag=3 have=0 need=10
+fill from={} to={} have=0 need=10
+want have=0 need=10
 
-fill tag=5 have=0 need=10 nonsense=1
-want tag=5 have=0 need=10
+fill have=0 need=10 nonsense=1
+want have=0 need=10
 
-fill tag=x have=0 need=10
+fill have=0 need=10 from={ name "a" "b" }
 bad
 
-fill tag=1 have=0 need=10 from={ name "a" "b" }
+fill have=0 need=10 from={ !name }
 bad
 
-fill tag=1 have=0 need=10 from={ !name }
+fill have=0 need=10 from={ name !x }
 bad
 
-fill tag=1 have=0 need=10 from={ name !x }
-bad
-
-fill tag=1 have=0 need=10 from=17
+fill have=0 need=10 from=17
 bad

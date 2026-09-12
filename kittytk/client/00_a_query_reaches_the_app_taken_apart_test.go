@@ -1,12 +1,13 @@
 package client
 
-// What an application has to write to host a query, and what it never has to
+// What an application has to write to serve a query, and what it never has to
 // write.
 //
 // It never parses. The statement the display sent is taken apart before the
-// handler sees it, so the handler reads fields off a struct. And it never has
-// to hold the whole answer: records go out in batches as they accumulate, so
-// the answer may be produced over as long as it takes.
+// handler sees it, so the handler reads fields off a struct. It never sees a
+// request on the event line: `query` is answered by `result`, `ask` by
+// `answer`, `sub` by `event`, and nothing carries two of them. And it never
+// has to hold the whole answer: records go out in batches as they accumulate.
 
 import (
 	"fmt"
@@ -17,24 +18,31 @@ import (
 	"github.com/phroun/kittytk/wire"
 )
 
-// recorder is a transport that answers `new` with an id and keeps everything
-// else that was sent.
+// recorder is a transport that keeps everything written through it, both the
+// batches an application sends and the answers it writes back.
 type recorder struct {
 	mu   sync.Mutex
 	sent []string
 }
 
 func (r *recorder) Exec(src string) (*wire.Reply, error) {
-	r.mu.Lock()
-	r.sent = append(r.sent, src)
-	r.mu.Unlock()
-	if strings.HasPrefix(src, "q=new ") {
-		return &wire.Reply{IDs: map[string]uint64{"q": 7}}, nil
-	}
+	r.record(src)
 	return &wire.Reply{}, nil
 }
 
+// Send is the reverse direction: written, not awaited.
+func (r *recorder) Send(src string) error {
+	r.record(src)
+	return nil
+}
+
 func (r *recorder) Close() error { return nil }
+
+func (r *recorder) record(src string) {
+	r.mu.Lock()
+	r.sent = append(r.sent, src)
+	r.mu.Unlock()
+}
 
 func (r *recorder) since(n int) []string {
 	r.mu.Lock()
@@ -48,63 +56,95 @@ func (r *recorder) count() int {
 	return len(r.sent)
 }
 
-// hostOne sets up a connection hosting one query.
-func hostOne(t *testing.T, fill func(*Fill)) (*Conn, *recorder, *Query) {
+// serveOne sets up a connection serving one source.
+func serveOne(t *testing.T, fill func(*Fill)) (*Conn, *recorder, *Source) {
 	t.Helper()
 	r := &recorder{}
 	c := NewWithTransport(r, nil)
-	spec := &wire.Spec{
-		Source: "files",
-		Sort:   []wire.SortLevel{{Field: "name", Level: wire.Level{Collation: wire.CollateNatural}}},
-	}
-	q, err := c.HostQuery(spec, fill)
+	s, err := c.HostSource("files", fill)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c, r, q
+	return c, r, s
 }
 
-// send delivers one statement the way the transport would.
+// send delivers one batch the way the transport would.
 func send(t *testing.T, c *Conn, src string) {
 	t.Helper()
 	script, err := wire.Parse(src)
 	if err != nil {
 		t.Fatalf("parsing %q: %v", src, err)
 	}
-	for _, stmt := range script.Statements {
-		c.Inbound(stmt)
+	c.InboundBatch(script.Statements)
+}
+
+// Registering a source says nothing on the wire: it is a name, not an object.
+func TestRegisteringASourceSaysNothing(t *testing.T) {
+	_, r, s := serveOne(t, func(*Fill) {})
+	if s.Name() != "files" {
+		t.Errorf("the source is called %q", s.Name())
+	}
+	if n := r.count(); n != 0 {
+		t.Errorf("registering a source wrote %d message(s): %v", n, r.since(0))
 	}
 }
 
-// The application announces the query, and what it announced is the spec it
-// was given.
-func TestAQueryIsAnnouncedWithItsSpec(t *testing.T) {
-	_, r, q := hostOne(t, func(*Fill) {})
-	if q.ID() != 7 {
-		t.Fatalf("the query is id %d, want the one the display surfaced", q.ID())
+// The display opens the query and the application names it, because every id
+// in every statement that follows is the application's own.
+func TestTheApplicationNamesTheQuery(t *testing.T) {
+	var served *Fill
+	c, r, _ := serveOne(t, func(f *Fill) {
+		served = f
+		_ = f.Exhausted()
+	})
+	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=30`)
+
+	if got := r.since(0)[0]; got != "reply q=1\nend" {
+		t.Errorf("the reply was\n  %s\nwant\n  reply q=1\nend", got)
 	}
-	got := r.since(0)[0]
-	want := `q=new query source="files" sort={ name natural }`
+	if served == nil {
+		t.Fatal("the source was never asked for a window")
+	}
+	if served.Query.ID() != 1 {
+		t.Errorf("the query is id %d", served.Query.ID())
+	}
+	if q := c.Query(1); q == nil || q.Source().Name() != "files" {
+		t.Errorf("the connection is not serving it: %#v", q)
+	}
+}
+
+// Opening is one statement because the display never wants a sequence without
+// wanting rows of it, and the reply goes out before any record, because the
+// reply is what names a query the display has not heard of yet.
+func TestTheReplyComesBeforeTheRecords(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) {
+		f.Ordered()
+		_ = f.Record(17, wire.Named("name", "src/parser.go"), wire.Named("size", 1024))
+		_ = f.Record(42, wire.Named("name", "src/window.go"), wire.Named("size", 2048))
+		_ = f.Done(wire.Fields{wire.Named("name", "src/window.go"), wire.Named(wire.KeyField, 42)})
+	})
+	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=30`)
+
+	got := strings.Join(r.since(0), "\n")
+	want := "reply q=1\nend\n" +
+		`result 1 fields={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
+		`result 1 fields={ key 42; name "src/window.go"; size 2048 }` + "\n" +
+		`result 1 complete ordered watermark={ name "src/window.go"; key 42 }`
 	if got != want {
-		t.Errorf("announced\n  %s\nwant\n  %s", got, want)
+		t.Errorf("the answer was\n%s\nwant\n%s", got, want)
 	}
 }
 
-// A fill arrives as a struct. Nothing in the handler parses anything.
-func TestAFillArrivesTakenApart(t *testing.T) {
+// A window arrives as a struct. Nothing in the handler parses anything.
+func TestAWindowArrivesTakenApart(t *testing.T) {
 	var got *Fill
-	done := make(chan struct{})
-	c, _, _ := hostOne(t, func(f *Fill) {
+	c, _, _ := serveOne(t, func(f *Fill) {
 		got = f
 		_ = f.Exhausted()
-		close(done)
 	})
-	send(t, c, `ask 7 fill tag=4 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50 fields={ name; size }`)
-	<-done
+	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=1`)
+	send(t, c, `query 1 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50 fields={ name; size }`)
 
-	if got.Tag != 4 {
-		t.Errorf("tag is %d", got.Tag)
-	}
 	if got.Have != 30 || got.Need != 50 {
 		t.Errorf("have=%d need=%d, want 30 and 50", got.Have, got.Need)
 	}
@@ -126,47 +166,34 @@ func TestAFillArrivesTakenApart(t *testing.T) {
 	}
 }
 
-// The answer is records and then one terminator, all stamped with the tag of
-// the fill they answer.
-func TestAnAnswerIsRecordsThenATerminator(t *testing.T) {
-	c, r, _ := hostOne(t, func(f *Fill) {
-		f.Ordered()
-		_ = f.Record(17, wire.Named("name", "src/parser.go"), wire.Named("size", 1024))
-		_ = f.Record(42, wire.Named("name", "src/window.go"), wire.Named("size", 2048))
-		_ = f.Done(wire.Fields{wire.Named("name", "src/window.go"), wire.Named(wire.KeyField, 42)})
+// A display may address a query it opened in the same batch, without waiting
+// for the reply that names it.
+func TestAQueryIsAddressableInTheBatchThatMadeIt(t *testing.T) {
+	var asked []int
+	c, _, _ := serveOne(t, func(f *Fill) {
+		asked = append(asked, f.Need)
+		_ = f.Exhausted()
 	})
-	n := r.count()
-	send(t, c, `ask 7 fill tag=9 have=0 need=2`)
+	send(t, c, "q=new query source=\"files\" have=0 need=5\nquery q have=5 need=10")
 
-	lines := strings.Split(strings.Join(r.since(n), "\n"), "\n")
-	want := []string{
-		`event query_record query=7 tag=9 fields={ key 17; name "src/parser.go"; size 1024 }`,
-		`event query_record query=7 tag=9 fields={ key 42; name "src/window.go"; size 2048 }`,
-		`event query_filled query=7 tag=9 ordered watermark={ name "src/window.go"; key 42 }`,
-	}
-	if len(lines) != len(want) {
-		t.Fatalf("the answer was\n  %s", strings.Join(lines, "\n  "))
-	}
-	for i := range want {
-		if lines[i] != want[i] {
-			t.Errorf("line %d was\n  %s\nwant\n  %s", i, lines[i], want[i])
-		}
+	if len(asked) != 2 || asked[0] != 5 || asked[1] != 10 {
+		t.Errorf("the source was asked for %v", asked)
 	}
 }
 
 // The least an implementation can do: ignore every hint, send everything, say
 // so. It says nothing about order, which is what leaves the display to sort.
 func TestTheSimplestAnswerIsEverythingAndExhausted(t *testing.T) {
-	c, r, _ := hostOne(t, func(f *Fill) {
+	c, r, _ := serveOne(t, func(f *Fill) {
 		_ = f.Record("a")
 		_ = f.Exhausted()
 	})
 	n := r.count()
-	send(t, c, `ask 7 fill tag=1 have=0 need=10`)
+	send(t, c, `q=new query source="files" have=0 need=10`)
 
-	got := strings.Join(r.since(n), "\n")
-	want := "event query_record query=7 tag=1 fields={ key \"a\" }\n" +
-		"event query_filled query=7 tag=1 exhausted"
+	got := strings.Join(r.since(n+1), "\n")
+	want := "result 1 fields={ key \"a\" }\n" +
+		"result 1 complete exhausted"
 	if got != want {
 		t.Errorf("the answer was\n  %s\nwant\n  %s", got, want)
 	}
@@ -174,39 +201,39 @@ func TestTheSimplestAnswerIsEverythingAndExhausted(t *testing.T) {
 
 // A refusal is an answer.
 func TestARefusalIsAnAnswer(t *testing.T) {
-	c, r, _ := hostOne(t, func(f *Fill) {
+	c, r, _ := serveOne(t, func(f *Fill) {
 		_ = f.Fail("no records past %q", "build.sh")
 	})
 	n := r.count()
-	send(t, c, `ask 7 fill tag=2 have=0 need=10`)
+	send(t, c, `q=new query source="files" have=0 need=10`)
 
-	got := strings.Join(r.since(n), "\n")
-	want := `event query_filled query=7 tag=2 error="no records past \"build.sh\""`
+	got := strings.Join(r.since(n+1), "\n")
+	want := `result 1 complete error="no records past \"build.sh\""`
 	if got != want {
 		t.Errorf("the refusal was\n  %s\nwant\n  %s", got, want)
 	}
 }
 
 // Nothing is answered twice.
-func TestAnAnsweredFillRefusesMore(t *testing.T) {
+func TestAnAnsweredWindowRefusesMore(t *testing.T) {
 	var second, third error
-	c, _, _ := hostOne(t, func(f *Fill) {
+	c, _, _ := serveOne(t, func(f *Fill) {
 		_ = f.Exhausted()
 		second = f.Record(1)
 		third = f.Done(nil)
 	})
-	send(t, c, `ask 7 fill tag=3 have=0 need=1`)
+	send(t, c, `q=new query source="files" have=0 need=1`)
 	if second == nil || third == nil {
-		t.Errorf("a finished fill took more: record=%v done=%v", second, third)
+		t.Errorf("a finished window took more: record=%v done=%v", second, third)
 	}
 }
 
-// The answer goes out as it accumulates rather than all at the end, so a fill
-// larger than one message is neither held in memory nor one uninterruptible
-// stretch of work.
+// The answer goes out as it accumulates rather than all at the end, so a
+// window larger than one message is neither held in memory nor one
+// uninterruptible stretch of work.
 func TestALongAnswerGoesOutInBatches(t *testing.T) {
 	const records = 400
-	c, r, _ := hostOne(t, func(f *Fill) {
+	c, r, _ := serveOne(t, func(f *Fill) {
 		f.Ordered()
 		for i := 0; i < records; i++ {
 			_ = f.Record(i, wire.Named("name", fmt.Sprintf("file-%03d-%s", i, strings.Repeat("x", 80))))
@@ -214,9 +241,9 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 		_ = f.Exhausted()
 	})
 	n := r.count()
-	send(t, c, `ask 7 fill tag=5 have=0 need=400`)
+	send(t, c, `q=new query source="files" have=0 need=400`)
 
-	batches := r.since(n)
+	batches := r.since(n + 1) // past the reply
 	if len(batches) < 2 {
 		t.Fatalf("the whole answer went in %d message(s); it was meant to stream", len(batches))
 	}
@@ -230,23 +257,24 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 			t.Fatalf("statement %d is %.60s...", i, all[i])
 		}
 	}
-	if !strings.HasPrefix(all[records], "event query_filled ") {
+	if !strings.HasPrefix(all[records], "result 1 complete") {
 		t.Errorf("the last statement is %.60s...", all[records])
 	}
 }
 
 // The display restating the sequence is a new generation of the same query:
-// the spec changes underneath, and the next fill carries the new one.
+// the spec changes underneath, and the next window carries the new one.
 func TestTheDisplayCanRestateTheSequence(t *testing.T) {
 	var told *wire.Spec
-	var atFill *wire.Spec
-	c, _, q := hostOne(t, func(f *Fill) {
-		atFill = f.Spec
+	var atWindow *wire.Spec
+	c, _, s := serveOne(t, func(f *Fill) {
+		atWindow = f.Spec
 		_ = f.Exhausted()
 	})
-	q.OnRespec(func(s *wire.Spec) { told = s })
+	s.OnRespec(func(_ *Query, spec *wire.Spec) { told = spec })
 
-	send(t, c, `set 7 sort={ size desc; name fold } filter={ ge size 1024 }`)
+	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=1`)
+	send(t, c, `set 1 sort={ size desc; name fold } filter={ ge size 1024 }`)
 	if told == nil {
 		t.Fatal("the application was not told the sequence changed")
 	}
@@ -258,28 +286,33 @@ func TestTheDisplayCanRestateTheSequence(t *testing.T) {
 		t.Errorf("the new filter came through as %#v", told.Filter)
 	}
 
-	send(t, c, `ask 7 fill tag=6 have=0 need=1`)
-	if atFill == nil || len(atFill.Sort) != 2 {
-		t.Errorf("the fill carried the old spec: %#v", atFill)
+	send(t, c, `query 1 have=0 need=1`)
+	if atWindow == nil || len(atWindow.Sort) != 2 {
+		t.Errorf("the window carried the old spec: %#v", atWindow)
 	}
 }
 
-// The display letting the query go stops the application answering for it.
+// The display letting the query go is how the application learns it may drop
+// the records it was holding for it.
 func TestTheDisplayCanDropTheQuery(t *testing.T) {
-	dropped, filled := false, false
-	c, _, q := hostOne(t, func(f *Fill) {
-		filled = true
+	dropped, served := false, 0
+	c, _, s := serveOne(t, func(f *Fill) {
+		served++
 		_ = f.Exhausted()
 	})
-	q.OnDropped(func() { dropped = true })
+	s.OnDropped(func(q *Query) { dropped = true })
 
-	send(t, c, "destroy 7")
+	send(t, c, `q=new query source="files" have=0 need=1`)
+	send(t, c, "destroy 1")
 	if !dropped {
 		t.Error("the application was not told the query was let go")
 	}
-	send(t, c, "ask 7 fill tag=1 have=0 need=1")
-	if filled {
-		t.Error("a query that was let go answered anyway")
+	if c.Query(1) != nil {
+		t.Error("the connection is still serving it")
+	}
+	send(t, c, `query 1 have=0 need=1`)
+	if served != 1 {
+		t.Errorf("a query that was let go was served %d times", served)
 	}
 }
 
@@ -287,10 +320,11 @@ func TestTheDisplayCanDropTheQuery(t *testing.T) {
 // what it does not implement does not have to be added here to be reachable.
 func TestWhatTheLibraryDoesNotKnowReachesTheApp(t *testing.T) {
 	var got *wire.Statement
-	c, _, q := hostOne(t, func(*Fill) {})
-	q.OnStatement(func(s *wire.Statement) { got = s })
+	c, _, s := serveOne(t, func(f *Fill) { _ = f.Exhausted() })
+	s.OnStatement(func(_ *Query, stmt *wire.Statement) { got = stmt })
 
-	send(t, c, `do 7 cover handle=3 from={ key 1 } to={ key 200 }`)
+	send(t, c, `q=new query source="files" have=0 need=1`)
+	send(t, c, `do 1 cover handle=3 from={ key 1 } to={ key 200 }`)
 	if got == nil {
 		t.Fatal("the statement reached nobody")
 	}
@@ -300,13 +334,17 @@ func TestWhatTheLibraryDoesNotKnowReachesTheApp(t *testing.T) {
 	}
 }
 
-// A statement for an id this connection hosts nothing under is not an error to
-// answer; there is nothing to answer it with.
-func TestAStatementForNothingHostedIsDropped(t *testing.T) {
-	called := false
-	c, _, _ := hostOne(t, func(*Fill) { called = true })
-	send(t, c, `ask 99 fill tag=1 have=0 need=1`)
-	if called {
-		t.Error("a query answered for an id that is not its own")
+// A source this application does not serve is refused, and the refusal is what
+// the batch is answered with.
+func TestAnUnknownSourceIsRefused(t *testing.T) {
+	c, r, _ := serveOne(t, func(*Fill) {})
+	send(t, c, `q=new query source="ledgers" have=0 need=1`)
+
+	got := r.since(0)[0]
+	if !strings.HasPrefix(got, "error text=") || !strings.Contains(got, "ledgers") {
+		t.Errorf("the batch was answered with\n  %s", got)
+	}
+	if len(c.Queries()) != 0 {
+		t.Error("a query was made for a source that is not served")
 	}
 }

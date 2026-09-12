@@ -285,7 +285,9 @@ typedef struct {
     kt_script *block;/* kind 4: the statements between the braces */
 } kt_arg;
 
-typedef struct { char *verb; kt_arg *args; int n; } kt_stmt;
+/* key is the correlation name a statement was written under: `q=new query
+ * ...` surfaces the id the receiver mints for it, in the reply. */
+typedef struct { char *key; char *verb; kt_arg *args; int n; } kt_stmt;
 
 /* A run of statements: a request body, or what a {} holds. Blocks are how a
  * filter, a sort and a boundary travel, so the parser here is no longer flat. */
@@ -486,6 +488,7 @@ static void args_free(kt_arg *args, int n) {
 }
 
 static void stmt_parts_free(kt_stmt *s) {
+    free(s->key);
     free(s->verb);
     args_free(s->args, s->n);
 }
@@ -606,6 +609,18 @@ static int p_statement(kt_p *p, kt_stmt *st, int in_block) {
     if (p_eof(p) || !is_word_start(p_peek(p))) return 0;
     memset(st, 0, sizeof *st);
     st->verb = p_word(p);
+    /* `key=verb args...`: a name for whatever the statement makes, answered in
+     * the reply with the id the receiving end minted for it. */
+    if (!p_eof(p) && p_peek(p) == '=') {
+        size_t save = p->pos;
+        p->pos++;
+        if (!p_eof(p) && is_word_start(p_peek(p))) {
+            st->key = st->verb;
+            st->verb = p_word(p);
+        } else {
+            p->pos = save;
+        }
+    }
     int cap = 0;
     for (;;) {
         p_skip_inline(p);
@@ -858,11 +873,14 @@ static void enc_qspec(kt_buf *b, const kt_qspec *s) {
 
 static void enc_qfill(kt_buf *b, const kt_qfill *f) {
     char tmp[64];
-    snprintf(tmp, sizeof tmp, "tag=%lld", f->tag);
-    buf_puts(b, tmp);
-    if (f->from.n) { buf_puts(b, " from="); enc_bag(b, &f->from); }
-    if (f->to.n) { buf_puts(b, " to="); enc_bag(b, &f->to); }
-    snprintf(tmp, sizeof tmp, " have=%d need=%d", f->have, f->need);
+    int wrote = 0;
+    if (f->from.n) { buf_puts(b, "from="); enc_bag(b, &f->from); wrote = 1; }
+    if (f->to.n) {
+        if (wrote) buf_put(b, ' ');
+        buf_puts(b, "to="); enc_bag(b, &f->to);
+        wrote = 1;
+    }
+    snprintf(tmp, sizeof tmp, "%shave=%d need=%d", wrote ? " " : "", f->have, f->need);
     buf_puts(b, tmp);
     if (f->fields.n) { buf_puts(b, " fields="); enc_bag(b, &f->fields); }
 }
@@ -1195,13 +1213,12 @@ static int parse_qfill(const kt_arg *args, int n, kt_qfill *out, char *err) {
     for (int i = 0; i < n; i++) {
         const kt_arg *a = &args[i];
         const char *nm = a->name ? a->name : "";
-        if (!strcmp(nm, "tag") || !strcmp(nm, "have") || !strcmp(nm, "need")) {
+        if (!strcmp(nm, "have") || !strcmp(nm, "need")) {
             if (!a->has_value || a->kind != 0) {
                 qfail(err, "%s: expected a whole number", nm);
                 goto bad;
             }
-            if (!strcmp(nm, "tag")) out->tag = a->ival;
-            else if (!strcmp(nm, "have")) out->have = (int)a->ival;
+            if (!strcmp(nm, "have")) out->have = (int)a->ival;
             else out->need = (int)a->ival;
         } else if (!strcmp(nm, "from") || !strcmp(nm, "to") || !strcmp(nm, "fields")) {
             kt_bag bag;
@@ -1282,15 +1299,24 @@ typedef struct {
     void *ud;
 } kt_handler;
 
-/* One query this application hosts, and what answers for it. */
-typedef struct {
-    uint64_t id;
-    kt_fill_cb fill;      void *fill_ud;
-    kt_respec_cb respec;  void *respec_ud;
-    kt_hstmt_cb other;    void *other_ud;
+/* A body of records this application can serve, and what answers a window of
+ * it. A name, not an object: nothing about registering one crosses the wire. */
+struct kt_source {
+    kt_conn *c;
+    char *name;
+    kt_fill_cb fill;       void *fill_ud;
+    kt_respec_cb respec;   void *respec_ud;
+    kt_hstmt_cb other;     void *other_ud;
     kt_dropped_cb dropped; void *dropped_ud;
+};
+
+/* One sequence of a source's records that a display is reading. The display
+ * opens it; this application names it. */
+struct kt_query {
+    uint64_t id;
+    kt_source *source;
     kt_qspec spec;
-} kt_hosted;
+};
 
 struct kt_conn {
     kt_socket fd;
@@ -1334,9 +1360,15 @@ struct kt_conn {
     evnode *ihead, *itail;
     int istop;
 
-    /* What this connection holds on the application's behalf, by the id the
-     * display addresses it by. Guarded by hmu, with the handlers. */
-    kt_hosted *hosted; int nhosted;
+    /* What this application serves, and what the display is currently reading
+     * of it. Guarded by hmu, with the handlers.
+     *
+     * last_hosted_id names the queries in this application's own space: each
+     * end mints its own ids, and the direction a statement travelled says
+     * whose space it is in, so the two never have to be told apart. */
+    kt_source **sources; int nsources;
+    kt_query **queries;  int nqueries;
+    uint64_t last_hosted_id;
 
     kt_mutex hmu;
     kt_handler *handlers; int nh, caph;
@@ -1401,6 +1433,22 @@ static long conn_read(kt_conn *c, void *buf, size_t n) {
     }
 #endif
     return recv(c->fd, buf, (int)n, 0);
+}
+
+static int conn_write_all(kt_conn *c, const void *buf, size_t n);
+
+/* Write without waiting for anything back, which is what the reverse direction
+ * needs: this is the end answering, not asking. */
+static int conn_send(kt_conn *c, const char *src) {
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    buf_puts(&b, src);
+    buf_put(&b, '\n');
+    kt_mutex_lock(&c->write_mu);
+    int rc = conn_write_all(c, b.p, b.len);
+    kt_mutex_unlock(&c->write_mu);
+    free(b.p);
+    return rc;
 }
 
 static int conn_write_all(kt_conn *c, const void *buf, size_t n) {
@@ -1588,24 +1636,23 @@ static void mark_closed(kt_conn *c) {
     kt_mutex_unlock(&c->imu);
 }
 
-/* --- hosting a query: the questions, and where the answer is written ---
+/* --- serving a query: the questions, and where the answer is written ---
  *
  * The statement is taken apart before the application's callback sees it, so
  * nothing in that callback parses anything. The answer goes into a sink that
- * flushes as it fills, so a fill larger than one message is neither held whole
- * in memory nor one uninterruptible stretch of work.
+ * flushes as it fills, so a window larger than one message is neither held
+ * whole in memory nor one uninterruptible stretch of work.
  */
 
-/* How much answer accumulates before it goes out on its own. It trades round
- * trips against how long a record waits: big enough that a fill of a screenful
- * is one message, small enough that a fill of a million records is not held in
- * memory. */
+/* How much answer accumulates before it goes out on its own. It trades write
+ * syscalls against how long a record waits: big enough that a window of a
+ * screenful is one message, small enough that a window of a million records is
+ * not held in memory. */
 #define KT_FLUSH_BYTES (16 * 1024)
 
 struct kt_fill {
     kt_conn *c;
     uint64_t query;
-    long long tag;
     kt_mutex mu;
     kt_buf buf;
     int sent, ordered;
@@ -1622,36 +1669,74 @@ static void enqueue_inbound(kt_conn *c, const char *text) {
     kt_mutex_unlock(&c->imu);
 }
 
-/* The object a statement is addressed to: the leading operand, which is a bare
- * id. Returns 0 when the statement is addressed to nothing, which is also how
- * a describe line -- `ask of="..." name="..."` -- is told from a question put
- * to something this application hosts. */
-static uint64_t hosted_target(const kt_stmt *st) {
-    if (st->n < 1) return 0;
-    const kt_arg *a = &st->args[0];
-    if ((a->name && *a->name) || !a->has_value || a->kind != 0 || a->ival < 0) return 0;
-    return (uint64_t)a->ival;
-}
+/* --- the two tables, both under hmu --- */
 
-/* Called under hmu. */
-static kt_hosted *hosted_find(kt_conn *c, uint64_t id) {
-    for (int i = 0; i < c->nhosted; i++)
-        if (c->hosted[i].id == id) return &c->hosted[i];
+static kt_source *source_named(kt_conn *c, const char *name) {
+    for (int i = 0; i < c->nsources; i++)
+        if (!strcmp(c->sources[i]->name, name)) return c->sources[i];
     return NULL;
 }
 
-static kt_fill *fill_new(kt_conn *c, uint64_t query, long long tag) {
+static kt_query *query_with(kt_conn *c, uint64_t id) {
+    for (int i = 0; i < c->nqueries; i++)
+        if (c->queries[i]->id == id) return c->queries[i];
+    return NULL;
+}
+
+static void query_release(kt_query *q) {
+    qspec_release(&q->spec);
+    free(q);
+}
+
+kt_source *kt_host_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud) {
+    if (!c || !name || !*name || !cb) return NULL;
+    kt_source *s = calloc(1, sizeof *s);
+    s->c = c;
+    s->name = strdup(name);
+    s->fill = cb;
+    s->fill_ud = ud;
+    kt_mutex_lock(&c->hmu);
+    c->sources = realloc(c->sources, (c->nsources + 1) * sizeof(kt_source *));
+    c->sources[c->nsources++] = s;
+    kt_mutex_unlock(&c->hmu);
+    return s;
+}
+
+const char *kt_source_name(const kt_source *s) { return s ? s->name : NULL; }
+
+void kt_source_on_respec(kt_source *s, kt_respec_cb cb, void *ud) {
+    if (!s) return;
+    kt_mutex_lock(&s->c->hmu);
+    s->respec = cb; s->respec_ud = ud;
+    kt_mutex_unlock(&s->c->hmu);
+}
+
+void kt_source_on_dropped(kt_source *s, kt_dropped_cb cb, void *ud) {
+    if (!s) return;
+    kt_mutex_lock(&s->c->hmu);
+    s->dropped = cb; s->dropped_ud = ud;
+    kt_mutex_unlock(&s->c->hmu);
+}
+
+void kt_source_on_statement(kt_source *s, kt_hstmt_cb cb, void *ud) {
+    if (!s) return;
+    kt_mutex_lock(&s->c->hmu);
+    s->other = cb; s->other_ud = ud;
+    kt_mutex_unlock(&s->c->hmu);
+}
+
+uint64_t kt_query_id(const kt_query *q) { return q ? q->id : 0; }
+const kt_source *kt_query_source(const kt_query *q) { return q ? q->source : NULL; }
+const kt_qspec *kt_query_spec(const kt_query *q) { return q ? &q->spec : NULL; }
+
+/* --- the sink --- */
+
+static kt_fill *fill_new(kt_conn *c, uint64_t query) {
     kt_fill *f = calloc(1, sizeof *f);
     f->c = c;
     f->query = query;
-    f->tag = tag;
     kt_mutex_init(&f->mu);
     return f;
-}
-
-static void fill_release(kt_fill *f) {
-    free(f->buf.p);
-    free(f);
 }
 
 /* Empty the buffer and hand back what was in it. Called under f->mu. */
@@ -1662,26 +1747,27 @@ static char *fill_take(kt_fill *f) {
     return src;
 }
 
+static int conn_send(kt_conn *c, const char *src);
+
 static int fill_send(kt_fill *f, char *src) {
     int rc = 0;
-    if (src && *src) rc = do_exec(f->c, src, NULL, NULL, NULL);
+    if (src && *src) rc = conn_send(f->c, src);
     free(src);
     return rc;
 }
 
-/* The head of an answering statement: which query, and the tag of the fill it
- * answers, so a late answer is still placeable. */
-static void fill_head(kt_fill *f, kt_buf *b, const char *event) {
-    char tmp[96];
-    snprintf(tmp, sizeof tmp, "event %s query=%llu tag=%lld",
-             event, (unsigned long long)f->query, f->tag);
+/* The head of a result: the query it belongs to, addressed the way every other
+ * statement addresses an object. */
+static void fill_head(kt_fill *f, kt_buf *b) {
+    char tmp[64];
+    snprintf(tmp, sizeof tmp, "result %llu", (unsigned long long)f->query);
     buf_puts(b, tmp);
 }
 
 int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
     kt_buf b;
     memset(&b, 0, sizeof b);
-    fill_head(f, &b, "query_record");
+    fill_head(f, &b);
     buf_puts(&b, " fields={ ");
     buf_puts(&b, KT_KEY_FIELD);
     buf_put(&b, ' ');
@@ -1736,16 +1822,23 @@ static int fill_finish(kt_fill *f, const char *tail) {
     kt_mutex_lock(&f->mu);
     kt_buf b;
     memset(&b, 0, sizeof b);
-    fill_head(f, &b, "query_filled");
+    fill_head(f, &b);
+    /* `complete` ends the window; `ordered` rides on it, so it can be decided
+     * after the records have been produced rather than promised before. */
+    buf_puts(&b, " complete");
     if (f->ordered) buf_puts(&b, " ordered");
     if (tail) buf_puts(&b, tail);
     if (f->buf.len) buf_put(&f->buf, '\n');
-    buf_puts(&f->buf, b.p ? b.p : "");
+    /* buf_dup, not b.p: a kt_buf holds a length and is not NUL-terminated. */
+    char *line = buf_dup(&b);
+    buf_puts(&f->buf, line);
+    free(line);
     free(b.p);
     char *src = fill_take(f);
     kt_mutex_unlock(&f->mu);
     int rc = fill_send(f, src);
-    fill_release(f);
+    free(f->buf.p);
+    free(f);
     return rc;
 }
 
@@ -1779,188 +1872,296 @@ int kt_fill_fail(kt_fill *f, const char *message) {
     return rc;
 }
 
-/* Route one statement the display addressed to something this connection
- * hosts. Runs on the inbound thread: answering a fill executes statements, and
- * those need the reader free to route their replies. */
-static void dispatch_hosted(kt_conn *c, kt_stmt *st, const char *text) {
-    uint64_t id = hosted_target(st);
-    if (!id) return;
+/* --- running a batch the display sent --- */
+
+/* One thing to do once the batch has been replied to. */
+typedef struct {
+    int kind;            /* 0=fill 1=respec 2=dropped 3=other */
+    kt_query *q;
+    kt_fill *sink;
+    kt_qfill req;
+    char *text;
+} kt_deferred;
+
+typedef struct {
+    kt_pair *keys; int nkeys;     /* what this batch surfaced, before the reply */
+    kt_pair *ids;  int nids;      /* what the reply carries */
+    kt_deferred *todo; int ntodo;
+    char err[KT_QERR];
+} kt_batch;
+
+static void batch_key(kt_batch *b, const char *name, uint64_t id) {
+    b->keys = realloc(b->keys, (b->nkeys + 1) * sizeof(kt_pair));
+    b->keys[b->nkeys].name = strdup(name);
+    b->keys[b->nkeys].id = id;
+    b->nkeys++;
+    b->ids = realloc(b->ids, (b->nids + 1) * sizeof(kt_pair));
+    b->ids[b->nids].name = strdup(name);
+    b->ids[b->nids].id = id;
+    b->nids++;
+}
+
+static void batch_defer(kt_batch *b, kt_deferred d) {
+    b->todo = realloc(b->todo, (b->ntodo + 1) * sizeof(kt_deferred));
+    b->todo[b->ntodo++] = d;
+}
+
+/* The object a statement is addressed to: a bare id, or a key this same batch
+ * surfaced -- which is what lets a display open a query and address it again
+ * without waiting for the reply. 0 when it is addressed to nothing. */
+static uint64_t hosted_target(const kt_stmt *st, const kt_batch *b) {
+    if (st->n < 1) return 0;
+    const kt_arg *a = &st->args[0];
+    if (!(a->name && *a->name) && a->has_value && a->kind == 0 && a->ival >= 0)
+        return (uint64_t)a->ival;
+    if (b && !a->has_value && a->flag == KT_FLAG_TRUE && a->name) {
+        for (int i = 0; i < b->nkeys; i++)
+            if (!strcmp(b->keys[i].name, a->name)) return b->keys[i].id;
+    }
+    return 0;
+}
+
+/* Take a request for one window apart and queue serving it. */
+static int batch_window(kt_conn *c, kt_batch *b, kt_query *q,
+                        const kt_arg *args, int n) {
+    kt_deferred d;
+    memset(&d, 0, sizeof d);
+    d.kind = 0;
+    d.q = q;
+    if (!parse_qfill(args, n, &d.req, b->err)) return 0;
+    d.sink = fill_new(c, q->id);
+    batch_defer(b, d);
+    return 1;
+}
+
+/* Make a query and ask it for its first window, which is one statement because
+ * the display never wants a sequence without wanting rows of it.
+ *
+ * The application names it. The display has no id to offer -- ids here are the
+ * application's own -- so the reply is what carries it back. */
+static int batch_open(kt_conn *c, kt_batch *b, const kt_stmt *st) {
+    if (st->n < 1 || st->args[0].has_value || st->args[0].flag != KT_FLAG_TRUE) {
+        qfail(b->err, "new: expected a type");
+        return 0;
+    }
+    if (strcmp(st->args[0].name, "query") != 0) {
+        qfail(b->err, "new: I host nothing called \"%s\"", st->args[0].name);
+        return 0;
+    }
+    const kt_arg *args = st->n > 1 ? &st->args[1] : NULL;
+    int n = st->n - 1;
+
+    kt_qspec spec;
+    if (!parse_qspec(args, n, &spec, b->err)) return 0;
 
     kt_mutex_lock(&c->hmu);
-    kt_hosted *h = hosted_find(c, id);
-    if (!h) { kt_mutex_unlock(&c->hmu); return; }
-    kt_fill_cb fill = h->fill; void *fill_ud = h->fill_ud;
-    kt_respec_cb respec = h->respec; void *respec_ud = h->respec_ud;
-    kt_hstmt_cb other = h->other; void *other_ud = h->other_ud;
-    kt_dropped_cb dropped = h->dropped; void *dropped_ud = h->dropped_ud;
+    kt_source *source = source_named(c, spec.source);
+    if (!source) {
+        kt_mutex_unlock(&c->hmu);
+        qfail(b->err, "query: I serve nothing called \"%s\"", spec.source);
+        qspec_release(&spec);
+        return 0;
+    }
+    kt_query *q = calloc(1, sizeof *q);
+    q->id = ++c->last_hosted_id;
+    q->source = source;
+    q->spec = spec;
+    c->queries = realloc(c->queries, (c->nqueries + 1) * sizeof(kt_query *));
+    c->queries[c->nqueries++] = q;
     kt_mutex_unlock(&c->hmu);
 
+    return batch_window(c, b, q, args, n);
+}
+
+/* Route one statement. Anything meant to answer with records is deferred, so
+ * the batch is replied to first. */
+static int batch_one(kt_conn *c, kt_batch *b, const kt_stmt *st, const char *text) {
+    if (!strcmp(st->verb, "new")) return batch_open(c, b, st);
+
+    uint64_t id = hosted_target(st, b);
     const kt_arg *rest = st->n > 1 ? &st->args[1] : NULL;
     int nrest = st->n - 1;
-    char err[KT_QERR];
-    err[0] = '\0';
 
-    if (strcmp(st->verb, "ask") == 0 && nrest > 0 && !rest[0].has_value
-        && rest[0].flag == KT_FLAG_TRUE && rest[0].name
-        && strcmp(rest[0].name, "fill") == 0) {
-        kt_qfill req;
-        if (!parse_qfill(rest + 1, nrest - 1, &req, err)) {
-            /* The tag is in the request that would not parse, so there is
-             * nothing to stamp a refusal with. Say so where it can be seen
-             * rather than dropping the question on the floor. */
-            kt_fill_fail(fill_new(c, id, 0), err);
-            return;
-        }
+    if (!strcmp(st->verb, "query")) {
+        if (!id) { qfail(b->err, "query: expected the query to ask"); return 0; }
         kt_mutex_lock(&c->hmu);
-        h = hosted_find(c, id);
-        req.spec = h ? &h->spec : NULL;
-        kt_fill *sink = fill_new(c, id, req.tag);
+        kt_query *q = query_with(c, id);
         kt_mutex_unlock(&c->hmu);
-        if (fill) fill(&req, sink, fill_ud);
-        else kt_fill_fail(sink, "this query has nothing to fill it");
-        qfill_release(&req);
-        return;
+        if (!q) { qfail(b->err, "query %llu: no query of mine", (unsigned long long)id); return 0; }
+        return batch_window(c, b, q, rest, nrest);
+    }
+    if (!id) return 1;  /* not addressed to anything this application holds */
+
+    kt_mutex_lock(&c->hmu);
+    kt_query *q = query_with(c, id);
+    kt_mutex_unlock(&c->hmu);
+    if (!q) {
+        qfail(b->err, "%s %llu: no query of mine", st->verb, (unsigned long long)id);
+        return 0;
     }
 
-    if (strcmp(st->verb, "set") == 0) {
+    kt_deferred d;
+    memset(&d, 0, sizeof d);
+    d.q = q;
+    if (!strcmp(st->verb, "set")) {
         kt_qspec spec;
-        if (parse_qspec(rest, nrest, &spec, err)) {
-            kt_mutex_lock(&c->hmu);
-            h = hosted_find(c, id);
-            if (h) { qspec_release(&h->spec); h->spec = spec; }
-            kt_mutex_unlock(&c->hmu);
-            if (!h) qspec_release(&spec);
-            else if (respec) respec(&spec, respec_ud);
-            return;
-        }
-    }
-
-    if (strcmp(st->verb, "destroy") == 0) {
+        if (!parse_qspec(rest, nrest, &spec, b->err)) return 0;
         kt_mutex_lock(&c->hmu);
-        for (int i = 0; i < c->nhosted; i++) {
-            if (c->hosted[i].id != id) continue;
-            qspec_release(&c->hosted[i].spec);
-            c->hosted[i] = c->hosted[--c->nhosted];
+        qspec_release(&q->spec);
+        q->spec = spec;
+        kt_mutex_unlock(&c->hmu);
+        d.kind = 1;
+        batch_defer(b, d);
+        return 1;
+    }
+    if (!strcmp(st->verb, "destroy")) {
+        kt_mutex_lock(&c->hmu);
+        for (int i = 0; i < c->nqueries; i++) {
+            if (c->queries[i] != q) continue;
+            c->queries[i] = c->queries[--c->nqueries];
             break;
         }
         kt_mutex_unlock(&c->hmu);
-        if (dropped) dropped(dropped_ud);
-        return;
+        d.kind = 2;
+        batch_defer(b, d);
+        return 1;
     }
-
-    if (other) {
-        /* The statement as it was scanned, without the newline that separated
-         * it from the next: what reaches a handler is the statement, not the
-         * ragged end of a read. */
-        size_t n = strlen(text);
-        while (n && (text[n - 1] == '\n' || text[n - 1] == '\r')) n--;
-        char *trimmed = dupn(text, n);
-        other(trimmed, other_ud);
-        free(trimmed);
-    }
+    d.kind = 3;
+    d.text = strdup(text);
+    batch_defer(b, d);
+    return 1;
 }
 
+/* Run one batch the display sent, answer it, and then produce whatever records
+ * it asked for.
+ *
+ * The reply goes out before any result does, because the reply is what names a
+ * query the display has not heard of yet. That ordering is not policy: the
+ * application mints the id, so it writes it before anything that carries it. */
+static void run_batch(kt_conn *c, kt_stmt *stmts, const char **texts, int n) {
+    kt_batch b;
+    memset(&b, 0, sizeof b);
+    int ok = 1;
+
+    for (int i = 0; i < n; i++) {
+        kt_stmt *st = &stmts[i];
+        if (ok && !batch_one(c, &b, st, texts[i])) ok = 0;
+        if (ok && !strcmp(st->verb, "new") && st->key && b.ntodo > 0)
+            batch_key(&b, st->key, b.todo[b.ntodo - 1].q->id);
+    }
+
+    kt_buf out;
+    memset(&out, 0, sizeof out);
+    if (!ok) {
+        buf_puts(&out, "error text=");
+        char *q = kt_quote(b.err);
+        buf_puts(&out, q);
+        free(q);
+    } else {
+        buf_puts(&out, "reply");
+        for (int i = 0; i < b.nids; i++) {
+            char tmp[128];
+            snprintf(tmp, sizeof tmp, " %s=%llu", b.ids[i].name,
+                     (unsigned long long)b.ids[i].id);
+            buf_puts(&out, tmp);
+        }
+    }
+    buf_puts(&out, "\nend");
+    char *line = buf_dup(&out);
+    free(out.p);
+    conn_send(c, line);
+    free(line);
+
+    for (int i = 0; i < b.ntodo; i++) {
+        kt_deferred *d = &b.todo[i];
+        kt_source *s = d->q->source;
+        kt_mutex_lock(&c->hmu);
+        kt_fill_cb fill = s->fill;         void *fill_ud = s->fill_ud;
+        kt_respec_cb respec = s->respec;   void *respec_ud = s->respec_ud;
+        kt_dropped_cb drop = s->dropped;   void *drop_ud = s->dropped_ud;
+        kt_hstmt_cb other = s->other;      void *other_ud = s->other_ud;
+        kt_mutex_unlock(&c->hmu);
+
+        switch (d->kind) {
+        case 0:
+            d->req.spec = &d->q->spec;
+            if (ok && fill) fill(d->q, &d->req, d->sink, fill_ud);
+            else kt_fill_fail(d->sink, ok ? "this source has nothing to fill it" : b.err);
+            qfill_release(&d->req);
+            break;
+        case 1:
+            if (respec) respec(d->q, &d->q->spec, respec_ud);
+            break;
+        case 2:
+            if (drop) drop(d->q, drop_ud);
+            query_release(d->q);
+            break;
+        case 3:
+            if (other) other(d->q, d->text, other_ud);
+            free(d->text);
+            break;
+        }
+    }
+    for (int i = 0; i < b.nkeys; i++) free(b.keys[i].name);
+    for (int i = 0; i < b.nids; i++) free(b.ids[i].name);
+    free(b.keys);
+    free(b.ids);
+    free(b.todo);
+}
+
+/* The inbound thread: batches the display sent, in the order they arrived. A
+ * thread of its own rather than the event one, because serving a window can
+ * take as long as the records take and a list nobody is looking at must not
+ * hold up a click. */
 static void *inbound_loop(void *arg) {
     kt_conn *c = arg;
+    kt_stmt *stmts = NULL;
+    char **texts = NULL;
+    int n = 0, cap = 0;
     for (;;) {
         kt_mutex_lock(&c->imu);
         while (!c->ihead && !c->istop) kt_cond_wait(&c->icv, &c->imu);
-        if (!c->ihead && c->istop) { kt_mutex_unlock(&c->imu); return NULL; }
-        evnode *n = c->ihead;
-        c->ihead = n->next;
+        if (!c->ihead && c->istop) { kt_mutex_unlock(&c->imu); break; }
+        evnode *node = c->ihead;
+        c->ihead = node->next;
         if (!c->ihead) c->itail = NULL;
         kt_mutex_unlock(&c->imu);
 
-        kt_stmt *st = parse_statement(n->text);
-        if (st) { dispatch_hosted(c, st, n->text); stmt_free(st); }
-        free(n->text);
-        free(n);
+        if (!strcmp(node->text, "end")) {
+            if (n) {
+                run_batch(c, stmts, (const char **)texts, n);
+                for (int i = 0; i < n; i++) { stmt_parts_free(&stmts[i]); free(texts[i]); }
+                n = 0;
+            }
+        } else {
+            kt_stmt *st = parse_statement(node->text);
+            if (st) {
+                if (n + 1 > cap) {
+                    cap = cap ? cap * 2 : 8;
+                    stmts = realloc(stmts, cap * sizeof(kt_stmt));
+                    texts = realloc(texts, cap * sizeof(char *));
+                }
+                stmts[n] = *st;
+                /* The statement as it was scanned, without the newline that
+                 * separated it from the next: what reaches a handler is the
+                 * statement, not the ragged end of a read. */
+                {
+                    size_t len = strlen(node->text);
+                    while (len && (node->text[len - 1] == '\n' ||
+                                   node->text[len - 1] == '\r')) len--;
+                    texts[n] = dupn(node->text, len);
+                }
+                n++;
+                free(st);
+            }
+        }
+        free(node->text);
+        free(node);
     }
-}
-
-uint64_t kt_host_query(kt_conn *c, const char *spec_args, kt_fill_cb cb, void *ud) {
-    if (!c || !cb) return 0;
-    kt_buf b;
-    memset(&b, 0, sizeof b);
-    buf_puts(&b, "q=new query");
-    if (spec_args && *spec_args) { buf_put(&b, ' '); buf_puts(&b, spec_args); }
-    char *src = buf_dup(&b);
-    free(b.p);
-
-    kt_ui ids;
-    memset(&ids, 0, sizeof ids);
-    int rc = do_exec(c, src, &ids, NULL, NULL);
-    free(src);
-    if (rc != 0) { free(ids.pairs); return 0; }
-    uint64_t id = kt_ui_id(&ids, "q");
-    for (int i = 0; i < ids.n; i++) free(ids.pairs[i].name);
-    free(ids.pairs);
-    if (!id) return 0;
-
-    /* The spec as the application wrote it, kept so a fill can hand it over
-     * without the application having to have stashed it. */
-    kt_qspec spec;
-    memset(&spec, 0, sizeof spec);
-    kt_buf sb;
-    memset(&sb, 0, sizeof sb);
-    buf_puts(&sb, "spec ");
-    if (spec_args) buf_puts(&sb, spec_args);
-    char *text = buf_dup(&sb);
-    free(sb.p);
-    kt_stmt *st = parse_statement(text);
-    free(text);
-    if (st) {
-        char err[KT_QERR];
-        err[0] = '\0';
-        if (!parse_qspec(st->args, st->n, &spec, err)) memset(&spec, 0, sizeof spec);
-        stmt_free(st);
-    }
-
-    kt_mutex_lock(&c->hmu);
-    c->hosted = realloc(c->hosted, (c->nhosted + 1) * sizeof(kt_hosted));
-    kt_hosted *h = &c->hosted[c->nhosted++];
-    memset(h, 0, sizeof *h);
-    h->id = id;
-    h->fill = cb;
-    h->fill_ud = ud;
-    h->spec = spec;
-    kt_mutex_unlock(&c->hmu);
-    return id;
-}
-
-void kt_query_on_respec(kt_conn *c, uint64_t query, kt_respec_cb cb, void *ud) {
-    kt_mutex_lock(&c->hmu);
-    kt_hosted *h = hosted_find(c, query);
-    if (h) { h->respec = cb; h->respec_ud = ud; }
-    kt_mutex_unlock(&c->hmu);
-}
-
-void kt_query_on_dropped(kt_conn *c, uint64_t query, kt_dropped_cb cb, void *ud) {
-    kt_mutex_lock(&c->hmu);
-    kt_hosted *h = hosted_find(c, query);
-    if (h) { h->dropped = cb; h->dropped_ud = ud; }
-    kt_mutex_unlock(&c->hmu);
-}
-
-void kt_query_on_statement(kt_conn *c, uint64_t query, kt_hstmt_cb cb, void *ud) {
-    kt_mutex_lock(&c->hmu);
-    kt_hosted *h = hosted_find(c, query);
-    if (h) { h->other = cb; h->other_ud = ud; }
-    kt_mutex_unlock(&c->hmu);
-}
-
-int kt_query_destroy(kt_conn *c, uint64_t query) {
-    kt_mutex_lock(&c->hmu);
-    for (int i = 0; i < c->nhosted; i++) {
-        if (c->hosted[i].id != query) continue;
-        qspec_release(&c->hosted[i].spec);
-        c->hosted[i] = c->hosted[--c->nhosted];
-        break;
-    }
-    kt_mutex_unlock(&c->hmu);
-    char src[64];
-    snprintf(src, sizeof src, "destroy %llu", (unsigned long long)query);
-    return do_exec(c, src, NULL, NULL, NULL);
+    for (int i = 0; i < n; i++) { stmt_parts_free(&stmts[i]); free(texts[i]); }
+    free(stmts);
+    free(texts);
+    return NULL;
 }
 
 static void *read_loop(void *arg) {
@@ -2009,18 +2210,25 @@ static void *read_loop(void *arg) {
              * stream's record of an event a type CAN raise, which leads with
              * of="...". The first argument tells them apart. */
             enqueue_event(c, text);
-        } else if ((strcmp(st->verb, "set") == 0 ||
-                    strcmp(st->verb, "destroy") == 0 ||
-                    strcmp(st->verb, "sub") == 0 ||
-                    strcmp(st->verb, "unsub") == 0 ||
-                    strcmp(st->verb, "ask") == 0 ||
-                    strcmp(st->verb, "do") == 0) && hosted_target(st) != 0) {
-            /* The other direction: the display addressing something this
-             * application hosts. Two different lines start with `ask` and with
-             * `do` -- a question put to a hosted object, and the describe
-             * stream's record of a question a type CAN answer -- and it is
-             * being addressed to an object that tells them apart. */
+        } else if (strcmp(st->verb, "new") == 0 ||
+                   strcmp(st->verb, "query") == 0 ||
+                   ((strcmp(st->verb, "set") == 0 ||
+                     strcmp(st->verb, "destroy") == 0 ||
+                     strcmp(st->verb, "sub") == 0 ||
+                     strcmp(st->verb, "unsub") == 0 ||
+                     strcmp(st->verb, "ask") == 0 ||
+                     strcmp(st->verb, "do") == 0) && hosted_target(st, NULL) != 0)) {
+            /* The other direction: the display making, asking after, or letting
+             * go of something this application holds. Two different lines start
+             * with `ask` and with `do` -- a question put to an object, and the
+             * describe stream's record of a question a type CAN answer -- and
+             * being addressed to an object is what tells them apart.
+             *
+             * Gathered by the inbound thread until `end`, because a batch is
+             * what gets a reply. */
             enqueue_inbound(c, text);
+        } else if (strcmp(st->verb, "end") == 0) {
+            enqueue_inbound(c, "end");
         } else if (strcmp(st->verb, "proptype") == 0 ||
                    strcmp(st->verb, "prop") == 0 ||
                    strcmp(st->verb, "propcommon") == 0 ||

@@ -159,12 +159,19 @@ int kt_blob_replace(kt_conn *c, uint64_t blob, const void *data, size_t n);
 int kt_blob_read(kt_conn *c, uint64_t blob, long long offset);
 int kt_blob_drop(kt_conn *c, uint64_t blob);
 
-/* --- hosting a query --------------------------------------------------
+/* --- serving a query --------------------------------------------------
  *
  * Everything above points one way: the application says `new`, `set`, `ask`,
- * `do`, and the display answers with events. A query points the other way. The
- * application holds records the display cannot see, so the display asks -- and
- * this is where those questions arrive.
+ * `do`, and the display raises events at it. A query points the other way.
+ * Only the display knows a query is wanted and what it is -- the sort comes
+ * from the column header somebody clicked, the filter from the filter box, the
+ * window from the scroll position -- so the display opens it, and the
+ * application, which is the end that holds the records, serves it.
+ *
+ * It arrives nowhere near the event line. `query` is answered by `result`,
+ * `ask` by `answer`, and `sub` -- or an object's mere existence -- by `event`;
+ * nothing carries two of them, so a request for records can never be mistaken
+ * for something a subscription raised.
  *
  * What an author has to write is one function: given a window of the sequence,
  * produce the records in it. The statement is taken apart before it gets here,
@@ -260,9 +267,12 @@ typedef struct {
  * is how many rows the window is. Emit every record of your own in (from..to],
  * and if that does not make up the shortfall, keep going past to until it does.
  *
+ * Nothing stamps it: the application's results and its replies travel one
+ * ordered stream, so a window's results are the ones between the reply that
+ * accepted it and the result that completes it.
+ *
  * It is valid for the length of the callback and freed after it returns. */
 typedef struct {
-    long long tag;
     kt_bag from, to;
     int have, need;
     kt_bag fields;           /* the fields wanted for this window; empty means the spec's */
@@ -313,39 +323,49 @@ int kt_fill_fail(kt_fill *f, const char *message);
 int kt_fill_flush(kt_fill *f);
 int kt_fill_sent(const kt_fill *f);
 
-typedef void (*kt_fill_cb)(const kt_qfill *req, kt_fill *sink, void *ud);
-typedef void (*kt_respec_cb)(const kt_qspec *spec, void *ud);
-typedef void (*kt_hstmt_cb)(const char *text, void *ud);
-typedef void (*kt_dropped_cb)(void *ud);
+/* One sequence of a source's records that a display is reading. The display
+   opens it; this application names it, because the ids in every statement that
+   follows are this application's own. */
+typedef struct kt_query kt_query;
 
-/* Announce a query this application hosts and register what answers its fills.
-   Returns the id the display addresses it by, or 0 on failure.
+typedef void (*kt_fill_cb)(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud);
+typedef void (*kt_respec_cb)(kt_query *q, const kt_qspec *spec, void *ud);
+typedef void (*kt_hstmt_cb)(kt_query *q, const char *text, void *ud);
+typedef void (*kt_dropped_cb)(kt_query *q, void *ud);
 
-   spec_args is the sequence written in the wire language -- `source="files"
-   sort={ name natural }` -- which is what the Go and Python clients build from
-   a struct and C is better off writing out. */
-uint64_t kt_host_query(kt_conn *c, const char *spec_args, kt_fill_cb cb, void *ud);
+/* A body of records this application can serve, under the name a display asks
+   for it by. It is not an object and has no id: the application says
+   `data="files"` on whatever trinket is to show it, and the display opens
+   queries against that name when somebody scrolls.
 
-/* A handler for the display restating the sequence: a re-sort, a new filter, a
-   different set of fields. A query that ignores this is still correct -- the
-   next fill carries the new spec -- so it is for applications with something
-   to tear down. */
-void kt_query_on_respec(kt_conn *c, uint64_t query, kt_respec_cb cb, void *ud);
+   Registering one says nothing on the wire. Returns NULL on failure. */
+typedef struct kt_source kt_source;
+kt_source *kt_host_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud);
+const char *kt_source_name(const kt_source *s);
 
-/* A handler for the display letting the query go. */
-void kt_query_on_dropped(kt_conn *c, uint64_t query, kt_dropped_cb cb, void *ud);
+/* A handler for the display restating a query's sequence: a re-sort, a new
+   filter, a different set of fields. A source that ignores this is still
+   correct -- the next window carries the new spec -- so it is for applications
+   with something to tear down. */
+void kt_source_on_respec(kt_source *s, kt_respec_cb cb, void *ud);
 
-/* A handler for anything else the display addresses to this query: a question
-   this library does not know, an action, a property it does not read. The
-   statement arrives as its text.
+/* A handler for the display letting a query go, which is how the application
+   learns it may drop the records it was holding for it. */
+void kt_source_on_dropped(kt_source *s, kt_dropped_cb cb, void *ud);
+
+/* A handler for anything else the display addresses to one of this source's
+   queries: a question this library does not know, an action, a property it
+   does not read. The statement arrives as its text.
 
    This is the seam a fuller library is built on. Coverage and invalidation
    both travel this way and neither is implemented here, so a library that
    wants them adds them without this one having to grow. */
-void kt_query_on_statement(kt_conn *c, uint64_t query, kt_hstmt_cb cb, void *ud);
+void kt_source_on_statement(kt_source *s, kt_hstmt_cb cb, void *ud);
 
-/* Tell the display the query is gone and stop answering for it. */
-int kt_query_destroy(kt_conn *c, uint64_t query);
+/* What a query is: which source it reads, and the sequence as it stands. */
+uint64_t kt_query_id(const kt_query *q);
+const kt_source *kt_query_source(const kt_query *q);
+const kt_qspec *kt_query_spec(const kt_query *q);
 
 /* --- introspection (describe, D24) ----------------------------------- */
 

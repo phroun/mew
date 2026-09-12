@@ -26,9 +26,11 @@ So the verbs go both ways, addressed to whichever end holds the object.
 mean, whichever direction they travel. There is no second vocabulary to learn
 and no reverse spelling of anything.
 
-**Events go from an object's host to its subscribers.** A trinket raising
-`clicked` at an application and an application's source raising `filled` at the
-display are one mechanism pointed two ways.
+**Events go from an object's host to its subscribers**, and answers go to
+whoever asked. `query` is answered by `result`, `ask` by `answer`, and `sub` --
+or an object's mere existence -- by `event`; nothing carries two of them,
+whichever direction it travels, so a request for data can never arrive looking
+like something a subscription raised.
 
 **Replies and errors.** A batch is answered by the end that received it, with
 the ids it surfaced. A statement that will not parse refuses its batch and
@@ -36,51 +38,55 @@ leaves the connection standing, exactly as it does today.
 
 ## What is different, and it is one rule
 
-**The display never says `new` to an application.**
+**Whoever holds an object names it.**
 
-An application creates every object it hosts, because the application is the
-end that bound data to a trinket in the first place. Every case that looked
-like it needed the display to create something turns out not to: two trinkets
-on one set of data are two objects the application made; a re-sort is a
-property change on one that exists; a tree expanding a node asks the object it
-already has, and the application answers with one it made.
+An application's objects have the application's ids, the display's have the
+display's, and each end mints its own. That works without partitioning any
+range because **the direction a statement travelled says whose space it is
+in**: a statement arriving at an application is about the application's
+objects, one arriving at the display is about the display's. Neither end ever
+has to ask whose number it is holding, and no range has to be reserved
+anywhere.
 
-The application says `new`; the display answers with an id, exactly as it does
-for a button. There is one allocator of ids and it is the display, so no range
-has to be reserved and no collision is possible — the only ids an application
-holds for its own objects are the ones it was handed.
-
-So a client library needs no type registry and no factory to take part.
-Receiving a statement is: find the object by id, apply a property, answer a
-question, perform an action. That is a few hundred lines in C, not a mirror of
-the toolkit.
-
-## Ids are resolved by whoever receives them
-
-An id means whatever it means **in the receiver's own space**, and the direction
-of travel says whose space that is: a statement arriving at an application is
-about the application's objects, one arriving at the display is about the
-display's. Neither end ever has to ask whose number it is holding, and no range
-has to be reserved anywhere — which holds trivially when the display is the one
-allocator, and would still hold if it ever stopped being.
+So when the display creates something an application will hold — and it does:
+only the display knows a list needs a query, and what sort and filter it wants
+— it has no id to offer. It says `new`, and **the reply carries the
+application's**, which is the same key-and-reply machinery a `new` in the other
+direction has always used, pointed the other way.
 
 The single place an id crosses is a property whose *value* refers to the other
 side, and that is settled by the property's declared kind rather than by the
 number.
 
-## How an application's object reaches the display
+A client library still needs no type registry and no factory to take part.
+Receiving a statement is: find the object by id, apply a property, answer a
+question, produce records. That is a few hundred lines in C, not a mirror of
+the toolkit.
 
-Through a property, like any other value:
+## Why the making is said out loud
+
+An object with a lifetime needs both ends of that lifetime spoken. The display
+opens a query when a list needs rows and destroys it when it is done with it
+entirely, and **`destroy` is how the application learns it may let the records
+go**. Without a `new` to pair with, there is nothing for that ending to end,
+and an application holding a large result set would never find out it could
+stop holding it.
+
+## How the display learns there is anything to ask
+
+Through a property, like any other value — and for a query, the value is a
+**name** rather than an id:
 
 ```
-mine=new <type>                   (app -> display: the app makes it)
-set <treeview> data=<mine>        (app -> display: the trinket is told where its data lives)
+set <treeview> data="files"       (app -> display: these rows are mine, under this name)
+q=new query source="files" ...    (display -> app: then serve me this sequence)
+reply q=9                         (app -> display: which I am calling 9)
 ```
 
-The trinket now holds an id belonging to the application, so everything it asks
-goes back across the wire. Nothing else about a property changed: a value that
-happens to be an object id is what `action`, `menu` and half the toolkit's
-properties already carry.
+So nothing is created until there is something to show, and the application
+registers a source by writing one line of its own UI script. Where a hosted
+type does need an object up front, the property carries its id instead, and the
+property's declared kind is what says the number belongs to the other side.
 
 ## What this does not change
 

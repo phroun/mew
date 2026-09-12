@@ -17,19 +17,21 @@ import (
 	"strings"
 )
 
-// The verb an application announces a query with, and the two the display
-// addresses it by afterwards.
+// The verb a display opens and refills a query with, and the verb the
+// application answers it with.
+//
+// Three pairs, and nothing carries two of them: `query` is answered by
+// `result`, `ask` by `answer`, and `sub` -- or an object's mere existence --
+// by `event`. So a record arriving for a list can never be mistaken for
+// something a subscription raised.
 const (
-	QueryType = "query"  // `q=new query ...`
-	AskFill   = "fill"   // `ask <q> fill ...`
-	KeyField  = "key"    // the record key, inside a field bag
-)
+	QueryVerb  = "query"  // `query 9 from={ ... } have=25 need=30`
+	ResultVerb = "result" // `result 9 fields={ ... }`
+	KeyField   = "key"    // the record key, inside a field bag
 
-// The events a query answers with. Both name the query they belong to and
-// carry back the tag of the fill they answer.
-const (
-	EventQueryRecord = "query_record"
-	EventQueryFilled = "query_filled"
+	// ResultComplete ends a window: everything for it has been sent. A result
+	// without it carries a record.
+	ResultComplete = "complete"
 )
 
 // The operators a filter is built from.
@@ -210,8 +212,12 @@ type Spec struct {
 // far it runs. Both are empty at the beginning of the sequence. Have is how
 // much of the window the display can fill from what it already holds, and Need
 // is how many rows the window is.
+//
+// Nothing stamps it. The application's results and its replies travel one
+// ordered stream, so a window's results are the ones between the reply that
+// accepted it and the result that completes it -- which is also what separates
+// the generation before a re-sort from the one after it.
 type Fill struct {
-	Tag    int64  // what the answer is stamped with, so a late one is placeable
 	From   Fields // empty: the start of the sequence
 	To     Fields // empty: nothing is known past From
 	Have   int
@@ -290,16 +296,13 @@ func ParseFill(args []*Arg) (*Fill, error) {
 	f := &Fill{}
 	for _, a := range args {
 		switch a.Name {
-		case "tag", "have", "need":
+		case "have", "need":
 			if a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt {
 				return nil, fmt.Errorf("%s: expected a whole number", a.Name)
 			}
-			switch a.Name {
-			case "tag":
-				f.Tag = a.Value.Int
-			case "have":
+			if a.Name == "have" {
 				f.Have = int(a.Value.Int)
-			case "need":
+			} else {
 				f.Need = int(a.Value.Int)
 			}
 		case "from", "to", "fields":
@@ -322,7 +325,7 @@ func ParseFill(args []*Arg) (*Fill, error) {
 
 // Encode renders the fill as the arguments after the question word.
 func (f *Fill) Encode() string {
-	parts := []string{fmt.Sprintf("tag=%d", f.Tag)}
+	var parts []string
 	if len(f.From) > 0 {
 		parts = append(parts, "from="+f.From.Encode())
 	}

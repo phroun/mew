@@ -2,10 +2,10 @@
 
 > **Status: a plan, with its first piece built.** The comparison core it stands
 > on is settled (`sort-and-filter.md`), the reverse direction it needs is
-> decided in shape (`app-hosted-objects.md`), and the filling half — the query
-> an application hosts, and the fills it answers — is implemented in all three
-> client libraries (`hosting-a-query.md`). Coverage and invalidation are not
-> built, and the open questions at the end are open.
+> decided (`app-hosted-objects.md`), and the filling half — the query a display
+> opens against an application, and the windows it serves — is implemented in
+> all three client libraries (`hosting-a-query.md`). Coverage and invalidation
+> are not built, and the open questions at the end are open.
 
 ## The pieces, and where each one lives
 
@@ -24,9 +24,10 @@ exists only when a data source has an application component, and its interface
 is deliberately much smaller than a view's.
 
 The display opens a **view** and manages position, generation, watermark and
-coverage. The application holds a **query**, which is just *which records, in
-what order*. Nothing about views reaches the application; it hears about its
-query and nothing else.
+coverage; it also opens the **query** on the application's side, because only
+it knows one is wanted and what sort and filter it carries. The application
+holds that query, names it, and answers windows of it. Nothing about views
+reaches the application; it hears about its query and nothing else.
 
 ## The query
 
