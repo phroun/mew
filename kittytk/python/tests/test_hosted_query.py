@@ -73,7 +73,7 @@ class ServingAQueryTest(unittest.TestCase):
         served = []
         c, _ = serve_one(lambda f: (served.append(f), f.exhausted()))
         send(c, 'q=new query source="files" sort={ name natural } have=0 need=30')
-        self.assertEqual(c.sent[0], "reply q=1\nend")
+        self.assertEqual(c.sent[0], "reply q=1")
         self.assertEqual(served[0].query.id(), 1)
         self.assertEqual(c.query(1).source().name(), "files")
 
@@ -88,7 +88,7 @@ class ServingAQueryTest(unittest.TestCase):
         c, _ = serve_one(fill)
         send(c, 'q=new query source="files" sort={ name natural } have=0 need=30')
         self.assertEqual("\n".join(c.sent), "\n".join([
-            "reply q=1\nend",
+            "reply q=1",
             'result 1 fields={ key 17; name "src/parser.go"; size 1024 }',
             'result 1 fields={ key 42; name "src/window.go"; size 2048 }',
             'result 1 complete ordered watermark={ name "src/window.go"; key 42 }',

@@ -54,7 +54,7 @@ func psiItem(t *testing.T, d *trinkets.Desktop, text string) *trinkets.MenuItem 
 }
 
 func TestNarrationIsOnTheSystemMenuBeforeConnections(t *testing.T) {
-	desktop, _, done := servedDesktop(t)
+	desktop, _, _, done := servedDesktop(t)
 	defer done()
 
 	// It is there, it ticks, and it sits directly before Connections.
@@ -90,7 +90,7 @@ func TestNarrationIsOnTheSystemMenuBeforeConnections(t *testing.T) {
 
 // Choosing it turns narration on, and choosing it again turns it off.
 func TestChoosingNarrationTurnsItOverAndTheTickFollows(t *testing.T) {
-	desktop, _, done := servedDesktop(t)
+	desktop, _, _, done := servedDesktop(t)
 	defer done()
 
 	item := psiItem(t, desktop, "Narration")
@@ -112,7 +112,7 @@ func TestChoosingNarrationTurnsItOverAndTheTickFollows(t *testing.T) {
 // which is what the about-to-show refresh is for, since the item is not what
 // changed it.
 func TestTheWireAndTheMenuAreTheSameSwitch(t *testing.T) {
-	desktop, sock, done := servedDesktop(t)
+	desktop, _, sock, done := servedDesktop(t)
 	defer done()
 
 	conn := dialSocket(t, sock, "Narrating App")
@@ -138,7 +138,7 @@ func TestTheWireAndTheMenuAreTheSameSwitch(t *testing.T) {
 
 // Two connections no longer fight over it: what one sets, the other sees.
 func TestTwoAppsShareTheOneSetting(t *testing.T) {
-	desktop, sock, done := servedDesktop(t)
+	desktop, _, sock, done := servedDesktop(t)
 	defer done()
 
 	a := dialSocket(t, sock, "App A")
@@ -234,7 +234,7 @@ mb=new menubar children={
 	}
 }`},
 	} {
-		desktop, sock, done := servedDesktop(t)
+		desktop, _, sock, done := servedDesktop(t)
 		conn := dialSocket(t, sock, "Menu App")
 		if _, err := conn.Exec(c.build); err != nil {
 			t.Fatalf("%s: %v", c.name, err)
@@ -261,7 +261,7 @@ mb=new menubar children={
 // A menu opens on an item, not on a rule. The separator that offsets the
 // system's items only belongs there when the app put something above it.
 func TestAnAppMenuDoesNotOpenWithASeparator(t *testing.T) {
-	desktop, sock, done := servedDesktop(t)
+	desktop, _, sock, done := servedDesktop(t)
 	defer done()
 
 	conn := dialSocket(t, sock, "Plain App")
@@ -284,7 +284,7 @@ func TestAnAppMenuDoesNotOpenWithASeparator(t *testing.T) {
 
 	// An app that declared its own items still gets the offset, because now
 	// there is something to offset from.
-	desktop2, sock2, done2 := servedDesktop(t)
+	desktop2, _, sock2, done2 := servedDesktop(t)
 	defer done2()
 	conn2 := dialSocket(t, sock2, "Declaring App")
 	if _, err := conn2.Exec(`w=new window title="W" width=200 height=120

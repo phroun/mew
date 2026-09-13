@@ -99,8 +99,8 @@ func TestTheApplicationNamesTheQuery(t *testing.T) {
 	})
 	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=30`)
 
-	if got := r.since(0)[0]; got != "reply q=1\nend" {
-		t.Errorf("the reply was\n  %s\nwant\n  reply q=1\nend", got)
+	if got := r.since(0)[0]; got != "reply q=1" {
+		t.Errorf("the reply was %q, want %q", got, "reply q=1")
 	}
 	if served == nil {
 		t.Fatal("the source was never asked for a window")
@@ -126,7 +126,7 @@ func TestTheReplyComesBeforeTheRecords(t *testing.T) {
 	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=30`)
 
 	got := strings.Join(r.since(0), "\n")
-	want := "reply q=1\nend\n" +
+	want := "reply q=1\n" +
 		`result 1 fields={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
 		`result 1 fields={ key 42; name "src/window.go"; size 2048 }` + "\n" +
 		`result 1 complete ordered watermark={ name "src/window.go"; key 42 }`

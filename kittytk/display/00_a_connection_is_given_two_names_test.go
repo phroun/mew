@@ -25,7 +25,7 @@ import (
 
 // servedDesktop runs a headless desktop with a display server on a socket, and
 // hands back the desktop, the socket, and how to stop it.
-func servedDesktop(t *testing.T) (*trinkets.Desktop, string, func()) {
+func servedDesktop(t *testing.T) (*trinkets.Desktop, *display.Server, string, func()) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
@@ -52,7 +52,7 @@ func servedDesktop(t *testing.T) (*trinkets.Desktop, string, func()) {
 	}
 
 	var once sync.Once
-	return desktop, sock, func() {
+	return desktop, srv, sock, func() {
 		once.Do(func() {
 			srv.Close()
 			desktop.Quit()
@@ -79,7 +79,7 @@ func dialSocket(t *testing.T, sock, appName string) *client.Conn {
 // dialDesktop runs a headless desktop and returns a connection to it.
 func dialDesktop(t *testing.T, appName string) *client.Conn {
 	t.Helper()
-	_, sock, done := servedDesktop(t)
+	_, _, sock, done := servedDesktop(t)
 	t.Cleanup(done)
 	return dialSocket(t, sock, appName)
 }

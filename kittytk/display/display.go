@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -128,6 +129,70 @@ type Server struct {
 	// TLSFingerprint is the host certificate's sha256:<hex> for tls://
 	// endpoints (what clients pin); empty otherwise.
 	TLSFingerprint string
+
+	// The connections currently served, so one can be found by the name its
+	// application goes under. Only the debug relay needs this; nothing about
+	// ordinary traffic reaches across connections.
+	connMu sync.Mutex
+	conns  []*conn
+
+	// relayEnabled opens the host's debug relay, which lets one connection put
+	// statements to another. It is off unless something turns it on, because
+	// it is a way for one application to speak as the display to another.
+	relayEnabled atomic.Bool
+}
+
+// isTruthy reads an environment switch the way every other one here is read.
+func isTruthy(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// RelayEnv opens the host's debug relay when set to a truthy value. It is the
+// only thing that turns it on by itself; a host with a surface of its own can
+// call SetRelayEnabled instead.
+const RelayEnv = "KITTYTK_DEBUG_RELAY"
+
+// SetRelayEnabled opens or closes the host's debug relay (`ask host relay`).
+// It is off until this is called: an application that can relay can address
+// another application's objects, which is the display's business and nobody
+// else's.
+func (s *Server) SetRelayEnabled(v bool) { s.relayEnabled.Store(v) }
+
+// RelayEnabled reports whether the debug relay is open.
+func (s *Server) RelayEnabled() bool { return s.relayEnabled.Load() }
+
+// connNamed is the live connection whose application goes under this name, and
+// nil for a name nothing is connected under.
+func (s *Server) connNamed(name string) *conn {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	for _, c := range s.conns {
+		if c.app != nil && c.app.Name() == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func (s *Server) addConn(c *conn) {
+	s.connMu.Lock()
+	s.conns = append(s.conns, c)
+	s.connMu.Unlock()
+}
+
+func (s *Server) dropConn(c *conn) {
+	s.connMu.Lock()
+	for i, other := range s.conns {
+		if other == c {
+			s.conns = append(s.conns[:i], s.conns[i+1:]...)
+			break
+		}
+	}
+	s.connMu.Unlock()
 }
 
 // SetPreTrustedOnly toggles lockdown: while true, connections that are
@@ -205,6 +270,9 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 	}
 	s.promptLocal.Store(cfg.PromptLocal)
 	s.preTrustedOnly.Store(cfg.PreTrustedOnly)
+	// The debug relay is off unless the environment opens it, because an
+	// application that can relay can address another application's objects.
+	s.relayEnabled.Store(isTruthy(os.Getenv(RelayEnv)))
 	// Narration is the desktop's setting; speaking it is this host's doing.
 	if runtime.GOOS == "darwin" {
 		desktop.SetSpeaker(speak)
@@ -316,6 +384,11 @@ type conn struct {
 	// whole display: its main window replaces the desktop entirely.
 	solo bool
 
+	// relayTo is the connection this one's answers are being shown to, set by
+	// the host's debug relay and nil the rest of the time.
+	relayMu sync.Mutex
+	relayTo *conn
+
 	// What the store was asked during a batch and will say when the batch is
 	// over: `set` runs with emission suppressed, so an answer to one waits here
 	// (see storeObject.answer).
@@ -423,6 +496,8 @@ func (s *Server) serveConn(nc net.Conn) {
 	// (A future step could re-prompt instead of rejecting.)
 	application.SetWireNameChangeAllowed(req.Local || s.store.allowsAllApps(req))
 	c.app = application
+	s.addConn(c)
+	defer s.dropConn(c)
 	c.session.RegisterAs(protocol.AppName, application)
 	s.desktop.Post(func() { s.desktop.AddApplication(application) })
 	defer s.desktop.Post(func() { c.teardown() })
@@ -470,6 +545,14 @@ func (s *Server) serveConn(nc net.Conn) {
 			dbg("batch read ended for app=%q: %v", appName, err)
 			return // disconnect -> deferred teardown
 		}
+		// An answer is not a request. When an application replies to
+		// something the display put to it, or produces the records a query
+		// asked for, those statements run against nothing and are answered by
+		// nothing -- they go to whoever is listening for them.
+		if answers(batch) {
+			c.relay(batch)
+			continue
+		}
 		dbg("executing batch (%d statements) for app=%q", len(batch), appName)
 		done := make(chan struct{})
 		s.desktop.Post(func() {
@@ -477,6 +560,52 @@ func (s *Server) serveConn(nc net.Conn) {
 			c.execute(batch)
 		})
 		<-done
+	}
+}
+
+// isAnswer reports whether a verb is something an application says back rather
+// than something it asks for.
+func isAnswer(verb string) bool {
+	switch verb {
+	case "reply", "error", protocol.ResultVerb:
+		return true
+	}
+	return false
+}
+
+// answers reports whether a whole batch is answering. One of those neither
+// runs nor is replied to; it goes to whoever put the question.
+func answers(batch []*protocol.Statement) bool {
+	if len(batch) == 0 {
+		return false
+	}
+	for _, stmt := range batch {
+		if !isAnswer(stmt.Verb) {
+			return false
+		}
+	}
+	return true
+}
+
+// relay hands an application's answers to whoever asked the display to put the
+// question -- the debug relay, and nothing else yet. When nobody is listening
+// they are dropped, which is what happens to an answer to a question the
+// display has stopped caring about.
+func (c *conn) relay(batch []*protocol.Statement) {
+	c.relayMu.Lock()
+	to := c.relayTo
+	c.relayMu.Unlock()
+	if to == nil {
+		dbg("answer from app=%q with nobody listening: %d statement(s)",
+			c.app.Name(), len(batch))
+		return
+	}
+	for _, stmt := range batch {
+		to.send(protocol.NewEvent(EventRelay).
+			WithUint("host", to.host.ID()).
+			WithString("from", c.app.Name()).
+			WithString("text", protocol.EncodeStatement(stmt)).
+			Encode())
 	}
 }
 
@@ -521,6 +650,14 @@ func readBatch(scanner *protocol.Scanner) ([]*protocol.Statement, error) {
 					return nil, &badBatch{bad}
 				}
 				return batch, nil
+			}
+			// An answer is not a batch and carries no terminator: a request is
+			// terminated by `end` and answered, and these are the answering.
+			// They arrive one at a time, the way events go the other way, so
+			// waiting for an `end` that is never coming would stop the
+			// connection dead.
+			if len(batch) == 0 && isAnswer(stmt.Verb) {
+				return []*protocol.Statement{stmt}, nil
 			}
 			batch = append(batch, stmt)
 		}

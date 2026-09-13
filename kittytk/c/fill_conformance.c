@@ -316,7 +316,7 @@ int main(void) {
     expect(seen_sort_levels == 1, "the spec's sort came with the window");
     char *answer = since(n);
     expect_str(answer,
-        "reply q=1\nend\n"
+        "reply q=1\n"
         "result 1 fields={ key 17; name \"src/parser.go\"; size 1024 }\n"
         "result 1 fields={ key 42; name \"src/window.go\"; size 2048 }\n"
         "result 1 complete ordered watermark={ name \"src/window.go\"; key 42 }",
@@ -381,7 +381,7 @@ int main(void) {
        say so. It says nothing about order, which leaves the display to sort. */
     n = sent_count();
     q = serve(fill_simplest, "have=0 need=10");
-    answer = since(n + 2);
+    answer = since(n + 1);
     char tmp[256];
     snprintf(tmp, sizeof tmp,
              "result %llu fields={ key \"a\" }\nresult %llu complete exhausted",
@@ -392,7 +392,7 @@ int main(void) {
     /* A refusal is an answer. */
     n = sent_count();
     q = serve(fill_refuses, "have=0 need=10");
-    answer = since(n + 2);
+    answer = since(n + 1);
     snprintf(tmp, sizeof tmp,
              "result %llu complete error=\"no records past \\\"build.sh\\\"\"",
              (unsigned long long)q);
@@ -404,7 +404,7 @@ int main(void) {
     q = serve(fill_ends_once, "have=0 need=1");
     settle();
     expect(ended_once == 1, "the handler ran");
-    char *once = since(n + 2);
+    char *once = since(n + 1);
     snprintf(tmp, sizeof tmp, "result %llu complete exhausted", (unsigned long long)q);
     expect_str(once, tmp, "one ending is the whole answer");
     free(once);
@@ -414,9 +414,9 @@ int main(void) {
        uninterruptible stretch of work. */
     n = sent_count();
     q = serve(fill_long, "have=0 need=400");
-    int batches = sent_count() - n - 2;
+    int batches = sent_count() - n - 1;
     expect(batches > 1, "a long answer goes out in batches");
-    answer = since(n + 2);
+    answer = since(n + 1);
     int lines = *answer ? 1 : 0;
     for (char *p = answer; *p; p++) if (*p == '\n') lines++;
     expect(lines == LONG_RECORDS + 1, "every record arrives, once, with a terminator");

@@ -196,9 +196,9 @@ func (c *Conn) InboundBatch(stmts []*wire.Statement) {
 		}
 	}
 	if failed != nil {
-		c.send(wire.EncodeError(failed.Error()) + "\nend")
+		c.send(wire.EncodeError(failed.Error()))
 	} else {
-		c.send(wire.EncodeReply(reply) + "\nend")
+		c.send(wire.EncodeReply(reply))
 	}
 	for _, fn := range pending {
 		fn()
@@ -206,6 +206,11 @@ func (c *Conn) InboundBatch(stmts []*wire.Statement) {
 }
 
 // send writes without waiting for anything back.
+//
+// What goes out this way is never a batch: a request is terminated by `end`
+// and answered, and this end is answering. A reply, an error and a result are
+// bare statements, which is exactly how the display writes its own replies and
+// its events.
 func (c *Conn) send(src string) {
 	if s, ok := c.transport.(Sender); ok {
 		_ = s.Send(src)

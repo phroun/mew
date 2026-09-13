@@ -253,7 +253,10 @@ class Conn:
 
         The reverse direction needs it and the forward one does not: when the
         display sends a batch, the application answers it, and an answer that
-        waited for an answer of its own would never be written at all."""
+        waited for an answer of its own would never be written at all.
+
+        What goes out this way is never a batch: a request is terminated by
+        `end` and answered, and this end is answering."""
         with self._write_lock:
             with self._lock:
                 if self._closed_flag:
@@ -494,10 +497,10 @@ class Conn:
                 if failed is None:
                     failed = str(e)
         if failed is not None:
-            self.send("error text=" + protocol.quote(failed) + "\nend")
+            self.send("error text=" + protocol.quote(failed))
         else:
             line = "reply" + "".join(" %s=%d" % (k, ids[k]) for k in sorted(ids))
-            self.send(line + "\nend")
+            self.send(line)
         for fn in pending:
             fn()
 

@@ -83,6 +83,48 @@ of the sequence rather than where it meant to. Fields the sort does not mention
 are ignored at the far end, so sending the whole record is the simplest thing
 that is right.
 
+## Putting one through a real display
+
+The probe is a stand-in. To put a query to an application that is connected to
+a **real** display, the display carries it -- it reads none of it, it hands the
+statements over and sends back whatever comes:
+
+```
+KITTYTK_DEBUG_RELAY=1 kittytk-tui &
+kittytk-queryrun -to queryapp query.txt
+```
+
+where `query.txt` is the wire text and nothing else:
+
+```
+q=new query source="files" filter={ not { starts name "." } } sort={ name natural } have=0 need=5
+```
+
+```
+key  name             size
+---  ---------------  ----
+2    "build.sh"       310
+3    "go.mod"         96
+1    "README.md"      2048
+6    "src/file2.go"   1200
+7    "src/file10.go"  880
+
+complete up to { name "src/file10.go"; key 7 }
+```
+
+`-raw` prints the statements instead of the table. Under the tool it is one
+question on the display's own host object:
+
+```
+ask host relay to="queryapp" text="<the file>"
+```
+
+and every statement the application says back arrives as a `relay` event
+carrying it. **The relay is shut unless the display opens it** -- an
+application that can relay can address another application's objects, which is
+the display's business and nobody else's. `KITTYTK_DEBUG_RELAY` opens it, or a
+host with a surface of its own calls `SetRelayEnabled`.
+
 ## What an author writes
 
 One function. The statement is taken apart before it arrives, so nothing in it
@@ -263,7 +305,14 @@ a float is never written in a spelling that would come back an integer.
 ## What this costs a client library
 
 Both ends now send replies, because both ends now receive batches. The reply
-path in each client is a few lines, but it comes with a discipline: **an end
-that is waiting for a reply must keep reading**, or two ends waiting on each
+path in each client is a few lines, but it comes with two disciplines.
+
+**An end waiting for a reply must keep reading**, or two ends waiting on each
 other deadlock. The client libraries answer on a thread of their own for that
 reason, and a display has to do the same.
+
+**An answer is not a batch.** A request is terminated by `end` and answered; a
+reply, an error and a result are bare statements, exactly like the events going
+the other way. A reader that waits for an `end` after an answer waits forever,
+and a reader that blocks handing on a reply nobody asked for goes deaf without
+saying so -- both of which happened on the way to this working.

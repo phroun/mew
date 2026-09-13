@@ -418,6 +418,12 @@ const (
 
 	AskDark    = "dark"
 	AskDesktop = "desktop"
+
+	// The display's debug relay: statements put to another connected
+	// application, and one event per statement it says back. Off unless the
+	// display was started with it open.
+	AskRelay   = "relay"
+	EventRelay = "relay"
 )
 
 // OnHost registers a handler for what the display says about itself and opens

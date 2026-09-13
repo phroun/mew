@@ -49,6 +49,10 @@ const (
 	StoreName = wire.StoreName
 	HostName  = wire.HostName
 	InitVerb  = wire.InitVerb
+
+	// The verbs a query travels under, and the verb it is answered with.
+	QueryVerb  = wire.QueryVerb
+	ResultVerb = wire.ResultVerb
 )
 
 // Language functions.
@@ -62,6 +66,7 @@ var (
 	DecodeReply        = wire.DecodeReply
 	EncodeError        = wire.EncodeError
 	NewScanner         = wire.NewScanner
+	EncodeStatement    = wire.EncodeStatement
 	DecodeVocabulary   = wire.DecodeVocabulary
 	NewEventDispatcher = wire.NewEventDispatcher
 )

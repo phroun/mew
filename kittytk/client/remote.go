@@ -242,7 +242,7 @@ func (t *remoteTransport) readLoop() {
 					r.Extra = t.pendingDesc
 				}
 				t.pendingDesc = nil
-				t.replies <- replyOrError{reply: r, err: err}
+				t.answer(replyOrError{reply: r, err: err})
 			case "error":
 				t.pendingDesc = nil
 				msg := "display error"
@@ -251,7 +251,7 @@ func (t *remoteTransport) readLoop() {
 						msg = a.Value.Str
 					}
 				}
-				t.replies <- replyOrError{err: fmt.Errorf("%s", msg)}
+				t.answer(replyOrError{err: fmt.Errorf("%s", msg)})
 			case "proptype", "prop", "propcommon", "ask", "askarg", "do", "doarg", "eventfield":
 				// Two different lines start with `ask` and with `do`: the
 				// display putting a question to something this application
@@ -297,6 +297,22 @@ func (t *remoteTransport) readLoop() {
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
 			}
 		}
+	}
+}
+
+// answer hands a reply to whatever is waiting for one, and drops it if
+// nothing is.
+//
+// A reply is only ever sent in answer to a batch, so one arriving with no
+// batch outstanding is the other end saying something it should not have. The
+// channel holds the one in flight; blocking on a second would stop this reader
+// dead, and a reader that has stopped is a connection that has silently gone
+// deaf -- far worse than an unexpected statement going in the bin.
+func (t *remoteTransport) answer(r replyOrError) {
+	select {
+	case t.replies <- r:
+	default:
+		dbg("reply with no batch outstanding, dropped: %v", r.err)
 	}
 }
 

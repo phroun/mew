@@ -34,12 +34,17 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// The questions the display answers, and the event it answers them with.
+// The questions the display answers, and the events it answers them with.
 const (
 	AskDark    = "dark"    // is the terminal in the dark theme
 	AskDesktop = "desktop" // is the desktop showing
 
+	// AskRelay puts statements to another connected application and shows what
+	// comes back. A debug facility, off unless the display turns it on.
+	AskRelay = "relay"
+
 	EventHostState = "host_state" // how the display stands
+	EventRelay     = "relay"      // one statement another application said
 )
 
 // The things the display does. None of them is a value it then holds: there is
@@ -152,13 +157,66 @@ func (h *hostObject) Do(action string, _ []*protocol.Arg) error {
 // Ask answers a question put to the display. Nothing else reads these back, so
 // an app that means to turn one of them over has to be told which way it is
 // first. Every question is answered with the same event, carrying all of it.
-func (h *hostObject) Ask(question string, _ []*protocol.Arg) error {
+func (h *hostObject) Ask(question string, args []*protocol.Arg) error {
 	switch question {
 	case AskDark, AskDesktop:
 		h.answer()
 		return nil
+	case AskRelay:
+		return h.relay(args)
 	}
 	return fmt.Errorf("the host answers no question called %q", question)
+}
+
+// relay puts statements to another connected application and arranges for what
+// that application says back to arrive here.
+//
+// It is how a query can be put to an application before any display knows how
+// to want one: the display does not read the text, it carries it. That is also
+// why it is off unless the display turns it on -- an application that can relay
+// can address another application's objects, which is the display's business
+// and nobody else's.
+func (h *hostObject) relay(args []*protocol.Arg) error {
+	if !h.conn.server.RelayEnabled() {
+		return fmt.Errorf("relay: the display's debug relay is not open")
+	}
+	var to, text string
+	for _, a := range args {
+		if a.Value == nil || a.Value.Kind != protocol.StringValue {
+			continue
+		}
+		switch a.Name {
+		case "to":
+			to = a.Value.Str
+		case "text":
+			text = a.Value.Str
+		}
+	}
+	if to == "" || text == "" {
+		return fmt.Errorf("relay: expected to= and text=")
+	}
+	target := h.conn.server.connNamed(to)
+	if target == nil {
+		return fmt.Errorf("relay: nothing is connected as %q", to)
+	}
+	if target == h.conn {
+		return fmt.Errorf("relay: %q is this connection", to)
+	}
+	if _, err := protocol.Parse(text); err != nil {
+		return fmt.Errorf("relay: %w", err)
+	}
+
+	// Whatever the target says back from here on comes to this connection.
+	// One listener: a second relay to the same application replaces the first,
+	// which is what a debug facility should do rather than fan out.
+	target.relayMu.Lock()
+	target.relayTo = h.conn
+	target.relayMu.Unlock()
+
+	// And the statements go over as a batch, because that is what a request is.
+	target.send(text)
+	target.send("end")
+	return nil
 }
 
 // answer says how the display stands, naming itself as the source so one
@@ -218,6 +276,12 @@ func init() {
 				Answering(EventHostState),
 			AskDesktop: protocol.NewAskDesc("Whether the desktop is showing.").
 				Answering(EventHostState),
+			AskRelay: protocol.NewAskDesc(
+				"Debug: put statements to another connected application and show "+
+					"what it says back. Off unless the display opens it.").
+				Arg("to", "string", "The application to put them to, by name.").
+				Arg("text", "string", "The statements, in the wire language.").
+				Answering(EventRelay),
 		},
 		Events: map[string]protocol.EventDesc{
 			EventHostState: protocol.NewEventDesc(
@@ -226,6 +290,11 @@ func init() {
 				Field("host", "uint", "The display answering.").
 				Field("dark", "flag", "The terminal's theme: asserted for dark, negated for light.").
 				Field("desktop", "flag", "Whether the desktop is showing."),
+			EventRelay: protocol.NewEventDesc(
+				"One statement a relayed-to application said back.").
+				Field("host", "uint", "The display carrying it.").
+				Field("from", "string", "The application that said it.").
+				Field("text", "string", "The statement, in the wire language."),
 		},
 	})
 }

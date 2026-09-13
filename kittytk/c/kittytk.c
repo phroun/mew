@@ -1438,7 +1438,10 @@ static long conn_read(kt_conn *c, void *buf, size_t n) {
 static int conn_write_all(kt_conn *c, const void *buf, size_t n);
 
 /* Write without waiting for anything back, which is what the reverse direction
- * needs: this is the end answering, not asking. */
+ * needs: this is the end answering, not asking.
+ *
+ * What goes out this way is never a batch: a request is terminated by `end`
+ * and answered, and this end is answering. */
 static int conn_send(kt_conn *c, const char *src) {
     kt_buf b;
     memset(&b, 0, sizeof b);
@@ -2066,7 +2069,6 @@ static void run_batch(kt_conn *c, kt_stmt *stmts, const char **texts, int n) {
             buf_puts(&out, tmp);
         }
     }
-    buf_puts(&out, "\nend");
     char *line = buf_dup(&out);
     free(out.p);
     conn_send(c, line);
