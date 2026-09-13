@@ -111,14 +111,14 @@ func NewPSL(n *pawscript.PSLNode, reading Reading) *PSL {
 func (p *PSL) Len() int { return len(p.recs) }
 
 // Open states a sequence over the records: one filter, one sort.
-func (p *PSL) Open(spec *wire.Spec) (View, error) {
+func (p *PSL) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
 	if err := supported(spec.Sort); err != nil {
 		return nil, err
 	}
-	return &pslView{src: p, spec: spec, ord: p.order(spec)}, nil
+	return &pslResultSet{src: p, spec: spec, ord: p.order(spec)}, nil
 }
 
 // supported refuses a sort this source cannot produce exactly. A collation it
@@ -324,9 +324,9 @@ func (o *ordering) Less(i, j int) bool {
 
 // order is the sequence a spec names, built if it has not been built already.
 //
-// Two views of the same sequence share one, and so does a view opened again on
-// an order somebody had before -- which is the same click that produced it the
-// first time.
+// Two result sets over the same sequence share one, and so does one opened
+// again on an order somebody had before -- which is the same click that
+// produced it the first time.
 func (p *PSL) order(spec *wire.Spec) *ordering {
 	key := orderKey(spec)
 	p.mu.Lock()
@@ -387,17 +387,17 @@ func boundaryTuple(at wire.Fields, levels []wire.SortLevel) []*wire.Value {
 	return append(out, at.Key())
 }
 
-// --- the view -----------------------------------------------------------
+// --- the result set ------------------------------------------------------
 
-type pslView struct {
+type pslResultSet struct {
 	src  *PSL
 	spec *wire.Spec
 	ord  *ordering
 }
 
-// Close lets the view go. The ordering stays in the source's cache until
+// Close lets the result set go. The ordering stays in the source's cache until
 // something newer pushes it out, because the records it orders have not moved.
-func (v *pslView) Close() { v.ord = nil }
+func (v *pslResultSet) Close() { v.ord = nil }
 
 // Fill produces one window.
 //
@@ -405,10 +405,10 @@ func (v *pslView) Close() { v.ord = nil }
 // record past a boundary is found in the log of the sequence's length rather
 // than by walking to it. Then it emits every record in (From..To], and carries
 // on past To only while the window is still short of Need.
-func (v *pslView) Fill(f *wire.Fill, out Sink) (Complete, error) {
+func (v *pslResultSet) Fill(f *wire.Fill, out Sink) (Complete, error) {
 	o := v.ord
 	if o == nil {
-		return Complete{}, fmt.Errorf("this view has been closed")
+		return Complete{}, fmt.Errorf("this result set has been closed")
 	}
 
 	start := 0
@@ -453,7 +453,7 @@ func (v *pslView) Fill(f *wire.Fill, out Sink) (Complete, error) {
 }
 
 // boundary is a record's position: its sort fields, and its key.
-func (v *pslView) boundary(rec pslRecord) wire.Fields {
+func (v *pslResultSet) boundary(rec pslRecord) wire.Fields {
 	out := make(wire.Fields, 0, len(v.spec.Sort)+1)
 	for _, l := range v.spec.Sort {
 		out = append(out, &wire.Arg{Name: l.Field, Value: rec.Field(l.Field)})
@@ -468,7 +468,7 @@ func (v *pslView) boundary(rec pslRecord) wire.Fields {
 // A field the record has not got is left out rather than sent as `undefined`,
 // which is the same answer in fewer bytes: an absent field reads as undefined
 // at the far end.
-func (v *pslView) fields(rec pslRecord, f *wire.Fill) wire.Fields {
+func (v *pslResultSet) fields(rec pslRecord, f *wire.Fill) wire.Fields {
 	want := f.Fields
 	if len(want) == 0 {
 		want = v.spec.Fields
@@ -489,7 +489,7 @@ func (v *pslView) fields(rec pslRecord, f *wire.Fill) wire.Fields {
 }
 
 // without drops the fields the query said it did not want.
-func (v *pslView) without(bag wire.Fields) wire.Fields {
+func (v *pslResultSet) without(bag wire.Fields) wire.Fields {
 	if len(v.spec.Exclude) == 0 {
 		return bag
 	}

@@ -51,10 +51,10 @@ func fromPSL(path, reading, query string, raw bool) {
 // run drives the source through the statements the file holds, which are the
 // ones a display would have sent.
 func run(src source.Source, script *wire.Script, out *printer) error {
-	var view source.View
+	var set source.ResultSet
 	defer func() {
-		if view != nil {
-			view.Close()
+		if set != nil {
+			set.Close()
 		}
 	}()
 
@@ -72,23 +72,23 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 			if err != nil {
 				return err
 			}
-			if view != nil {
-				view.Close()
+			if set != nil {
+				set.Close()
 			}
-			if view, err = src.Open(spec); err != nil {
+			if set, err = src.Open(spec); err != nil {
 				return err
 			}
 			// Opening carries the first window, because a display never wants a
 			// sequence without wanting rows of it.
-			if err := window(view, args, out); err != nil {
+			if err := window(set, args, out); err != nil {
 				return err
 			}
 
 		case wire.QueryVerb:
-			if view == nil {
+			if set == nil {
 				return fmt.Errorf("query: nothing has been opened")
 			}
-			if err := window(view, afterTarget(stmt), out); err != nil {
+			if err := window(set, afterTarget(stmt), out); err != nil {
 				return err
 			}
 
@@ -97,9 +97,9 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 				"with; a different sequence is another `new query`")
 
 		case "destroy":
-			if view != nil {
-				view.Close()
-				view = nil
+			if set != nil {
+				set.Close()
+				set = nil
 			}
 
 		default:
@@ -111,13 +111,13 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 
 // window draws one and writes it out as the statements it would have crossed
 // as, so what is printed comes off the wire language either way.
-func window(view source.View, args []*wire.Arg, out *printer) error {
+func window(set source.ResultSet, args []*wire.Arg, out *printer) error {
 	f, err := wire.ParseFill(args)
 	if err != nil {
 		return err
 	}
 	sink := &results{out: out}
-	done, err := view.Fill(f, sink)
+	done, err := set.Fill(f, sink)
 	if err != nil {
 		return err
 	}

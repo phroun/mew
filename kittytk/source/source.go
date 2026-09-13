@@ -25,20 +25,20 @@ type Source interface {
 	// sequence cannot be produced exactly -- an op that is not implemented, a
 	// collation that is not carried -- because an ordering that is quietly a
 	// little different corrupts every answer after it and looks like data.
-	Open(spec *wire.Spec) (View, error)
+	Open(spec *wire.Spec) (ResultSet, error)
 }
 
-// A View is one stated sequence, which windows are drawn from until it is let
-// go.
+// A ResultSet is one stated sequence, which windows are drawn from until it is
+// let go. It is what a query names, seen from the end that holds the records.
 //
 // It does not change. A different sort or a different filter is a different
-// view, opened alongside this one and taking its place -- which is also what
-// keeps the source in use while the reader moves from one to the other.
-type View interface {
+// result set, opened alongside this one and taking its place -- which is also
+// what keeps the source in use while the reader moves from one to the other.
+type ResultSet interface {
 	// Fill produces one window into the sink, and reports what ends it.
 	Fill(f *wire.Fill, out Sink) (Complete, error)
 
-	// Close lets the view go, and with it whatever it was holding.
+	// Close lets the result set go, and with it whatever it was holding.
 	Close()
 }
 

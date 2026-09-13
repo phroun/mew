@@ -20,9 +20,9 @@ const doc = `(
   plain: "just a string"
 )`
 
-func open(t *testing.T, text, spec string) View { return openAs(t, Whole, text, spec) }
+func open(t *testing.T, text, spec string) ResultSet { return openAs(t, Whole, text, spec) }
 
-func openAs(t *testing.T, reading Reading, text, spec string) View {
+func openAs(t *testing.T, reading Reading, text, spec string) ResultSet {
 	t.Helper()
 	src, err := ParsePSL(text, reading)
 	if err != nil {
@@ -78,7 +78,7 @@ func (c *collector) Record(key *wire.Value, fields wire.Fields) error {
 func (c *collector) joined() string { return strings.Join(c.keys, ",") }
 
 // fill draws one window and reports the keys that came out of it.
-func fill(t *testing.T, v View, args string) (*collector, Complete) {
+func fill(t *testing.T, v ResultSet, args string) (*collector, Complete) {
 	t.Helper()
 	out := &collector{}
 	done, err := v.Fill(parseFill(t, args), out)
@@ -239,10 +239,10 @@ func TestAWindowAsksForFewerFieldsThanTheQuery(t *testing.T) {
 	}
 }
 
-// A different sequence is a different view, opened alongside the one it
+// A different sequence is a different result set, opened alongside the one it
 // replaces and closed after it -- which is what keeps the source in use while
 // the reader moves across.
-func TestADifferentSequenceIsADifferentView(t *testing.T) {
+func TestADifferentSequenceIsADifferentResultSet(t *testing.T) {
 	src, err := ParsePSL(doc, Whole)
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +267,7 @@ func TestADifferentSequenceIsADifferentView(t *testing.T) {
 	}
 }
 
-// A view is refused rather than opened wrong. An order that is quietly a
+// A result set is refused rather than opened wrong. An order that is quietly a
 // little different corrupts every answer after it and looks like data.
 func TestASortNobodyCanProduceIsRefused(t *testing.T) {
 	src, err := ParsePSL(doc, Whole)
@@ -279,8 +279,8 @@ func TestASortNobodyCanProduceIsRefused(t *testing.T) {
 	}
 }
 
-// The same sequence is ordered once. Two views of it, and a view opened again
-// on an order somebody had before, draw on the ordering that is already built.
+// The same sequence is ordered once. Two result sets over it, and one opened
+// again on an order somebody had before, draw on the ordering already built.
 func TestOneSequenceIsOrderedOnce(t *testing.T) {
 	src, err := ParsePSL(doc, Whole)
 	if err != nil {
@@ -295,8 +295,8 @@ func TestOneSequenceIsOrderedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.(*pslView).ord != b.(*pslView).ord {
-		t.Error("two views of one sequence built it twice")
+	if a.(*pslResultSet).ord != b.(*pslResultSet).ord {
+		t.Error("two result sets over one sequence built it twice")
 	}
 
 	// And an order pushed out by newer ones is built again rather than wrong.
@@ -309,7 +309,7 @@ func TestOneSequenceIsOrderedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.(*pslView).ord == a.(*pslView).ord {
+	if c.(*pslResultSet).ord == a.(*pslResultSet).ord {
 		t.Error("the cache grew without limit")
 	}
 	out, _ := fill(t, c, "have=0 need=10")

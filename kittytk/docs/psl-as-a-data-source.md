@@ -13,9 +13,9 @@ It is the same question either way — this filter, this sort, this window — s
 static data sitting here.
 
 ```go
-type Source interface{ Open(spec *wire.Spec) (View, error) }
+type Source interface{ Open(spec *wire.Spec) (ResultSet, error) }
 
-type View interface {
+type ResultSet interface {
     Fill(f *wire.Fill, out Sink) (Complete, error)
     Close()
 }
@@ -28,9 +28,10 @@ The shapes are the wire's own. A `Spec` and a `Fill` arrive exactly as
 `result <id> complete` can carry — `ordered`, a watermark, `exhausted`. So a
 source backed by an application is a relay rather than a translation.
 
-A view does not change. A different sort or a different filter is a different
-view, opened alongside the one it replaces and closed after it — which is what
-keeps the source in use while the reader moves across.
+A **result set** is what a query names, seen from the end that holds the
+records. It does not change: a different sort or a different filter is a
+different result set, opened alongside the one it replaces and closed after it,
+which is what keeps the source in use while the reader moves across.
 
 ## Two spaces, one sequence
 
@@ -176,8 +177,8 @@ what reaching the first one costs.
 The sort tuples are kept beside the rows rather than recomputed, because
 extracting a field is a map lookup and a conversion, and a sort that did it per
 comparison would read the data `n log n` times instead of once. Orderings are
-cached on the spec that names them, so two views of one sequence share the work
-and going back to a column somebody clicked before is free.
+cached on the spec that names them, so two result sets over one sequence share
+the work and going back to a column somebody clicked before is free.
 
 A window emits every record in `(from..to]` and then carries on past `to` only
 while it is still short of `need` — which is what the far end has to merge

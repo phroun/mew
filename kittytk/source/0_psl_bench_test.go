@@ -97,7 +97,7 @@ func BenchmarkWindowAtTheEnd(b *testing.B)   { benchWindow(b, benchRecords-40) }
 
 func benchWindow(b *testing.B, after int) {
 	src := benchSource(b, benchRecords)
-	view, err := src.Open(benchSpec(b, "sort={ name natural }"))
+	set, err := src.Open(benchSpec(b, "sort={ name natural }"))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func benchWindow(b *testing.B, after int) {
 	from := wire.Fields{}
 	if after > 0 {
 		c := &counter{}
-		if _, err := view.Fill(fillOf(b, 0, after), c); err != nil {
+		if _, err := set.Fill(fillOf(b, 0, after), c); err != nil {
 			b.Fatal(err)
 		}
 		from = wire.Fields{
@@ -121,7 +121,7 @@ func benchWindow(b *testing.B, after int) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		c := &counter{}
-		if _, err := view.Fill(f, c); err != nil {
+		if _, err := set.Fill(f, c); err != nil {
 			b.Fatal(err)
 		}
 		if c.n != 30 {
