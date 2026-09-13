@@ -435,3 +435,62 @@ func TestUnderWholeANameWithoutADotIsNotAMember(t *testing.T) {
 		t.Errorf("the dotted name found %s", out.joined())
 	}
 }
+
+// --- a bare word is a symbol --------------------------------------------
+
+// PSL writes a bare word and a quoted string differently, and so does the
+// wire: a symbol ranks between a number and a string, is compared exactly, and
+// takes no collation. So the two spellings reach a filter as the two different
+// questions they were written as.
+func TestABareWordIsASymbolAndAQuotedOneIsAString(t *testing.T) {
+	const kinds = `(
+  (name: "a", kind: text),
+  (name: "b", kind: "text")
+)`
+	v := open(t, kinds, "filter={ eq .kind text }")
+	out, _ := fill(t, v, "have=0 need=10")
+	if out.joined() != "0" {
+		t.Errorf("the word text found %s", out.joined())
+	}
+
+	v = open(t, kinds, `filter={ eq .kind "text" }`)
+	out, _ = fill(t, v, "have=0 need=10")
+	if out.joined() != "1" {
+		t.Errorf("the string text found %s", out.joined())
+	}
+
+	// And a symbol goes out as one, which is what the far end reads back.
+	v = open(t, kinds, "")
+	out, _ = fill(t, v, "have=0 need=1")
+	if got := out.fields[0].Encode(); got != `{ .kind text; .name "a" }` {
+		t.Errorf("the record carries %s", got)
+	}
+}
+
+// PSL spells a symbol more widely than the wire spells a word, and a word is
+// written as itself with nothing around it. One the wire cannot spell crosses
+// as a string rather than as text the far end would read as something else.
+func TestASymbolTheWireCannotSpellCrossesAsAString(t *testing.T) {
+	v := open(t, `( (ok: plain, digits: 1x, dashed: kebab-case, starred: *star) )`, "")
+	out, _ := fill(t, v, "have=0 need=1")
+
+	got := out.fields[0].Encode()
+	want := `{ .dashed "kebab-case"; .digits "1x"; .ok plain; .starred "*star" }`
+	if got != want {
+		t.Errorf("the record carries %s", got)
+	}
+	// Which is text the far end reads back as what was sent.
+	if _, err := wire.Parse("result 1 fields=" + got); err != nil {
+		t.Errorf("what went out does not read back: %v", err)
+	}
+}
+
+// `undefined` says the same thing in both languages, so it crosses as the word
+// rather than as an identifier that happens to be spelled that way.
+func TestTheWordUndefinedCrossesAsUndefined(t *testing.T) {
+	v := open(t, `( (thumbnail: undefined), (thumbnail: "x") )`, "filter={ eq .thumbnail undefined }")
+	out, _ := fill(t, v, "have=0 need=10")
+	if out.joined() != "0" {
+		t.Errorf("undefined found %s", out.joined())
+	}
+}

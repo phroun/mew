@@ -242,6 +242,20 @@ func pslValue(v any) *wire.Value {
 		return wire.NewFloat(x)
 	case string:
 		return wire.NewString(x)
+	case pawscript.Symbol:
+		// A bare word is a symbol, which the wire ranks between a number and a
+		// string: an identifier, compared exactly and under no collation. So
+		// `kind: text` and `kind: "text"` reach a filter as the two different
+		// questions they were written as.
+		//
+		// PSL spells a symbol more widely than the wire spells a word -- `1x`,
+		// `kebab-case` and `*star` are all symbols -- and a word is written as
+		// itself with nothing around it. One the wire cannot spell crosses as a
+		// string rather than as text the far end would read as something else.
+		if wire.IsWord(string(x)) {
+			return wire.NewWord(string(x))
+		}
+		return wire.NewString(string(x))
 	case *pawscript.PSLNode:
 		return pslRecord{reading: Whole, value: x}.fields().Block()
 	}

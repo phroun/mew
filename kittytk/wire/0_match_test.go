@@ -140,3 +140,42 @@ func TestATextPredicateNeedsText(t *testing.T) {
 		}
 	}
 }
+
+// A word is written as itself with nothing around it, so a caller building one
+// out of text from somewhere else has to ask whether it can be spelled at all.
+func TestWhatCanBeWrittenAsABareWord(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{"plain", true},
+		{"with_under", true},
+		{"SHOUT", true},
+		{"has9digits", true},
+		{".member", true},
+		{"_leading", true},
+		{"", false},
+		{"1x", false},         // a word does not start with a digit
+		{"kebab-case", false}, // nor hold a hyphen
+		{"*star", false},
+		{"two words", false},
+		{"quote\"inside", false},
+		{"semi;colon", false},
+	} {
+		if got := IsWord(c.text); got != c.want {
+			t.Errorf("IsWord(%q) is %v", c.text, got)
+		}
+		// And what it says can be written, reads back as the word it was.
+		if !c.want {
+			continue
+		}
+		script, err := Parse("f v=" + c.text)
+		if err != nil {
+			t.Errorf("%q did not read back: %v", c.text, err)
+			continue
+		}
+		if v := script.Statements[0].Args[0].Value; v == nil || v.Kind != WordValue || v.Word != c.text {
+			t.Errorf("%q read back as %#v", c.text, v)
+		}
+	}
+}

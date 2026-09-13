@@ -98,22 +98,28 @@ filter={ eq .key "figaro" }
 | a whole number | an integer, exact, however large |
 | a fractional number | a float |
 | `true`, `false`, `nil` | the words |
+| a bare word | a symbol, or a string where the wire cannot spell the word |
 | a nested list | a block of its own members, which is the unordered rank |
 | absent | nothing is sent, and an absent field reads as `undefined` |
 
 A nested list's contents are written the `Whole` way whatever the reading,
 because a position inside one has no other spelling.
 
-**A symbol arrives as a string.** PSL carries symbols — it is a canonical
-spelling of PawScript's paren lists, and its parser has the type — but
-`PSLNode` does not keep them: `convertFromPawValue` maps a `Symbol` to a Go
-string, keeping only `nil`, `true` and `false` apart. So a document written
-`kind: text` reaches here as `"text"`, and `eq .kind text` — which asks about
-the *word* — matches nothing where `eq .kind "text"` does.
+**A bare word is a symbol.** PSL writes `kind: text` and `kind: "text"`
+differently and so does the wire, so the two reach a filter as the two
+different questions they were written as: `eq .kind text` asks about the
+identifier and `eq .kind "text"` asks about the four characters.
 
-That is the node accessor rather than the format, and it is one branch in
-pawscript to change. Until it is, the symbol rank is unreachable from a
-PSL-backed source.
+PSL spells a symbol more widely than the wire spells a word, though — `1x`,
+`kebab-case` and `*star` are all symbols, and none of them can be written as a
+bare word. A word is written as itself with nothing around it, so one the wire
+cannot spell crosses as a **string** rather than as text the far end would read
+as something else. `wire.IsWord` is what decides.
+
+`undefined` says the same thing in both languages, so it crosses as the word —
+which makes `thumbnail: undefined` in the document and a record with no
+thumbnail at all the same answer to `eq .thumbnail undefined`, as they should
+be.
 
 ## Records that are not uniform
 

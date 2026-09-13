@@ -14,7 +14,7 @@ require (
 	github.com/phroun/key-sequence-processor v0.1.11
 	github.com/phroun/khatool v0.1.1
 	github.com/phroun/mew v0.3.1-alpha
-	github.com/phroun/pawscript v0.2.16-alpha
+	github.com/phroun/pawscript v0.2.17-alpha
 	github.com/phroun/purfecterm v0.2.55
 	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
