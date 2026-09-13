@@ -143,19 +143,22 @@ against. What ends it is a watermark, or `exhausted` where the sequence ran out.
 
 ## What it costs
 
-Measured on 100,000 records, each a list of three named members
-(`0_psl_bench_test.go`):
+Measured on 100,000 records, each a list of three named members, over 200
+iterations (`0_psl_bench_test.go`):
 
 | | |
 |---|---|
-| reading the file | **2.7 s** — `pawscript.ParsePSL`, once |
+| reading the file | **2.5 s** — `pawscript.ParsePSL`, once |
 | stating the sequence | **58 ms** — one filter pass and one sort, once per spec |
-| a window of 30 at the start | **14.5 µs** |
-| a window of 30 at the end | **16.6 µs** |
+| a window of 30 at the start | **14.0 µs** |
+| a window of 30 at the end | **21.8 µs** |
 
 The last two are the pair that matters: **a window at the far end of a hundred
-thousand records costs 14% more than one at the near end**, not three thousand
-times more, which is what a walk to the boundary would have cost.
+thousand records costs about half again what one at the near end costs** — not
+three thousand times more, which is what walking to the boundary would have
+cost. What separates them is the seventeen comparisons the search makes, each
+of them a natural collation over a string, and they are the whole of the
+difference between the two ends of the sequence.
 
 The parse dominates everything else by a factor of forty, and none of it is
 here — it is PawScript reading the text. A source large enough for that to
