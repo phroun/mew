@@ -68,12 +68,12 @@ const (
 	Members
 )
 
-// A PSL is a data source backed by one parsed PSL list.
+// A PSLSource is a data source backed by one parsed PSL list.
 //
 // It is read-only and its records do not move, so everything computed from them
 // stays true: an ordering is built once per spec and reused for every scope
 // drawn from it.
-type PSL struct {
+type PSLSource struct {
 	recs    []pslRecord
 	reading Reading
 
@@ -82,19 +82,19 @@ type PSL struct {
 	recent []string // cache keys, oldest first
 }
 
-// ParsePSL reads PSL text and presents it as a data source.
-func ParsePSL(text string, reading Reading) (*PSL, error) {
+// ParsePSLSource reads PSL text and presents it as a data source.
+func ParsePSLSource(text string, reading Reading) (*PSLSource, error) {
 	n, err := pawscript.ParsePSL(text)
 	if err != nil {
 		return nil, err
 	}
-	return NewPSL(n, reading), nil
+	return NewPSLSource(n, reading), nil
 }
 
-// NewPSL presents an already-parsed PSL list as a data source: its items as
+// NewPSLSource presents an already-parsed PSL list as a data source: its items as
 // records keyed by index, its keyed members as records keyed by name.
-func NewPSL(n *pawscript.PSLNode, reading Reading) *PSL {
-	p := &PSL{reading: reading, cache: map[string]*ordering{}}
+func NewPSLSource(n *pawscript.PSLNode, reading Reading) *PSLSource {
+	p := &PSLSource{reading: reading, cache: map[string]*ordering{}}
 	p.recs = make([]pslRecord, 0, n.Len()+len(n.Map()))
 	for i := 0; i < n.Len(); i++ {
 		v, _ := n.Item(i)
@@ -108,10 +108,10 @@ func NewPSL(n *pawscript.PSLNode, reading Reading) *PSL {
 }
 
 // Len is how many records the source holds, before any filter.
-func (p *PSL) Len() int { return len(p.recs) }
+func (p *PSLSource) Len() int { return len(p.recs) }
 
 // Open states a sequence over the records: one filter, one sort.
-func (p *PSL) Open(spec *wire.Spec) (ResultSet, error) {
+func (p *PSLSource) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
@@ -327,7 +327,7 @@ func (o *ordering) Less(i, j int) bool {
 // Two result sets over the same sequence share one, and so does one opened
 // again on an order somebody had before -- which is the same click that
 // produced it the first time.
-func (p *PSL) order(spec *wire.Spec) *ordering {
+func (p *PSLSource) order(spec *wire.Spec) *ordering {
 	key := orderKey(spec)
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -390,7 +390,7 @@ func boundaryTuple(at wire.Fields, levels []wire.SortLevel) []*wire.Value {
 // --- the result set ------------------------------------------------------
 
 type pslResultSet struct {
-	src  *PSL
+	src  *PSLSource
 	spec *wire.Spec
 	ord  *ordering
 }

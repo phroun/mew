@@ -90,20 +90,20 @@ func (s *Source) OnStatement(fn func(*Query, *wire.Statement)) {
 	s.mu.Unlock()
 }
 
-// HostSource registers a body of records this application can serve, and what
+// ProvideSource registers a body of records this application can serve, and what
 // answers a scope of it.
 //
 // Nothing crosses the wire here: a source is a name, not an object, and the
 // display learns of it when a trinket is told `data="<name>"`.
-func (c *Conn) HostSource(name string, fill func(*Fill)) (*Source, error) {
+func (c *Conn) ProvideSource(name string, fill func(*Fill)) (*Source, error) {
 	if name == "" {
-		return nil, fmt.Errorf("HostSource: a source needs a name")
+		return nil, fmt.Errorf("ProvideSource: a source needs a name")
 	}
 	if fill == nil {
-		return nil, fmt.Errorf("HostSource: a source needs something to fill it")
+		return nil, fmt.Errorf("ProvideSource: a source needs something to fill it")
 	}
 	if _, ok := c.transport.(Sender); !ok {
-		return nil, fmt.Errorf("HostSource: this transport cannot carry the reverse direction")
+		return nil, fmt.Errorf("ProvideSource: this transport cannot carry the reverse direction")
 	}
 	s := &Source{c: c, name: name, fill: fill}
 	c.mu.Lock()

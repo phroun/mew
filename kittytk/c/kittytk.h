@@ -369,7 +369,7 @@ typedef void (*kt_dropped_cb)(kt_query *q, void *ud);
 
    Registering one says nothing on the wire. Returns NULL on failure. */
 typedef struct kt_source kt_source;
-kt_source *kt_host_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud);
+kt_source *kt_provide_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud);
 const char *kt_source_name(const kt_source *s);
 
 /* A handler for the display letting a query go, which is one reader finishing.

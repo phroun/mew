@@ -35,9 +35,9 @@ var appRecords = []struct {
 
 // --- the application, and the loop that reaches it ----------------------
 
-// loop is a connection with an application at one end and a Hosted source at
+// loop is a connection with an application at one end and a ApplicationSource source at
 // the other, wired to each other with nothing in between.
-type loop struct{ src *Hosted }
+type loop struct{ src *ApplicationSource }
 
 func (l *loop) Exec(src string) (*wire.Reply, error) {
 	l.src.Statements(src)
@@ -46,23 +46,23 @@ func (l *loop) Exec(src string) (*wire.Reply, error) {
 func (l *loop) Send(src string) error { l.src.Statements(src); return nil }
 func (l *loop) Close() error          { return nil }
 
-// serving stands up an application serving `files` and a Hosted source that
+// serving stands up an application serving `files` and a ApplicationSource source that
 // asks it for them. What the source sends reaches the application's inbound
 // path, and what the application answers reaches the source.
-func serving(t *testing.T) *Hosted {
+func serving(t *testing.T) *ApplicationSource {
 	t.Helper()
 	return hosting(t, serveRecords)
 }
 
 // hosting is the same, for an application that answers some other way.
-func hosting(t *testing.T, fill func(*client.Fill)) *Hosted {
+func hosting(t *testing.T, fill func(*client.Fill)) *ApplicationSource {
 	t.Helper()
 	l := &loop{}
 	conn := client.NewWithTransport(l, nil)
-	if _, err := conn.HostSource("files", fill); err != nil {
+	if _, err := conn.ProvideSource("files", fill); err != nil {
 		t.Fatal(err)
 	}
-	l.src = NewHosted("files", func(src string) error {
+	l.src = NewApplicationSource("files", func(src string) error {
 		script, err := wire.Parse(src)
 		if err != nil {
 			return err
@@ -205,7 +205,7 @@ func TestAskingDoesNotWaitForTheAnswer(t *testing.T) {
 // A connection that will not carry the question ends the scope rather than
 // leaving whoever asked waiting for records that are never coming.
 func TestAConnectionThatWillNotCarryTheQuestionSaysSo(t *testing.T) {
-	src := NewHosted("files", func(string) error { return errBroken{} })
+	src := NewApplicationSource("files", func(string) error { return errBroken{} })
 	set, err := src.Open(parseSpec(t, ""))
 	if err != nil {
 		t.Fatal(err)
@@ -228,14 +228,14 @@ func (errBroken) Error() string { return "the connection is broken" }
 
 // A source with nothing to ask cannot open a sequence at all.
 func TestASourceWithNoConnectionRefusesToOpen(t *testing.T) {
-	if _, err := NewHosted("files", nil).Open(&wire.Spec{}); err == nil {
+	if _, err := NewApplicationSource("files", nil).Open(&wire.Spec{}); err == nil {
 		t.Error("a source with no connection opened a sequence")
 	}
 }
 
-func mustPSL(t *testing.T, text string) *PSL {
+func mustPSL(t *testing.T, text string) *PSLSource {
 	t.Helper()
-	src, err := ParsePSL(text, Whole)
+	src, err := ParsePSLSource(text, Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestTwoScopesOfOneSequence(t *testing.T) {
 // held is a connection that keeps what the source says until it is let go, so
 // two scopes can be asked for before either is answered.
 type held struct {
-	src     *Hosted
+	src     *ApplicationSource
 	conn    *client.Conn
 	batches []string
 }
@@ -318,10 +318,10 @@ func (h *held) let(t *testing.T) {
 func TestTwoScopesInFlightKeepTheirOwnAnswers(t *testing.T) {
 	h := &held{}
 	h.conn = client.NewWithTransport(h, nil)
-	if _, err := h.conn.HostSource("files", serveRecords); err != nil {
+	if _, err := h.conn.ProvideSource("files", serveRecords); err != nil {
 		t.Fatal(err)
 	}
-	h.src = NewHosted("files", func(src string) error {
+	h.src = NewApplicationSource("files", func(src string) error {
 		h.batches = append(h.batches, src)
 		return nil
 	})

@@ -39,7 +39,7 @@ func served(t *testing.T, sock string) *client.Conn {
 		key  int64
 		name string
 	}{{1, "alpha"}, {2, "beta"}, {3, "gamma"}}
-	if _, err := conn.HostSource("letters", func(f *client.Fill) {
+	if _, err := conn.ProvideSource("letters", func(f *client.Fill) {
 		f.Ordered()
 		for _, r := range rows {
 			if f.Need > 0 && f.Sent() >= f.Need {

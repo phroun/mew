@@ -42,11 +42,11 @@ func main() {
 	// an object. A real application would also tell whatever trinket is to
 	// show these rows `data="files"`, and the display would open its queries
 	// against that name when somebody scrolled.
-	if _, err := conn.HostSource("colours", serveEverything); err != nil {
+	if _, err := conn.ProvideSource("colours", serveEverything); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	files, err := conn.HostSource("files", serveWindow)
+	files, err := conn.ProvideSource("files", serveWindow)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

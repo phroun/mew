@@ -28,7 +28,7 @@ const objects = `(
 // drive runs a query file against a PSL source and gives back what was printed.
 func drive(t *testing.T, reading source.Reading, query string) *printer {
 	t.Helper()
-	src, err := source.ParsePSL(objects, reading)
+	src, err := source.ParsePSLSource(objects, reading)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestAFileOpensRefillsAndLetsGo(t *testing.T) {
 // A query cannot be restated, so a file that tries is refused rather than
 // quietly answering the wrong sequence.
 func TestAFileCannotRestateAQuery(t *testing.T) {
-	src, err := source.ParsePSL(objects, source.Whole)
+	src, err := source.ParsePSLSource(objects, source.Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestTheMembersReadingNamesTheMembersAlone(t *testing.T) {
 // A file that says something a query file cannot say is refused rather than
 // half-run.
 func TestAFileThatIsNotAQueryIsRefused(t *testing.T) {
-	src, err := source.ParsePSL(objects, source.Whole)
+	src, err := source.ParsePSLSource(objects, source.Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func rawDrive(t *testing.T, query string) string {
 	os.Stdout = w
 	func() {
 		defer func() { os.Stdout = saved; w.Close() }()
-		src, err := source.ParsePSL(objects, source.Whole)
+		src, err := source.ParsePSLSource(objects, source.Whole)
 		if err != nil {
 			t.Fatal(err)
 		}

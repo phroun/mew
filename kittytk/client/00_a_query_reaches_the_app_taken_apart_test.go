@@ -61,7 +61,7 @@ func serveOne(t *testing.T, fill func(*Fill)) (*Conn, *recorder, *Source) {
 	t.Helper()
 	r := &recorder{}
 	c := NewWithTransport(r, nil)
-	s, err := c.HostSource("files", fill)
+	s, err := c.ProvideSource("files", fill)
 	if err != nil {
 		t.Fatal(err)
 	}

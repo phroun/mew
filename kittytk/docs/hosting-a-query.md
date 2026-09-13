@@ -135,7 +135,7 @@ parses anything, and the answer is written into a sink that goes out in batches
 as it fills.
 
 ```go
-src, _ := conn.HostSource("files", func(f *client.Fill) {
+src, _ := conn.ProvideSource("files", func(f *client.Fill) {
     f.Ordered()
     for _, rec := range myRecords(f.From, f.To, f.Need-f.Have) {
         f.Record(rec.ID, wire.Named("name", rec.Name), wire.Named("size", rec.Size))
@@ -152,8 +152,8 @@ and the display opens queries against that name.
 `f.subset(key, …)`, `kt_fill_subset` — says they are the ones this scope asked
 for, and crosses as `fields={…}`.
 
-Python is the same shape (`conn.host_source(name, fill)`, `f.record(key,
-name=...)`), and so is C (`kt_host_source(c, "files", fill, NULL)`).
+Python is the same shape (`conn.provide_source(name, fill)`, `f.record(key,
+name=...)`), and so is C (`kt_provide_source(c, "files", fill, NULL)`).
 
 **The least an implementation can do is real.** Ignore every hint, send every
 record, say `Exhausted`. The display then holds the whole layer and asks

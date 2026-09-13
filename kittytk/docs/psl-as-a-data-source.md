@@ -30,28 +30,32 @@ type Sink interface {
 
 `Record` is the record entire and `Subset` is the fields that were asked for,
 the same two claims the wire makes with `record={…}` and `fields={…}`. A source
-here says whichever is true of what it sent: `PSL` says `Record` where nothing
-narrowed the record and `Subset` where a field list or an exclusion did, and
-`Hosted` passes on whatever the application claimed, making none of its own.
+here says whichever is true of what it sent: `PSLSource` says `Record` where
+nothing narrowed the record and `Subset` where a field list or an exclusion
+did, and `ApplicationSource` passes on whatever the application claimed, making
+none of its own.
 
 **Nothing waits.** `Fill` asks for a scope and returns; the records reach the
-sink as they are produced — at once for `PSL`, whose records are here, and as
-they arrive for `Hosted`, whose records are an application's. The error is for
-a request that could not be started, never for one that has not finished.
+sink as they are produced — at once for `PSLSource`, whose records are here,
+and as they arrive for `ApplicationSource`, whose records are an application's.
+The error is for a request that could not be started, never for one that has
+not finished.
 
-Three kinds are behind the interface today, and a fourth is a fourth
-implementation:
+Four implementations are behind the interface today, and a fifth kind is a
+fifth implementation of it:
 
 | | |
 |---|---|
-| `source.PSL` | records here, in a parsed PSL list |
-| `source.Hosted` | records an application's, asked for with `query` and answered with `result` |
-| `source.Amended` | any other kind, with replacements and deletions held over it |
+| `source.PSLSource` | records here, in a parsed PSL list |
+| `source.ApplicationSource` | records an application's, asked for with `query` and answered with `result` |
+| `source.AmendedSource` | any other kind, with replacements and deletions held over it |
+| `source.ComposedSource` | several other kinds at once, their records under names of their own |
 
-The third one wraps rather than holds. It answers the scope itself — it asks
-the child the same question and merges what comes back with what it holds of
-its own — which is what lets it stand in front of either of the others, or in
-front of another amended source.
+The first two hold records. The other two wrap, and answer the scope
+themselves out of what their children send: an amended source asks its one
+child the same question and merges what it holds of its own into the answer, and
+a composed source asks all of its children and interleaves theirs. Either can
+stand in front of any kind, including each other.
 
 The shapes are the wire's own. A `Spec` and a `Fill` arrive exactly as
 `wire/query.go` takes them off a statement, and `Complete` is the three things
@@ -62,6 +66,52 @@ A **result set** is what a query names, seen from the end that holds the
 records. It does not change: a different sort or a different filter is a
 different result set, opened alongside the one it replaces and closed after it,
 which is what keeps the source in use while the reader moves across.
+
+## Several sources at once
+
+A composed source holds a sequence of named **includes** and answers out of all
+of them. Every record reaches the outer sequence under a key of its own — the
+include's name, a slash, and the child's key:
+
+```
+left/0   left/1   left/note   right/0   right/1
+```
+
+**Nothing shadows anything.** Two includes keyed the same way both keep every
+record, because the name in front of the key is what tells them apart. That is
+what separates this from the layering still ahead: layering replaces an inner
+record with an outer one of the *same* key, and here no two records can share a
+key at all.
+
+**The order is the include's name, then the child's key as the child itself
+orders it** — so `many/10` follows `many/9` rather than sitting between
+`many/1` and `many/2`, which is where comparing the composed key as text would
+put it. Within one include the name is constant, so the outer order and the
+child's own order are the same sequence.
+
+That is what lets the answer stream. Each include delivers into a queue of its
+own, and a record leaves its queue as soon as no include can still produce one
+before it — which is when every include that has not finished is holding at
+least one. **So what is buffered is how far the includes have drifted out of
+step with each other, never the answer itself.** One record from each is the
+floor, and the wait ends the moment the slowest of them speaks.
+
+Order is claimed only where every include promised it. One that would not
+leaves the merge nothing to merge on, so the records go out as they arrive, the
+answer says nothing about order, and it does not stop at the shortfall either —
+cutting an unordered answer at some arbitrary record would drop ones that
+belong in the scope, and a superset is always allowed where a gap is not.
+
+**The watermark is the lowest of the includes', not the highest.** Complete up
+to a point means every one of them is complete up to it, so the one that swept
+least far holds the claim back for all of them — and it can be no further than
+the last record that actually went out.
+
+Two things it refuses. A **sort level or filter predicate naming `key`**: the
+key it hands out is not one any include holds, so every include would answer
+about its own instead. And an **include name holding a slash**, which is what
+tells a name from a key. There are no amendments in it: one include may be an
+`AmendedSource`, or an `AmendedSource` may wrap the whole of it.
 
 ## Two spaces, one sequence
 
@@ -265,7 +315,7 @@ crossed rather than as a table.
 Layers, shadowing, the merge, nested bundles, `_hash`, includes and version
 expressions.
 
-The delta half of that is built. `source.Amended` combines a large static
+The delta half of that is built. `source.AmendedSource` combines a large static
 source with a small run-time set of replacements and deletions: it asks the
 child for enough extra to cover what its own deletions will take out of the
 answer, and goes back for another round from where the child got to when that

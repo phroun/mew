@@ -36,19 +36,18 @@ import (
 // there because a child that keeps answering short should not be asked forever.
 const rounds = 4
 
-// An Amended source holds replacements and deletions against a child's
-// records.
-type Amended struct {
+// An AmendedSource holds replacements and deletions against a child's records.
+type AmendedSource struct {
 	child Source
 
 	mu    sync.Mutex
 	amend map[string]*amendment
 }
 
-// NewAmended amends the records of a child source. The child is any kind --
-// records here, records an application's, or another amended source.
-func NewAmended(child Source) *Amended {
-	return &Amended{child: child, amend: map[string]*amendment{}}
+// NewAmendedSource amends the records of a child source. The child is any kind
+// -- records here, records an application's, or another amended source.
+func NewAmendedSource(child Source) *AmendedSource {
+	return &AmendedSource{child: child, amend: map[string]*amendment{}}
 }
 
 // An amendment is what is held against one of the child's records.
@@ -77,7 +76,7 @@ func (a *amendment) place() wire.Fields {
 // These are the record entire, not a correction to some of it: what goes out
 // for this key is exactly what is stated here, and it goes out as a whole
 // record.
-func (a *Amended) Replace(key *wire.Value, fields wire.Fields) {
+func (a *AmendedSource) Replace(key *wire.Value, fields wire.Fields) {
 	if key == nil {
 		return
 	}
@@ -92,7 +91,7 @@ func (a *Amended) Replace(key *wire.Value, fields wire.Fields) {
 // record would have fallen in is known before the child is asked; without it,
 // the shortfall is discovered afterwards and costs a second question -- which
 // is also where the fields to remember are learned.
-func (a *Amended) Delete(key *wire.Value, known wire.Fields) {
+func (a *AmendedSource) Delete(key *wire.Value, known wire.Fields) {
 	if key == nil {
 		return
 	}
@@ -102,7 +101,7 @@ func (a *Amended) Delete(key *wire.Value, known wire.Fields) {
 }
 
 // Forget drops an amendment, leaving the child's own record to stand.
-func (a *Amended) Forget(key *wire.Value) {
+func (a *AmendedSource) Forget(key *wire.Value) {
 	if key == nil {
 		return
 	}
@@ -114,7 +113,7 @@ func (a *Amended) Forget(key *wire.Value) {
 // learn writes down where a deleted record actually sat, from a copy the child
 // sent. The next scope over that scope of the sequence predicts its
 // shortfall instead of discovering it.
-func (a *Amended) learn(key *wire.Value, fields wire.Fields) {
+func (a *AmendedSource) learn(key *wire.Value, fields wire.Fields) {
 	a.mu.Lock()
 	if am := a.amend[wire.EncodeValue(key)]; am != nil && am.deleted {
 		am.seen = fields
@@ -123,7 +122,7 @@ func (a *Amended) learn(key *wire.Value, fields wire.Fields) {
 }
 
 // held is what the source holds, taken at the moment a scope is asked for.
-func (a *Amended) held() []*amendment {
+func (a *AmendedSource) held() []*amendment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	out := make([]*amendment, 0, len(a.amend))
@@ -134,14 +133,14 @@ func (a *Amended) held() []*amendment {
 }
 
 // lookup is the amendment against one key, and nil where there is none.
-func (a *Amended) lookup(key *wire.Value) *amendment {
+func (a *AmendedSource) lookup(key *wire.Value) *amendment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.amend[wire.EncodeValue(key)]
 }
 
 // Open states a sequence, and opens the same one on the child.
-func (a *Amended) Open(spec *wire.Spec) (ResultSet, error) {
+func (a *AmendedSource) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
@@ -158,7 +157,7 @@ func (a *Amended) Open(spec *wire.Spec) (ResultSet, error) {
 }
 
 type amendedSet struct {
-	src    *Amended
+	src    *AmendedSource
 	spec   *wire.Spec
 	child  ResultSet
 	levels []wire.Level

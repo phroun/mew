@@ -41,7 +41,7 @@ class Recorder:
         return {}
 
     # What the query machinery calls on a connection.
-    host_source = client.Conn.host_source
+    provide_source = client.Conn.provide_source
     query = client.Conn.query
     queries = client.Conn.queries
     _mint_id = client.Conn._mint_id
@@ -56,7 +56,7 @@ class Recorder:
 
 def serve_one(fill):
     c = Recorder()
-    return c, c.host_source("files", fill)
+    return c, c.provide_source("files", fill)
 
 
 def send(c, src):

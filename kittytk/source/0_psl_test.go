@@ -24,7 +24,7 @@ func open(t *testing.T, text, spec string) ResultSet { return openAs(t, Whole, t
 
 func openAs(t *testing.T, reading Reading, text, spec string) ResultSet {
 	t.Helper()
-	src, err := ParsePSL(text, reading)
+	src, err := ParsePSLSource(text, reading)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestAScopeAsksForFewerFieldsThanTheQuery(t *testing.T) {
 // replaces and closed after it -- which is what keeps the source in use while
 // the reader moves across.
 func TestADifferentSequenceIsADifferentResultSet(t *testing.T) {
-	src, err := ParsePSL(doc, Whole)
+	src, err := ParsePSLSource(doc, Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestADifferentSequenceIsADifferentResultSet(t *testing.T) {
 // A result set is refused rather than opened wrong. An order that is quietly a
 // little different corrupts every answer after it and looks like data.
 func TestASortNobodyCanProduceIsRefused(t *testing.T) {
-	src, err := ParsePSL(doc, Whole)
+	src, err := ParsePSLSource(doc, Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestASortNobodyCanProduceIsRefused(t *testing.T) {
 // The same sequence is ordered once. Two result sets over it, and one opened
 // again on an order somebody had before, draw on the ordering already built.
 func TestOneSequenceIsOrderedOnce(t *testing.T) {
-	src, err := ParsePSL(doc, Whole)
+	src, err := ParsePSLSource(doc, Whole)
 	if err != nil {
 		t.Fatal(err)
 	}

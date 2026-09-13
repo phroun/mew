@@ -107,7 +107,7 @@ func TestAnAmendedSourceStatesItsOwnAndRelaysTheChildsClaim(t *testing.T) {
 		{"a child sending subsets", serveSubsets, false},
 	} {
 		t.Run(kind.what, func(t *testing.T) {
-			a := NewAmended(hosting(t, kind.serve))
+			a := NewAmendedSource(hosting(t, kind.serve))
 			a.Replace(key(2), fields("go.mod", 96))
 
 			out, _ := read(t, a, "sort={ .size }", "have=0 need=2")

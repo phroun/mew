@@ -10,9 +10,9 @@ import (
 )
 
 // four records, by size: go.mod 96, build.sh 310, README.md 2048, parser.go 14022
-func amendable(t *testing.T) *Amended {
+func amendable(t *testing.T) *AmendedSource {
 	t.Helper()
-	return NewAmended(mustPSL(t, twoWays))
+	return NewAmendedSource(mustPSL(t, twoWays))
 }
 
 func key(i int64) *wire.Value { return wire.NewInt(i) }
@@ -164,10 +164,10 @@ func TestItWrapsAnyKind(t *testing.T) {
 	}{
 		{"records that are here", mustPSL(t, twoWays)},
 		{"records an application has", serving(t)},
-		{"another amended source", NewAmended(mustPSL(t, twoWays))},
+		{"another amended source", NewAmendedSource(mustPSL(t, twoWays))},
 	} {
 		t.Run(kind.what, func(t *testing.T) {
-			a := NewAmended(kind.child)
+			a := NewAmendedSource(kind.child)
 			a.Replace(key(2), fields("go.mod", 99999))
 			a.Delete(key(1), fields("build.sh", 310))
 
@@ -197,7 +197,7 @@ func TestAnOrderedChildMakesAnOrderedAnswer(t *testing.T) {
 }
 
 func TestItClaimsOrderOnlyWhenTheChildDid(t *testing.T) {
-	a := NewAmended(&jumbled{inner: mustPSL(t, twoWays)})
+	a := NewAmendedSource(&jumbled{inner: mustPSL(t, twoWays)})
 	a.Replace(key(2), fields("go.mod", 96))
 
 	out, _ := read(t, a, "sort={ .size }", "have=0 need=4")
@@ -238,7 +238,7 @@ func (u *unordered) Done(c Complete)                           { u.out.Done(c) }
 // A child that refuses ends the scope here too, rather than leaving whoever
 // asked waiting.
 func TestAChildThatRefusesEndsTheScope(t *testing.T) {
-	a := NewAmended(NewHosted("files", func(string) error { return errBroken{} }))
+	a := NewAmendedSource(NewApplicationSource("files", func(string) error { return errBroken{} }))
 	set, err := a.Open(parseSpec(t, ""))
 	if err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func TestTheEndOfTheSequenceIsTheChildsEnd(t *testing.T) {
 // being wrong from becoming being stuck.
 func TestAChildThatNeverCatchesUpIsNotAskedForever(t *testing.T) {
 	child := &dribble{}
-	a := NewAmended(child)
+	a := NewAmendedSource(child)
 
 	out, done := read(t, a, "", "have=0 need=100")
 	if child.rounds < 2 {

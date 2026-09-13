@@ -31,7 +31,7 @@ func fromPSL(path, reading, query string, raw bool) {
 	if err != nil {
 		fail("%v", err)
 	}
-	src, err := source.ParsePSL(string(text), which)
+	src, err := source.ParsePSLSource(string(text), which)
 	if err != nil {
 		fail("%s: %v", path, err)
 	}

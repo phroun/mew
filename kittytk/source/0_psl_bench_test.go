@@ -31,9 +31,9 @@ func benchDoc(n int) string {
 	return b.String()
 }
 
-func benchSource(tb testing.TB, n int) *PSL {
+func benchSource(tb testing.TB, n int) *PSLSource {
 	tb.Helper()
-	src, err := ParsePSL(benchDoc(n), Members)
+	src, err := ParsePSLSource(benchDoc(n), Members)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func BenchmarkReadThePSL(b *testing.B) {
 	text := benchDoc(benchRecords)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := ParsePSL(text, Members); err != nil {
+		if _, err := ParsePSLSource(text, Members); err != nil {
 			b.Fatal(err)
 		}
 	}

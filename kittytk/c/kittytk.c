@@ -1816,7 +1816,7 @@ static void query_release(kt_query *q) {
     free(q);
 }
 
-kt_source *kt_host_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud) {
+kt_source *kt_provide_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud) {
     if (!c || !name || !*name || !cb) return NULL;
     kt_source *s = calloc(1, sizeof *s);
     s->c = c;

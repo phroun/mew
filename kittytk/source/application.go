@@ -2,7 +2,7 @@ package source
 
 // A source whose records are an application's.
 //
-// The other kind. `PSL` reads records that are here; this one asks for them
+// `PSLSource` reads records that are here; this one asks for them
 // over a connection, in the query/result exchange docs/hosting-a-query.md
 // spells out, and hands them on as they arrive. Both are one interface, so
 // whatever asks the question does not know which kind answered it.
@@ -18,33 +18,34 @@ import (
 	"github.com/phroun/kittytk/wire"
 )
 
-// A Hosted source names a body of records an application serves, and the way
-// to reach that application.
+// An ApplicationSource names a body of records an application serves, and the
+// way to reach that application.
 //
 // Send writes one batch of statements. Whatever reads the connection hands
 // every statement the application says back to Inbound; the ones addressed to
 // a query this source opened are taken, and the rest are somebody else's.
-type Hosted struct {
+type ApplicationSource struct {
 	name string
 	send func(src string) error
 
 	mu   sync.Mutex
-	open []*hostedSet // opened, in the order their replies are owed
-	byID map[uint64]*hostedSet
+	open []*appSet // opened, in the order their replies are owed
+	byID map[uint64]*appSet
 }
 
-// NewHosted is a source backed by the application's records under this name.
-func NewHosted(name string, send func(src string) error) *Hosted {
-	return &Hosted{name: name, send: send, byID: map[uint64]*hostedSet{}}
+// NewApplicationSource is a source backed by the application's records under
+// this name.
+func NewApplicationSource(name string, send func(src string) error) *ApplicationSource {
+	return &ApplicationSource{name: name, send: send, byID: map[uint64]*appSet{}}
 }
 
 // Name is what the application serves these records under.
-func (h *Hosted) Name() string { return h.name }
+func (h *ApplicationSource) Name() string { return h.name }
 
 // Open states a sequence. Nothing is said on the wire yet: a query is opened
 // with the first scope of it, because there is no reason to name a sequence
 // nobody is reading.
-func (h *Hosted) Open(spec *wire.Spec) (ResultSet, error) {
+func (h *ApplicationSource) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
@@ -53,17 +54,17 @@ func (h *Hosted) Open(spec *wire.Spec) (ResultSet, error) {
 	}
 	stated := *spec
 	stated.Source = h.name
-	return &hostedSet{src: h, spec: &stated}, nil
+	return &appSet{src: h, spec: &stated}, nil
 }
 
-// A hostedSet is one sequence the application is serving.
+// An appSet is one sequence the application is serving.
 //
 // Its id is the application's, and it does not exist until the application
 // replies with it -- so a scope asked for before that reply arrives is
 // addressed by the key the query was opened under, which the same batch
 // surfaces (docs/hosting-a-query.md).
-type hostedSet struct {
-	src  *Hosted
+type appSet struct {
+	src  *ApplicationSource
 	spec *wire.Spec
 
 	mu      sync.Mutex
@@ -76,7 +77,7 @@ type hostedSet struct {
 
 // Fill asks the application for one scope and returns. The records reach the
 // sink when the application sends them.
-func (s *hostedSet) Fill(f *wire.Fill, out Sink) error {
+func (s *appSet) Fill(f *wire.Fill, out Sink) error {
 	if out == nil {
 		return fmt.Errorf("a fill needs somewhere to put the answer")
 	}
@@ -124,7 +125,7 @@ func (s *hostedSet) Fill(f *wire.Fill, out Sink) error {
 
 // Close lets the sequence go, which is how the application learns this reader
 // has finished.
-func (s *hostedSet) Close() {
+func (s *appSet) Close() {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -141,13 +142,13 @@ func (s *hostedSet) Close() {
 }
 
 // enqueue and forget keep the source's record of which sequences are open.
-func (h *Hosted) enqueue(s *hostedSet) {
+func (h *ApplicationSource) enqueue(s *appSet) {
 	h.mu.Lock()
 	h.open = append(h.open, s)
 	h.mu.Unlock()
 }
 
-func (h *Hosted) forget(s *hostedSet) {
+func (h *ApplicationSource) forget(s *appSet) {
 	h.mu.Lock()
 	for i, o := range h.open {
 		if o == s {
@@ -166,7 +167,7 @@ func (h *Hosted) forget(s *hostedSet) {
 //
 // Two kinds arrive: the reply that names a sequence, and the results that fill
 // one. Anything else belongs to somebody else on the same connection.
-func (h *Hosted) Inbound(stmt *wire.Statement) bool {
+func (h *ApplicationSource) Inbound(stmt *wire.Statement) bool {
 	switch stmt.Verb {
 	case "reply":
 		return h.name1(stmt)
@@ -178,7 +179,7 @@ func (h *Hosted) Inbound(stmt *wire.Statement) bool {
 
 // name1 takes the reply that names a sequence. A reply carrying no id belongs
 // to a scope of one already named, and says nothing this source needs.
-func (h *Hosted) name1(stmt *wire.Statement) bool {
+func (h *ApplicationSource) name1(stmt *wire.Statement) bool {
 	var id uint64
 	for _, a := range stmt.Args {
 		if a.Name == "q" && a.Value != nil && a.Value.Kind == wire.NumberValue && a.Value.IsInt {
@@ -189,7 +190,7 @@ func (h *Hosted) name1(stmt *wire.Statement) bool {
 		return false
 	}
 	h.mu.Lock()
-	var named *hostedSet
+	var named *appSet
 	for _, s := range h.open {
 		s.mu.Lock()
 		unnamed := s.id == 0
@@ -213,7 +214,7 @@ func (h *Hosted) name1(stmt *wire.Statement) bool {
 
 // release asks for the scopes that were waiting for the sequence to be
 // named, now that it has a number to address.
-func (s *hostedSet) release() {
+func (s *appSet) release() {
 	s.mu.Lock()
 	held, id := s.held, s.id
 	s.held = nil
@@ -227,7 +228,7 @@ func (s *hostedSet) release() {
 }
 
 // result takes one record, or the statement that ends a scope.
-func (h *Hosted) result(stmt *wire.Statement) bool {
+func (h *ApplicationSource) result(stmt *wire.Statement) bool {
 	if len(stmt.Args) == 0 {
 		return false
 	}
@@ -246,7 +247,7 @@ func (h *Hosted) result(stmt *wire.Statement) bool {
 }
 
 // take reads one result statement into the sink waiting for it.
-func (s *hostedSet) take(args []*wire.Arg) {
+func (s *appSet) take(args []*wire.Arg) {
 	var (
 		bag      wire.Fields
 		whole    bool
@@ -302,7 +303,7 @@ func (s *hostedSet) take(args []*wire.Arg) {
 
 // waiting is the sink the next result belongs to: answers come back in the
 // order the scopes were asked for, one ordered stream.
-func (s *hostedSet) waiting() Sink {
+func (s *appSet) waiting() Sink {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.pending) == 0 {
@@ -312,7 +313,7 @@ func (s *hostedSet) waiting() Sink {
 }
 
 // finish hands the sink what ended its scope and takes it off the queue.
-func (s *hostedSet) finish(sink Sink, done Complete) {
+func (s *appSet) finish(sink Sink, done Complete) {
 	s.mu.Lock()
 	if len(s.pending) > 0 && s.pending[0] == sink {
 		s.pending = s.pending[1:]
@@ -323,7 +324,7 @@ func (s *hostedSet) finish(sink Sink, done Complete) {
 
 // fail ends every scope still waiting, which is what a connection that will
 // not carry the question leaves them needing.
-func (s *hostedSet) fail(why string) {
+func (s *appSet) fail(why string) {
 	s.mu.Lock()
 	waiting := s.pending
 	s.pending = nil
@@ -347,7 +348,7 @@ func withoutKey(bag wire.Fields) wire.Fields {
 
 // Statements reads a run of wire text and hands each statement to Inbound,
 // which is what a reader of the connection does with what it gets.
-func (h *Hosted) Statements(src string) {
+func (h *ApplicationSource) Statements(src string) {
 	script, err := wire.Parse(src)
 	if err != nil {
 		return

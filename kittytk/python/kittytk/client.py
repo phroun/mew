@@ -438,16 +438,16 @@ class Conn:
     def ask(self, oid: int, question: str):
         self.exec("ask %d %s" % (oid, question))
 
-    def host_source(self, name: str, fill) -> "Source":
+    def provide_source(self, name: str, fill) -> "Source":
         """Register a body of records this application can serve, and what
         answers a scope of it.
 
         Nothing crosses the wire here: a source is a name, not an object, and
         the display learns of it when a trinket is told `data="<name>"`."""
         if not name:
-            raise ValueError("host_source: a source needs a name")
+            raise ValueError("provide_source: a source needs a name")
         if fill is None:
-            raise ValueError("host_source: a source needs something to fill it")
+            raise ValueError("provide_source: a source needs something to fill it")
         s = Source(self, name, fill)
         with self._lock:
             self._sources[name] = s

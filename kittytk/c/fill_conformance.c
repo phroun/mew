@@ -306,7 +306,7 @@ int main(void) {
 
     /* Registering a source says nothing on the wire: it is a name, not an
        object. */
-    source = kt_host_source(conn, "files", fill_two, NULL);
+    source = kt_provide_source(conn, "files", fill_two, NULL);
     expect(source != NULL, "the source was registered");
     expect_str(kt_source_name(source), "files", "the source knows its name");
     settle();
