@@ -89,9 +89,12 @@ class ServingAQueryTest(unittest.TestCase):
         send(c, 'q=new query source="files" sort={ name natural } have=0 need=30')
         self.assertEqual("\n".join(c.sent), "\n".join([
             "reply q=1",
+            # The order is declared before the records rather than after them,
+            # which is the only place a far end can act on it.
+            "result 1 ordered",
             'result 1 fields={ key 17; name "src/parser.go"; size 1024 }',
             'result 1 fields={ key 42; name "src/window.go"; size 2048 }',
-            'result 1 complete ordered watermark={ name "src/window.go"; key 42 }',
+            'result 1 complete watermark={ name "src/window.go"; key 42 }',
         ]))
 
     def test_a_window_arrives_taken_apart(self):
@@ -162,10 +165,12 @@ class ServingAQueryTest(unittest.TestCase):
         self.assertGreater(len(batches), 1,
                            "the whole answer went in one message; it was meant to stream")
         lines = "\n".join(batches).split("\n")
-        self.assertEqual(len(lines), records + 1)
+        self.assertEqual(len(lines), records + 2,
+                         "a declaration, every record once, and a terminator")
+        self.assertEqual(lines[0], "result 1 ordered")
         for i in range(records):
-            self.assertIn("key %d;" % i, lines[i])
-        self.assertTrue(lines[records].startswith("result 1 complete"))
+            self.assertIn("key %d;" % i, lines[i + 1])
+        self.assertTrue(lines[records + 1].startswith("result 1 complete"))
 
     def test_a_different_sequence_is_a_different_query(self):
         """A query is stated when it is made and does not change, so the id IS
@@ -235,3 +240,29 @@ class ServingAQueryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrderIsDeclaredUpFrontTest(unittest.TestCase):
+    """The order is declared before the records or not at all. One declared
+    after a record has gone out is too late to be true of what has already
+    crossed, so it is dropped rather than sent."""
+
+    def test_a_late_declaration_is_not_sent(self):
+        def fill(f):
+            f.record(1, name="alpha")
+            f.ordered()  # too late
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" have=0 need=2')
+        self.assertNotIn("ordered", "\n".join(c.sent))
+
+    def test_it_is_declared_once(self):
+        def fill(f):
+            f.ordered()
+            f.ordered()
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" have=0 need=2')
+        self.assertEqual("\n".join(c.sent).count("ordered"), 1)

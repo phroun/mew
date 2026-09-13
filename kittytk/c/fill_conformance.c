@@ -172,6 +172,16 @@ static void fill_ends_once(kt_query *q, const kt_qfill *req, kt_fill *sink, void
 
 #define LONG_RECORDS 400
 
+/* The order declared after a record has gone out is too late to be true of
+   what crossed, so it is dropped rather than sent. */
+static void fill_late_order(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
+    kt_value f = kt_vstr("name", "alpha");
+    kt_fill_record(sink, kt_vint("", 1), &f, 1);
+    kt_fill_ordered(sink);
+    kt_fill_exhausted(sink);
+}
+
 static void fill_long(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_ordered(sink);
@@ -305,9 +315,12 @@ int main(void) {
     char *answer = since(n);
     expect_str(answer,
         "reply q=1\n"
+        /* The order is declared before the records rather than after them,
+           which is the only place a far end can act on it. */
+        "result 1 ordered\n"
         "result 1 fields={ key 17; name \"src/parser.go\"; size 1024 }\n"
         "result 1 fields={ key 42; name \"src/window.go\"; size 2048 }\n"
-        "result 1 complete ordered watermark={ name \"src/window.go\"; key 42 }",
+        "result 1 complete watermark={ name \"src/window.go\"; key 42 }",
         "the reply comes before the records");
     free(answer);
 
@@ -405,17 +418,26 @@ int main(void) {
        window larger than one message is neither held in memory nor one
        uninterruptible stretch of work. */
     n = sent_count();
+    serve(fill_late_order, "have=0 need=2");
+    answer = since(n + 1);
+    expect(strstr(answer, "ordered") == NULL, "a late declaration of order is not sent");
+    free(answer);
+
+    n = sent_count();
     q = serve(fill_long, "have=0 need=400");
     int batches = sent_count() - n - 1;
     expect(batches > 1, "a long answer goes out in batches");
     answer = since(n + 1);
     int lines = *answer ? 1 : 0;
     for (char *p = answer; *p; p++) if (*p == '\n') lines++;
-    expect(lines == LONG_RECORDS + 1, "every record arrives, once, with a terminator");
+    expect(lines == LONG_RECORDS + 2,
+           "every record arrives, once, with a declaration and a terminator");
     expect(strstr(answer, "key 0;") != NULL && strstr(answer, "key 399;") != NULL,
            "the first and last records are both there");
-    snprintf(tmp, sizeof tmp, "\nresult %llu complete ordered", (unsigned long long)q);
+    snprintf(tmp, sizeof tmp, "\nresult %llu complete", (unsigned long long)q);
     expect(strstr(answer, tmp) != NULL, "the terminator is last");
+    snprintf(tmp, sizeof tmp, "result %llu ordered\n", (unsigned long long)q);
+    expect(strncmp(answer, tmp, strlen(tmp)) == 0, "the declaration of order leads");
     free(answer);
 
     /* A source this application does not serve is refused, and the refusal is

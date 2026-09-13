@@ -251,13 +251,14 @@ func (s *hostedSet) take(args []*wire.Arg) {
 		bag      wire.Fields
 		done     Complete
 		complete bool
+		ordered  bool
 	)
 	for _, a := range args {
 		switch {
 		case a.Name == wire.ResultComplete && a.Value == nil:
 			complete = true
 		case a.Name == "ordered" && a.Value == nil:
-			done.Ordered = true
+			ordered = true
 		case a.Name == "exhausted" && a.Value == nil:
 			done.Exhausted = true
 		case a.Name == "fields" && a.Value != nil:
@@ -274,7 +275,12 @@ func (s *hostedSet) take(args []*wire.Arg) {
 		return // nothing is waiting for this, so nobody wants it
 	}
 	if !complete {
-		if len(bag) > 0 {
+		switch {
+		case ordered:
+			// The declaration that leads an answer, which is what lets whoever
+			// is reading act on the records as they arrive.
+			sink.Ordered()
+		case len(bag) > 0:
 			_ = sink.Record(bag.Key(), withoutKey(bag))
 		}
 		return

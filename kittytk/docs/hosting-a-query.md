@@ -50,25 +50,27 @@ and what it prints is this:
 -> init app=1 store=2 host=3
 -> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } have=0 need=3
 <- reply q=1
+<- result 1 ordered
 <- end
 <- result 1 fields={ key 2; name "build.sh"; size 310 }
 <- result 1 fields={ key 3; name "go.mod"; size 96 }
 <- result 1 fields={ key 1; name "README.md"; size 2048 }
-<- result 1 complete ordered watermark={ name "README.md"; key 1 }
+<- result 1 complete watermark={ name "README.md"; key 1 }
 -> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3
 <- reply
 <- end
+<- result 1 ordered
 <- result 1 fields={ key 6; name "src/file2.go"; size 1200 }
 <- result 1 fields={ key 7; name "src/file10.go"; size 880 }
 <- result 1 fields={ key 4; name "src/parser.go"; size 14022 }
-<- result 1 complete ordered watermark={ name "src/parser.go"; key 4 }
+<- result 1 complete watermark={ name "src/parser.go"; key 4 }
 -> r=new query source="files" sort={ size desc } have=0 need=3
 <- reply r=2
 <- end
 <- result 2 fields={ key 4; name "src/parser.go"; size 14022 }
 <- result 2 fields={ key 5; name "src/window.go"; size 9310 }
 <- result 2 fields={ key 8; name "testdata/query.wire"; size 6100 }
-<- result 2 complete ordered watermark={ size 6100; key 8 }
+<- result 2 complete watermark={ size 6100; key 8 }
 -> destroy 1
 <- reply
 <- end
@@ -165,9 +167,10 @@ DISPLAY → APP   q=new query source="files" filter={ ge size 1024 } sort={ name
                 end
 APP → DISPLAY   reply q=9
                 end
-APP → DISPLAY   result 9 fields={ key 17; name "src/parser.go"; size 1024 }
+APP → DISPLAY   result 9 ordered
+                result 9 fields={ key 17; name "src/parser.go"; size 1024 }
                 result 9 fields={ key 42; name "src/window.go"; size 2048 }
-                result 9 complete ordered watermark={ name "src/window.go"; key 42 }
+                result 9 complete watermark={ name "src/window.go"; key 42 }
 ```
 
 **The application names it.** Each end mints ids in its own space and the
@@ -193,8 +196,9 @@ DISPLAY → APP   query 9 from={ name "build.sh"; key 42 } have=25 need=30
                 end
 APP → DISPLAY   reply
                 end
-APP → DISPLAY   result 9 fields={ … }
-                result 9 complete ordered exhausted
+APP → DISPLAY   result 9 ordered
+                result 9 fields={ … }
+                result 9 complete exhausted
 ```
 
 | on a window request | |
@@ -243,10 +247,22 @@ three things can ride on it:
 | `exhausted` | everything there is. No watermark, because there is nothing past the end to be complete up to |
 | `error="…"` | a refusal, which is an answer: the display carries on with what it has |
 
-`ordered` says the records are in the query's own order. It is the one hint
-that cannot be left unsaid and assumed, because it changes what the display
-does with what arrived — ordered, it merges; unordered, it sorts first. Saying
-nothing means unordered, which is always safe.
+**`ordered` leads the answer**, on its own statement, before any record:
+
+```
+result 9 ordered
+```
+
+It says the records are in the query's own order, and it is said up front
+because that is the only place it is worth anything. It changes what the far
+end does with what arrives — ordered, it merges; unordered, it sorts first —
+and an end that does not learn which until the records have all gone by can act
+on neither. Saying nothing means unordered, which is always safe, and costs no
+statement at all.
+
+An application that declares it after a record has gone out is declaring
+something that is already not true of what crossed, so the client libraries
+drop it rather than send it.
 
 **Nothing is stamped**, because nothing needs to be. The application's replies
 and its results travel one ordered stream, so a window's results are the ones

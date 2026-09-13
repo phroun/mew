@@ -423,6 +423,9 @@ func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
 		to = boundaryTuple(f.To, v.spec.Sort)
 	}
 
+	// Said before the records, which is where it can be acted on.
+	out.Ordered()
+
 	sent := 0
 	for i := start; i < len(o.rows); i++ {
 		past := to == nil || wire.CompareLevels(o.tuples[i], to, o.levels) > 0
@@ -436,7 +439,7 @@ func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
 		sent++
 	}
 
-	done := Complete{Ordered: true}
+	done := Complete{}
 	switch {
 	case start+sent >= len(o.rows):
 		// Nothing past here, so there is no point past which to be complete.

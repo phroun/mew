@@ -127,9 +127,12 @@ func TestTheReplyComesBeforeTheRecords(t *testing.T) {
 
 	got := strings.Join(r.since(0), "\n")
 	want := "reply q=1\n" +
+		// The order is declared before the records rather than after them,
+		// which is the only place a far end can act on it.
+		"result 1 ordered\n" +
 		`result 1 fields={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
 		`result 1 fields={ key 42; name "src/window.go"; size 2048 }` + "\n" +
-		`result 1 complete ordered watermark={ name "src/window.go"; key 42 }`
+		`result 1 complete watermark={ name "src/window.go"; key 42 }`
 	if got != want {
 		t.Errorf("the answer was\n%s\nwant\n%s", got, want)
 	}
@@ -247,18 +250,23 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 	if len(batches) < 2 {
 		t.Fatalf("the whole answer went in %d message(s); it was meant to stream", len(batches))
 	}
-	// Every record still arrives, once, in order, and the terminator is last.
+	// The declaration of order leads, every record arrives once and in order
+	// after it, and the terminator is last.
 	all := strings.Split(strings.Join(batches, "\n"), "\n")
-	if len(all) != records+1 {
-		t.Fatalf("%d statements for %d records and a terminator", len(all), records)
+	if len(all) != records+2 {
+		t.Fatalf("%d statements for %d records, a declaration and a terminator",
+			len(all), records)
+	}
+	if all[0] != "result 1 ordered" {
+		t.Fatalf("the answer leads with %.60s...", all[0])
 	}
 	for i := 0; i < records; i++ {
-		if !strings.Contains(all[i], fmt.Sprintf("key %d;", i)) {
-			t.Fatalf("statement %d is %.60s...", i, all[i])
+		if !strings.Contains(all[i+1], fmt.Sprintf("key %d;", i)) {
+			t.Fatalf("statement %d is %.60s...", i, all[i+1])
 		}
 	}
-	if !strings.HasPrefix(all[records], "result 1 complete") {
-		t.Errorf("the last statement is %.60s...", all[records])
+	if !strings.HasPrefix(all[records+1], "result 1 complete") {
+		t.Errorf("the last statement is %.60s...", all[records+1])
 	}
 }
 
@@ -371,5 +379,36 @@ func TestAnUnknownSourceIsRefused(t *testing.T) {
 	}
 	if len(c.Queries()) != 0 {
 		t.Error("a query was made for a source that is not served")
+	}
+}
+
+// The order is declared before the records or not at all. One declared after a
+// record has gone out is too late to be true of what has already crossed, so
+// it is dropped rather than sent.
+func TestOrderDeclaredLateIsNotSent(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) {
+		_ = f.Record(1, wire.Named("name", "a"))
+		f.Ordered() // too late
+		_ = f.Exhausted()
+	})
+	send(t, c, `q=new query source="files" have=0 need=2`)
+
+	answered := strings.Join(r.since(0), "\n")
+	if strings.Contains(answered, "ordered") {
+		t.Errorf("a late declaration went out:\n%s", answered)
+	}
+}
+
+// And declaring it twice says it once.
+func TestOrderIsDeclaredOnce(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) {
+		f.Ordered()
+		f.Ordered()
+		_ = f.Exhausted()
+	})
+	send(t, c, `q=new query source="files" have=0 need=2`)
+
+	if n := strings.Count(strings.Join(r.since(0), "\n"), "ordered"); n != 1 {
+		t.Errorf("the order was declared %d times", n)
 	}
 }

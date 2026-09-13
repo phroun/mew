@@ -27,7 +27,7 @@ func TestWhatCameBackIsPrintedAsATable(t *testing.T) {
 	if !feed(p,
 		`result 1 fields={ key 2; name "build.sh"; size 310 }`,
 		`result 1 fields={ key 1; name "README.md"; size 2048 }`,
-		`result 1 complete ordered watermark={ name "README.md"; key 1 }`,
+		`result 1 complete watermark={ name "README.md"; key 1 }`,
 	) {
 		t.Fatal("the terminator did not end the answer")
 	}

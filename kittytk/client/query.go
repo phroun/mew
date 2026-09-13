@@ -371,7 +371,8 @@ type Fill struct {
 
 	mu      sync.Mutex
 	buf     strings.Builder
-	sent    int
+	sent    int // statements written, which is what decides a flush
+	records int // records among them, which is what Sent reports
 	ordered bool
 	closed  bool
 }
@@ -387,19 +388,38 @@ func (f *Fill) Record(key any, fields ...*wire.Arg) error {
 	bag := make(wire.Fields, 0, len(fields)+1)
 	bag = append(bag, wire.Named(wire.KeyField, key))
 	bag = append(bag, fields...)
-	return f.emit(f.result(&wire.Arg{Name: "fields", Value: bag.Block()}))
+	err := f.emit(f.result(&wire.Arg{Name: "fields", Value: bag.Block()}))
+	if err == nil {
+		f.mu.Lock()
+		f.records++
+		f.mu.Unlock()
+	}
+	return err
 }
 
-// Ordered declares that the records are being sent in the query's own order.
+// Ordered declares that the records are being sent in the query's own order,
+// and goes out at once, before any of them.
 //
-// It is the one hint that cannot be left unsaid and assumed, because it
-// changes what the display does with what arrives: ordered, it merges the
-// records as they stand; unordered, it sorts them first. Saying nothing means
-// unordered, which is always safe.
+// Up front because that is the only place it is worth anything. It changes
+// what the far end does with what arrives -- ordered, it merges the records as
+// they stand; unordered, it sorts them first -- and a far end that does not
+// learn which until the records have all gone by cannot act on either. Saying
+// nothing means unordered, which is always safe.
+//
+// So it is said before the first record or not at all: a declaration made
+// after one has gone out is too late to be true of what has already crossed,
+// and is dropped rather than sent.
 func (f *Fill) Ordered() {
 	f.mu.Lock()
-	f.ordered = true
+	late := f.sent > 0 || f.closed || f.ordered
+	if !late {
+		f.ordered = true
+	}
 	f.mu.Unlock()
+	if late {
+		return
+	}
+	_ = f.emit(f.result(&wire.Arg{Name: "ordered", Flag: wire.FlagTrue}))
 }
 
 // Done finishes the answer with a watermark: there is nothing of mine between
@@ -437,7 +457,7 @@ func (f *Fill) Fail(format string, args ...any) error {
 func (f *Fill) Sent() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.sent
+	return f.records
 }
 
 // Flush sends what has accumulated without finishing the answer.
@@ -491,12 +511,7 @@ func (f *Fill) finish(extra []*wire.Arg) error {
 		f.mu.Unlock()
 		return fmt.Errorf("this window has already been answered")
 	}
-	// `ordered` rides on the terminator, so it can be decided after the records
-	// have been produced rather than promised before.
 	args := []*wire.Arg{{Name: wire.ResultComplete, Flag: wire.FlagTrue}}
-	if f.ordered {
-		args = append(args, &wire.Arg{Name: "ordered", Flag: wire.FlagTrue})
-	}
 	stmt := f.result(append(args, extra...)...)
 	if f.buf.Len() > 0 {
 		f.buf.WriteByte('\n')

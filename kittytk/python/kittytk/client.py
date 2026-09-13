@@ -1012,7 +1012,8 @@ class Fill:
         self._lock = threading.Lock()
         self._buf: List[str] = []
         self._size = 0
-        self._sent = 0
+        self._sent = 0       # statements written, which is what decides a flush
+        self._records = 0    # records among them, which is what sent() reports
         self._ordered = False
         self._closed = False
 
@@ -1029,16 +1030,29 @@ class Fill:
         for name, v in fields.items():
             bag.append(protocol.named(name, v))
         self._emit(self._result(protocol.Arg(name="fields", value=bag.block())))
+        with self._lock:
+            self._records += 1
 
     def ordered(self):
-        """Declare that the records are being sent in the query's own order.
+        """Declare that the records are being sent in the query's own order,
+        which goes out at once, before any of them.
 
-        It is the one hint that cannot be left unsaid and assumed, because it
-        changes what the display does with what arrives: ordered, it merges the
-        records as they stand; unordered, it sorts them first. Saying nothing
-        means unordered, which is always safe."""
+        Up front because that is the only place it is worth anything. It
+        changes what the far end does with what arrives -- ordered, it merges
+        the records as they stand; unordered, it sorts them first -- and a far
+        end that does not learn which until the records have all gone by cannot
+        act on either. Saying nothing means unordered, which is always safe.
+
+        So it is said before the first record or not at all: a declaration made
+        after one has gone out is too late to be true of what has already
+        crossed, and is dropped rather than sent."""
         with self._lock:
-            self._ordered = True
+            late = self._sent > 0 or self._closed or self._ordered
+            if not late:
+                self._ordered = True
+        if late:
+            return
+        self._emit(self._result(protocol.Arg(name="ordered", flag=FlagState.TRUE)))
 
     def done(self, watermark=None):
         """Finish with a watermark: there is nothing of mine between where you
@@ -1072,7 +1086,7 @@ class Fill:
     def sent(self) -> int:
         """How many records have gone into the answer so far."""
         with self._lock:
-            return self._sent
+            return self._records
 
     def flush(self):
         """Send what has accumulated without finishing the answer."""
@@ -1107,11 +1121,7 @@ class Fill:
         with self._lock:
             if self._closed:
                 raise RuntimeError("this window has already been answered")
-            # `ordered` rides on the terminator, so it can be decided after the
-            # records have been produced rather than promised before.
             args = [protocol.Arg(name=_query.RESULT_COMPLETE, flag=FlagState.TRUE)]
-            if self._ordered:
-                args.append(protocol.Arg(name="ordered", flag=FlagState.TRUE))
             args.extend(extra)
             self._buf.append(self._result(*args))
             self._closed = True

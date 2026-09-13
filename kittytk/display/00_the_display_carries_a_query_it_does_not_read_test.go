@@ -108,9 +108,11 @@ func TestTheDisplayCarriesAQueryItDoesNotRead(t *testing.T) {
 		t.Fatalf("the first thing back was not the reply:\n%s", got)
 	}
 	for _, want := range []string{
+		// The order is declared before the records rather than after them.
+		"result 1 ordered",
 		`result 1 fields={ key 1; name "alpha" }`,
 		`result 1 fields={ key 2; name "beta" }`,
-		"result 1 complete ordered exhausted",
+		"result 1 complete exhausted",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing:\n  %s\nin:\n%s", want, got)

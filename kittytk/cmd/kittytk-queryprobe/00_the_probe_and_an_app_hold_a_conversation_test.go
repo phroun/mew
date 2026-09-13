@@ -101,8 +101,11 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		// The application names it, and the reply carries the name before
 		// anything that uses it.
 		"<- reply q=1",
+		// The order is declared before the records, which is the only place a
+		// reader can act on it.
+		"<- result 1 ordered",
 		`<- result 1 fields={ key 2; name "build.sh"; size 310 }`,
-		`<- result 1 complete ordered watermark={ name "README.md"; key 1 }`,
+		`<- result 1 complete watermark={ name "README.md"; key 1 }`,
 		// A second window from where the first stopped. file2 before file10 is
 		// the natural collation the sort asked for.
 		`-> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3`,
@@ -114,7 +117,7 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		`-> r=new query source="files" sort={ size desc } have=0 need=3`,
 		"<- reply r=2",
 		`<- result 2 fields={ key 4; name "src/parser.go"; size 14022 }`,
-		`<- result 2 complete ordered watermark={ size 6100; key 8 }`,
+		`<- result 2 complete watermark={ size 6100; key 8 }`,
 		"-> destroy 1",
 		// And letting the last one go, which is how the application learns
 		// every reader has finished.
@@ -133,7 +136,7 @@ func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 		"<- result 1 complete exhausted",
 	})
 	// It said nothing about order, which is what leaves the display to sort.
-	if strings.Contains(trace, "complete ordered") {
+	if strings.Contains(trace, "result 1 ordered") {
 		t.Error("the simplest source claimed its records were in order")
 	}
 	// Five records for a window of two: the display asked for a window and got

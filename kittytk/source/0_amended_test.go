@@ -180,13 +180,28 @@ func TestItWrapsAnyKind(t *testing.T) {
 }
 
 // What it claims about order is what is true of what it sent, which is the
-// child's claim: ours went out in the sequence's order either way.
+// child's claim: ours went out in the sequence's order either way. And the
+// claim is passed on before the records, which is what lets whoever is reading
+// act on them as they arrive.
+func TestAnOrderedChildMakesAnOrderedAnswer(t *testing.T) {
+	a := amendable(t)
+	a.Replace(key(2), fields("go.mod", 96))
+
+	out, _ := read(t, a, "sort={ .size }", "have=0 need=4")
+	if !out.ordered {
+		t.Error("an ordered child did not make an ordered answer")
+	}
+	if out.joined() != "2,1,0,3" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+}
+
 func TestItClaimsOrderOnlyWhenTheChildDid(t *testing.T) {
 	a := NewAmended(&jumbled{inner: mustPSL(t, twoWays)})
 	a.Replace(key(2), fields("go.mod", 96))
 
-	out, done := read(t, a, "sort={ .size }", "have=0 need=4")
-	if done.Ordered {
+	out, _ := read(t, a, "sort={ .size }", "have=0 need=4")
+	if out.ordered {
 		t.Error("a jumble was claimed to be in order")
 	}
 	if len(out.keys) != 4 {
@@ -215,8 +230,9 @@ func (j *jumbledSet) Fill(f *wire.Fill, out Sink) error {
 
 type unordered struct{ out Sink }
 
+func (u *unordered) Ordered()                                  {} // said nothing, which is what a jumble says
 func (u *unordered) Record(k *wire.Value, f wire.Fields) error { return u.out.Record(k, f) }
-func (u *unordered) Done(c Complete)                           { c.Ordered = false; u.out.Done(c) }
+func (u *unordered) Done(c Complete)                           { u.out.Done(c) }
 
 // A child that refuses ends the stretch here too, rather than leaving whoever
 // asked waiting.
@@ -311,11 +327,9 @@ func (d *dribble) Close()                             {}
 
 func (d *dribble) Fill(f *wire.Fill, out Sink) error {
 	d.rounds++
+	out.Ordered()
 	k := wire.NewInt(int64(d.rounds))
 	_ = out.Record(k, wire.Fields{wire.Named(".n", int64(d.rounds))})
-	out.Done(Complete{
-		Ordered:   true,
-		Watermark: wire.Fields{wire.Named(wire.KeyField, int64(d.rounds))},
-	})
+	out.Done(Complete{Watermark: wire.Fields{wire.Named(wire.KeyField, int64(d.rounds))}})
 	return nil
 }

@@ -65,6 +65,7 @@ func (c *counter) Record(key *wire.Value, fields wire.Fields) error {
 	return nil
 }
 
+func (c *counter) Ordered()      {}
 func (c *counter) Done(Complete) {}
 
 // Reading the file: parsing the PSL and taking its records off it.

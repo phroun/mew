@@ -1781,7 +1781,9 @@ struct kt_fill {
     uint64_t query;
     kt_mutex mu;
     kt_buf buf;
-    int sent, ordered;
+    int sent;     /* statements written, which is what decides a flush */
+    int records;  /* records among them, which is what kt_fill_sent reports */
+    int ordered;
 };
 
 static void enqueue_inbound(kt_conn *c, const char *text) {
@@ -1908,6 +1910,7 @@ int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
     buf_puts(&f->buf, stmt);
     free(stmt);
     f->sent++;
+    f->records++;
     if (f->buf.len < KT_FLUSH_BYTES) {
         kt_mutex_unlock(&f->mu);
         return 0;
@@ -1917,13 +1920,32 @@ int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
     return fill_send(f, src);
 }
 
+/* The order is declared before the records, which is the only place it is worth
+   anything: a far end that learns it afterwards cannot act on what it has
+   already been given. One declared after a record has gone out is too late to
+   be true of what crossed, so it is dropped rather than sent. */
 void kt_fill_ordered(kt_fill *f) {
     kt_mutex_lock(&f->mu);
-    f->ordered = 1;
+    int late = f->sent > 0 || f->ordered;
+    if (!late) f->ordered = 1;
     kt_mutex_unlock(&f->mu);
+    if (late) return;
+
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    fill_head(f, &b);
+    buf_puts(&b, " ordered");
+    char *line = buf_dup(&b);
+    free(b.p);
+    kt_mutex_lock(&f->mu);
+    if (f->buf.len) buf_put(&f->buf, '\n');
+    buf_puts(&f->buf, line);
+    f->sent++;
+    kt_mutex_unlock(&f->mu);
+    free(line);
 }
 
-int kt_fill_sent(const kt_fill *f) { return f->sent; }
+int kt_fill_sent(const kt_fill *f) { return f->records; }
 
 int kt_fill_flush(kt_fill *f) {
     kt_mutex_lock(&f->mu);
@@ -1942,10 +1964,7 @@ static int fill_finish(kt_fill *f, const char *tail) {
     kt_buf b;
     memset(&b, 0, sizeof b);
     fill_head(f, &b);
-    /* `complete` ends the window; `ordered` rides on it, so it can be decided
-     * after the records have been produced rather than promised before. */
     buf_puts(&b, " complete");
-    if (f->ordered) buf_puts(&b, " ordered");
     if (tail) buf_puts(&b, tail);
     if (f->buf.len) buf_put(&f->buf, '\n');
     /* buf_dup, not b.p: a kt_buf holds a length and is not NUL-terminated. */

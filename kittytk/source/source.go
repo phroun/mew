@@ -55,21 +55,27 @@ type ResultSet interface {
 // anywhere before the first of them moves, and because a source whose records
 // are across a connection has them in that shape already.
 type Sink interface {
+	// Ordered says the records about to arrive are in the sequence's order.
+	// It comes before the first of them or not at all, which is the only place
+	// it is worth anything: a sink that learns it afterwards can no longer act
+	// on the records it has already been given. Not being told means not
+	// ordered, which is always safe.
+	Ordered()
+
 	Record(key *wire.Value, fields wire.Fields) error
 	Done(c Complete)
 }
 
-// Complete is what ends a window, and it is the three things the terminator can
-// carry.
+// Complete is what ends a stretch.
 //
-// Ordered says the records went in in the sequence's own order, which changes
-// what the far end does with them: ordered, it merges; unordered, it sorts
-// first. Watermark says there is nothing between where the window was asked
-// from and that point that the far end does not now have. Exhausted says there
-// is nothing past the end at all, which is why it carries no watermark -- there
-// is no point past the end to be complete up to.
+// Watermark says there is nothing between where the stretch was asked from and
+// that point that the far end does not now have. Exhausted says there is
+// nothing past the end at all, which is why it carries no watermark -- there is
+// no point past the end to be complete up to.
+//
+// Order is not here. It is said before the records, on the sink, because a
+// sink told afterwards cannot use it.
 type Complete struct {
-	Ordered   bool
 	Watermark wire.Fields
 	Exhausted bool
 

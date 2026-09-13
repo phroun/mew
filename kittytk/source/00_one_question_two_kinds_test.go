@@ -148,7 +148,7 @@ func TestOneQuestionTwoKinds(t *testing.T) {
 			if got := out.fields[0].Encode(); got != `{ .name "go.mod"; .size 96 }` {
 				t.Errorf("the first record carries %s", got)
 			}
-			if !done.Ordered {
+			if !out.ordered {
 				t.Error("the answer did not say it was in order")
 			}
 			if done.Exhausted {

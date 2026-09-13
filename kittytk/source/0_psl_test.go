@@ -65,10 +65,20 @@ func statement(t *testing.T, text string) *wire.Statement {
 
 // collector is a Sink that keeps what it was given.
 type collector struct {
-	keys   []string
-	fields []wire.Fields
-	done   Complete
-	ended  bool
+	keys    []string
+	fields  []wire.Fields
+	done    Complete
+	ended   bool
+	ordered bool
+}
+
+// Ordered arrives before the records, so a sink that is told late is a sink
+// that was told wrong.
+func (c *collector) Ordered() {
+	if len(c.keys) > 0 || c.ended {
+		panic("the order was declared after the records it describes")
+	}
+	c.ordered = true
 }
 
 func (c *collector) Record(key *wire.Value, fields wire.Fields) error {
@@ -106,7 +116,7 @@ func TestBothOfAPSLListsCollectionsAreRecords(t *testing.T) {
 	if !done.Exhausted {
 		t.Error("a window holding every record did not say so")
 	}
-	if !done.Ordered {
+	if !out.ordered {
 		t.Error("the records went out in the sequence's order and did not say so")
 	}
 }

@@ -123,6 +123,9 @@ func window(set source.ResultSet, args []*wire.Arg, out *printer) error {
 // terminator when the stretch ends.
 type results struct{ out *printer }
 
+// Ordered leads the answer, in the spelling the wire leads one with.
+func (r *results) Ordered() { r.out.take(result(&wire.Arg{Name: "ordered", Flag: wire.FlagTrue})) }
+
 func (r *results) Done(done source.Complete) { r.out.take(terminator(done)) }
 
 func (r *results) Record(key *wire.Value, fields wire.Fields) error {
@@ -136,9 +139,6 @@ func (r *results) Record(key *wire.Value, fields wire.Fields) error {
 // terminator is what ends the window, in the spelling the wire ends one with.
 func terminator(done source.Complete) string {
 	args := []*wire.Arg{{Name: wire.ResultComplete, Flag: wire.FlagTrue}}
-	if done.Ordered {
-		args = append(args, &wire.Arg{Name: "ordered", Flag: wire.FlagTrue})
-	}
 	switch {
 	case done.Exhausted:
 		args = append(args, &wire.Arg{Name: "exhausted", Flag: wire.FlagTrue})

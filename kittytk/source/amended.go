@@ -184,9 +184,10 @@ type merge struct {
 	mine  []*amendment // ours, in the sequence's order, still to go out
 	slack int          // records of the child's this stretch will take out
 
-	sent  int
-	round int
-	done  bool
+	sent        int
+	round       int
+	done        bool
+	saidOrdered bool
 }
 
 // prepare works out what this source has to say about the stretch before the
@@ -242,6 +243,19 @@ func (m *merge) ask(from wire.Fields, need int) error {
 	return m.set.child.Fill(&next, m)
 }
 
+// Ordered is the child saying its records are in the sequence's order, before
+// any of them arrive.
+//
+// Ours go out in that order too, so what comes out of the merge is ordered
+// exactly when what goes into it was -- and whoever is reading learns it in
+// time to act on it, which is the whole reason it is said up front.
+func (m *merge) Ordered() {
+	if !m.saidOrdered {
+		m.saidOrdered = true
+		m.out.Ordered()
+	}
+}
+
 // Record takes one of the child's records.
 //
 // A key this source amends is the source's to answer: the child's copy is
@@ -284,10 +298,6 @@ func (m *merge) Done(c Complete) {
 	m.done = true
 
 	out := Complete{
-		// Ours went out in the sequence's order, and the child's did if the
-		// child said so. Where it did not, what came out is a jumble and
-		// nothing is claimed about it.
-		Ordered: c.Ordered,
 		// Everything of ours from the boundary on has just gone out, so where
 		// the child had nothing more, neither has anyone.
 		Exhausted: c.Exhausted,
