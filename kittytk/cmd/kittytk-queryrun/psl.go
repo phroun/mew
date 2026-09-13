@@ -128,11 +128,22 @@ func (r *results) Ordered() { r.out.take(result(&wire.Arg{Name: "ordered", Flag:
 
 func (r *results) Done(done source.Complete) { r.out.take(terminator(done)) }
 
+// Record and Subset write a record out under the word that says how much of it
+// came back: `record` for every field it has, `fields` for the ones this
+// window asked for.
 func (r *results) Record(key *wire.Value, fields wire.Fields) error {
+	return r.write(wire.RecordArg, key, fields)
+}
+
+func (r *results) Subset(key *wire.Value, fields wire.Fields) error {
+	return r.write(wire.FieldsArg, key, fields)
+}
+
+func (r *results) write(what string, key *wire.Value, fields wire.Fields) error {
 	bag := make(wire.Fields, 0, len(fields)+1)
 	bag = append(bag, &wire.Arg{Name: wire.KeyField, Value: key})
 	bag = append(bag, fields...)
-	r.out.take(result(&wire.Arg{Name: "fields", Value: bag.Block()}))
+	r.out.take(result(&wire.Arg{Name: what, Value: bag.Block()}))
 	return nil
 }
 

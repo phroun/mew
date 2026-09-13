@@ -130,8 +130,8 @@ func TestTheReplyComesBeforeTheRecords(t *testing.T) {
 		// The order is declared before the records rather than after them,
 		// which is the only place a far end can act on it.
 		"result 1 ordered\n" +
-		`result 1 fields={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
-		`result 1 fields={ key 42; name "src/window.go"; size 2048 }` + "\n" +
+		`result 1 record={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
+		`result 1 record={ key 42; name "src/window.go"; size 2048 }` + "\n" +
 		`result 1 complete watermark={ name "src/window.go"; key 42 }`
 	if got != want {
 		t.Errorf("the answer was\n%s\nwant\n%s", got, want)
@@ -195,10 +195,52 @@ func TestTheSimplestAnswerIsEverythingAndExhausted(t *testing.T) {
 	send(t, c, `q=new query source="files" have=0 need=10`)
 
 	got := strings.Join(r.since(n+1), "\n")
-	want := "result 1 fields={ key \"a\" }\n" +
+	want := "result 1 record={ key \"a\" }\n" +
 		"result 1 complete exhausted"
 	if got != want {
 		t.Errorf("the answer was\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// A record and a subset of one are two different claims, and they cross under
+// two different words.
+//
+// The claim is what makes them worth telling apart. A whole record answers any
+// question about that record, so whoever asked can keep it and answer the next
+// query out of it; a subset answers the one question that asked for it. Neither
+// end can work that out from the fields alone -- a record of two fields and two
+// fields of a record of nine look the same -- so the answer says which it is.
+func TestAWholeRecordAndASubsetCrossUnderDifferentWords(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) {
+		_ = f.Record(17, wire.Named("name", "src/parser.go"), wire.Named("size", 1024))
+		_ = f.Subset(42, wire.Named("name", "src/window.go"))
+		_ = f.Exhausted()
+	})
+	n := r.count()
+	send(t, c, `q=new query source="files" have=0 need=10 fields={ name }`)
+
+	got := strings.Join(r.since(n+1), "\n")
+	want := `result 1 record={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
+		`result 1 fields={ key 42; name "src/window.go" }` + "\n" +
+		"result 1 complete exhausted"
+	if got != want {
+		t.Errorf("the answer was\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Both count as records, because both are one.
+func TestASubsetCountsTowardsWhatWasSent(t *testing.T) {
+	var sent int
+	c, _, _ := serveOne(t, func(f *Fill) {
+		_ = f.Record(1, wire.Named("name", "a"))
+		_ = f.Subset(2, wire.Named("name", "b"))
+		sent = f.Sent()
+		_ = f.Exhausted()
+	})
+	send(t, c, `q=new query source="files" have=0 need=10`)
+
+	if sent != 2 {
+		t.Errorf("two records went out and it counted %d", sent)
 	}
 }
 

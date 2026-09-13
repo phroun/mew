@@ -433,7 +433,12 @@ func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
 			break
 		}
 		rec := v.src.recs[o.rows[i]]
-		if err := out.Record(rec.key, v.fields(rec, f)); err != nil {
+		bag, whole := v.fields(rec, f)
+		send := out.Subset
+		if whole {
+			send = out.Record
+		}
+		if err := send(rec.key, bag); err != nil {
 			return err
 		}
 		sent++
@@ -465,20 +470,28 @@ func (v *pslResultSet) boundary(rec pslRecord) wire.Fields {
 	return append(out, &wire.Arg{Name: wire.KeyField, Value: rec.key})
 }
 
-// fields is what one record carries in this window: the fields the window asked
-// for where it named fewer than the query did, the query's own where it did
-// not, and everything the record has where neither named any.
+// fields is what one record carries in this window -- the fields the window
+// asked for where it named fewer than the query did, the query's own where it
+// did not, and everything the record has where neither named any -- and whether
+// that is the whole of the record.
+//
+// Whole is the stronger claim and it is only made where it is true: a list of
+// fields was asked for, or an exclusion took something out, and what goes out
+// is a subset. Narrowing to a list that happens to name everything is still
+// answered as a subset, which is the weaker claim and therefore always safe.
 //
 // A field the record has not got is left out rather than sent as `undefined`,
 // which is the same answer in fewer bytes: an absent field reads as undefined
 // at the far end.
-func (v *pslResultSet) fields(rec pslRecord, f *wire.Fill) wire.Fields {
+func (v *pslResultSet) fields(rec pslRecord, f *wire.Fill) (wire.Fields, bool) {
 	want := f.Fields
 	if len(want) == 0 {
 		want = v.spec.Fields
 	}
 	if len(want) == 0 {
-		return v.without(rec.fields())
+		bag := rec.fields()
+		out := v.without(bag)
+		return out, len(out) == len(bag)
 	}
 	out := make(wire.Fields, 0, len(want))
 	for _, a := range want {
@@ -489,7 +502,7 @@ func (v *pslResultSet) fields(rec pslRecord, f *wire.Fill) wire.Fields {
 			out = append(out, &wire.Arg{Name: a.Name, Value: val})
 		}
 	}
-	return out
+	return out, false
 }
 
 // without drops the fields the query said it did not want.

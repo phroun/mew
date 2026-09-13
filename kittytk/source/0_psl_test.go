@@ -63,10 +63,12 @@ func statement(t *testing.T, text string) *wire.Statement {
 	return script.Statements[0]
 }
 
-// collector is a Sink that keeps what it was given.
+// collector is a Sink that keeps what it was given, and how much of each
+// record it was told had come back.
 type collector struct {
 	keys    []string
 	fields  []wire.Fields
+	whole   []bool
 	done    Complete
 	ended   bool
 	ordered bool
@@ -82,8 +84,17 @@ func (c *collector) Ordered() {
 }
 
 func (c *collector) Record(key *wire.Value, fields wire.Fields) error {
+	return c.took(key, fields, true)
+}
+
+func (c *collector) Subset(key *wire.Value, fields wire.Fields) error {
+	return c.took(key, fields, false)
+}
+
+func (c *collector) took(key *wire.Value, fields wire.Fields, whole bool) error {
 	c.keys = append(c.keys, wire.EncodeValue(key))
 	c.fields = append(c.fields, fields)
+	c.whole = append(c.whole, whole)
 	return nil
 }
 
@@ -502,7 +513,7 @@ func TestEverySymbolCrossesAsASymbol(t *testing.T) {
 	}
 
 	// And every one of them reads back as the symbol it was sent as.
-	script, err := wire.Parse("result 1 fields=" + got)
+	script, err := wire.Parse("result 1 record=" + got)
 	if err != nil {
 		t.Fatalf("what went out does not read back: %v", err)
 	}

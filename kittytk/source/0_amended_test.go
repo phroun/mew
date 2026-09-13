@@ -232,6 +232,7 @@ type unordered struct{ out Sink }
 
 func (u *unordered) Ordered()                                  {} // said nothing, which is what a jumble says
 func (u *unordered) Record(k *wire.Value, f wire.Fields) error { return u.out.Record(k, f) }
+func (u *unordered) Subset(k *wire.Value, f wire.Fields) error { return u.out.Subset(k, f) }
 func (u *unordered) Done(c Complete)                           { u.out.Done(c) }
 
 // A child that refuses ends the stretch here too, rather than leaving whoever

@@ -65,6 +65,10 @@ func (c *counter) Record(key *wire.Value, fields wire.Fields) error {
 	return nil
 }
 
+func (c *counter) Subset(key *wire.Value, fields wire.Fields) error {
+	return c.Record(key, fields)
+}
+
 func (c *counter) Ordered()      {}
 func (c *counter) Done(Complete) {}
 

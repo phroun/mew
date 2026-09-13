@@ -73,6 +73,10 @@ func (a *amendment) place() wire.Fields {
 }
 
 // Replace says a record now carries these fields, whatever the child holds.
+//
+// These are the record entire, not a correction to some of it: what goes out
+// for this key is exactly what is stated here, and it goes out as a whole
+// record.
 func (a *Amended) Replace(key *wire.Value, fields wire.Fields) {
 	if key == nil {
 		return
@@ -256,12 +260,23 @@ func (m *merge) Ordered() {
 	}
 }
 
-// Record takes one of the child's records.
+// Record and Subset take one of the child's records, entire or in part. Which
+// it was goes out unchanged: this source says of a record it passed on exactly
+// what the child said of it.
+func (m *merge) Record(key *wire.Value, fields wire.Fields) error {
+	return m.theirs(key, fields, true)
+}
+
+func (m *merge) Subset(key *wire.Value, fields wire.Fields) error {
+	return m.theirs(key, fields, false)
+}
+
+// theirs is one of the child's records reaching the merge.
 //
 // A key this source amends is the source's to answer: the child's copy is
 // dropped, and ours goes out in its own place -- which is wherever the run of
 // ours reaches, not wherever the child's copy turned up.
-func (m *merge) Record(key *wire.Value, fields wire.Fields) error {
+func (m *merge) theirs(key *wire.Value, fields wire.Fields, whole bool) error {
 	if am := m.set.src.lookup(key); am != nil {
 		if am.deleted {
 			// The child still holds it, so this is where we find out where it
@@ -271,7 +286,7 @@ func (m *merge) Record(key *wire.Value, fields wire.Fields) error {
 		return nil
 	}
 	m.flushBefore(recordTuple(key, fields, m.set.spec.Sort))
-	return m.emit(key, fields)
+	return m.emit(key, fields, whole)
 }
 
 // Done is the end of one round of the child's answer.
@@ -322,15 +337,20 @@ func (m *merge) flushBefore(at []*wire.Value) {
 			}
 		}
 		m.mine = m.mine[1:]
-		if m.emit(am.key, am.fields) != nil {
+		// A replacement is the record entire -- that is what Replace states --
+		// so it goes out as one.
+		if m.emit(am.key, am.fields, true) != nil {
 			return
 		}
 	}
 }
 
-func (m *merge) emit(key *wire.Value, fields wire.Fields) error {
+func (m *merge) emit(key *wire.Value, fields wire.Fields, whole bool) error {
 	m.sent++
-	return m.out.Record(key, fields)
+	if whole {
+		return m.out.Record(key, fields)
+	}
+	return m.out.Subset(key, fields)
 }
 
 // amendTuple and recordTuple place a record: the value at each sort level, and

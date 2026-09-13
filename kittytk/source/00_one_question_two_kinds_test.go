@@ -51,9 +51,15 @@ func (l *loop) Close() error          { return nil }
 // path, and what the application answers reaches the source.
 func serving(t *testing.T) *Hosted {
 	t.Helper()
+	return hosting(t, serveRecords)
+}
+
+// hosting is the same, for an application that answers some other way.
+func hosting(t *testing.T, fill func(*client.Fill)) *Hosted {
+	t.Helper()
 	l := &loop{}
 	conn := client.NewWithTransport(l, nil)
-	if _, err := conn.HostSource("files", serveRecords); err != nil {
+	if _, err := conn.HostSource("files", fill); err != nil {
 		t.Fatal(err)
 	}
 	l.src = NewHosted("files", func(src string) error {
@@ -69,7 +75,13 @@ func serving(t *testing.T) *Hosted {
 
 // serveRecords is an application honouring the sort and the stretch: the whole
 // of what an author writes.
-func serveRecords(f *client.Fill) {
+func serveRecords(f *client.Fill) { serve(f, f.Record) }
+
+// serveSubsets is the same application saying of every record that it is only
+// the fields somebody asked for.
+func serveSubsets(f *client.Fill) { serve(f, f.Subset) }
+
+func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
 	rows := append([]struct {
 		key  int64
 		name string
@@ -96,7 +108,7 @@ func serveRecords(f *client.Fill) {
 	f.Ordered()
 	sent := 0
 	for i := start; i < len(rows) && f.Have+sent < f.Need; i++ {
-		_ = f.Record(rows[i].key,
+		_ = send(rows[i].key,
 			wire.Named(".name", rows[i].name), wire.Named(".size", rows[i].size))
 		sent++
 	}

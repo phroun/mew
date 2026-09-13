@@ -146,7 +146,7 @@ func (p *printer) take(line string) bool {
 		switch {
 		case a.Name == wire.ResultComplete && a.Value == nil:
 			complete = true
-		case a.Name == "fields" && a.Value != nil:
+		case (a.Name == wire.RecordArg || a.Name == wire.FieldsArg) && a.Value != nil:
 			bag, _ = wire.ParseFields(a.Value)
 		case a.Name == "error" && a.Value != nil:
 			p.note = a.Value.Str

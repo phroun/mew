@@ -25,8 +25,8 @@ func feed(p *printer, lines ...string) bool {
 func TestWhatCameBackIsPrintedAsATable(t *testing.T) {
 	p := &printer{}
 	if !feed(p,
-		`result 1 fields={ key 2; name "build.sh"; size 310 }`,
-		`result 1 fields={ key 1; name "README.md"; size 2048 }`,
+		`result 1 record={ key 2; name "build.sh"; size 310 }`,
+		`result 1 record={ key 1; name "README.md"; size 2048 }`,
 		`result 1 complete watermark={ name "README.md"; key 1 }`,
 	) {
 		t.Fatal("the terminator did not end the answer")
@@ -46,12 +46,13 @@ func TestWhatCameBackIsPrintedAsATable(t *testing.T) {
 }
 
 // Records need not carry the same fields: a window may ask for fewer than the
-// query does, and a field a record has not got is not an error.
+// query does, and a field a record has not got is not an error. A record is a
+// record to the table whichever word carried it.
 func TestATableWidensForAFieldAnEarlierRecordHadNot(t *testing.T) {
 	p := &printer{}
 	feed(p,
 		`result 1 fields={ key 1; name "a" }`,
-		`result 1 fields={ key 2; name "b"; size 99 }`,
+		`result 1 record={ key 2; name "b"; size 99 }`,
 		"result 1 complete exhausted",
 	)
 	if strings.Join(p.columns, ",") != "key,name,size" {

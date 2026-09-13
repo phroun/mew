@@ -1885,11 +1885,16 @@ static void fill_head(kt_fill *f, kt_buf *b) {
     buf_puts(b, tmp);
 }
 
-int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
+/* One record onto the answer, under the word that says how much of it came
+   back: `record` for every field it has, `fields` for the ones asked for. */
+static int fill_write(kt_fill *f, const char *what, kt_value key,
+                      const kt_value *fields, int n) {
     kt_buf b;
     memset(&b, 0, sizeof b);
     fill_head(f, &b);
-    buf_puts(&b, " fields={ ");
+    buf_put(&b, ' ');
+    buf_puts(&b, what);
+    buf_puts(&b, "={ ");
     buf_puts(&b, KT_KEY_FIELD);
     buf_put(&b, ' ');
     enc_value(&b, &key);
@@ -1918,6 +1923,14 @@ int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
     char *src = fill_take(f);
     kt_mutex_unlock(&f->mu);
     return fill_send(f, src);
+}
+
+int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
+    return fill_write(f, KT_RECORD_ARG, key, fields, n);
+}
+
+int kt_fill_subset(kt_fill *f, kt_value key, const kt_value *fields, int n) {
+    return fill_write(f, KT_FIELDS_ARG, key, fields, n);
 }
 
 /* The order is declared before the records, which is the only place it is worth

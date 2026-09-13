@@ -377,18 +377,37 @@ type Fill struct {
 	closed  bool
 }
 
-// Record adds one record to the answer: its key, and the fields asked for.
+// Record adds one whole record to the answer: its key, and every field it has.
 //
 //	f.Record(17, wire.Named("name", "src/parser.go"), wire.Named("size", 1024))
 //
-// The key is what identifies the record, view-independent and permanent; the
-// fields are whatever this window asked for, which may be fewer than the
-// query's own list when the display wants the skeleton of a wide stretch.
+// Whole matters beyond this answer. A record that arrived entire answers any
+// question about that record, so whoever asked can keep it and use it for the
+// next query as well; part of one answers only the question that asked for it.
+// So say Record when these are all the fields there are, and Subset when they
+// are the ones somebody asked for.
+//
+// The key is what identifies the record, and it is the same key whatever is
+// being asked.
 func (f *Fill) Record(key any, fields ...*wire.Arg) error {
+	return f.record(wire.RecordArg, key, fields)
+}
+
+// Subset adds some of a record: its key, and the fields this stretch asked
+// for, which are fewer than the record has. It crosses as `fields={ ... }`.
+//
+// It is the honest answer to a query that named a short list of fields -- the
+// skeleton of a wide stretch -- and it is worth less afterwards than a whole
+// record, because it can only answer the question it was asked.
+func (f *Fill) Subset(key any, fields ...*wire.Arg) error {
+	return f.record(wire.FieldsArg, key, fields)
+}
+
+func (f *Fill) record(what string, key any, fields []*wire.Arg) error {
 	bag := make(wire.Fields, 0, len(fields)+1)
 	bag = append(bag, wire.Named(wire.KeyField, key))
 	bag = append(bag, fields...)
-	err := f.emit(f.result(&wire.Arg{Name: "fields", Value: bag.Block()}))
+	err := f.emit(f.result(&wire.Arg{Name: what, Value: bag.Block()}))
 	if err == nil {
 		f.mu.Lock()
 		f.records++

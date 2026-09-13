@@ -92,8 +92,8 @@ class ServingAQueryTest(unittest.TestCase):
             # The order is declared before the records rather than after them,
             # which is the only place a far end can act on it.
             "result 1 ordered",
-            'result 1 fields={ key 17; name "src/parser.go"; size 1024 }',
-            'result 1 fields={ key 42; name "src/window.go"; size 2048 }',
+            'result 1 record={ key 17; name "src/parser.go"; size 1024 }',
+            'result 1 record={ key 42; name "src/window.go"; size 2048 }',
             'result 1 complete watermark={ name "src/window.go"; key 42 }',
         ]))
 
@@ -126,8 +126,38 @@ class ServingAQueryTest(unittest.TestCase):
         c, _ = serve_one(fill)
         send(c, 'q=new query source="files" have=0 need=10')
         self.assertEqual("\n".join(c.since(1)),
-                         'result 1 fields={ key "a" }\n'
+                         'result 1 record={ key "a" }\n'
                          'result 1 complete exhausted')
+
+    def test_a_whole_record_and_a_subset_cross_under_different_words(self):
+        # A whole record answers any question about that record, so whoever
+        # asked can keep it and answer the next query out of it; a subset
+        # answers the one question that asked for it. Neither end can work that
+        # out from the fields alone, so the answer says which it is.
+        def fill(f):
+            f.record(17, name="src/parser.go", size=1024)
+            f.subset(42, name="src/window.go")
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" have=0 need=10 fields={ name }')
+        self.assertEqual("\n".join(c.since(1)),
+                         'result 1 record={ key 17; name "src/parser.go"; size 1024 }\n'
+                         'result 1 fields={ key 42; name "src/window.go" }\n'
+                         'result 1 complete exhausted')
+
+    def test_a_subset_counts_towards_what_was_sent(self):
+        sent = []
+
+        def fill(f):
+            f.record(1, name="a")
+            f.subset(2, name="b")
+            sent.append(f.sent())
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" have=0 need=10')
+        self.assertEqual(sent, [2])
 
     def test_a_refusal_is_an_answer(self):
         c, _ = serve_one(lambda f: f.fail('no records past "build.sh"'))

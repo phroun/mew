@@ -1018,18 +1018,35 @@ class Fill:
         self._closed = False
 
     def record(self, key, **fields):
-        """One record: its key, and the fields asked for.
+        """One whole record: its key, and every field it has.
 
             f.record(17, name="src/parser.go", size=1024)
 
-        The key is what identifies the record, view-independent and permanent;
-        the fields are whatever this window asked for, which may be fewer than
-        the query's own list when the display wants the skeleton of a wide
-        stretch."""
+        Whole matters beyond this answer. A record that arrived entire answers
+        any question about that record, so whoever asked can keep it and use it
+        for the next query as well; part of one answers only the question that
+        asked for it. So say record when these are all the fields there are,
+        and subset when they are the ones somebody asked for.
+
+        The key is what identifies the record, and it is the same key whatever
+        is being asked."""
+        self._write(_query.RECORD_ARG, key, fields)
+
+    def subset(self, key, **fields):
+        """Some of a record: its key, and the fields this window asked for,
+        which are fewer than the record has. It crosses as `fields={ ... }`.
+
+        It is the honest answer to a query that named a short list of fields --
+        the skeleton of a wide stretch -- and it is worth less afterwards than
+        a whole record, because it can only answer the question it was
+        asked."""
+        self._write(_query.FIELDS_ARG, key, fields)
+
+    def _write(self, what, key, fields):
         bag = _query.Fields([protocol.named(_query.KEY_FIELD, key)])
         for name, v in fields.items():
             bag.append(protocol.named(name, v))
-        self._emit(self._result(protocol.Arg(name="fields", value=bag.block())))
+        self._emit(self._result(protocol.Arg(name=what, value=bag.block())))
         with self._lock:
             self._records += 1
 

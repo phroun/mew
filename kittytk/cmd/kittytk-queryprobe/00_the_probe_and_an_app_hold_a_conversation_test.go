@@ -104,19 +104,19 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		// The order is declared before the records, which is the only place a
 		// reader can act on it.
 		"<- result 1 ordered",
-		`<- result 1 fields={ key 2; name "build.sh"; size 310 }`,
+		`<- result 1 record={ key 2; name "build.sh"; size 310 }`,
 		`<- result 1 complete watermark={ name "README.md"; key 1 }`,
 		// A second window from where the first stopped. file2 before file10 is
 		// the natural collation the sort asked for.
 		`-> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3`,
-		`<- result 1 fields={ key 6; name "src/file2.go"; size 1200 }`,
-		`<- result 1 fields={ key 7; name "src/file10.go"; size 880 }`,
+		`<- result 1 record={ key 6; name "src/file2.go"; size 1200 }`,
+		`<- result 1 record={ key 7; name "src/file10.go"; size 880 }`,
 		// A different sort is a different query, named in its own right -- and
 		// opened before the one it replaces is let go, so the source stays in
 		// use while the reader moves across.
 		`-> r=new query source="files" sort={ size desc } have=0 need=3`,
 		"<- reply r=2",
-		`<- result 2 fields={ key 4; name "src/parser.go"; size 14022 }`,
+		`<- result 2 record={ key 4; name "src/parser.go"; size 14022 }`,
 		`<- result 2 complete watermark={ size 6100; key 8 }`,
 		"-> destroy 1",
 		// And letting the last one go, which is how the application learns
@@ -131,8 +131,8 @@ func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 	trace := converse(t, "-source", "colours", "-need", "2")
 	inOrder(t, trace, []string{
 		`-> q=new query source="colours" sort={ name natural } have=0 need=2`,
-		`<- result 1 fields={ key 0; name "amber" }`,
-		`<- result 1 fields={ key 4; name "vermilion" }`,
+		`<- result 1 record={ key 0; name "amber" }`,
+		`<- result 1 record={ key 4; name "vermilion" }`,
 		"<- result 1 complete exhausted",
 	})
 	// It said nothing about order, which is what leaves the display to sort.
@@ -141,7 +141,7 @@ func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 	}
 	// Five records for a window of two: the display asked for a window and got
 	// a superset, which is correct.
-	if n := strings.Count(trace, "<- result 1 fields="); n != 5 {
+	if n := strings.Count(trace, "<- result 1 record="); n != 5 {
 		t.Errorf("it sent %d records, want all 5", n)
 	}
 }

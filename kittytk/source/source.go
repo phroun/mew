@@ -62,7 +62,22 @@ type Sink interface {
 	// ordered, which is always safe.
 	Ordered()
 
+	// Record takes one record entire: its key, and every field it has.
+	//
+	// Whole is worth saying because it outlives the stretch that asked for it.
+	// A record that arrived entire answers any question about that record, so
+	// whoever holds it can answer the next query out of it instead of asking
+	// again.
 	Record(key *wire.Value, fields wire.Fields) error
+
+	// Subset takes some of a record: its key, and the fields that were asked
+	// for, which are fewer than the record has.
+	//
+	// It answers the question that asked for it and no other. A later question
+	// naming a field this one left out is not answered by what came back here,
+	// however many of the same records it names.
+	Subset(key *wire.Value, fields wire.Fields) error
+
 	Done(c Complete)
 }
 

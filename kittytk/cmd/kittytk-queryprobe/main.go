@@ -226,7 +226,7 @@ func (p *probe) collect(withResults bool) (uint64, bool) {
 // ignored at the far end.
 func (p *probe) noteRow(stmt *wire.Statement) {
 	for _, a := range stmt.Args {
-		if a.Name == "fields" && a.Value != nil {
+		if (a.Name == wire.RecordArg || a.Name == wire.FieldsArg) && a.Value != nil {
 			p.lastRow = wire.EncodeValue(a.Value)
 		}
 	}

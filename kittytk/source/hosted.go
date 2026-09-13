@@ -249,6 +249,7 @@ func (h *Hosted) result(stmt *wire.Statement) bool {
 func (s *hostedSet) take(args []*wire.Arg) {
 	var (
 		bag      wire.Fields
+		whole    bool
 		done     Complete
 		complete bool
 		ordered  bool
@@ -261,8 +262,12 @@ func (s *hostedSet) take(args []*wire.Arg) {
 			ordered = true
 		case a.Name == "exhausted" && a.Value == nil:
 			done.Exhausted = true
-		case a.Name == "fields" && a.Value != nil:
+		case a.Name == wire.RecordArg && a.Value != nil:
 			bag, _ = wire.ParseFields(a.Value)
+			whole = true
+		case a.Name == wire.FieldsArg && a.Value != nil:
+			bag, _ = wire.ParseFields(a.Value)
+			whole = false
 		case a.Name == "watermark" && a.Value != nil:
 			done.Watermark, _ = wire.ParseFields(a.Value)
 		case a.Name == "error" && a.Value != nil:
@@ -281,7 +286,14 @@ func (s *hostedSet) take(args []*wire.Arg) {
 			// is reading act on the records as they arrive.
 			sink.Ordered()
 		case len(bag) > 0:
-			_ = sink.Record(bag.Key(), withoutKey(bag))
+			// The application said which it sent, and that is passed on as it
+			// stands: this source claims nothing about the records it relays
+			// beyond what the far end claimed about them.
+			send := sink.Subset
+			if whole {
+				send = sink.Record
+			}
+			_ = send(bag.Key(), withoutKey(bag))
 		}
 		return
 	}

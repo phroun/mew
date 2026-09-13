@@ -26,8 +26,18 @@ import (
 // something a subscription raised.
 const (
 	QueryVerb  = "query"  // `query 9 from={ ... } have=25 need=30`
-	ResultVerb = "result" // `result 9 fields={ ... }`
+	ResultVerb = "result" // `result 9 record={ ... }`
 	KeyField   = "key"    // the record key, inside a field bag
+
+	// What a result carries, and how much of the record it is.
+	//
+	// `record` is every field the record has; `fields` is some of them. The
+	// difference is worth a word because a whole record answers any question
+	// about that record, and a subset answers only the one that asked for it --
+	// which is what lets an answer be kept and reused rather than asked for
+	// again.
+	RecordArg = "record"
+	FieldsArg = "fields"
 
 	// ResultComplete ends a window: everything for it has been sent. A result
 	// without it carries a record.

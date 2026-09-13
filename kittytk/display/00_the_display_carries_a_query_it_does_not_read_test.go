@@ -110,8 +110,8 @@ func TestTheDisplayCarriesAQueryItDoesNotRead(t *testing.T) {
 	for _, want := range []string{
 		// The order is declared before the records rather than after them.
 		"result 1 ordered",
-		`result 1 fields={ key 1; name "alpha" }`,
-		`result 1 fields={ key 2; name "beta" }`,
+		`result 1 record={ key 1; name "alpha" }`,
+		`result 1 record={ key 2; name "beta" }`,
 		"result 1 complete exhausted",
 	} {
 		if !strings.Contains(got, want) {
@@ -119,7 +119,7 @@ func TestTheDisplayCarriesAQueryItDoesNotRead(t *testing.T) {
 		}
 	}
 	// It was asked for two and sent two: the window was honoured.
-	if n := strings.Count(got, "result 1 fields="); n != 2 {
+	if n := strings.Count(got, "result 1 record="); n != 2 {
 		t.Errorf("%d records came back, want 2:\n%s", n, got)
 	}
 }

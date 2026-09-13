@@ -157,6 +157,21 @@ static void fill_simplest(kt_query *q, const kt_qfill *req, kt_fill *sink, void 
     kt_fill_exhausted(sink);
 }
 
+/* A whole record answers any question about that record, so whoever asked can
+   keep it and answer the next query out of it; a subset answers the one
+   question that asked for it. Neither end can work that out from the fields
+   alone, so the answer says which it is. */
+static void fill_whole_and_part(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
+    kt_value fields[2];
+    fields[0] = kt_vstr("name", "src/parser.go");
+    fields[1] = kt_vint("size", 1024);
+    kt_fill_record(sink, kt_vint("", 17), fields, 2);
+    fields[0] = kt_vstr("name", "src/window.go");
+    kt_fill_subset(sink, kt_vint("", 42), fields, 1);
+    kt_fill_exhausted(sink);
+}
+
 static void fill_refuses(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_fail(sink, "no records past \"build.sh\"");
@@ -318,8 +333,8 @@ int main(void) {
         /* The order is declared before the records rather than after them,
            which is the only place a far end can act on it. */
         "result 1 ordered\n"
-        "result 1 fields={ key 17; name \"src/parser.go\"; size 1024 }\n"
-        "result 1 fields={ key 42; name \"src/window.go\"; size 2048 }\n"
+        "result 1 record={ key 17; name \"src/parser.go\"; size 1024 }\n"
+        "result 1 record={ key 42; name \"src/window.go\"; size 2048 }\n"
         "result 1 complete watermark={ name \"src/window.go\"; key 42 }",
         "the reply comes before the records");
     free(answer);
@@ -389,9 +404,21 @@ int main(void) {
     answer = since(n + 1);
     char tmp[256];
     snprintf(tmp, sizeof tmp,
-             "result %llu fields={ key \"a\" }\nresult %llu complete exhausted",
+             "result %llu record={ key \"a\" }\nresult %llu complete exhausted",
              (unsigned long long)q, (unsigned long long)q);
     expect_str(answer, tmp, "the simplest answer is everything and exhausted");
+    free(answer);
+
+    /* A whole record and a subset of one cross under two different words. */
+    n = sent_count();
+    q = serve(fill_whole_and_part, "have=0 need=10 fields={ name }");
+    answer = since(n + 1);
+    snprintf(tmp, sizeof tmp,
+             "result %llu record={ key 17; name \"src/parser.go\"; size 1024 }\n"
+             "result %llu fields={ key 42; name \"src/window.go\" }\n"
+             "result %llu complete exhausted",
+             (unsigned long long)q, (unsigned long long)q, (unsigned long long)q);
+    expect_str(answer, tmp, "a whole record and a subset say which they are");
     free(answer);
 
     /* A refusal is an answer. */

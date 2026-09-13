@@ -8,6 +8,8 @@ package main
 // arrives as the wire language either way.
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -140,4 +142,53 @@ func TestAFileThatIsNotAQueryIsRefused(t *testing.T) {
 			t.Errorf("%q was accepted", text)
 		}
 	}
+}
+
+// What `-raw` prints is the wire language the answer would have crossed as, so
+// the word that says how much of each record came back is in it.
+func TestTheRawTraceSaysHowMuchOfEachRecordCameBack(t *testing.T) {
+	whole := rawDrive(t, `q=new query source="objects" sort={ .size desc } have=0 need=1`)
+	if !strings.Contains(whole, `result 1 record={ key 3; .0 "src/parser.go"; .size 14022 }`) {
+		t.Errorf("a record nothing narrowed was written as\n%s", whole)
+	}
+
+	// The same record, with the window naming the one field it wants: what goes
+	// out is some of the record, and it says so.
+	part := rawDrive(t,
+		`q=new query source="objects" sort={ .size desc } have=0 need=1 fields={ .size }`)
+	if !strings.Contains(part, `result 1 fields={ key 3; .size 14022 }`) {
+		t.Errorf("a narrowed record was written as\n%s", part)
+	}
+}
+
+// rawDrive runs a query file with the raw trace on and gives back what it
+// printed.
+func rawDrive(t *testing.T, query string) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	func() {
+		defer func() { os.Stdout = saved; w.Close() }()
+		src, err := source.ParsePSL(objects, source.Whole)
+		if err != nil {
+			t.Fatal(err)
+		}
+		script, err := wire.Parse(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := &printer{raw: true}
+		if err := run(src, script, out); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	text, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(text)
 }

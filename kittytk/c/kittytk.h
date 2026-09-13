@@ -225,6 +225,15 @@ const kt_value *kt_bag_get(const kt_bag *b, const char *name);
 const kt_value *kt_bag_key(const kt_bag *b);
 #define KT_KEY_FIELD "key"
 
+/* What a result carries, and how much of the record it is.
+
+   `record` is every field the record has; `fields` is some of them. The
+   difference is worth a word because a whole record answers any question about
+   that record, and a subset answers only the one that asked for it -- which is
+   what lets an answer be kept and reused rather than asked for again. */
+#define KT_RECORD_ARG "record"
+#define KT_FIELDS_ARG "fields"
+
 /* One node of a filter tree: a predicate over one field, or an and/or/not over
    other nodes. A block is an AND, so the top of a parsed filter always is --
    one shape to walk, whether it held one predicate or twenty. */
@@ -289,10 +298,25 @@ typedef struct {
    ending instead; C has nothing left to refuse with. */
 typedef struct kt_fill kt_fill;
 
-/* One record: its key, and the fields asked for. The key is what identifies
-   the record, view-independent and permanent; the fields are whatever this
-   fill asked for, which may be fewer than the query's own list. */
+/* One whole record: its key, and every field it has.
+
+   Whole matters beyond this answer. A record that arrived entire answers any
+   question about that record, so whoever asked can keep it and use it for the
+   next query as well; part of one answers only the question that asked for it.
+   So say kt_fill_record when these are all the fields there are, and
+   kt_fill_subset when they are the ones somebody asked for.
+
+   The key is what identifies the record, and it is the same key whatever is
+   being asked. */
 int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n);
+
+/* Some of a record: its key, and the fields this fill asked for, which are
+   fewer than the record has. It crosses as `fields={ ... }`.
+
+   The honest answer to a query that named a short list of fields -- the
+   skeleton of a wide stretch -- and worth less afterwards than a whole record,
+   because it can only answer the question it was asked. */
+int kt_fill_subset(kt_fill *f, kt_value key, const kt_value *fields, int n);
 
 /* Declare that the records are being sent in the query's own order.
    It is the one hint that cannot be left unsaid and assumed, because it

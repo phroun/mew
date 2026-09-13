@@ -21,10 +21,18 @@ type ResultSet interface {
 }
 
 type Sink interface {
+    Ordered()
     Record(key *wire.Value, fields wire.Fields) error
+    Subset(key *wire.Value, fields wire.Fields) error
     Done(c Complete)
 }
 ```
+
+`Record` is the record entire and `Subset` is the fields that were asked for,
+the same two claims the wire makes with `record={…}` and `fields={…}`. A source
+here says whichever is true of what it sent: `PSL` says `Record` where nothing
+narrowed the record and `Subset` where a field list or an exclusion did, and
+`Hosted` passes on whatever the application claimed, making none of its own.
 
 **Nothing waits.** `Fill` asks for a stretch and returns; the records reach the
 sink as they are produced — at once for `PSL`, whose records are here, and as

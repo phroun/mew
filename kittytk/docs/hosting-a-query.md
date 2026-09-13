@@ -52,24 +52,24 @@ and what it prints is this:
 <- reply q=1
 <- result 1 ordered
 <- end
-<- result 1 fields={ key 2; name "build.sh"; size 310 }
-<- result 1 fields={ key 3; name "go.mod"; size 96 }
-<- result 1 fields={ key 1; name "README.md"; size 2048 }
+<- result 1 record={ key 2; name "build.sh"; size 310 }
+<- result 1 record={ key 3; name "go.mod"; size 96 }
+<- result 1 record={ key 1; name "README.md"; size 2048 }
 <- result 1 complete watermark={ name "README.md"; key 1 }
 -> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3
 <- reply
 <- end
 <- result 1 ordered
-<- result 1 fields={ key 6; name "src/file2.go"; size 1200 }
-<- result 1 fields={ key 7; name "src/file10.go"; size 880 }
-<- result 1 fields={ key 4; name "src/parser.go"; size 14022 }
+<- result 1 record={ key 6; name "src/file2.go"; size 1200 }
+<- result 1 record={ key 7; name "src/file10.go"; size 880 }
+<- result 1 record={ key 4; name "src/parser.go"; size 14022 }
 <- result 1 complete watermark={ name "src/parser.go"; key 4 }
 -> r=new query source="files" sort={ size desc } have=0 need=3
 <- reply r=2
 <- end
-<- result 2 fields={ key 4; name "src/parser.go"; size 14022 }
-<- result 2 fields={ key 5; name "src/window.go"; size 9310 }
-<- result 2 fields={ key 8; name "testdata/query.wire"; size 6100 }
+<- result 2 record={ key 4; name "src/parser.go"; size 14022 }
+<- result 2 record={ key 5; name "src/window.go"; size 9310 }
+<- result 2 record={ key 8; name "testdata/query.wire"; size 6100 }
 <- result 2 complete watermark={ size 6100; key 8 }
 -> destroy 1
 <- reply
@@ -148,6 +148,10 @@ Registering a source says nothing on the wire: **a source is a name, not an
 object**. The application tells whatever trinket is to show it `data="files"`,
 and the display opens queries against that name.
 
+`Record` says these are all the fields there are. `Subset` — `f.Subset(id, …)`,
+`f.subset(key, …)`, `kt_fill_subset` — says they are the ones this window asked
+for, and crosses as `fields={…}`.
+
 Python is the same shape (`conn.host_source(name, fill)`, `f.record(key,
 name=...)`), and so is C (`kt_host_source(c, "files", fill, NULL)`).
 
@@ -168,8 +172,8 @@ DISPLAY → APP   q=new query source="files" filter={ ge size 1024 } sort={ name
 APP → DISPLAY   reply q=9
                 end
 APP → DISPLAY   result 9 ordered
-                result 9 fields={ key 17; name "src/parser.go"; size 1024 }
-                result 9 fields={ key 42; name "src/window.go"; size 2048 }
+                result 9 record={ key 17; name "src/parser.go"; size 1024 }
+                result 9 record={ key 42; name "src/window.go"; size 2048 }
                 result 9 complete watermark={ name "src/window.go"; key 42 }
 ```
 
@@ -197,7 +201,7 @@ DISPLAY → APP   query 9 from={ name "build.sh"; key 42 } have=25 need=30
 APP → DISPLAY   reply
                 end
 APP → DISPLAY   result 9 ordered
-                result 9 fields={ … }
+                result 9 record={ … }
                 result 9 complete exhausted
 ```
 
@@ -238,8 +242,34 @@ the loss a lie.
 Which is why an application never has to reproduce the comparison core exactly.
 Exactness buys a smaller answer, not a correct one.
 
-**A result carries a record, or ends the window.** One `complete` ends it, and
-three things can ride on it:
+**A result carries a record, or ends the window.**
+
+A record crosses under one of two words, and the difference is how much of the
+record is there:
+
+```
+result 9 record={ key 17; name "src/parser.go"; size 1024 }
+result 9 fields={ key 17; name "src/parser.go" }
+```
+
+| | |
+|---|---|
+| `record={…}` | every field the record has |
+| `fields={…}` | some of them — the ones this window asked for |
+
+A whole record answers **any** question about that record, so whoever asked can
+keep it and answer the next query out of it instead of asking again. A subset
+answers only the question that asked for it: a later query naming a field it
+left out is not answered by it, however many of the same records it names.
+
+Neither end can tell them apart by looking — a record of two fields and two
+fields of a record of nine come out the same shape — so the answer says which
+it is. Say `record` when these are all the fields there are, and `fields` when
+they are the ones somebody asked for. `fields` is the weaker claim and is
+therefore always safe; `record` is the one worth making, and worth making only
+when it is true.
+
+One `complete` ends the window, and three things can ride on it:
 
 | | |
 |---|---|
