@@ -149,8 +149,9 @@ Most of what a mixed source needs is already in the comparison core, and needs
 nothing added:
 
 - **A field one record has and another has not** is `undefined`, which is a
-  value with a rank rather than an error. `eq .thumbnail undefined` is the
-  presence test, which is why there is no presence operator.
+  value with a rank rather than an error, so `eq .thumbnail undefined` answers
+  for it. `has` and `lacks` ask the same question of any field, including one
+  holding a list, which cannot be compared at all.
 - **A field that holds a different type per record** is grouped by rank —
   `undefined < nil < false < true < number < symbol < string < bytes <
   unordered` — and `lt` and `gt` still answer.

@@ -40,8 +40,9 @@ KITTYTK_DISPLAY=/tmp/kittytk-queryprobe.sock go run ./examples/queryapp
 `examples/queryapp` serves two sources, at the two ends of how much work an
 author wants to do: `colours` sends everything and says `exhausted`, and
 `files` honours the boundary, the sort and the window and answers with a
-watermark. The probe's flags drive the rest — `-filter`, `-sort`, `-resort`,
-`-more` — and what it prints is this:
+watermark. The probe's flags drive the rest — `-filter`, `-sort`, `-more`, and
+`-resort`, which opens a second query on another sort and drops the first —
+and what it prints is this:
 
 ```
 <- hello version=1 app="queryapp"
@@ -61,17 +62,17 @@ watermark. The probe's flags drive the rest — `-filter`, `-sort`, `-resort`,
 <- result 1 fields={ key 7; name "src/file10.go"; size 880 }
 <- result 1 fields={ key 4; name "src/parser.go"; size 14022 }
 <- result 1 complete ordered watermark={ name "src/parser.go"; key 4 }
--> set 1 sort={ size desc }
-<- reply
+-> r=new query source="files" sort={ size desc } have=0 need=3
+<- reply r=2
 <- end
--> query 1 have=0 need=3
-<- reply
-<- end
-<- result 1 fields={ key 4; name "src/parser.go"; size 14022 }
-<- result 1 fields={ key 5; name "src/window.go"; size 9310 }
-<- result 1 fields={ key 8; name "testdata/query.wire"; size 6100 }
-<- result 1 complete ordered watermark={ size 6100; key 8 }
+<- result 2 fields={ key 4; name "src/parser.go"; size 14022 }
+<- result 2 fields={ key 5; name "src/window.go"; size 9310 }
+<- result 2 fields={ key 8; name "testdata/query.wire"; size 6100 }
+<- result 2 complete ordered watermark={ size 6100; key 8 }
 -> destroy 1
+<- reply
+<- end
+-> destroy 2
 <- reply
 <- end
 ```
@@ -206,6 +207,31 @@ APP → DISPLAY   result 9 fields={ … }
 The whole of what the application does with that: emit every record of its own
 in `(from..to]`, and if that does not make up the shortfall, keep going past
 `to` until it does.
+
+## What may be sent, and what may be claimed
+
+These are two different things, and only one of them is a promise.
+
+**What is sent may be any superset of the answer.** An application that filters
+on the one predicate it can index cheaply and ignores the rest is correct. So
+is one that uses a looser comparison than the core's, or sends the whole source
+every time. The display rejects what it did not ask for, so extra records cost
+bandwidth and nothing else — and it may keep them, because a record it has is a
+record it need not ask for later.
+
+**What is claimed must be true.** The watermark says *there is nothing of mine
+between where you asked from and this point that you do not now have*, and
+`exhausted` says it of the whole sequence. Those are the only statements the
+display takes on trust, because they are the only ones it cannot check.
+
+So the single mistake is **cutting records out and then claiming the range
+anyway** — filtering too hard, and saying the result was complete. An
+application that filters too hard and stays quiet about coverage has corrupted
+nothing; the display simply never gets a complete range out of it and goes on
+asking.
+
+Which is why an application never has to reproduce the comparison core exactly.
+Exactness buys a smaller answer, not a correct one.
 
 **A result carries a record, or ends the window.** One `complete` ends it, and
 three things can ride on it:
