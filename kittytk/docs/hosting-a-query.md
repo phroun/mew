@@ -26,6 +26,63 @@ that holds the records, so it serves it.
 That is what keeps a request for records off the event line, so nobody is
 tempted to hand-roll what the library already does for them.
 
+## Running one
+
+No display opens queries yet, so there is a stand-in that does — it listens,
+does the handshake, opens one query against a named source, and prints the
+statements as they cross:
+
+```
+go run ./cmd/kittytk-queryprobe &
+KITTYTK_DISPLAY=/tmp/kittytk-queryprobe.sock go run ./examples/queryapp
+```
+
+`examples/queryapp` serves two sources, at the two ends of how much work an
+author wants to do: `colours` sends everything and says `exhausted`, and
+`files` honours the boundary, the sort and the window and answers with a
+watermark. The probe's flags drive the rest — `-filter`, `-sort`, `-resort`,
+`-more` — and what it prints is this:
+
+```
+<- hello version=1 app="queryapp"
+-> welcome version=1 session=1
+-> init app=1 store=2 host=3
+-> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } have=0 need=3
+<- reply q=1
+<- end
+<- result 1 fields={ key 2; name "build.sh"; size 310 }
+<- result 1 fields={ key 3; name "go.mod"; size 96 }
+<- result 1 fields={ key 1; name "README.md"; size 2048 }
+<- result 1 complete ordered watermark={ name "README.md"; key 1 }
+-> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3
+<- reply
+<- end
+<- result 1 fields={ key 6; name "src/file2.go"; size 1200 }
+<- result 1 fields={ key 7; name "src/file10.go"; size 880 }
+<- result 1 fields={ key 4; name "src/parser.go"; size 14022 }
+<- result 1 complete ordered watermark={ name "src/parser.go"; key 4 }
+-> set 1 sort={ size desc }
+<- reply
+<- end
+-> query 1 have=0 need=3
+<- reply
+<- end
+<- result 1 fields={ key 4; name "src/parser.go"; size 14022 }
+<- result 1 fields={ key 5; name "src/window.go"; size 9310 }
+<- result 1 fields={ key 8; name "testdata/query.wire"; size 6100 }
+<- result 1 complete ordered watermark={ size 6100; key 8 }
+-> destroy 1
+<- reply
+<- end
+```
+
+**A boundary is the sort fields and the key, not the key alone.** The second
+window asks `from={ key 1; name "README.md"; size 2048 }`; a boundary carrying
+only the key has nothing to compare against the levels, and lands at the start
+of the sequence rather than where it meant to. Fields the sort does not mention
+are ignored at the far end, so sending the whole record is the simplest thing
+that is right.
+
 ## What an author writes
 
 One function. The statement is taken apart before it arrives, so nothing in it
