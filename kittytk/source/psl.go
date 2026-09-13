@@ -405,10 +405,10 @@ func (v *pslResultSet) Close() { v.ord = nil }
 // record past a boundary is found in the log of the sequence's length rather
 // than by walking to it. Then it emits every record in (From..To], and carries
 // on past To only while the window is still short of Need.
-func (v *pslResultSet) Fill(f *wire.Fill, out Sink) (Complete, error) {
+func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
 	o := v.ord
 	if o == nil {
-		return Complete{}, fmt.Errorf("this result set has been closed")
+		return fmt.Errorf("this result set has been closed")
 	}
 
 	start := 0
@@ -431,7 +431,7 @@ func (v *pslResultSet) Fill(f *wire.Fill, out Sink) (Complete, error) {
 		}
 		rec := v.src.recs[o.rows[i]]
 		if err := out.Record(rec.key, v.fields(rec, f)); err != nil {
-			return Complete{}, err
+			return err
 		}
 		sent++
 	}
@@ -449,7 +449,8 @@ func (v *pslResultSet) Fill(f *wire.Fill, out Sink) (Complete, error) {
 		// true, and is what the far end is told.
 		done.Watermark = f.From
 	}
-	return done, nil
+	out.Done(done)
+	return nil
 }
 
 // boundary is a record's position: its sort fields, and its key.

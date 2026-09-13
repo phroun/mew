@@ -16,12 +16,28 @@ static data sitting here.
 type Source interface{ Open(spec *wire.Spec) (ResultSet, error) }
 
 type ResultSet interface {
-    Fill(f *wire.Fill, out Sink) (Complete, error)
+    Fill(f *wire.Fill, out Sink) error
     Close()
 }
 
-type Sink interface{ Record(key *wire.Value, fields wire.Fields) error }
+type Sink interface {
+    Record(key *wire.Value, fields wire.Fields) error
+    Done(c Complete)
+}
 ```
+
+**Nothing waits.** `Fill` asks for a stretch and returns; the records reach the
+sink as they are produced — at once for `PSL`, whose records are here, and as
+they arrive for `Hosted`, whose records are an application's. The error is for
+a request that could not be started, never for one that has not finished.
+
+Two kinds are behind the interface today, and a third is a third
+implementation:
+
+| | |
+|---|---|
+| `source.PSL` | records here, in a parsed PSL list |
+| `source.Hosted` | records an application's, asked for with `query` and answered with `result` |
 
 The shapes are the wire's own. A `Spec` and a `Fill` arrive exactly as
 `wire/query.go` takes them off a statement, and `Complete` is the three things

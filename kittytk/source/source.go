@@ -35,18 +35,28 @@ type Source interface {
 // result set, opened alongside this one and taking its place -- which is also
 // what keeps the source in use while the reader moves from one to the other.
 type ResultSet interface {
-	// Fill produces one window into the sink, and reports what ends it.
-	Fill(f *wire.Fill, out Sink) (Complete, error)
+	// Fill asks for one stretch of the sequence and says where to put it.
+	//
+	// It does not wait for the answer. Records reach the sink as they are
+	// produced -- immediately, for a source whose records are here; as they
+	// arrive, for one whose records are somewhere else -- and the sink is told
+	// what ended it when it ends. The error is for a request that could not be
+	// started at all, never for one that has not finished.
+	Fill(f *wire.Fill, out Sink) error
 
 	// Close lets the result set go, and with it whatever it was holding.
 	Close()
 }
 
-// A Sink takes the records a window is made of, one at a time, so a window of a
-// million records need not be assembled anywhere before the first of them
-// moves.
+// A Sink takes an answer as it is produced: the records one at a time, and
+// then what ended them.
+//
+// One at a time because a stretch of a million records need not be assembled
+// anywhere before the first of them moves, and because a source whose records
+// are across a connection has them in that shape already.
 type Sink interface {
 	Record(key *wire.Value, fields wire.Fields) error
+	Done(c Complete)
 }
 
 // Complete is what ends a window, and it is the three things the terminator can
@@ -62,4 +72,9 @@ type Complete struct {
 	Ordered   bool
 	Watermark wire.Fields
 	Exhausted bool
+
+	// Error is a refusal, which is an answer: this stretch cannot be produced,
+	// the records are gone, the connection carrying the question broke. Whoever
+	// asked carries on with what it has.
+	Error string
 }

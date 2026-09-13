@@ -116,17 +116,14 @@ func window(set source.ResultSet, args []*wire.Arg, out *printer) error {
 	if err != nil {
 		return err
 	}
-	sink := &results{out: out}
-	done, err := set.Fill(f, sink)
-	if err != nil {
-		return err
-	}
-	out.take(terminator(done))
-	return nil
+	return set.Fill(f, &results{out: out})
 }
 
-// results writes each record as the result statement that carries one.
+// results writes each record as the result statement that carries one, and the
+// terminator when the stretch ends.
 type results struct{ out *printer }
+
+func (r *results) Done(done source.Complete) { r.out.take(terminator(done)) }
 
 func (r *results) Record(key *wire.Value, fields wire.Fields) error {
 	bag := make(wire.Fields, 0, len(fields)+1)

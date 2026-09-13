@@ -65,6 +65,8 @@ func (c *counter) Record(key *wire.Value, fields wire.Fields) error {
 	return nil
 }
 
+func (c *counter) Done(Complete) {}
+
 // Reading the file: parsing the PSL and taking its records off it.
 func BenchmarkReadThePSL(b *testing.B) {
 	text := benchDoc(benchRecords)
@@ -107,7 +109,7 @@ func benchWindow(b *testing.B, after int) {
 	from := wire.Fields{}
 	if after > 0 {
 		c := &counter{}
-		if _, err := set.Fill(fillOf(b, 0, after), c); err != nil {
+		if err := set.Fill(fillOf(b, 0, after), c); err != nil {
 			b.Fatal(err)
 		}
 		from = wire.Fields{
@@ -121,7 +123,7 @@ func benchWindow(b *testing.B, after int) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		c := &counter{}
-		if _, err := set.Fill(f, c); err != nil {
+		if err := set.Fill(f, c); err != nil {
 			b.Fatal(err)
 		}
 		if c.n != 30 {

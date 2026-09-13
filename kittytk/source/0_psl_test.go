@@ -67,6 +67,8 @@ func statement(t *testing.T, text string) *wire.Statement {
 type collector struct {
 	keys   []string
 	fields []wire.Fields
+	done   Complete
+	ended  bool
 }
 
 func (c *collector) Record(key *wire.Value, fields wire.Fields) error {
@@ -75,17 +77,21 @@ func (c *collector) Record(key *wire.Value, fields wire.Fields) error {
 	return nil
 }
 
+func (c *collector) Done(done Complete) { c.done, c.ended = done, true }
+
 func (c *collector) joined() string { return strings.Join(c.keys, ",") }
 
 // fill draws one window and reports the keys that came out of it.
 func fill(t *testing.T, v ResultSet, args string) (*collector, Complete) {
 	t.Helper()
 	out := &collector{}
-	done, err := v.Fill(parseFill(t, args), out)
-	if err != nil {
+	if err := v.Fill(parseFill(t, args), out); err != nil {
 		t.Fatal(err)
 	}
-	return out, done
+	if !out.ended {
+		t.Fatal("the stretch was never ended")
+	}
+	return out, out.done
 }
 
 // The ordered items and the keyed members are two collections, and they come
