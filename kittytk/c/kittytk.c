@@ -520,8 +520,11 @@ static void p_skip_inline(kt_p *p) {
         else break;
     }
 }
-static int is_word_start(char c) { return c == '_' || isalpha((unsigned char)c); }
-static int is_word_rune(char c) { return is_word_start(c) || c == '.' || isdigit((unsigned char)c); }
+/* A word may begin with a dot, which is how a name says it is a member of
+   something rather than a word in its own right: `.size` is the member called
+   size, and `size` is the word size. */
+static int is_word_start(char c) { return c == '_' || c == '.' || isalpha((unsigned char)c); }
+static int is_word_rune(char c) { return is_word_start(c) || isdigit((unsigned char)c); }
 
 static char *p_word(kt_p *p) {
     kt_buf b = {0};

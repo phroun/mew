@@ -17,6 +17,11 @@
 //
 // The relay is off unless the display is started with KITTYTK_DEBUG_RELAY set:
 // an application that can relay can address another application's objects.
+//
+// The same file can also be answered here, out of a PSL file, with nothing
+// dialled and nobody asked:
+//
+//	kittytk-queryrun -psl objects.psl query.txt
 package main
 
 import (
@@ -35,10 +40,13 @@ func main() {
 	endpoint := flag.String("display", "", "display endpoint (default $KITTYTK_DISPLAY)")
 	wait := flag.Duration("wait", 5*time.Second, "how long to wait for the answer")
 	raw := flag.Bool("raw", false, "print the statements as they crossed, not a table")
+	psl := flag.String("psl", "", "answer the query here, out of this PSL file, instead of asking an application")
+	reading := flag.String("reading", "whole", "how a PSL record's contents are named: whole or members")
 	flag.Parse()
 
-	if flag.NArg() != 1 || *to == "" {
+	if flag.NArg() != 1 || (*to == "" && *psl == "") {
 		fmt.Fprintln(os.Stderr, "usage: kittytk-queryrun -to <app> <query.txt>")
+		fmt.Fprintln(os.Stderr, "       kittytk-queryrun -psl <file.psl> <query.txt>")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
@@ -53,6 +61,13 @@ func main() {
 	if _, err := wire.Parse(query); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", flag.Arg(0), err)
 		os.Exit(1)
+	}
+
+	// A source that holds its own records answers the same questions, so the
+	// same file is put to it directly: no display, and nobody to ask.
+	if *psl != "" {
+		fromPSL(*psl, *reading, query, *raw)
+		return
 	}
 
 	where := *endpoint

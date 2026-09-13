@@ -278,6 +278,23 @@ in kind { folder; disk }      a block holds bare names
 in name "a" "b" 3             operands hold any value
 ```
 
+**A field name may begin with a dot**, which is how a name says it is a member
+of the record rather than a word in its own right: `.size` is the member called
+size, `size` is the word size. An application whose records carry their own
+contents needs the distinction; one that has a fixed set of columns never writes
+a dot. `psl-as-a-data-source.md` is where it is put to work.
+
+**The filter does not have to be walked by hand.** `wire.Match(rec, spec.Filter)`
+answers it for anything that can produce a field by name:
+
+```go
+func (e entry) Field(name string) *wire.Value { ... }
+```
+
+An application is still free to do better — a filter it can turn into an index
+lookup should be — and one that ignores the filter entirely is still correct,
+because the display rejects what it did not ask for.
+
 ## Where a larger library plugs in
 
 The client libraries understand the open, the window, the restatement and the

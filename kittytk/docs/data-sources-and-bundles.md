@@ -1,9 +1,11 @@
 # Data sources and bundles
 
-> **Status: conversation only, not a specification yet.** This is a design
-> discussion written down so it is not lost, not a contract. Nothing here is
-> implemented, nothing here is settled enough to build against, and several
-> points at the end are still open questions. Where it states a decision, that
+> **Status: conversation, with one piece of it built.** This is a design
+> discussion written down so it is not lost, not a contract. The flat reading of
+> a single PSL list — its records, a filter, a sort and a window — is built, and
+> `psl-as-a-data-source.md` is what it does. Everything below that touches
+> layering, shadowing, includes, amendments or hashes is still discussion, and
+> several points at the end are open questions. Where it states a decision, that
 > is a decision reached in conversation and nothing more.
 
 A **data source** is a named collection an Application draws records from: an

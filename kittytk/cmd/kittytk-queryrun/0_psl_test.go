@@ -1,0 +1,127 @@
+package main
+
+// Driving a PSL source from a query file.
+//
+// The statements are the ones a display would have sent, and what comes back is
+// printed by the same code that prints what an application sent -- so the test
+// is that the file opens, refills, restates and lets go, and that the answer
+// arrives as the wire language either way.
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/phroun/kittytk/source"
+	"github.com/phroun/kittytk/wire"
+)
+
+const objects = `(
+  ("README.md", size: 2048),
+  ("build.sh", size: 310),
+  ("go.mod", size: 96),
+  ("src/parser.go", size: 14022),
+  notes: "a bare string"
+)`
+
+// drive runs a query file against a PSL source and gives back what was printed.
+func drive(t *testing.T, reading source.Reading, query string) *printer {
+	t.Helper()
+	src, err := source.ParsePSL(objects, reading)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := wire.Parse(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &printer{}
+	if err := run(src, script, out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestAQueryFileIsAnsweredOutOfAPSLFile(t *testing.T) {
+	p := drive(t, source.Whole,
+		`q=new query source="objects" filter={ ge .size 1000 } sort={ .size desc } have=0 need=2`)
+
+	if strings.Join(p.columns, ",") != "key,.0,.size" {
+		t.Errorf("the columns are %v", p.columns)
+	}
+	if len(p.rows) != 2 {
+		t.Fatalf("%d rows", len(p.rows))
+	}
+	if strings.Join(p.rows[0], "|") != `3|"src/parser.go"|14022` {
+		t.Errorf("the first row is %v", p.rows[0])
+	}
+	// Two records are the whole of what the filter holds, so the window ran out
+	// of sequence rather than out of room.
+	if !strings.Contains(p.note, "every record there is") {
+		t.Errorf("what ended the window reads %q", p.note)
+	}
+}
+
+// Opening carries the first window, and every statement after it addresses the
+// query that is open: another window, a restatement, and letting it go.
+func TestAFileOpensRefillsRestatesAndLetsGo(t *testing.T) {
+	p := drive(t, source.Whole, strings.Join([]string{
+		`q=new query source="objects" sort={ .size } have=0 need=2`,
+		`query q from={ .size 310; key 1 } have=0 need=1`,
+		`set q sort={ .size desc }`,
+		`query q have=0 need=1`,
+		`destroy q`,
+	}, "\n"))
+
+	var keys []string
+	for _, row := range p.rows {
+		keys = append(keys, row[0])
+	}
+	// By size ascending the bare string has none and leads, then go.mod and
+	// build.sh; the window after build.sh is README.md; and re-sorted the
+	// other way the first record is the largest.
+	if strings.Join(keys, ",") != `"notes",2,0,3` {
+		t.Errorf("the records that came back are %v", keys)
+	}
+}
+
+// The shorter reading names the members alone.
+//
+// The bare string is in the answer and carries nothing. Under Members it has no
+// members, so it has no size, and undefined sits below every number -- which is
+// what `lt` is being asked.
+func TestTheMembersReadingNamesTheMembersAlone(t *testing.T) {
+	p := drive(t, source.Members,
+		`q=new query source="objects" filter={ lt size 1000 } sort={ size } have=0 need=3`)
+
+	if strings.Join(p.columns, ",") != "key,size" {
+		t.Errorf("the columns are %v", p.columns)
+	}
+	if strings.Join(p.rows[0], "|") != `"notes"|` {
+		t.Errorf("the first row is %v", p.rows[0])
+	}
+	if strings.Join(p.rows[1], "|") != `2|96` {
+		t.Errorf("the second row is %v", p.rows[1])
+	}
+}
+
+// A file that says something a query file cannot say is refused rather than
+// half-run.
+func TestAFileThatIsNotAQueryIsRefused(t *testing.T) {
+	src, err := source.ParsePSL(objects, source.Whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{
+		`set 1 sort={ .size }`,
+		`query 1 have=0 need=5`,
+		`b=new button caption="press me"`,
+	} {
+		script, err := wire.Parse(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := run(src, script, &printer{}); err == nil {
+			t.Errorf("%q was accepted", text)
+		}
+	}
+}

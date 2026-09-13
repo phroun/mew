@@ -313,11 +313,14 @@ class Scanner:
 # --- Parser (mirror of parser.go) ----------------------------------------
 
 def _is_word_start(ch: str) -> bool:
-    return ch == '_' or ('a' <= ch <= 'z') or ('A' <= ch <= 'Z')
+    # A word may begin with a dot, which is how a name says it is a member of
+    # something rather than a word in its own right: `.size` is the member
+    # called size, and `size` is the word size.
+    return ch == '_' or ch == '.' or ('a' <= ch <= 'z') or ('A' <= ch <= 'Z')
 
 
 def _is_word_rune(ch: str) -> bool:
-    return _is_word_start(ch) or ch == '.' or ('0' <= ch <= '9')
+    return _is_word_start(ch) or ('0' <= ch <= '9')
 
 
 def _is_number_start(ch: str) -> bool:

@@ -203,12 +203,16 @@ func hexVal(ch rune) int {
 	return -1
 }
 
+// A word may begin with a dot, which is how a name says it is a member of
+// something rather than a word in its own right: `.size` is the member called
+// size, and `size` is the word size. Nothing is taken away by allowing it,
+// because a number never starts with a dot either (isNumberStart).
 func isWordStart(ch rune) bool {
-	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+	return ch == '_' || ch == '.' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
 func isWordRune(ch rune) bool {
-	return isWordStart(ch) || ch == '.' || (ch >= '0' && ch <= '9')
+	return isWordStart(ch) || (ch >= '0' && ch <= '9')
 }
 
 func isNumberStart(ch rune) bool {

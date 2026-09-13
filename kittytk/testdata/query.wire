@@ -218,3 +218,26 @@ bad
 
 fill have=0 need=10 from=17
 bad
+
+# --- a field that names a member of the record rather than a word ---
+#
+# A data source made of structured records addresses their contents by name,
+# and a leading dot is how a name says it is a member: `.size` is the member
+# called size, `size` is the word size. It is a word wherever a field name is
+# one -- a sort level, a filter predicate, a field bag -- so nothing but the
+# lexer has anything to say about it.
+
+spec source=f sort={ .name natural; key desc }
+want source="f" sort={ .name natural; key desc }
+
+spec source=f filter={ eq .key "figaro" }
+want source="f" filter={ eq .key "figaro" }
+
+spec source=f filter={ ge .0 1024 }
+want source="f" filter={ ge .0 1024 }
+
+spec source=f fields={ key; .name; value }
+want source="f" fields={ key; .name; value }
+
+fill have=0 need=10 from={ .name "a"; key 3 }
+want from={ .name "a"; key 3 } have=0 need=10

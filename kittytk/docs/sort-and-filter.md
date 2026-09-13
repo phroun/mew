@@ -84,6 +84,13 @@ field, and may say `desc` and, for strings, a collation:
 sort={ name fold; size desc; modified desc }
 ```
 
+**A field name may begin with a dot**, which is how a name says it is a member
+of the record rather than a word in its own right: `.size` is the member called
+size, `size` is the word size. A source whose records carry their own contents
+needs the distinction — otherwise a member called `key` and the record key are
+the same name — and one that does not need it never writes a dot.
+`psl-as-a-data-source.md` is where it is put to work.
+
 The first level that separates two records decides. A level settles only what
 the levels above it left equal, so "by department, then by salary, highest
 first" is two levels and the answer never depends on what the records were
@@ -134,6 +141,20 @@ instead of inventing an argument name for every operand.
 
 A text op carries its collation where it differs from the default:
 `contains title "report" collate=fold`.
+
+**The text ops are text's alone.** A number, a symbol and a word have no inside
+for a string to sit in, so a field that is not the same flavour of string as the
+value is `false` rather than being rendered into one to compare — which is the
+same decision as `eq kind folder` and `eq kind "folder"` being different
+questions. Bytes take no collation, being not text; and under a text op
+`natural` reads as `fold`, because a digit run's numeric value says whether one
+string sorts before another and nothing at all about whether it sits inside it.
+
+**A block is an AND wherever one appears**, `not { … }` included, so
+`not { a; b }` is the negation of `a and b`. With one predicate inside, which is
+how a negation is nearly always written, the two readings agree. An operator
+given nothing is its own identity: an empty `and` holds and an empty `or` does
+not.
 
 `eq kind folder` and `eq kind "folder"` are different questions, because a
 symbol and a string are different values. So a filter needs no type
