@@ -19,9 +19,9 @@ func TestAWholeRecordIsAnsweredAsOne(t *testing.T) {
 	}
 }
 
-// A window that named the fields it wanted gets those fields, and they are
+// A scope that named the fields it wanted gets those fields, and they are
 // answered as what they are: some of the record, not the record.
-func TestAWindowThatNamesFieldsIsAnsweredWithASubset(t *testing.T) {
+func TestAScopeThatNamesFieldsIsAnsweredWithASubset(t *testing.T) {
 	out, _ := read(t, mustPSL(t, twoWays), "sort={ .size }",
 		"have=0 need=4 fields={ .name }")
 	for i, whole := range out.whole {
@@ -35,7 +35,7 @@ func TestAWindowThatNamesFieldsIsAnsweredWithASubset(t *testing.T) {
 }
 
 // So does a query that named them, which is the same narrowing said once for
-// the whole sequence rather than per window.
+// the whole sequence rather than per scope.
 func TestAQueryThatNamesFieldsIsAnsweredWithSubsets(t *testing.T) {
 	out, _ := read(t, mustPSL(t, twoWays), "sort={ .size } fields={ .name }",
 		"have=0 need=1")
@@ -82,7 +82,7 @@ func TestAnApplicationsClaimIsPassedThrough(t *testing.T) {
 		t.Run(kind.what, func(t *testing.T) {
 			out, _ := read(t, hosting(t, kind.serve), "sort={ .size }", "have=0 need=2")
 			if out.joined() != "2,1" {
-				t.Fatalf("the stretch is %s", out.joined())
+				t.Fatalf("the scope is %s", out.joined())
 			}
 			for i, whole := range out.whole {
 				if whole != kind.whole {
@@ -112,7 +112,7 @@ func TestAnAmendedSourceStatesItsOwnAndRelaysTheChildsClaim(t *testing.T) {
 
 			out, _ := read(t, a, "sort={ .size }", "have=0 need=2")
 			if out.joined() != "2,1" {
-				t.Fatalf("the stretch is %s", out.joined())
+				t.Fatalf("the scope is %s", out.joined())
 			}
 			if !out.whole[0] {
 				t.Error("the replacement did not go out as a whole record")

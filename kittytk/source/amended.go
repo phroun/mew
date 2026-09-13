@@ -19,7 +19,7 @@ package source
 // supplied.
 //
 // Amendments change at any time. This is a data source, not a query: it
-// answers against what it holds when it is asked, and two stretches of one
+// answers against what it holds when it is asked, and two scopes of one
 // result set need not agree.
 
 import (
@@ -30,7 +30,7 @@ import (
 	"github.com/phroun/kittytk/wire"
 )
 
-// rounds is how many times one stretch will go back to the child for the
+// rounds is how many times one scope will go back to the child for the
 // records its deletions took out. A prediction that was wrong is corrected by
 // what the round taught it, so a second is nearly always enough; the cap is
 // there because a child that keeps answering short should not be asked forever.
@@ -55,7 +55,7 @@ func NewAmended(child Source) *Amended {
 //
 // A deletion carries what was last known of the record it removes. That is not
 // the record -- it is gone -- but what it takes to work out whether it would
-// have fallen inside a stretch, which is how the shortfall it causes is
+// have fallen inside a scope, which is how the shortfall it causes is
 // predicted rather than discovered.
 type amendment struct {
 	key     *wire.Value
@@ -88,7 +88,7 @@ func (a *Amended) Replace(key *wire.Value, fields wire.Fields) {
 
 // Delete says a record is gone.
 //
-// Known is what was last seen of it, and may be nil. With it, the stretch that
+// Known is what was last seen of it, and may be nil. With it, the scope that
 // record would have fallen in is known before the child is asked; without it,
 // the shortfall is discovered afterwards and costs a second question -- which
 // is also where the fields to remember are learned.
@@ -112,7 +112,7 @@ func (a *Amended) Forget(key *wire.Value) {
 }
 
 // learn writes down where a deleted record actually sat, from a copy the child
-// sent. The next stretch over that stretch of the sequence predicts its
+// sent. The next scope over that scope of the sequence predicts its
 // shortfall instead of discovering it.
 func (a *Amended) learn(key *wire.Value, fields wire.Fields) {
 	a.mu.Lock()
@@ -122,7 +122,7 @@ func (a *Amended) learn(key *wire.Value, fields wire.Fields) {
 	a.mu.Unlock()
 }
 
-// held is what the source holds, taken at the moment a stretch is asked for.
+// held is what the source holds, taken at the moment a scope is asked for.
 func (a *Amended) held() []*amendment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -167,7 +167,7 @@ type amendedSet struct {
 // Close lets this sequence go, and the child's with it.
 func (s *amendedSet) Close() { s.child.Close() }
 
-// Fill answers one stretch out of the child's records and this source's own.
+// Fill answers one scope out of the child's records and this source's own.
 func (s *amendedSet) Fill(f *wire.Fill, out Sink) error {
 	if out == nil {
 		return fmt.Errorf("a fill needs somewhere to put the answer")
@@ -178,7 +178,7 @@ func (s *amendedSet) Fill(f *wire.Fill, out Sink) error {
 	return m.ask(f.From, f.Need+m.slack)
 }
 
-// A merge is one stretch being answered: this source's own records for it, and
+// A merge is one scope being answered: this source's own records for it, and
 // the child's, going out as one run.
 type merge struct {
 	set  *amendedSet
@@ -186,7 +186,7 @@ type merge struct {
 	out  Sink
 
 	mine  []*amendment // ours, in the sequence's order, still to go out
-	slack int          // records of the child's this stretch will take out
+	slack int          // records of the child's this scope will take out
 
 	sent        int
 	round       int
@@ -194,7 +194,7 @@ type merge struct {
 	saidOrdered bool
 }
 
-// prepare works out what this source has to say about the stretch before the
+// prepare works out what this source has to say about the scope before the
 // child is asked anything.
 //
 // Two lists come out of it. What goes out: the replacements that match the
@@ -237,7 +237,7 @@ func (m *merge) prepare() {
 	})
 }
 
-// ask puts the stretch to the child, with room for what this source will take
+// ask puts the scope to the child, with room for what this source will take
 // out of the answer.
 func (m *merge) ask(from wire.Fields, need int) error {
 	m.round++
@@ -291,10 +291,10 @@ func (m *merge) theirs(key *wire.Value, fields wire.Fields, whole bool) error {
 
 // Done is the end of one round of the child's answer.
 //
-// If the stretch came up short of what was asked for -- a deletion landed in
+// If the scope came up short of what was asked for -- a deletion landed in
 // it that this source did not know about -- the child is asked again from
 // where it got to. What the round taught about that deletion means the next
-// stretch over the same ground does not come up short again.
+// scope over the same ground does not come up short again.
 func (m *merge) Done(c Complete) {
 	if m.done {
 		return
@@ -306,7 +306,7 @@ func (m *merge) Done(c Complete) {
 		}
 	}
 
-	// Whatever is left of ours goes out: it is the end of the stretch, and the
+	// Whatever is left of ours goes out: it is the end of the scope, and the
 	// records this source holds do not depend on the child having sent
 	// anything.
 	m.flushBefore(nil)

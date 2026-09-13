@@ -4,7 +4,7 @@ package source
 // application's.
 //
 // This is what the interface is for. The asking code below is written once and
-// run twice, and it names neither kind: it opens a sequence, asks for stretches
+// run twice, and it names neither kind: it opens a sequence, asks for scopes
 // of it, and reads what arrives. A third kind is a third entry in the table.
 
 import (
@@ -73,7 +73,7 @@ func hosting(t *testing.T, fill func(*client.Fill)) *Hosted {
 	return l.src
 }
 
-// serveRecords is an application honouring the sort and the stretch: the whole
+// serveRecords is an application honouring the sort and the scope: the whole
 // of what an author writes.
 func serveRecords(f *client.Fill) { serve(f, f.Record) }
 
@@ -125,7 +125,7 @@ func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
 
 // --- the asking, written once -------------------------------------------
 
-// read opens a sequence and draws one stretch of it, naming no kind.
+// read opens a sequence and draws one scope of it, naming no kind.
 func read(t *testing.T, src Source, spec, fill string) (*collector, Complete) {
 	t.Helper()
 	set, err := src.Open(parseSpec(t, spec))
@@ -139,7 +139,7 @@ func read(t *testing.T, src Source, spec, fill string) (*collector, Complete) {
 		t.Fatal(err)
 	}
 	if !out.ended {
-		t.Fatal("the stretch was never ended")
+		t.Fatal("the scope was never ended")
 	}
 	return out, out.done
 }
@@ -164,13 +164,13 @@ func TestOneQuestionTwoKinds(t *testing.T) {
 				t.Error("the answer did not say it was in order")
 			}
 			if done.Exhausted {
-				t.Error("a stretch with records past it claimed to be exhausted")
+				t.Error("a scope with records past it claimed to be exhausted")
 			}
 			if got := done.Watermark.Encode(); got != "{ .size 310; key 1 }" {
 				t.Errorf("the watermark is %s", got)
 			}
 
-			// And the stretch after it, from where that one stopped.
+			// And the scope after it, from where that one stopped.
 			next, done := read(t, kind.src, "sort={ .size }",
 				"from="+done.Watermark.Encode()+" have=0 need=9")
 			if next.joined() != "0,3" {
@@ -183,7 +183,7 @@ func TestOneQuestionTwoKinds(t *testing.T) {
 	}
 }
 
-// A stretch is asked for and answered; nothing waits on anything. The records
+// A scope is asked for and answered; nothing waits on anything. The records
 // reach the sink as the application sends them, which here is during the send.
 func TestAskingDoesNotWaitForTheAnswer(t *testing.T) {
 	src := serving(t)
@@ -202,7 +202,7 @@ func TestAskingDoesNotWaitForTheAnswer(t *testing.T) {
 	}
 }
 
-// A connection that will not carry the question ends the stretch rather than
+// A connection that will not carry the question ends the scope rather than
 // leaving whoever asked waiting for records that are never coming.
 func TestAConnectionThatWillNotCarryTheQuestionSaysSo(t *testing.T) {
 	src := NewHosted("files", func(string) error { return errBroken{} })
@@ -215,7 +215,7 @@ func TestAConnectionThatWillNotCarryTheQuestionSaysSo(t *testing.T) {
 		t.Fatal("a broken connection was not reported")
 	}
 	if !out.ended || out.done.Error == "" {
-		t.Errorf("the stretch ended as %#v", out.done)
+		t.Errorf("the scope ended as %#v", out.done)
 	}
 	if !strings.Contains(out.done.Error, "broken") {
 		t.Errorf("what ended it reads %q", out.done.Error)
@@ -242,11 +242,11 @@ func mustPSL(t *testing.T, text string) *PSL {
 	return src
 }
 
-// --- two stretches of one sequence --------------------------------------
+// --- two scopes of one sequence --------------------------------------
 
-// One sequence, asked twice. The second stretch starts where the first ended,
+// One sequence, asked twice. The second scope starts where the first ended,
 // and neither kind is told which it is.
-func TestTwoStretchesOfOneSequence(t *testing.T) {
+func TestTwoScopesOfOneSequence(t *testing.T) {
 	for _, kind := range []struct {
 		what string
 		src  Source
@@ -266,7 +266,7 @@ func TestTwoStretchesOfOneSequence(t *testing.T) {
 				t.Fatal(err)
 			}
 			if first.joined() != "2,1" {
-				t.Fatalf("the first stretch is %s", first.joined())
+				t.Fatalf("the first scope is %s", first.joined())
 			}
 
 			second := &collector{}
@@ -275,7 +275,7 @@ func TestTwoStretchesOfOneSequence(t *testing.T) {
 				t.Fatal(err)
 			}
 			if second.joined() != "0,3" {
-				t.Errorf("the second stretch is %s", second.joined())
+				t.Errorf("the second scope is %s", second.joined())
 			}
 			if !second.done.Exhausted {
 				t.Error("the end of the sequence did not say so")
@@ -285,7 +285,7 @@ func TestTwoStretchesOfOneSequence(t *testing.T) {
 }
 
 // held is a connection that keeps what the source says until it is let go, so
-// two stretches can be asked for before either is answered.
+// two scopes can be asked for before either is answered.
 type held struct {
 	src     *Hosted
 	conn    *client.Conn
@@ -312,10 +312,10 @@ func (h *held) let(t *testing.T) {
 	}
 }
 
-// Two stretches asked for before either is answered go to their own sinks, in
+// Two scopes asked for before either is answered go to their own sinks, in
 // the order they were asked for. It is one ordered stream either way, so what
 // separates them is nothing but their place in it.
-func TestTwoStretchesInFlightKeepTheirOwnAnswers(t *testing.T) {
+func TestTwoScopesInFlightKeepTheirOwnAnswers(t *testing.T) {
 	h := &held{}
 	h.conn = client.NewWithTransport(h, nil)
 	if _, err := h.conn.HostSource("files", serveRecords); err != nil {
@@ -347,12 +347,12 @@ func TestTwoStretchesInFlightKeepTheirOwnAnswers(t *testing.T) {
 
 	h.let(t)
 	if first.joined() != "2,1" {
-		t.Errorf("the first stretch got %s", first.joined())
+		t.Errorf("the first scope got %s", first.joined())
 	}
 	if second.joined() != "0,3" {
-		t.Errorf("the second stretch got %s", second.joined())
+		t.Errorf("the second scope got %s", second.joined())
 	}
 	if !first.ended || !second.ended {
-		t.Error("a stretch was never ended")
+		t.Error("a scope was never ended")
 	}
 }

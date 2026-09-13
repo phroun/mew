@@ -203,7 +203,7 @@ class Conn:
 
     def _inbound_loop(self):
         """The batches the display sent, in the order they arrived. On a thread
-        of its own rather than sharing the event one, because serving a window
+        of its own rather than sharing the event one, because serving a scope
         can take as long as the records take and a list nobody is looking at
         must not hold up a click."""
         while True:
@@ -440,7 +440,7 @@ class Conn:
 
     def host_source(self, name: str, fill) -> "Source":
         """Register a body of records this application can serve, and what
-        answers a window of it.
+        answers a scope of it.
 
         Nothing crosses the wire here: a source is a name, not an object, and
         the display learns of it when a trinket is told `data="<name>"`."""
@@ -484,7 +484,7 @@ class Conn:
         policy: the application mints the id, so it writes it before anything
         that carries it.
 
-        It must not run on the reader: serving a window writes, and the reader
+        It must not run on the reader: serving a scope writes, and the reader
         has to stay free."""
         ids: Dict[str, int] = {}
         keys: Dict[str, int] = {}
@@ -543,7 +543,7 @@ class Conn:
             pending.append(lambda: fn(q, stmt))
 
     def _open_query(self, stmt, keys, ids, pending):
-        """Make a query and ask it for its first window, which is one statement
+        """Make a query and ask it for its first scope, which is one statement
         because the display never wants a sequence without wanting rows of it.
 
         The application names it. The display has no id to offer -- ids here are
@@ -570,7 +570,7 @@ class Conn:
         return self._window(q, args, pending)
 
     def _window(self, q, args, pending):
-        """Take a request for one window apart and queue serving it."""
+        """Take a request for one scope apart and queue serving it."""
         request = _query.parse_fill(args)
         with q._lock:
             spec = q._spec
@@ -870,15 +870,15 @@ def dial_solo(endpoint: str, app_name: str, dispatch=None, *, token=None,
 # Everything above points one way: the application says `new`, `set`, `ask`,
 # `do`, and the display raises events at it. A query points the other way. Only
 # the display knows a query is wanted and what it is -- the sort comes from the
-# column header somebody clicked, the filter from the filter box, the window
+# column header somebody clicked, the filter from the filter box, the scope
 # from the scroll position -- so the display opens it, and the application,
 # which is the end that holds the records, serves it.
 #
-# What an author writes is one function: given a window of the sequence,
+# What an author writes is one function: given a scope of the sequence,
 # produce the records in it. The statement is taken apart before it gets here,
 # so nothing in that function parses anything; and the answer is written into a
 # sink that goes out in batches as it fills, so a million records need not be
-# one message, or one uninterruptible stretch of work.
+# one message, or one uninterruptible piece of work.
 #
 # It arrives nowhere near the event line. `query` is answered by `result`,
 # `ask` by `answer`, and `sub` -- or an object's mere existence -- by `event`;
@@ -889,8 +889,8 @@ def dial_solo(endpoint: str, app_name: str, dispatch=None, *, token=None,
 # structure.
 
 # How much answer accumulates before it goes out on its own. It trades write
-# syscalls against how long a record waits: big enough that a window of a
-# screenful is one message, small enough that a window of a million records is
+# syscalls against how long a record waits: big enough that a scope of a
+# screenful is one message, small enough that a scope of a million records is
 # not held in memory.
 FLUSH_BYTES = 16 * 1024
 
@@ -956,7 +956,7 @@ class Source:
 
 class Query:
     """One sequence of a source's records that a display is reading: one
-    filter, one sort, and a window asked for at a time.
+    filter, one sort, and a scope asked for at a time.
 
     The display opens it; the application names it, because the ids in every
     statement that follows are the application's own."""
@@ -985,12 +985,12 @@ class Query:
 
 
 class Fill:
-    """One window of the sequence, asked for -- and where the records that
+    """One scope of the sequence, asked for -- and where the records that
     answer it are written.
 
     The reading side is what was asked: from_ and to are where the display's
-    own knowledge starts and how far it runs, have is how much of the window it
-    can fill from that, and need is how many rows the window is. Emit every
+    own knowledge starts and how far it runs, have is how much of the scope it
+    can fill from that, and need is how many rows the scope is. Emit every
     record of your own in (from_..to], and if that does not make up the
     shortfall, keep going past to until it does.
 
@@ -1033,11 +1033,11 @@ class Fill:
         self._write(_query.RECORD_ARG, key, fields)
 
     def subset(self, key, **fields):
-        """Some of a record: its key, and the fields this window asked for,
+        """Some of a record: its key, and the fields this scope asked for,
         which are fewer than the record has. It crosses as `fields={ ... }`.
 
         It is the honest answer to a query that named a short list of fields --
-        the skeleton of a wide stretch -- and it is worth less afterwards than
+        the skeleton of a wide scope -- and it is worth less afterwards than
         a whole record, because it can only answer the question it was
         asked."""
         self._write(_query.FIELDS_ARG, key, fields)
@@ -1076,7 +1076,7 @@ class Fill:
         asked from and this point that you do not now have.
 
         It is a completeness guarantee rather than a position, and it is what
-        lets the display shrink the window, grow it back and scroll inside it
+        lets the display shrink the scope, grow it back and scroll inside it
         without asking anything."""
         extra = []
         if watermark:
@@ -1095,7 +1095,7 @@ class Fill:
         self._finish([protocol.Arg(name="exhausted", flag=FlagState.TRUE)])
 
     def fail(self, message: str):
-        """Finish with a refusal: this query cannot be honoured, this window
+        """Finish with a refusal: this query cannot be honoured, this scope
         cannot be produced, the records are gone. A refusal is an answer -- the
         display carries on with what it has."""
         self._finish([protocol.named("error", message)])
@@ -1125,7 +1125,7 @@ class Fill:
     def _emit(self, stmt: str):
         with self._lock:
             if self._closed:
-                raise RuntimeError("this window has already been answered")
+                raise RuntimeError("this scope has already been answered")
             self._buf.append(stmt)
             self._size += len(stmt) + 1
             self._sent += 1
@@ -1137,7 +1137,7 @@ class Fill:
     def _finish(self, extra):
         with self._lock:
             if self._closed:
-                raise RuntimeError("this window has already been answered")
+                raise RuntimeError("this scope has already been answered")
             args = [protocol.Arg(name=_query.RESULT_COMPLETE, flag=FlagState.TRUE)]
             args.extend(extra)
             self._buf.append(self._result(*args))

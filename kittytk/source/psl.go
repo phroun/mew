@@ -14,10 +14,10 @@ package source
 // that is a layer above this one, and it is built on this rather than into it
 // (docs/data-sources-and-bundles.md).
 //
-// What it is for is access: a window of a sorted, filtered sequence, found
+// What it is for is access: a scope of a sorted, filtered sequence, found
 // without walking the records that precede it. The sequence is ordered once per
-// spec, and a window is a binary search for the boundary and a walk forward as
-// far as the window is long -- so scrolling to the end of a large list costs
+// spec, and a scope is a binary search for the boundary and a walk forward as
+// far as the scope is long -- so scrolling to the end of a large list costs
 // what scrolling to the start of it costs.
 
 import (
@@ -71,7 +71,7 @@ const (
 // A PSL is a data source backed by one parsed PSL list.
 //
 // It is read-only and its records do not move, so everything computed from them
-// stays true: an ordering is built once per spec and reused for every window
+// stays true: an ordering is built once per spec and reused for every scope
 // drawn from it.
 type PSL struct {
 	recs    []pslRecord
@@ -359,7 +359,7 @@ func (p *PSL) order(spec *wire.Spec) *ordering {
 }
 
 // orderKey names a sequence by what decides it. The fields a query asks for do
-// not: they change what a window carries, not which records are in it or where.
+// not: they change what a scope carries, not which records are in it or where.
 func orderKey(spec *wire.Spec) string {
 	return wire.EncodeSort(spec.Sort) + "\x00" + spec.Filter.Encode()
 }
@@ -399,12 +399,12 @@ type pslResultSet struct {
 // something newer pushes it out, because the records it orders have not moved.
 func (v *pslResultSet) Close() { v.ord = nil }
 
-// Fill produces one window.
+// Fill produces one scope.
 //
 // Where it starts is a binary search: the ordering is total, so the first
 // record past a boundary is found in the log of the sequence's length rather
 // than by walking to it. Then it emits every record in (From..To], and carries
-// on past To only while the window is still short of Need.
+// on past To only while the scope is still short of Need.
 func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
 	o := v.ord
 	if o == nil {
@@ -452,7 +452,7 @@ func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
 	case sent > 0:
 		done.Watermark = v.boundary(v.src.recs[o.rows[start+sent-1]])
 	default:
-		// The window was already full. Nothing new crossed, and everything
+		// The scope was already full. Nothing new crossed, and everything
 		// between where it was asked from and that same point is held: which is
 		// true, and is what the far end is told.
 		done.Watermark = f.From
@@ -470,7 +470,7 @@ func (v *pslResultSet) boundary(rec pslRecord) wire.Fields {
 	return append(out, &wire.Arg{Name: wire.KeyField, Value: rec.key})
 }
 
-// fields is what one record carries in this window -- the fields the window
+// fields is what one record carries in this scope -- the fields the scope
 // asked for where it named fewer than the query did, the query's own where it
 // did not, and everything the record has where neither named any -- and whether
 // that is the whole of the record.

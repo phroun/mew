@@ -163,7 +163,7 @@ func (p *printer) take(line string) bool {
 }
 
 // add folds one record into the table, widening it for a field no earlier
-// record had. Records need not carry the same fields: a window may ask for
+// record had. Records need not carry the same fields: a scope may ask for
 // fewer than the query does, and a field a record has not got is not an error.
 func (p *printer) add(bag wire.Fields) {
 	for _, a := range bag {

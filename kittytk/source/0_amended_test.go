@@ -47,7 +47,7 @@ func TestAReplacementIsPlacedByItsOwnValues(t *testing.T) {
 	}
 }
 
-// A deletion takes the record out, and the stretch is still as long as it was
+// A deletion takes the record out, and the scope is still as long as it was
 // asked for: the child was asked for enough to cover what would be removed.
 func TestADeletionIsCoveredBeforeTheChildIsAsked(t *testing.T) {
 	a := amendable(t)
@@ -63,7 +63,7 @@ func TestADeletionIsCoveredBeforeTheChildIsAsked(t *testing.T) {
 }
 
 // A deletion this source knows nothing about is discovered rather than
-// predicted: the stretch comes up short, the child is asked again, and what
+// predicted: the scope comes up short, the child is asked again, and what
 // the round taught means the next one over the same ground does not.
 func TestADeletionWithNoPlacementIsLearned(t *testing.T) {
 	a := amendable(t)
@@ -111,9 +111,9 @@ func TestARecordTheChildNeverSendsStillGoesOut(t *testing.T) {
 	}
 }
 
-// Amendments are not a query. They change whenever, and a stretch is answered
+// Amendments are not a query. They change whenever, and a scope is answered
 // against what is held when it is asked.
-func TestAmendmentsChangeBetweenStretches(t *testing.T) {
+func TestAmendmentsChangeBetweenScopes(t *testing.T) {
 	a := amendable(t)
 	set, err := a.Open(parseSpec(t, "sort={ .size }"))
 	if err != nil {
@@ -126,7 +126,7 @@ func TestAmendmentsChangeBetweenStretches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if first.joined() != "2,1" {
-		t.Fatalf("the first stretch is %s", first.joined())
+		t.Fatalf("the first scope is %s", first.joined())
 	}
 
 	a.Delete(key(1), fields("build.sh", 310))
@@ -136,7 +136,7 @@ func TestAmendmentsChangeBetweenStretches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if second.joined() != "2,0" {
-		t.Errorf("the second stretch is %s", second.joined())
+		t.Errorf("the second scope is %s", second.joined())
 	}
 }
 
@@ -235,9 +235,9 @@ func (u *unordered) Record(k *wire.Value, f wire.Fields) error { return u.out.Re
 func (u *unordered) Subset(k *wire.Value, f wire.Fields) error { return u.out.Subset(k, f) }
 func (u *unordered) Done(c Complete)                           { u.out.Done(c) }
 
-// A child that refuses ends the stretch here too, rather than leaving whoever
+// A child that refuses ends the scope here too, rather than leaving whoever
 // asked waiting.
-func TestAChildThatRefusesEndsTheStretch(t *testing.T) {
+func TestAChildThatRefusesEndsTheScope(t *testing.T) {
 	a := NewAmended(NewHosted("files", func(string) error { return errBroken{} }))
 	set, err := a.Open(parseSpec(t, ""))
 	if err != nil {
@@ -248,26 +248,26 @@ func TestAChildThatRefusesEndsTheStretch(t *testing.T) {
 		t.Fatal("a broken child was not reported")
 	}
 	if !out.ended || !strings.Contains(out.done.Error, "broken") {
-		t.Errorf("the stretch ended as %#v", out.done)
+		t.Errorf("the scope ended as %#v", out.done)
 	}
 }
 
 // A deletion whose placement is stale is discovered, not predicted.
 //
-// The stretch is asked for from a boundary, and this source believes the
+// The scope is asked for from a boundary, and this source believes the
 // deleted record sits before it -- so it asks the child for no extra. The
-// child sends the record anyway, it is dropped, and the stretch is one short.
-// So the child is asked again from where it got to, and the stretch is filled.
+// child sends the record anyway, it is dropped, and the scope is one short.
+// So the child is asked again from where it got to, and the scope is filled.
 func TestAStaleDeletionCostsASecondQuestion(t *testing.T) {
 	a := amendable(t)
 	// It really sits at 2048, between build.sh and parser.go. This source
-	// believes it sits at 1, before the whole stretch.
+	// believes it sits at 1, before the whole scope.
 	a.Delete(key(0), fields("README.md", 1))
 
 	out, _ := read(t, a, "sort={ .size }",
 		`from={ .size 96; key 2 } have=0 need=2`)
 	if out.joined() != "1,3" {
-		t.Errorf("the stretch is %s", out.joined())
+		t.Errorf("the scope is %s", out.joined())
 	}
 
 	// And what the round taught means the next one does not come up short.
@@ -312,7 +312,7 @@ func TestAChildThatNeverCatchesUpIsNotAskedForever(t *testing.T) {
 		t.Errorf("it asked %d times", child.rounds)
 	}
 	if done.Exhausted {
-		t.Error("a stretch that never filled claimed to be exhausted")
+		t.Error("a scope that never filled claimed to be exhausted")
 	}
 	if len(out.keys) != child.rounds {
 		t.Errorf("%d records from %d rounds", len(out.keys), child.rounds)
@@ -320,7 +320,7 @@ func TestAChildThatNeverCatchesUpIsNotAskedForever(t *testing.T) {
 }
 
 // dribble answers one record at a time and never says it has run out, which is
-// a source that will never fill a stretch however often it is asked.
+// a source that will never fill a scope however often it is asked.
 type dribble struct{ rounds int }
 
 func (d *dribble) Open(*wire.Spec) (ResultSet, error) { return d, nil }

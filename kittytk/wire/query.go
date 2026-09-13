@@ -3,7 +3,7 @@ package wire
 // A query, in structured form.
 //
 // An application hosts a query: one filter and one sort over its own records,
-// which a display fills windows out of as somebody scrolls. The wire carries
+// which a display fills scopes out of as somebody scrolls. The wire carries
 // that as text, and every client library would otherwise make its author walk
 // a statement tree to find out what was being asked. So the walking happens
 // once, here, and what reaches an application is a struct.
@@ -39,7 +39,7 @@ const (
 	RecordArg = "record"
 	FieldsArg = "fields"
 
-	// ResultComplete ends a window: everything for it has been sent. A result
+	// ResultComplete ends a scope: everything for it has been sent. A result
 	// without it carries a record.
 	ResultComplete = "complete"
 )
@@ -223,15 +223,15 @@ type Spec struct {
 	Sort    []SortLevel
 }
 
-// A Fill is one window of the sequence, asked for.
+// A Fill is one scope of the sequence, asked for.
 //
 // From and To are boundaries: where the display's own knowledge starts and how
 // far it runs. Both are empty at the beginning of the sequence. Have is how
-// much of the window the display can fill from what it already holds, and Need
-// is how many rows the window is.
+// much of the scope the display can fill from what it already holds, and Need
+// is how many rows the scope is.
 //
 // Nothing stamps it. The application's results and its replies travel one
-// ordered stream, so a window's results are the ones between the reply that
+// ordered stream, so a scope's results are the ones between the reply that
 // accepted it and the result that completes it -- which is also what separates
 // the generation before a re-sort from the one after it.
 type Fill struct {
@@ -239,7 +239,7 @@ type Fill struct {
 	To     Fields // empty: nothing is known past From
 	Have   int
 	Need   int
-	Fields Fields // the fields wanted for this window; empty means the spec's
+	Fields Fields // the fields wanted for this scope; empty means the spec's
 }
 
 // ParseSpec reads a query spec from the arguments of the statement carrying

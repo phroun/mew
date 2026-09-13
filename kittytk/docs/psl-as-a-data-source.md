@@ -1,6 +1,6 @@
 # A PSL list as a data source
 
-> **Status: built, and flat.** One PSL list, read as records, with windows drawn
+> **Status: built, and flat.** One PSL list, read as records, with scopes drawn
 > out of it. Nothing here follows an include, applies an amendment or resolves a
 > hash — layering and shadowing are the next thing and are built on this rather
 > than into it. `data-sources-and-bundles.md` is the conversation those belong
@@ -8,7 +8,7 @@
 > comparison both ends stand on.
 
 A display sometimes holds the records itself, and then there is nobody to ask.
-It is the same question either way — this filter, this sort, this window — so
+It is the same question either way — this filter, this sort, this scope — so
 `source.Source` is one interface with an application behind it or a body of
 static data sitting here.
 
@@ -34,7 +34,7 @@ here says whichever is true of what it sent: `PSL` says `Record` where nothing
 narrowed the record and `Subset` where a field list or an exclusion did, and
 `Hosted` passes on whatever the application claimed, making none of its own.
 
-**Nothing waits.** `Fill` asks for a stretch and returns; the records reach the
+**Nothing waits.** `Fill` asks for a scope and returns; the records reach the
 sink as they are produced — at once for `PSL`, whose records are here, and as
 they arrive for `Hosted`, whose records are an application's. The error is for
 a request that could not be started, never for one that has not finished.
@@ -191,11 +191,11 @@ sits below every number**, so `filter={ lt .size 1000 }` holds every record that
 has no size at all. A filter that means *has a size, and it is under a thousand*
 is two predicates and says both.
 
-## Drawing a window
+## Drawing a scope
 
 Stating the sequence runs the filter over every record and sorts what survives,
-once. A window is then a binary search for the boundary and a walk forward as
-far as the window is long, so reaching the last screenful of a long list costs
+once. A scope is then a binary search for the boundary and a walk forward as
+far as the scope is long, so reaching the last screenful of a long list costs
 what reaching the first one costs.
 
 The sort tuples are kept beside the rows rather than recomputed, because
@@ -204,7 +204,7 @@ comparison would read the data `n log n` times instead of once. Orderings are
 cached on the spec that names them, so two result sets over one sequence share
 the work and going back to a column somebody clicked before is free.
 
-A window emits every record in `(from..to]` and then carries on past `to` only
+A scope emits every record in `(from..to]` and then carries on past `to` only
 while it is still short of `need` — which is what the far end has to merge
 against. What ends it is a watermark, or `exhausted` where the sequence ran out.
 
@@ -217,10 +217,10 @@ iterations (`0_psl_bench_test.go`):
 |---|---|
 | reading the file | **2.5 s** — `pawscript.ParsePSL`, once |
 | stating the sequence | **58 ms** — one filter pass and one sort, once per spec |
-| a window of 30 at the start | **14.0 µs** |
-| a window of 30 at the end | **21.8 µs** |
+| a scope of 30 at the start | **14.0 µs** |
+| a scope of 30 at the end | **21.8 µs** |
 
-The last two are the pair that matters: **a window at the far end of a hundred
+The last two are the pair that matters: **a scope at the far end of a hundred
 thousand records costs about half again what one at the near end costs** — not
 three thousand times more, which is what walking to the boundary would have
 cost. What separates them is the seventeen comparisons the search makes, each

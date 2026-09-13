@@ -759,7 +759,7 @@ static kt_stmt *parse_statement(const char *text) {
 /* --- a query, in structured form -------------------------------------
  *
  * An application hosts a query: one filter and one sort over its own records,
- * which a display fills windows out of as somebody scrolls. The wire carries
+ * which a display fills scopes out of as somebody scrolls. The wire carries
  * that as text, and every client library would otherwise make its author walk
  * a statement tree to find out what was being asked. So the walking happens
  * once, here, and what reaches an application is a struct.
@@ -1423,7 +1423,7 @@ typedef struct {
     void *ud;
 } kt_handler;
 
-/* A body of records this application can serve, and what answers a window of
+/* A body of records this application can serve, and what answers a scope of
  * it. A name, not an object: nothing about registering one crosses the wire. */
 struct kt_source {
     kt_conn *c;
@@ -1766,13 +1766,13 @@ static void mark_closed(kt_conn *c) {
  *
  * The statement is taken apart before the application's callback sees it, so
  * nothing in that callback parses anything. The answer goes into a sink that
- * flushes as it fills, so a window larger than one message is neither held
- * whole in memory nor one uninterruptible stretch of work.
+ * flushes as it fills, so a scope larger than one message is neither held
+ * whole in memory nor one uninterruptible piece of work.
  */
 
 /* How much answer accumulates before it goes out on its own. It trades write
- * syscalls against how long a record waits: big enough that a window of a
- * screenful is one message, small enough that a window of a million records is
+ * syscalls against how long a record waits: big enough that a scope of a
+ * screenful is one message, small enough that a scope of a million records is
  * not held in memory. */
 #define KT_FLUSH_BYTES (16 * 1024)
 
@@ -2072,7 +2072,7 @@ static uint64_t hosted_target(const kt_stmt *st, const kt_batch *b) {
     return 0;
 }
 
-/* Take a request for one window apart and queue serving it. */
+/* Take a request for one scope apart and queue serving it. */
 static int batch_window(kt_conn *c, kt_batch *b, kt_query *q,
                         const kt_arg *args, int n) {
     kt_deferred d;
@@ -2085,7 +2085,7 @@ static int batch_window(kt_conn *c, kt_batch *b, kt_query *q,
     return 1;
 }
 
-/* Make a query and ask it for its first window, which is one statement because
+/* Make a query and ask it for its first scope, which is one statement because
  * the display never wants a sequence without wanting rows of it.
  *
  * The application names it. The display has no id to offer -- ids here are the
@@ -2250,7 +2250,7 @@ static void run_batch(kt_conn *c, kt_stmt *stmts, const char **texts, int n) {
 }
 
 /* The inbound thread: batches the display sent, in the order they arrived. A
- * thread of its own rather than the event one, because serving a window can
+ * thread of its own rather than the event one, because serving a scope can
  * take as long as the records take and a list nobody is looking at must not
  * hold up a click. */
 static void *inbound_loop(void *arg) {

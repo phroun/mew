@@ -7,7 +7,7 @@ package source
 // spells out, and hands them on as they arrive. Both are one interface, so
 // whatever asks the question does not know which kind answered it.
 //
-// Nothing is waited for. A stretch is asked for by writing a statement, and
+// Nothing is waited for. A scope is asked for by writing a statement, and
 // the results come back later on whatever thread reads the connection;
 // `Inbound` is where they are handed in, and the sink is fed from there.
 
@@ -42,7 +42,7 @@ func NewHosted(name string, send func(src string) error) *Hosted {
 func (h *Hosted) Name() string { return h.name }
 
 // Open states a sequence. Nothing is said on the wire yet: a query is opened
-// with the first stretch of it, because there is no reason to name a sequence
+// with the first scope of it, because there is no reason to name a sequence
 // nobody is reading.
 func (h *Hosted) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
@@ -59,7 +59,7 @@ func (h *Hosted) Open(spec *wire.Spec) (ResultSet, error) {
 // A hostedSet is one sequence the application is serving.
 //
 // Its id is the application's, and it does not exist until the application
-// replies with it -- so a stretch asked for before that reply arrives is
+// replies with it -- so a scope asked for before that reply arrives is
 // addressed by the key the query was opened under, which the same batch
 // surfaces (docs/hosting-a-query.md).
 type hostedSet struct {
@@ -71,10 +71,10 @@ type hostedSet struct {
 	closed  bool
 	id      uint64
 	pending []Sink   // sinks awaiting an answer, oldest first
-	held    []string // stretches asked for before the id came back
+	held    []string // scopes asked for before the id came back
 }
 
-// Fill asks the application for one stretch and returns. The records reach the
+// Fill asks the application for one scope and returns. The records reach the
 // sink when the application sends them.
 func (s *hostedSet) Fill(f *wire.Fill, out Sink) error {
 	if out == nil {
@@ -89,7 +89,7 @@ func (s *hostedSet) Fill(f *wire.Fill, out Sink) error {
 	opening := !s.opened
 	switch {
 	case opening:
-		// Opening carries the first stretch, which is one statement.
+		// Opening carries the first scope, which is one statement.
 		s.opened = true
 		stmt = "q=new query " + s.spec.Encode() + " " + f.Encode()
 	case s.id != 0:
@@ -177,7 +177,7 @@ func (h *Hosted) Inbound(stmt *wire.Statement) bool {
 }
 
 // name1 takes the reply that names a sequence. A reply carrying no id belongs
-// to a stretch of one already named, and says nothing this source needs.
+// to a scope of one already named, and says nothing this source needs.
 func (h *Hosted) name1(stmt *wire.Statement) bool {
 	var id uint64
 	for _, a := range stmt.Args {
@@ -211,7 +211,7 @@ func (h *Hosted) name1(stmt *wire.Statement) bool {
 	return true
 }
 
-// release asks for the stretches that were waiting for the sequence to be
+// release asks for the scopes that were waiting for the sequence to be
 // named, now that it has a number to address.
 func (s *hostedSet) release() {
 	s.mu.Lock()
@@ -226,7 +226,7 @@ func (s *hostedSet) release() {
 	}
 }
 
-// result takes one record, or the statement that ends a stretch.
+// result takes one record, or the statement that ends a scope.
 func (h *Hosted) result(stmt *wire.Statement) bool {
 	if len(stmt.Args) == 0 {
 		return false
@@ -301,7 +301,7 @@ func (s *hostedSet) take(args []*wire.Arg) {
 }
 
 // waiting is the sink the next result belongs to: answers come back in the
-// order the stretches were asked for, one ordered stream.
+// order the scopes were asked for, one ordered stream.
 func (s *hostedSet) waiting() Sink {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -311,7 +311,7 @@ func (s *hostedSet) waiting() Sink {
 	return s.pending[0]
 }
 
-// finish hands the sink what ended its stretch and takes it off the queue.
+// finish hands the sink what ended its scope and takes it off the queue.
 func (s *hostedSet) finish(sink Sink, done Complete) {
 	s.mu.Lock()
 	if len(s.pending) > 0 && s.pending[0] == sink {
@@ -321,7 +321,7 @@ func (s *hostedSet) finish(sink Sink, done Complete) {
 	sink.Done(done)
 }
 
-// fail ends every stretch still waiting, which is what a connection that will
+// fail ends every scope still waiting, which is what a connection that will
 // not carry the question leaves them needing.
 func (s *hostedSet) fail(why string) {
 	s.mu.Lock()

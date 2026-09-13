@@ -118,7 +118,7 @@ func TestTheDisplayCarriesAQueryItDoesNotRead(t *testing.T) {
 			t.Errorf("missing:\n  %s\nin:\n%s", want, got)
 		}
 	}
-	// It was asked for two and sent two: the window was honoured.
+	// It was asked for two and sent two: the scope was honoured.
 	if n := strings.Count(got, "result 1 record="); n != 2 {
 		t.Errorf("%d records came back, want 2:\n%s", n, got)
 	}

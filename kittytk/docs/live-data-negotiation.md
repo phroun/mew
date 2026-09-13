@@ -3,7 +3,7 @@
 > **Status: a plan, with its first piece built.** The comparison core it stands
 > on is settled (`sort-and-filter.md`), the reverse direction it needs is
 > decided (`app-hosted-objects.md`), and the filling half — the query a display
-> opens against an application, and the windows it serves — is implemented in
+> opens against an application, and the scopes it serves — is implemented in
 > all three client libraries (`hosting-a-query.md`). Coverage and invalidation
 > are not built, and the open questions at the end are open.
 
@@ -26,7 +26,7 @@ is deliberately much smaller than a view's.
 The display opens a **view** and manages position, generation, watermark and
 coverage; it also opens the **query** on the application's side, because only
 it knows one is wanted and what sort and filter it carries. The application
-holds that query, names it, and answers windows of it. Nothing about views
+holds that query, names it, and answers scopes of it. Nothing about views
 reaches the application; it hears about its query and nothing else.
 
 ## The query
@@ -40,10 +40,10 @@ Four properties matter:
 
 - **It names exactly one sequence.** The record key is always the sort's last
   level, so no two records tie and "the record after this point" means one
-  place. Without that, two fills of a window can overlap or skip.
+  place. Without that, two fills of a scope can overlap or skip.
 - **Both ends compute that sequence independently**, from the rules in
   `sort-and-filter.md`. Neither confers with the other about order.
-- **Changing it is a new generation, not a new view.** Windows, watermark and
+- **Changing it is a new generation, not a new view.** Scopes, watermark and
   counts held against the old spec are dropped; the view's identity persists.
 - **It can be refused.** An end that cannot honour a query exactly says so when
   it is asked. A refusal is recoverable; an ordering that is quietly a little
@@ -77,7 +77,7 @@ implementation can do with it is trivial.
 A fill request carries hints: where the server is, what it already has, how
 many rows it needs, which columns, what to leave out. **A minimal query ignores
 all of them**, sends every record it has, and says it is exhausted. That answer
-is correct — the server asked for a window and got a superset.
+is correct — the server asked for a scope and got a superset.
 
 So the application that onboards in an afternoon implements one thing —
 enumerate my records — and never learns what a boundary, a watermark, a column
@@ -94,12 +94,12 @@ What a more capable query takes over, in order:
 
 1. **Filter** — send only matching records
 2. **Sort** — send them in the query's order
-3. **Window** — send only the stretch asked for, with a watermark
+3. **Scope** — send only the records asked for, with a watermark
 4. **Project** — send only the columns asked for, minus the exclusions
 5. **Count** — say how many there are without sending them
 
-**3 requires 2**: a window is defined by the order, so nothing can answer a
-window without ordering. The rest are independent. A query backed by SQL takes
+**3 requires 2**: a scope is defined by the order, so nothing can answer a
+scope without ordering. The rest are independent. A query backed by SQL takes
 all five, because they are a `WHERE`, an `ORDER BY`, a `LIMIT`, a `SELECT` list
 and a `COUNT(*)`.
 
@@ -118,7 +118,7 @@ for, never wrong data.
 ## The fill itself
 
 The server states where it is, how far its own knowledge runs, how much of the
-window it can fill itself, and how many rows the window holds:
+scope it can fill itself, and how many rows the scope holds:
 
 ```
 from=<boundary>  to=<boundary>  have=<n>  need=<n>
@@ -138,7 +138,7 @@ it sends all of its own — which the server needs anyway for that range to be
 *correct* — and past `to` it sends exactly the shortfall, because out there the
 server contributes nothing, so every row is one of the query's.
 
-**The window is covered, and in one round trip.** The server is complete over
+**The scope is covered, and in one round trip.** The server is complete over
 `(from..to]` because the query sent everything of its own there, and complete
 from `to` to the watermark because the query swept it. Merged row `need` is at
 or before the watermark by construction.
@@ -146,7 +146,7 @@ or before the watermark by construction.
 **The watermark is a completeness guarantee, not a position**: *there is
 nothing of mine between your `from` and this point that you do not now have.*
 That is what turns some records into a correct merged prefix, and what makes
-the next several questions unnecessary — shrink the window, grow it back,
+the next several questions unnecessary — shrink the scope, grow it back,
 scroll within it, and nothing is asked at all.
 
 ## What goes stale, and how independently
@@ -229,7 +229,7 @@ almost the entire region, and most of it did not change.
 
 **A chunk boundary is a "do not merge across" mark.** Coarsening is always safe,
 but what it costs depends on where it lands. Inside the bulk chunk the server
-just forgets a stretch nobody is looking at. Across the visible chunk it drops
+just forgets a scope nobody is looking at. Across the visible chunk it drops
 what is on screen and refills it. So the application may coarsen freely *within*
 a chunk and should avoid spanning two, and splitting the chunks is how the server
 tells it where that line is.
@@ -305,7 +305,7 @@ other's granularity.
 
 **Invalidation costs nothing until someone looks.** The application says stale,
 the server drops that region and pulls its watermark back — and issues no fill.
-Whether a replacement is ever requested is the server's decision: a stretch
+Whether a replacement is ever requested is the server's decision: a scope
 scrolled out of view an hour ago may never be read again, while something on
 screen refreshes at once. Invalidation causes *forgetting*, not traffic.
 
@@ -361,7 +361,7 @@ The sort and filter fields are the **skeleton**; everything else is **flesh**.
 
 Positions, counts, membership, order and the watermark are all built out of the
 skeleton. Lose it for a region and the server cannot place anything there — it
-must re-read the whole stretch and re-establish its completeness claim. Lose the
+must re-read the whole scope and re-establish its completeness claim. Lose the
 flesh and nothing structural moves: the count is fine, the positions are fine,
 the thumb does not twitch, and re-acquiring it is a projection-only fill for the
 rows actually on screen.

@@ -34,8 +34,8 @@ func main() {
 	sortBy := flag.String("sort", "name natural", "the sort, as wire text inside the braces")
 	filter := flag.String("filter", "", "the filter, as wire text inside the braces")
 	fields := flag.String("fields", "", "the fields to ask for, as wire text inside the braces")
-	need := flag.Int("need", 10, "how many rows the window is")
-	more := flag.Int("more", 0, "ask for a second window of this many rows, past the first")
+	need := flag.Int("need", 10, "how many rows the scope is")
+	more := flag.Int("more", 0, "ask for a second scope of this many rows, past the first")
 	resort := flag.String("resort", "", "open a second query on this sort afterwards, as wire text inside the braces")
 	wait := flag.Duration("wait", 3*time.Second, "how long to wait for an answer")
 	flag.Parse()
@@ -62,7 +62,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Open the query and ask for its first window in one statement, because a
+	// Open the query and ask for its first scope in one statement, because a
 	// display never wants a sequence without wanting rows of it.
 	spec := fmt.Sprintf("source=%s", wire.Quote(*source))
 	if *fields != "" {
@@ -80,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// A second window, starting from where the first one left off. The probe
+	// A second scope, starting from where the first one left off. The probe
 	// holds no records, so it asks from the last key it saw.
 	if *more > 0 {
 		from := ""
@@ -216,7 +216,7 @@ func (p *probe) collect(withResults bool) (uint64, bool) {
 	}
 }
 
-// noteRow remembers the last record, so the next window can ask from it.
+// noteRow remembers the last record, so the next scope can ask from it.
 //
 // A boundary is a record's position -- its sort fields AND its key -- not the
 // key alone: without the sort fields there is nothing to compare against the

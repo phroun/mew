@@ -8,11 +8,11 @@
 > on.
 
 A **query** is a sequence of an application's own records that a display is
-reading: one filter, one sort, and a window asked for at a time.
+reading: one filter, one sort, and a scope asked for at a time.
 
 **The display opens it.** Only the display knows a query is wanted and what it
 is — the sort comes from the column header somebody clicked, the filter from
-the filter box, the window from the scroll position. The application is the end
+the filter box, the scope from the scroll position. The application is the end
 that holds the records, so it serves it.
 
 ## Three pairs, and nothing carries two of them
@@ -39,7 +39,7 @@ KITTYTK_DISPLAY=/tmp/kittytk-queryprobe.sock go run ./examples/queryapp
 
 `examples/queryapp` serves two sources, at the two ends of how much work an
 author wants to do: `colours` sends everything and says `exhausted`, and
-`files` honours the boundary, the sort and the window and answers with a
+`files` honours the boundary, the sort and the scope and answers with a
 watermark. The probe's flags drive the rest — `-filter`, `-sort`, `-more`, and
 `-resort`, which opens a second query on another sort and drops the first —
 and what it prints is this:
@@ -80,7 +80,7 @@ and what it prints is this:
 ```
 
 **A boundary is the sort fields and the key, not the key alone.** The second
-window asks `from={ key 1; name "README.md"; size 2048 }`; a boundary carrying
+scope asks `from={ key 1; name "README.md"; size 2048 }`; a boundary carrying
 only the key has nothing to compare against the levels, and lands at the start
 of the sequence rather than where it meant to. Fields the sort does not mention
 are ignored at the far end, so sending the whole record is the simplest thing
@@ -149,7 +149,7 @@ object**. The application tells whatever trinket is to show it `data="files"`,
 and the display opens queries against that name.
 
 `Record` says these are all the fields there are. `Subset` — `f.Subset(id, …)`,
-`f.subset(key, …)`, `kt_fill_subset` — says they are the ones this window asked
+`f.subset(key, …)`, `kt_fill_subset` — says they are the ones this scope asked
 for, and crosses as `fields={…}`.
 
 Python is the same shape (`conn.host_source(name, fill)`, `f.record(key,
@@ -162,7 +162,7 @@ is comfortable shipping, that is the *fastest* implementation, not a toy one.
 
 ## The statements
 
-**The display opens a query and asks for its first window in one statement**,
+**The display opens a query and asks for its first scope in one statement**,
 because it never wants a sequence without wanting rows of it.
 
 ```
@@ -193,7 +193,7 @@ DISPLAY → APP   q=new query source="files" have=0 need=5
                 end
 ```
 
-**Every window after that is the same, minus the making:**
+**Every scope after that is the same, minus the making:**
 
 ```
 DISPLAY → APP   query 9 from={ name "build.sh"; key 42 } have=25 need=30
@@ -205,12 +205,12 @@ APP → DISPLAY   result 9 ordered
                 result 9 complete exhausted
 ```
 
-| on a window request | |
+| on a scope request | |
 |---|---|
 | `from` `to` | boundaries. Absent or empty is the start of the sequence |
-| `have` | how much of the window the display can fill from what it already holds |
-| `need` | how many rows the window is |
-| `fields` | the fields wanted for *this* window, where they are fewer than the query's — the skeleton of a wide stretch rather than everything |
+| `have` | how much of the scope the display can fill from what it already holds |
+| `need` | how many rows the scope is |
+| `fields` | the fields wanted for *this* scope, where they are fewer than the query's — the skeleton of a wide scope rather than everything |
 
 The whole of what the application does with that: emit every record of its own
 in `(from..to]`, and if that does not make up the shortfall, keep going past
@@ -242,7 +242,7 @@ the loss a lie.
 Which is why an application never has to reproduce the comparison core exactly.
 Exactness buys a smaller answer, not a correct one.
 
-**A result carries a record, or ends the window.**
+**A result carries a record, or ends the scope.**
 
 A record crosses under one of two words, and the difference is how much of the
 record is there:
@@ -255,7 +255,7 @@ result 9 fields={ key 17; name "src/parser.go" }
 | | |
 |---|---|
 | `record={…}` | every field the record has |
-| `fields={…}` | some of them — the ones this window asked for |
+| `fields={…}` | some of them — the ones this scope asked for |
 
 A whole record answers **any** question about that record, so whoever asked can
 keep it and answer the next query out of it instead of asking again. A subset
@@ -269,7 +269,7 @@ they are the ones somebody asked for. `fields` is the weaker claim and is
 therefore always safe; `record` is the one worth making, and worth making only
 when it is true.
 
-One `complete` ends the window, and three things can ride on it:
+One `complete` ends the scope, and three things can ride on it:
 
 | | |
 |---|---|
@@ -295,7 +295,7 @@ something that is already not true of what crossed, so the client libraries
 drop it rather than send it.
 
 **Nothing is stamped**, because nothing needs to be. The application's replies
-and its results travel one ordered stream, so a window's results are the ones
+and its results travel one ordered stream, so a scope's results are the ones
 between the reply that accepted it and the result that completes it.
 
 ## A query does not change
@@ -382,7 +382,7 @@ because the display rejects what it did not ask for.
 
 ## Where a larger library plugs in
 
-The client libraries understand the open, the window and the drop. Anything
+The client libraries understand the open, the scope and the drop. Anything
 else the display addresses to a query reaches the application whole:
 
 ```go

@@ -1,6 +1,6 @@
 package source
 
-// Reading a PSL list as records, and drawing windows out of it.
+// Reading a PSL list as records, and drawing scopes out of it.
 
 import (
 	"strings"
@@ -102,7 +102,7 @@ func (c *collector) Done(done Complete) { c.done, c.ended = done, true }
 
 func (c *collector) joined() string { return strings.Join(c.keys, ",") }
 
-// fill draws one window and reports the keys that came out of it.
+// fill draws one scope and reports the keys that came out of it.
 func fill(t *testing.T, v ResultSet, args string) (*collector, Complete) {
 	t.Helper()
 	out := &collector{}
@@ -110,7 +110,7 @@ func fill(t *testing.T, v ResultSet, args string) (*collector, Complete) {
 		t.Fatal(err)
 	}
 	if !out.ended {
-		t.Fatal("the stretch was never ended")
+		t.Fatal("the scope was never ended")
 	}
 	return out, out.done
 }
@@ -125,7 +125,7 @@ func TestBothOfAPSLListsCollectionsAreRecords(t *testing.T) {
 		t.Errorf("the sequence is %s", out.joined())
 	}
 	if !done.Exhausted {
-		t.Error("a window holding every record did not say so")
+		t.Error("a scope holding every record did not say so")
 	}
 	if !out.ordered {
 		t.Error("the records went out in the sequence's order and did not say so")
@@ -173,7 +173,7 @@ func TestAFieldARecordHasNotGotIsUndefined(t *testing.T) {
 // what it says: undefined sits below every number, so a record with no size is
 // smaller than one, and `lt` says so. A filter that means "has a size, and it
 // is under a thousand" is two predicates and says both.
-func TestASortedFilteredWindow(t *testing.T) {
+func TestASortedFilteredScope(t *testing.T) {
 	v := open(t, doc, `filter={ lt .size 1000 } sort={ .size desc }`)
 	out, done := fill(t, v, "have=0 need=10")
 	if out.joined() != `1,2,"extra","plain"` {
@@ -184,46 +184,46 @@ func TestASortedFilteredWindow(t *testing.T) {
 	}
 }
 
-// A window is as long as it was asked for, and what ends it says where it got
+// A scope is as long as it was asked for, and what ends it says where it got
 // to -- the sort fields and the key, which is what makes the boundary name
 // exactly one position.
-func TestAWindowStopsAndSaysWhereItGotTo(t *testing.T) {
+func TestAScopeStopsAndSaysWhereItGotTo(t *testing.T) {
 	// `plain` is a bare string and has no first item, so it leads: undefined is
 	// the bottom of the order, and it is one position like any other.
 	v := open(t, doc, "sort={ .0 natural }")
 	out, done := fill(t, v, "have=0 need=2")
 	if out.joined() != `"plain",1` {
-		t.Errorf("the first window is %s", out.joined())
+		t.Errorf("the first scope is %s", out.joined())
 	}
 	if done.Exhausted {
-		t.Error("a window with records past it said it was exhausted")
+		t.Error("a scope with records past it said it was exhausted")
 	}
 	if got := done.Watermark.Encode(); got != `{ .0 "build.sh"; key 1 }` {
 		t.Errorf("the watermark is %s", got)
 	}
 
-	// And the next window starts after it.
+	// And the next scope starts after it.
 	next, _ := fill(t, v, "from="+done.Watermark.Encode()+" have=0 need=2")
 	if next.joined() != `2,"extra"` {
-		t.Errorf("the second window is %s", next.joined())
+		t.Errorf("the second scope is %s", next.joined())
 	}
 }
 
-// Have is how much of the window the far end can fill from what it holds, so a
-// window already full costs nothing.
-func TestAWindowAlreadyFullSendsNothing(t *testing.T) {
+// Have is how much of the scope the far end can fill from what it holds, so a
+// scope already full costs nothing.
+func TestAScopeAlreadyFullSendsNothing(t *testing.T) {
 	v := open(t, doc, "")
 	out, done := fill(t, v, "have=3 need=3")
 	if len(out.keys) != 0 {
-		t.Errorf("a full window was sent %d record(s)", len(out.keys))
+		t.Errorf("a full scope was sent %d record(s)", len(out.keys))
 	}
 	if done.Exhausted {
-		t.Error("a window that sent nothing claimed the sequence was over")
+		t.Error("a scope that sent nothing claimed the sequence was over")
 	}
 }
 
 // To is the far end saying how far its own knowledge runs. Every record inside
-// it goes out whether the window is full or not, because that is what the far
+// it goes out whether the scope is full or not, because that is what the far
 // end has to merge against; past it, only the shortfall.
 func TestEveryRecordInsideToGoesOut(t *testing.T) {
 	v := open(t, doc, "")
@@ -236,7 +236,7 @@ func TestEveryRecordInsideToGoesOut(t *testing.T) {
 // A boundary is found rather than walked to: the ordering is total, so the
 // position after it is a binary search. Nothing observable says so except that
 // the answer is right from any point in a long sequence.
-func TestAWindowStartsAfterABoundaryAnywhereInTheSequence(t *testing.T) {
+func TestAScopeStartsAfterABoundaryAnywhereInTheSequence(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("(")
 	for i := 0; i < 500; i++ {
@@ -249,16 +249,16 @@ func TestAWindowStartsAfterABoundaryAnywhereInTheSequence(t *testing.T) {
 	v := open(t, b.String(), "sort={ .n }")
 	out, done := fill(t, v, "from={ .n 399; key 399 } have=0 need=3")
 	if out.joined() != "400,401,402" {
-		t.Errorf("the window after 399 is %s", out.joined())
+		t.Errorf("the scope after 399 is %s", out.joined())
 	}
 	if got := done.Watermark.Encode(); got != "{ .n 402; key 402 }" {
 		t.Errorf("the watermark is %s", got)
 	}
 }
 
-// A window names the fields it wants where they are fewer than the query's,
-// which is how the far end asks for the skeleton of a wide stretch.
-func TestAWindowAsksForFewerFieldsThanTheQuery(t *testing.T) {
+// A scope names the fields it wants where they are fewer than the query's,
+// which is how the far end asks for the skeleton of a wide scope.
+func TestAScopeAsksForFewerFieldsThanTheQuery(t *testing.T) {
 	v := open(t, doc, "")
 	out, _ := fill(t, v, "fields={ .size } have=0 need=1")
 	if got := out.fields[0].Encode(); got != "{ .size 2048 }" {
@@ -384,7 +384,7 @@ func TestMembersNamesTheMembersAlone(t *testing.T) {
 	v := openAs(t, Members, table, "sort={ size desc }")
 	out, done := fill(t, v, "have=0 need=2")
 	if out.joined() != "0,1" {
-		t.Errorf("by size the window is %s", out.joined())
+		t.Errorf("by size the scope is %s", out.joined())
 	}
 	if got := out.fields[0].Encode(); got != `{ name "README.md"; size 2048 }` {
 		t.Errorf("the first record carries %s", got)

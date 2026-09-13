@@ -178,7 +178,7 @@ class ServingAQueryTest(unittest.TestCase):
 
         c, _ = serve_one(fill)
         send(c, 'q=new query source="files" have=0 need=1')
-        self.assertEqual(len(caught), 2, "a finished window took more")
+        self.assertEqual(len(caught), 2, "a finished scope took more")
 
     def test_a_long_answer_goes_out_in_batches(self):
         records = 400

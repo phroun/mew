@@ -324,9 +324,9 @@ int main(void) {
     expect(seen_have == 30 && seen_need == 50, "have and need came through");
     expect_str(seen_from_name, "README.md", "the boundary's fields came through");
     expect(seen_from_key == 17 && seen_to_key == 42, "both boundaries' keys came through");
-    expect_str(seen_fields, "name,size", "this window's fields came through");
-    expect_str(seen_source, "files", "the spec came with the window");
-    expect(seen_sort_levels == 1, "the spec's sort came with the window");
+    expect_str(seen_fields, "name,size", "this scope's fields came through");
+    expect_str(seen_source, "files", "the spec came with the scope");
+    expect(seen_sort_levels == 1, "the spec's sort came with the scope");
     char *answer = since(n);
     expect_str(answer,
         "reply q=1\n"
@@ -442,8 +442,8 @@ int main(void) {
     free(once);
 
     /* The answer goes out as it accumulates rather than all at the end, so a
-       window larger than one message is neither held in memory nor one
-       uninterruptible stretch of work. */
+       scope larger than one message is neither held in memory nor one
+       uninterruptible piece of work. */
     n = sent_count();
     serve(fill_late_order, "have=0 need=2");
     answer = since(n + 1);

@@ -116,7 +116,7 @@ sorted by before.
 
 **The record's key is always an implicit final level**, ascending, compared as
 the key's own type. It is not decoration: without a total order, "the record
-after this point" names more than one place, two fills of a window can overlap
+after this point" names more than one place, two fills of a scope can overlap
 or skip, and a fold of two ordered runs is not reproducible. The key level is
 what makes a position mean exactly one record.
 

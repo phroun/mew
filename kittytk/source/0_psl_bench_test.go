@@ -1,9 +1,9 @@
 package source
 
-// What a window costs.
+// What a scope costs.
 //
-// The claim the flat source makes is that a window is the log of the sequence's
-// length and then the length of the window -- so reaching the last screenful of
+// The claim the flat source makes is that a scope is the log of the sequence's
+// length and then the length of the scope -- so reaching the last screenful of
 // a hundred thousand records costs what reaching the first one costs. These
 // measure it rather than asserting it, and the pair at the two ends of the
 // sequence is the comparison that matters: if they diverge, the boundary is
@@ -84,7 +84,7 @@ func BenchmarkReadThePSL(b *testing.B) {
 }
 
 // Stating the sequence: the filter over every record, and the sort of what is
-// left. Paid once, however many windows are drawn from it.
+// left. Paid once, however many scopes are drawn from it.
 func BenchmarkStateTheSequence(b *testing.B) {
 	src := benchSource(b, benchRecords)
 	b.ResetTimer()
@@ -97,12 +97,12 @@ func BenchmarkStateTheSequence(b *testing.B) {
 	}
 }
 
-// A window at the start of the sequence, and a window at the end of it. These
+// A scope at the start of the sequence, and a scope at the end of it. These
 // are the two numbers to compare.
-func BenchmarkWindowAtTheStart(b *testing.B) { benchWindow(b, 0) }
-func BenchmarkWindowAtTheEnd(b *testing.B)   { benchWindow(b, benchRecords-40) }
+func BenchmarkScopeAtTheStart(b *testing.B) { benchScope(b, 0) }
+func BenchmarkScopeAtTheEnd(b *testing.B)   { benchScope(b, benchRecords-40) }
 
-func benchWindow(b *testing.B, after int) {
+func benchScope(b *testing.B, after int) {
 	src := benchSource(b, benchRecords)
 	set, err := src.Open(benchSpec(b, "sort={ name natural }"))
 	if err != nil {
@@ -110,7 +110,7 @@ func benchWindow(b *testing.B, after int) {
 	}
 
 	// Walk to the boundary once, outside the timer, so what is measured is one
-	// window drawn from where somebody has scrolled to.
+	// scope drawn from where somebody has scrolled to.
 	from := wire.Fields{}
 	if after > 0 {
 		c := &counter{}
@@ -132,7 +132,7 @@ func benchWindow(b *testing.B, after int) {
 			b.Fatal(err)
 		}
 		if c.n != 30 {
-			b.Fatalf("the window came back %d records long", c.n)
+			b.Fatalf("the scope came back %d records long", c.n)
 		}
 	}
 }

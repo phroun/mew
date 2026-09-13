@@ -78,9 +78,9 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 			if set, err = src.Open(spec); err != nil {
 				return err
 			}
-			// Opening carries the first window, because a display never wants a
+			// Opening carries the first scope, because a display never wants a
 			// sequence without wanting rows of it.
-			if err := window(set, args, out); err != nil {
+			if err := scope(set, args, out); err != nil {
 				return err
 			}
 
@@ -88,7 +88,7 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 			if set == nil {
 				return fmt.Errorf("query: nothing has been opened")
 			}
-			if err := window(set, afterTarget(stmt), out); err != nil {
+			if err := scope(set, afterTarget(stmt), out); err != nil {
 				return err
 			}
 
@@ -109,9 +109,9 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 	return nil
 }
 
-// window draws one and writes it out as the statements it would have crossed
+// scope draws one and writes it out as the statements it would have crossed
 // as, so what is printed comes off the wire language either way.
-func window(set source.ResultSet, args []*wire.Arg, out *printer) error {
+func scope(set source.ResultSet, args []*wire.Arg, out *printer) error {
 	f, err := wire.ParseFill(args)
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func window(set source.ResultSet, args []*wire.Arg, out *printer) error {
 }
 
 // results writes each record as the result statement that carries one, and the
-// terminator when the stretch ends.
+// terminator when the scope ends.
 type results struct{ out *printer }
 
 // Ordered leads the answer, in the spelling the wire leads one with.
@@ -130,7 +130,7 @@ func (r *results) Done(done source.Complete) { r.out.take(terminator(done)) }
 
 // Record and Subset write a record out under the word that says how much of it
 // came back: `record` for every field it has, `fields` for the ones this
-// window asked for.
+// scope asked for.
 func (r *results) Record(key *wire.Value, fields wire.Fields) error {
 	return r.write(wire.RecordArg, key, fields)
 }
@@ -147,7 +147,7 @@ func (r *results) write(what string, key *wire.Value, fields wire.Fields) error 
 	return nil
 }
 
-// terminator is what ends the window, in the spelling the wire ends one with.
+// terminator is what ends the scope, in the spelling the wire ends one with.
 func terminator(done source.Complete) string {
 	args := []*wire.Arg{{Name: wire.ResultComplete, Flag: wire.FlagTrue}}
 	switch {

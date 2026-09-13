@@ -103,7 +103,7 @@ func TestTheApplicationNamesTheQuery(t *testing.T) {
 		t.Errorf("the reply was %q, want %q", got, "reply q=1")
 	}
 	if served == nil {
-		t.Fatal("the source was never asked for a window")
+		t.Fatal("the source was never asked for a scope")
 	}
 	if served.Query.ID() != 1 {
 		t.Errorf("the query is id %d", served.Query.ID())
@@ -138,8 +138,8 @@ func TestTheReplyComesBeforeTheRecords(t *testing.T) {
 	}
 }
 
-// A window arrives as a struct. Nothing in the handler parses anything.
-func TestAWindowArrivesTakenApart(t *testing.T) {
+// A scope arrives as a struct. Nothing in the handler parses anything.
+func TestAScopeArrivesTakenApart(t *testing.T) {
 	var got *Fill
 	c, _, _ := serveOne(t, func(f *Fill) {
 		got = f
@@ -161,7 +161,7 @@ func TestAWindowArrivesTakenApart(t *testing.T) {
 		t.Errorf("to's key is %#v", v)
 	}
 	if names := strings.Join(got.Fields.Names(), ","); names != "name,size" {
-		t.Errorf("this window wants %q", names)
+		t.Errorf("this scope wants %q", names)
 	}
 	// The sequence comes with it, so the handler need not have kept it.
 	if got.Spec.Source != "files" || len(got.Spec.Sort) != 1 {
@@ -260,7 +260,7 @@ func TestARefusalIsAnAnswer(t *testing.T) {
 }
 
 // Nothing is answered twice.
-func TestAnAnsweredWindowRefusesMore(t *testing.T) {
+func TestAnAnsweredScopeRefusesMore(t *testing.T) {
 	var second, third error
 	c, _, _ := serveOne(t, func(f *Fill) {
 		_ = f.Exhausted()
@@ -269,13 +269,13 @@ func TestAnAnsweredWindowRefusesMore(t *testing.T) {
 	})
 	send(t, c, `q=new query source="files" have=0 need=1`)
 	if second == nil || third == nil {
-		t.Errorf("a finished window took more: record=%v done=%v", second, third)
+		t.Errorf("a finished scope took more: record=%v done=%v", second, third)
 	}
 }
 
 // The answer goes out as it accumulates rather than all at the end, so a
-// window larger than one message is neither held in memory nor one
-// uninterruptible stretch of work.
+// scope larger than one message is neither held in memory nor one
+// uninterruptible piece of work.
 func TestALongAnswerGoesOutInBatches(t *testing.T) {
 	const records = 400
 	c, r, _ := serveOne(t, func(f *Fill) {
@@ -334,7 +334,7 @@ func TestADifferentSequenceIsADifferentQuery(t *testing.T) {
 		t.Errorf("the second query was not named in its own right: %q", answered)
 	}
 	if len(specs) != 2 {
-		t.Fatalf("%d windows were served", len(specs))
+		t.Fatalf("%d scopes were served", len(specs))
 	}
 	if specs[0].Sort[0].Field != "name" || specs[1].Sort[0].Field != "size" {
 		t.Errorf("the two queries did not carry their own specs: %v", specs)

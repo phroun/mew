@@ -165,7 +165,7 @@ int kt_blob_drop(kt_conn *c, uint64_t blob);
  * `do`, and the display raises events at it. A query points the other way.
  * Only the display knows a query is wanted and what it is -- the sort comes
  * from the column header somebody clicked, the filter from the filter box, the
- * window from the scroll position -- so the display opens it, and the
+ * scope from the scroll position -- so the display opens it, and the
  * application, which is the end that holds the records, serves it.
  *
  * It arrives nowhere near the event line. `query` is answered by `result`,
@@ -173,11 +173,11 @@ int kt_blob_drop(kt_conn *c, uint64_t blob);
  * nothing carries two of them, so a request for records can never be mistaken
  * for something a subscription raised.
  *
- * What an author has to write is one function: given a window of the sequence,
+ * What an author has to write is one function: given a scope of the sequence,
  * produce the records in it. The statement is taken apart before it gets here,
  * so nothing in that function parses anything; and the answer is written into
  * a sink that goes out in batches as it fills, so a million records need not be
- * one message, or one uninterruptible stretch of work.
+ * one message, or one uninterruptible piece of work.
  *
  * See docs/hosting-a-query.md.
  */
@@ -268,23 +268,23 @@ typedef struct {
     int nsort;
 } kt_qspec;
 
-/* One window of the sequence, asked for.
+/* One scope of the sequence, asked for.
  *
  * from and to are boundaries: where the display's own knowledge starts and how
  * far it runs. Both are empty at the beginning of the sequence. have is how
- * much of the window the display can fill from what it already holds, and need
- * is how many rows the window is. Emit every record of your own in (from..to],
+ * much of the scope the display can fill from what it already holds, and need
+ * is how many rows the scope is. Emit every record of your own in (from..to],
  * and if that does not make up the shortfall, keep going past to until it does.
  *
  * Nothing stamps it: the application's results and its replies travel one
- * ordered stream, so a window's results are the ones between the reply that
+ * ordered stream, so a scope's results are the ones between the reply that
  * accepted it and the result that completes it.
  *
  * It is valid for the length of the callback and freed after it returns. */
 typedef struct {
     kt_bag from, to;
     int have, need;
-    kt_bag fields;           /* the fields wanted for this window; empty means the spec's */
+    kt_bag fields;           /* the fields wanted for this scope; empty means the spec's */
     const kt_qspec *spec;    /* the sequence, so a handler need not have kept it */
 } kt_qfill;
 
@@ -314,7 +314,7 @@ int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n);
    fewer than the record has. It crosses as `fields={ ... }`.
 
    The honest answer to a query that named a short list of fields -- the
-   skeleton of a wide stretch -- and worth less afterwards than a whole record,
+   skeleton of a wide scope -- and worth less afterwards than a whole record,
    because it can only answer the question it was asked. */
 int kt_fill_subset(kt_fill *f, kt_value key, const kt_value *fields, int n);
 
@@ -327,7 +327,7 @@ void kt_fill_ordered(kt_fill *f);
 
 /* Finish with a watermark: there is nothing of mine between where you asked
    from and this point that you do not now have. A completeness guarantee
-   rather than a position, and what lets the display shrink the window, grow it
+   rather than a position, and what lets the display shrink the scope, grow it
    back and scroll inside it without asking anything. */
 int kt_fill_done(kt_fill *f, const kt_value *watermark, int n);
 

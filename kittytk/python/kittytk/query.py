@@ -1,7 +1,7 @@
 """A query, in structured form (Python port of wire/query.go).
 
 An application hosts a query: one filter and one sort over its own records,
-which a display fills windows out of as somebody scrolls. The wire carries that
+which a display fills scopes out of as somebody scrolls. The wire carries that
 as text, and every client library would otherwise make its author walk a
 statement tree to find out what was being asked. So the walking happens once,
 here, and what reaches an application is an object.
@@ -53,7 +53,7 @@ KEY_FIELD = "key"
 RECORD_ARG = "record"
 FIELDS_ARG = "fields"
 
-# RESULT_COMPLETE ends a window: everything for it has been sent. A result
+# RESULT_COMPLETE ends a scope: everything for it has been sent. A result
 # without it carries a record.
 RESULT_COMPLETE = "complete"
 
@@ -214,15 +214,15 @@ class Spec:
 
 @dataclass
 class Fill:
-    """One window of the sequence, asked for.
+    """One scope of the sequence, asked for.
 
     from_ and to are boundaries: where the display's own knowledge starts and
     how far it runs. Both are empty at the beginning of the sequence. have is
-    how much of the window the display can fill from what it already holds, and
-    need is how many rows the window is.
+    how much of the scope the display can fill from what it already holds, and
+    need is how many rows the scope is.
 
     Nothing stamps it. The application's results and its replies travel one
-    ordered stream, so a window's results are the ones between the reply that
+    ordered stream, so a scope's results are the ones between the reply that
     accepted it and the result that completes it -- which is also what
     separates the generation before a re-sort from the one after it."""
 

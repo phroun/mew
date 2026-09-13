@@ -2,7 +2,7 @@
 
 > **Status: conversation, with one piece of it built.** This is a design
 > discussion written down so it is not lost, not a contract. The flat reading of
-> a single PSL list — its records, a filter, a sort and a window — is built, and
+> a single PSL list — its records, a filter, a sort and a scope — is built, and
 > `psl-as-a-data-source.md` is what it does. Everything below that touches
 > layering, shadowing, includes, amendments or hashes is still discussion, and
 > several points at the end are open questions. Where it states a decision, that

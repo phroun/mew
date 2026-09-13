@@ -93,7 +93,7 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		"-filter", `not { starts name "." }`, "-resort", "size desc")
 
 	inOrder(t, trace, []string{
-		// The handshake, then the open: the sequence and its first window in
+		// The handshake, then the open: the sequence and its first scope in
 		// one statement, because a display never wants one without the other.
 		`<- hello version=1 app="queryapp"`,
 		`-> welcome version=1`,
@@ -106,7 +106,7 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		"<- result 1 ordered",
 		`<- result 1 record={ key 2; name "build.sh"; size 310 }`,
 		`<- result 1 complete watermark={ name "README.md"; key 1 }`,
-		// A second window from where the first stopped. file2 before file10 is
+		// A second scope from where the first stopped. file2 before file10 is
 		// the natural collation the sort asked for.
 		`-> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3`,
 		`<- result 1 record={ key 6; name "src/file2.go"; size 1200 }`,
@@ -125,7 +125,7 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 	})
 }
 
-// The least an implementation can do, over the wire: ignore the window, send
+// The least an implementation can do, over the wire: ignore the scope, send
 // everything, say so.
 func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 	trace := converse(t, "-source", "colours", "-need", "2")
@@ -139,7 +139,7 @@ func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 	if strings.Contains(trace, "result 1 ordered") {
 		t.Error("the simplest source claimed its records were in order")
 	}
-	// Five records for a window of two: the display asked for a window and got
+	// Five records for a scope of two: the display asked for a scope and got
 	// a superset, which is correct.
 	if n := strings.Count(trace, "<- result 1 record="); n != 5 {
 		t.Errorf("it sent %d records, want all 5", n)

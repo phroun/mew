@@ -4,12 +4,12 @@ package source
 //
 // An application serves a query over records it holds; a display sometimes
 // holds the records itself, and then there is nobody to ask. The two cases want
-// the same answers to the same questions -- this filter, this sort, this window
+// the same answers to the same questions -- this filter, this sort, this scope
 // -- so they are one interface, and what is behind it can be a body of static
 // data sitting here or an application across a connection.
 //
 // The shapes are the wire's own. A spec and a fill arrive exactly as
-// wire/query.go parses them off a statement, and what ends a window is the
+// wire/query.go parses them off a statement, and what ends a scope is the
 // three things `result <id> complete` can carry. So an implementation backed by
 // an application is a relay rather than a translation, and one backed by data
 // here is answering the same question the application would have been asked.
@@ -28,14 +28,14 @@ type Source interface {
 	Open(spec *wire.Spec) (ResultSet, error)
 }
 
-// A ResultSet is one stated sequence, which windows are drawn from until it is
+// A ResultSet is one stated sequence, which scopes are drawn from until it is
 // let go. It is what a query names, seen from the end that holds the records.
 //
 // It does not change. A different sort or a different filter is a different
 // result set, opened alongside this one and taking its place -- which is also
 // what keeps the source in use while the reader moves from one to the other.
 type ResultSet interface {
-	// Fill asks for one stretch of the sequence and says where to put it.
+	// Fill asks for one scope of the sequence and says where to put it.
 	//
 	// It does not wait for the answer. Records reach the sink as they are
 	// produced -- immediately, for a source whose records are here; as they
@@ -51,7 +51,7 @@ type ResultSet interface {
 // A Sink takes an answer as it is produced: the records one at a time, and
 // then what ended them.
 //
-// One at a time because a stretch of a million records need not be assembled
+// One at a time because a scope of a million records need not be assembled
 // anywhere before the first of them moves, and because a source whose records
 // are across a connection has them in that shape already.
 type Sink interface {
@@ -64,7 +64,7 @@ type Sink interface {
 
 	// Record takes one record entire: its key, and every field it has.
 	//
-	// Whole is worth saying because it outlives the stretch that asked for it.
+	// Whole is worth saying because it outlives the scope that asked for it.
 	// A record that arrived entire answers any question about that record, so
 	// whoever holds it can answer the next query out of it instead of asking
 	// again.
@@ -81,9 +81,9 @@ type Sink interface {
 	Done(c Complete)
 }
 
-// Complete is what ends a stretch.
+// Complete is what ends a scope.
 //
-// Watermark says there is nothing between where the stretch was asked from and
+// Watermark says there is nothing between where the scope was asked from and
 // that point that the far end does not now have. Exhausted says there is
 // nothing past the end at all, which is why it carries no watermark -- there is
 // no point past the end to be complete up to.
@@ -94,7 +94,7 @@ type Complete struct {
 	Watermark wire.Fields
 	Exhausted bool
 
-	// Error is a refusal, which is an answer: this stretch cannot be produced,
+	// Error is a refusal, which is an answer: this scope cannot be produced,
 	// the records are gone, the connection carrying the question broke. Whoever
 	// asked carries on with what it has.
 	Error string

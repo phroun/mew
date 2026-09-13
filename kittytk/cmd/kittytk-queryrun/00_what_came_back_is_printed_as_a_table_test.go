@@ -45,7 +45,7 @@ func TestWhatCameBackIsPrintedAsATable(t *testing.T) {
 	}
 }
 
-// Records need not carry the same fields: a window may ask for fewer than the
+// Records need not carry the same fields: a scope may ask for fewer than the
 // query does, and a field a record has not got is not an error. A record is a
 // record to the table whichever word carried it.
 func TestATableWidensForAFieldAnEarlierRecordHadNot(t *testing.T) {

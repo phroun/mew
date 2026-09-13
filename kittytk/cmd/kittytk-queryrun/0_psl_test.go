@@ -56,15 +56,15 @@ func TestAQueryFileIsAnsweredOutOfAPSLFile(t *testing.T) {
 	if strings.Join(p.rows[0], "|") != `3|"src/parser.go"|14022` {
 		t.Errorf("the first row is %v", p.rows[0])
 	}
-	// Two records are the whole of what the filter holds, so the window ran out
+	// Two records are the whole of what the filter holds, so the scope ran out
 	// of sequence rather than out of room.
 	if !strings.Contains(p.note, "every record there is") {
-		t.Errorf("what ended the window reads %q", p.note)
+		t.Errorf("what ended the scope reads %q", p.note)
 	}
 }
 
-// Opening carries the first window, and every statement after it addresses the
-// query that is open: another window, and letting it go. A different sequence
+// Opening carries the first scope, and every statement after it addresses the
+// query that is open: another scope, and letting it go. A different sequence
 // is another `new query`, so the file says so.
 func TestAFileOpensRefillsAndLetsGo(t *testing.T) {
 	p := drive(t, source.Whole, strings.Join([]string{
@@ -79,7 +79,7 @@ func TestAFileOpensRefillsAndLetsGo(t *testing.T) {
 		keys = append(keys, row[0])
 	}
 	// By size ascending the bare string has none and leads, then go.mod and
-	// build.sh; the window after build.sh is README.md; and the other way
+	// build.sh; the scope after build.sh is README.md; and the other way
 	// round the first record is the largest.
 	if strings.Join(keys, ",") != `"notes",2,0,3` {
 		t.Errorf("the records that came back are %v", keys)
@@ -152,7 +152,7 @@ func TestTheRawTraceSaysHowMuchOfEachRecordCameBack(t *testing.T) {
 		t.Errorf("a record nothing narrowed was written as\n%s", whole)
 	}
 
-	// The same record, with the window naming the one field it wants: what goes
+	// The same record, with the scope naming the one field it wants: what goes
 	// out is some of the record, and it says so.
 	part := rawDrive(t,
 		`q=new query source="objects" sort={ .size desc } have=0 need=1 fields={ .size }`)
