@@ -422,24 +422,211 @@ func TestAnIncludesClaimIsPassedThrough(t *testing.T) {
 	}
 }
 
-// The key a composed source hands out is not one any include holds, so a
-// sequence that orders or filters by it is refused rather than answered
-// nearly.
-func TestASequenceNamingTheKeyIsRefused(t *testing.T) {
+// The composed key is two sort levels -- the include's name and the child's
+// key -- and both take the direction the sort asked of `key`.
+//
+// So `key desc` is the sequence's own order reversed entire: the includes come
+// back to front, and the records inside each of them do too. Half a reversal
+// would be worse than a refusal -- each include would deliver in one order
+// while the merge expected another, and the merge only ever sees a queue's
+// head, so it would hand records on backwards and call them ordered.
+func TestTheKeyIsTwoSortLevelsAndBothTakeItsDirection(t *testing.T) {
+	up, _ := read(t, twoIncludes(t), "sort={ key }", "have=0 need=10")
+	if up.joined() != "(left/0),(left/1),(left/note),(right/0),(right/1)" {
+		t.Errorf("ascending, the sequence is %s", up.joined())
+	}
+
+	down, _ := read(t, twoIncludes(t), "sort={ key desc }", "have=0 need=10")
+	if down.joined() != "(right/1),(right/0),(left/note),(left/1),(left/0)" {
+		t.Errorf("descending, the sequence is %s", down.joined())
+	}
+	if !down.ordered {
+		t.Error("a reversed sequence did not say it was in order")
+	}
+}
+
+// The key can sit under a sort of its own, where it settles what that one left
+// equal -- and it still carries its own direction there.
+func TestTheKeyTakesItsDirectionUnderAnotherLevel(t *testing.T) {
+	// Two includes holding a record apiece of the same size, so the sort ties
+	// and the key decides.
+	c := composed(t,
+		Include{Name: "a", Source: mustPSL(t, `( (n: "one", size: 7) )`)},
+		Include{Name: "b", Source: mustPSL(t, `( (n: "two", size: 7) )`)})
+
+	up, _ := read(t, c, "sort={ .size; key }", "have=0 need=10")
+	if up.joined() != "(a/0),(b/0)" {
+		t.Errorf("ascending, the tie settles as %s", up.joined())
+	}
+	down, _ := read(t, c, "sort={ .size; key desc }", "have=0 need=10")
+	if down.joined() != "(b/0),(a/0)" {
+		t.Errorf("descending, the tie settles as %s", down.joined())
+	}
+}
+
+// A reversed sequence is read scope by scope like any other: the watermark is
+// a position in it, and the next scope carries on from there.
+func TestAReversedSequenceCarriesOn(t *testing.T) {
 	c := twoIncludes(t)
-	for _, spec := range []string{
-		"sort={ key }",
-		"sort={ .size; key desc }",
-		`filter={ eq key (left/0) }`,
-		`filter={ not { starts key "left" } }`,
+	first, done := read(t, c, "sort={ key desc }", "have=0 need=2")
+	if first.joined() != "(right/1),(right/0)" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	if done.Exhausted {
+		t.Fatal("a scope with records past it claimed to be exhausted")
+	}
+
+	next, done := read(t, c, "sort={ key desc }",
+		"from="+done.Watermark.Encode()+" have=0 need=10")
+	if next.joined() != "(left/note),(left/1),(left/0)" {
+		t.Errorf("the rest is %s", next.joined())
+	}
+	if !done.Exhausted {
+		t.Error("the end of the sequence did not say so")
+	}
+}
+
+// A filter on the composed key is read here and asked of the includes in
+// their own terms.
+//
+// `eq key (left/1)` is a question about one record of one include. `left` is
+// asked for its own record 1; `right` is not asked anything at all, because no
+// key it holds can come out under a name that is not its own.
+func TestAFilterOnTheKeyReachesOneInclude(t *testing.T) {
+	left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
+	c := composed(t,
+		Include{Name: "left", Source: left},
+		Include{Name: "right", Source: right})
+
+	out, _ := read(t, c, `filter={ eq key (left/1) }`, "have=0 need=10")
+	if out.joined() != "(left/1)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if right.opened {
+		t.Error("the include that could hold nothing was opened anyway")
+	}
+	if !left.opened {
+		t.Fatal("the include that could hold it was not opened")
+	}
+	// Which of a number, a name and a string it keys its records by is its own
+	// business, so it is asked about every spelling of the text there could be.
+	if got := left.spec.Filter.Encode(); got != `{ in key "1" 1 }` {
+		t.Errorf("the include was asked %s", got)
+	}
+}
+
+// And the record keyed by a name rather than a number comes back too.
+//
+// A PSL list keys its members by string and its items by number, and the text
+// between the slashes says which it was for neither. So the include is asked
+// about both spellings, and the one that is right matches -- a question narrow
+// enough to miss would lose the record, which is the one thing that cannot
+// happen.
+func TestAFilterOnTheKeyReachesARecordKeyedByName(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t, Include{Name: "left", Source: left})
+
+	out, _ := read(t, c, `filter={ eq key (left/note) }`, "have=0 need=10")
+	if out.joined() != "(left/note)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if got := left.spec.Filter.Encode(); got != `{ in key "note" note }` {
+		t.Errorf("the include was asked %s", got)
+	}
+}
+
+// The same reading answers a range: every key an include holds starts with its
+// own name, so a value outside that settles the predicate for all of them at
+// once and the include is skipped or asked nothing.
+func TestARangeOnTheKeyPicksTheIncludes(t *testing.T) {
+	for _, c := range []struct {
+		filter string
+		want   string
+	}{
+		{`filter={ gt key (left/note) }`, "(right/0),(right/1)"},
+		{`filter={ lt key (right/0) }`, "(left/0),(left/1),(left/note)"},
+		{`filter={ ge key (right/0) }`, "(right/0),(right/1)"},
 	} {
-		if _, err := c.Open(parseSpec(t, spec)); err == nil {
-			t.Errorf("%s was accepted", spec)
+		out, _ := read(t, twoIncludes(t), c.filter, "have=0 need=10")
+		if out.joined() != c.want {
+			t.Errorf("%s gave %s, want %s", c.filter, out.joined(), c.want)
 		}
 	}
-	// And one that names no key opens.
-	if _, err := c.Open(parseSpec(t, "sort={ .size } filter={ lt .size 100 }")); err != nil {
-		t.Errorf("a sequence naming no key was refused: %v", err)
+}
+
+// A filter that shuts every include out is a sequence with nothing in it, and
+// it says so rather than leaving anybody waiting.
+func TestAFilterThatShutsEveryIncludeOutIsEmpty(t *testing.T) {
+	left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
+	c := composed(t,
+		Include{Name: "left", Source: left},
+		Include{Name: "right", Source: right})
+
+	out, done := read(t, c, `filter={ eq key (nobody/1) }`, "have=0 need=10")
+	if len(out.keys) != 0 {
+		t.Errorf("records came back for a name no include has: %v", out.keys)
+	}
+	if !done.Exhausted {
+		t.Error("an empty sequence did not say it was over")
+	}
+	if left.opened || right.opened {
+		t.Error("an include was opened for a filter it cannot satisfy")
+	}
+}
+
+// A predicate this source cannot put in an include's terms is dropped on the
+// way down rather than guessed at, and settled here instead -- so what the
+// include sends is a superset and nothing matching is ever cut.
+func TestAPredicateThatCannotBeHandedDownIsSettledHere(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t, Include{Name: "left", Source: left})
+
+	out, _ := read(t, c, `filter={ ne key (left/0) }`, "have=0 need=10")
+	if out.joined() != "(left/1),(left/note)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	// `ne` on one of its own keys is not a question the include can be asked
+	// in its own terms, so it was asked nothing and answered everything.
+	if left.spec.Filter != nil {
+		t.Errorf("the include was asked %s", left.spec.Filter.Encode())
+	}
+}
+
+// A filter mixing the key with an ordinary field keeps both: the include
+// answers the field, this source answers the key.
+func TestAFilterOnTheKeyAndAFieldKeepsBoth(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t,
+		Include{Name: "left", Source: left},
+		Include{Name: "right", Source: mustPSL(t, rightDoc)})
+
+	out, _ := read(t, c, `filter={ lt .size 100; gt key (left/0) }`, "have=0 need=10")
+	if out.joined() != "(left/1),(left/note),(right/0),(right/1)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if got := left.spec.Filter.Encode(); got != `{ lt .size 100 }` {
+		t.Errorf("the include was asked %s", got)
+	}
+}
+
+// An include that cannot produce the sequence says so when it is opened, and
+// the composed source passes the refusal on rather than answering nearly.
+//
+// A PSL source read for its members cannot name a record's key at all, so a
+// sort on the key would tie for every record and leave the sequence in the
+// source's own order while claiming it was in the one asked for.
+func TestAnIncludeThatCannotSortByKeyRefuses(t *testing.T) {
+	members, err := ParsePSLSource(leftDoc, Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := composed(t, Include{Name: "members", Source: members})
+
+	if _, err := c.Open(parseSpec(t, "sort={ key desc }")); err == nil {
+		t.Error("a members reading accepted a sort on the key")
+	}
+	if _, err := c.Open(parseSpec(t, "sort={ size }")); err != nil {
+		t.Errorf("a sort it can answer was refused: %v", err)
 	}
 }
 
@@ -581,8 +768,10 @@ func TestEveryIncludeIsAskedForTheWholeShortfall(t *testing.T) {
 
 // spy is a source that keeps the request it was given.
 type spy struct {
-	inner Source
-	asked *wire.Fill
+	inner  Source
+	asked  *wire.Fill
+	spec   *wire.Spec
+	opened bool
 }
 
 func (s *spy) Open(spec *wire.Spec) (ResultSet, error) {
@@ -590,6 +779,7 @@ func (s *spy) Open(spec *wire.Spec) (ResultSet, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.opened, s.spec = true, spec
 	return &spySet{src: s, inner: set}, nil
 }
 
@@ -603,4 +793,148 @@ func (s *spySet) Close() { s.inner.Close() }
 func (s *spySet) Fill(f *wire.Fill, out Sink) error {
 	s.src.asked = f
 	return s.inner.Fill(f, out)
+}
+
+// Resuming a reversed sequence part way through one include.
+//
+// Both includes here send everything they hold whatever they were asked from,
+// so the boundary is applied here and nowhere else -- which is what makes the
+// two levels of the composed key visible. Descending, `all/note` comes before
+// `all/1` and `all/0`, so a boundary at `all/note` leaves the last two and
+// nothing else: the other include sorts ahead of this one and is behind the
+// boundary entire.
+func TestAReversedBoundaryFallsInsideAnInclude(t *testing.T) {
+	c := composed(t,
+		Include{Name: "all", Source: &ignoresBoundaries{inner: mustPSL(t, leftDoc)}},
+		Include{Name: "other", Source: &ignoresBoundaries{inner: mustPSL(t, rightDoc)}})
+
+	whole, _ := read(t, c, "sort={ key desc }", "have=0 need=10")
+	if whole.joined() != "(other/1),(other/0),(all/note),(all/1),(all/0)" {
+		t.Fatalf("reversed, the sequence is %s", whole.joined())
+	}
+
+	out, _ := read(t, c, "sort={ key desc }",
+		`from={ key (all/note) } have=0 need=10`)
+	if out.joined() != "(all/1),(all/0)" {
+		t.Errorf("the scope after all/note is %s", out.joined())
+	}
+}
+
+// A boundary naming no key at all is not a position in this sequence.
+//
+// It says which sort value to start at and nothing about which of the records
+// there are already held, so there is nothing to drop against and whatever the
+// includes send stands. That is a superset, which is allowed; reading it as a
+// position instead would put it at one end of the order and silently cut the
+// records at the other.
+func TestABoundaryWithNoKeyDropsNothing(t *testing.T) {
+	c := composed(t,
+		Include{Name: "all", Source: &ignoresBoundaries{inner: mustPSL(t, leftDoc)}},
+		Include{Name: "other", Source: &ignoresBoundaries{inner: mustPSL(t, rightDoc)}})
+
+	out, _ := read(t, c, "sort={ key desc }", `from={ .size 30 } have=0 need=10`)
+	if out.joined() != "(other/1),(other/0),(all/note),(all/1),(all/0)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+}
+
+// A predicate on an ordinary field says nothing here, and saying nothing is
+// not saying no.
+//
+// The include was asked that predicate and applied it already, so a record
+// that arrived has passed it. Reading it here as a yes would be wrong under a
+// negation -- the negation would turn it into a no and take out a record the
+// include had just vouched for -- so what this source cannot see it declines
+// to answer, and only a definite no drops anything.
+func TestAPredicateOnAnotherFieldIsNotAnsweredHere(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t, Include{Name: "left", Source: left})
+
+	out, _ := read(t, c,
+		`filter={ not { gt .size 100 }; eq key (left/1) }`, "have=0 need=10")
+	if out.joined() != "(left/1)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	// The negation went down whole, because it names no key.
+	if got := left.spec.Filter.Encode(); got != `{ not { gt .size 100 }; in key "1" 1 }` {
+		t.Errorf("the include was asked %s", got)
+	}
+}
+
+// A disjunction keeps every include that any branch admits, and the key
+// branches still pick which.
+func TestADisjunctionOnTheKeyKeepsEveryBranchsIncludes(t *testing.T) {
+	out, _ := read(t, twoIncludes(t),
+		`filter={ or { eq key (left/1); eq key (right/0) } }`, "have=0 need=10")
+	if out.joined() != "(left/1),(right/0)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+}
+
+// A negation on the key is answered here and takes the record it names out.
+func TestANegationOnTheKeyTakesThatRecordOut(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t, Include{Name: "left", Source: left})
+
+	out, _ := read(t, c, `filter={ not { eq key (left/1) } }`, "have=0 need=10")
+	if out.joined() != "(left/0),(left/note)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	// A negation of something that became a different question cannot be
+	// handed down -- negating a widened filter narrows it -- so the include was
+	// asked nothing and this source settled it.
+	if left.spec.Filter != nil {
+		t.Errorf("the include was asked %s", left.spec.Filter.Encode())
+	}
+}
+
+// A branch that admits every record of an include makes the whole disjunction
+// admit them, so that include is asked nothing rather than asked the other
+// branches -- which would be a narrower question than the one that was put.
+func TestADisjunctionBranchThatAdmitsEverythingAsksNothing(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t, Include{Name: "left", Source: left})
+
+	out, _ := read(t, c,
+		`filter={ or { ne key (nobody/0); eq .size 999 } }`, "have=0 need=10")
+	if out.joined() != "(left/0),(left/1),(left/note)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if left.spec.Filter != nil {
+		t.Errorf("the include was asked %s", left.spec.Filter.Encode())
+	}
+}
+
+// Which includes are worth asking at all, for the predicates that settle it
+// without asking anything.
+func TestWhichIncludesAreWorthAsking(t *testing.T) {
+	for _, c := range []struct {
+		filter string
+		open   []bool // left, right
+	}{
+		// A set names keys of one include, so the other holds none of them.
+		{`filter={ in key (left/1) (left/note) }`, []bool{true, false}},
+		// Every key of an include begins with its own name, so a text
+		// predicate on a symbol is false for all of them -- which is what a
+		// text predicate on any symbol is.
+		{`filter={ starts key "left/" }`, []bool{false, false}},
+		{`filter={ ends key "/1" }`, []bool{false, false}},
+		{`filter={ contains key "left" }`, []bool{false, false}},
+		// A record with no key is a record there is none of.
+		{`filter={ lacks key }`, []bool{false, false}},
+		// And every record has one.
+		{`filter={ has key }`, []bool{true, true}},
+	} {
+		left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
+		set := composed(t,
+			Include{Name: "left", Source: left},
+			Include{Name: "right", Source: right})
+		read(t, set, c.filter, "have=0 need=10")
+
+		got := []bool{left.opened, right.opened}
+		if got[0] != c.open[0] || got[1] != c.open[1] {
+			t.Errorf("%s opened left=%v right=%v, want %v",
+				c.filter, got[0], got[1], c.open)
+		}
+	}
 }

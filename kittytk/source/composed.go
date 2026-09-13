@@ -79,25 +79,31 @@ func (c *ComposedSource) Includes() []Include {
 	return append([]Include(nil), c.includes...)
 }
 
-// Open states a sequence, and opens the same one on every include.
+// Open states a sequence, and opens it on every include that could hold
+// anything the filter admits.
+//
+// Each include gets the filter read in its own terms: what the composed key
+// says about it becomes what its own key must be, and an include the filter
+// shuts out entirely is never opened at all. `filter={ eq key (left/1) }` asks
+// `left` for its record 1 and asks `right` nothing, because no key `right`
+// holds can come out under a name that is not its own.
 func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
-	if err := refuseKey(spec); err != nil {
-		return nil, err
-	}
-
-	// Two levels past the query's own: the include's name, and then the child's
-	// key. Together they are the composed key, and they are what makes a
-	// position name exactly one record.
+	steps, levels := plan(spec.Sort)
 	set := &composedSet{
-		src:    c,
-		spec:   spec,
-		levels: append(wire.Levels(spec.Sort), wire.Level{}, wire.Level{}),
+		src: c, spec: spec, steps: steps, levels: levels,
+		keyed: names(spec.Filter, wire.KeyField),
 	}
 	for _, in := range c.includes {
-		child, err := in.Source.Open(spec)
+		asked, possible := narrow(spec.Filter, in.Name)
+		if !possible {
+			continue
+		}
+		sub := *spec
+		sub.Filter = asked
+		child, err := in.Source.Open(&sub)
 		if err != nil {
 			set.Close()
 			return nil, fmt.Errorf("include %q: %w", in.Name, err)
@@ -107,26 +113,272 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 	return set, nil
 }
 
-// refuseKey refuses a sequence that names the record key.
+// --- reading the filter in one include's terms ---------------------------
+
+// narrow is the filter as one include should be asked it, and whether that
+// include can hold anything at all.
 //
-// The key this source hands out is the include's name and the child's key
-// together, and no child has ever heard of it: a sort level or a filter
-// predicate naming `key` would be answered by every include about its own key
-// instead. Refusing says so. Answering nearly would put the sequence in an
-// order that is almost right, which is the one thing worse than a refusal --
-// it corrupts every answer after it and looks like data.
-func refuseKey(spec *wire.Spec) error {
-	for _, l := range spec.Sort {
-		if l.Field == wire.KeyField {
-			return fmt.Errorf("sort %s: a composed source orders by its includes, "+
-				"and its key is not one any include holds", wire.KeyField)
+// What comes back is never NARROWER than the truth. A predicate this source
+// cannot put in the include's own terms is dropped rather than guessed at, so
+// the include answers a question that admits at least every record the outer
+// filter does -- and `keyMatch` settles the rest here, where the composed key
+// is in hand. Dropping too much is the one thing that cannot be recovered
+// from, so nothing here ever does.
+func narrow(f *wire.Filter, name string) (*wire.Filter, bool) {
+	if f == nil {
+		return nil, true
+	}
+	switch f.Op {
+	case wire.OpAnd:
+		var kept []*wire.Filter
+		for _, c := range f.Children {
+			n, possible := narrow(c, name)
+			if !possible {
+				return nil, false // one impossible makes the whole and impossible
+			}
+			if n != nil {
+				kept = append(kept, n)
+			}
+		}
+		return group(wire.OpAnd, kept), true
+
+	case wire.OpOr:
+		var kept []*wire.Filter
+		for _, c := range f.Children {
+			n, possible := narrow(c, name)
+			if !possible {
+				continue // that branch admits nothing of this include's
+			}
+			if n == nil {
+				return nil, true // and this one admits all of it
+			}
+			kept = append(kept, n)
+		}
+		if len(kept) == 0 {
+			return nil, false
+		}
+		return group(wire.OpOr, kept), true
+
+	case wire.OpNot:
+		// A negation can only be handed down where what it negates came back
+		// settled either way: negating a filter that was WIDENED on the way
+		// would narrow it, and would cut records out.
+		if !names(f, wire.KeyField) {
+			return f, true
+		}
+		inner, possible := narrow(&wire.Filter{Op: wire.OpAnd, Children: f.Children}, name)
+		switch {
+		case !possible:
+			return nil, true // it admits nothing, so the negation admits all
+		case inner == nil:
+			return nil, false // it admits all, so the negation admits nothing
+		}
+		return nil, true
+	}
+
+	if f.Field != wire.KeyField {
+		return f, true
+	}
+	return narrowKey(f, name)
+}
+
+// group is one node over what is left of a branch, and nothing where nothing
+// is left.
+func group(op string, kept []*wire.Filter) *wire.Filter {
+	switch len(kept) {
+	case 0:
+		return nil
+	case 1:
+		return kept[0]
+	}
+	return &wire.Filter{Op: op, Children: kept}
+}
+
+// narrowKey reads one predicate on the composed key in an include's own terms.
+//
+// Every key this include hands out begins with its name and a slash, which is
+// what makes most of these answerable without asking it anything: a value
+// under that prefix is the include's own business, and one outside it settles
+// the predicate for every record the include holds at once.
+func narrowKey(p *wire.Filter, name string) (*wire.Filter, bool) {
+	prefix := name + separator
+	switch p.Op {
+	case wire.OpHas:
+		return nil, true // every record has a key
+	case wire.OpLacks:
+		return nil, false
+	case wire.OpContains, wire.OpStarts, wire.OpEnds:
+		// The composed key is a symbol, and a symbol has no inside for a
+		// string to sit in -- so these answer no for every record, here as
+		// anywhere else (docs/sort-and-filter.md).
+		return nil, false
+	case wire.OpIn:
+		var mine []*wire.Value
+		for _, v := range p.Values {
+			if who, text, ok := split(v); ok && who == name {
+				mine = append(mine, spellings(text)...)
+			}
+		}
+		if len(mine) == 0 {
+			return nil, false
+		}
+		return &wire.Filter{Op: wire.OpIn, Field: wire.KeyField,
+			Values: mine, Collate: p.Collate}, true
+	}
+
+	who, text, ok := split(p.Value())
+	switch p.Op {
+	case wire.OpEq:
+		if !ok || who != name {
+			return nil, false
+		}
+		// Which of a number, a symbol and a string the include keys its
+		// records by is its own business, and the text says nothing about it,
+		// so it is asked about every spelling there could be. What comes back
+		// is then a superset, and keyMatch settles it exactly.
+		return &wire.Filter{Op: wire.OpIn, Field: wire.KeyField,
+			Values: spellings(text), Collate: p.Collate}, true
+	case wire.OpNe:
+		if !ok || who != name {
+			return nil, true // no key of this include is that one
+		}
+		return nil, true
+	}
+
+	// An ordering comparison. Where the value falls inside this include it is
+	// the include's own to answer, and there is no asking it in its own terms
+	// -- the include compares key VALUES and this compares the composed key as
+	// the symbol it is. Where the value falls outside, every key the include
+	// holds is on the same side of it, because they all share the prefix.
+	if ok && who == name {
+		return nil, true
+	}
+	c := wire.Compare(wire.NewWord(prefix), p.Value(), p.Collate)
+	below := c < 0 // every key of this include sorts below the value
+	switch p.Op {
+	case wire.OpLt, wire.OpLe:
+		return nil, below
+	case wire.OpGt, wire.OpGe:
+		return nil, !below
+	}
+	return nil, true
+}
+
+// spellings is every value a key could be that writes as this text: the text
+// itself, and the number or name a bare token of it reads as.
+func spellings(text string) []*wire.Value {
+	out := []*wire.Value{wire.NewString(text)}
+	if v := childKey(text); v != nil {
+		out = append(out, v)
+	}
+	return out
+}
+
+// --- reading the filter here ---------------------------------------------
+
+// A verdict is what a filter says about a record whose fields are not all in
+// hand: yes, no, or not enough to say.
+type verdict int
+
+const (
+	no verdict = iota
+	yes
+	unsure
+)
+
+// keyMatch answers what the filter says about a record's composed key, leaving
+// every predicate on anything else unsaid.
+//
+// Unsaid is not false. A record is dropped only where the filter definitely
+// excludes it, so a predicate on a field this scope never asked for cannot
+// take a record out on its own -- the include it came from applied that one
+// already. What this settles is the part no include could: the key.
+func keyMatch(f *wire.Filter, key *wire.Value) verdict {
+	if f == nil {
+		return yes
+	}
+	switch f.Op {
+	case wire.OpAnd:
+		return every(f.Children, key)
+	case wire.OpOr:
+		out := no
+		for _, c := range f.Children {
+			switch keyMatch(c, key) {
+			case yes:
+				return yes
+			case unsure:
+				out = unsure
+			}
+		}
+		return out
+	case wire.OpNot:
+		switch every(f.Children, key) {
+		case yes:
+			return no
+		case no:
+			return yes
+		}
+		return unsure
+	}
+	if f.Field != wire.KeyField {
+		return unsure
+	}
+	if wire.Match(wire.Fields{wire.Named(wire.KeyField, key)}, f) {
+		return yes
+	}
+	return no
+}
+
+// every is the and of a run of filters, which is what a block is.
+func every(children []*wire.Filter, key *wire.Value) verdict {
+	out := yes
+	for _, c := range children {
+		switch keyMatch(c, key) {
+		case no:
+			return no
+		case unsure:
+			out = unsure
 		}
 	}
-	if names(spec.Filter, wire.KeyField) {
-		return fmt.Errorf("filter: a composed source cannot be filtered on %s, "+
-			"which is not a key any include holds", wire.KeyField)
+	return out
+}
+
+// A step is one place in a position tuple: the value of a field, or -- where
+// the field is blank -- the two parts of the composed key.
+type step struct{ field string }
+
+// plan works out what a position in this sequence is made of, and what orders
+// it.
+//
+// **The composed key is two levels, not one.** It is the include's name and
+// then the child's key, and both take the direction and collation the sort
+// asked of `key`, so `sort={ key desc }` reverses the includes as well as the
+// records inside them. Anything less would leave each include delivering in
+// one order while the merge expected another, and the merge only ever looks at
+// a queue's head -- it would hand records on backwards and call them ordered.
+//
+// Where the sort does not name the key at all, the two levels go on the end
+// ascending: they are what makes a position name exactly one record, and
+// ascending is the sequence's own order.
+func plan(sort []wire.SortLevel) ([]step, []wire.Level) {
+	steps := make([]step, 0, len(sort)+1)
+	levels := make([]wire.Level, 0, len(sort)+2)
+	keyed := false
+	for _, l := range sort {
+		if l.Field == wire.KeyField {
+			steps = append(steps, step{})
+			levels = append(levels, l.Level, l.Level)
+			keyed = true
+			continue
+		}
+		steps = append(steps, step{field: l.Field})
+		levels = append(levels, l.Level)
 	}
-	return nil
+	if !keyed {
+		steps = append(steps, step{})
+		levels = append(levels, wire.Level{}, wire.Level{})
+	}
+	return steps, levels
 }
 
 // names reports whether a filter tests a field anywhere in it.
@@ -220,7 +472,9 @@ type composedSet struct {
 	src    *ComposedSource
 	spec   *wire.Spec
 	parts  []part
+	steps  []step
 	levels []wire.Level
+	keyed  bool // the filter tests the composed key, so records are read here too
 }
 
 type part struct {
@@ -306,16 +560,49 @@ func (s *composedSet) mapBoundary(at wire.Fields, name string) wire.Fields {
 
 // boundary is a boundary as a position in this sequence: the sort values, the
 // include's name, and the child's key.
+//
+// A boundary carrying no key at all is not a position in this sequence -- it
+// names a sort value and says nothing about which of the records at it are
+// already held -- so there is nothing to drop against and the includes' own
+// answers stand. Whatever they send is then a superset, which is allowed.
 func (s *composedSet) boundary(at wire.Fields) []*wire.Value {
-	if len(at) == 0 {
+	if len(at) == 0 || at.Key() == nil {
 		return nil
 	}
 	who, text, _ := split(at.Key())
-	out := make([]*wire.Value, 0, len(s.spec.Sort)+2)
-	for _, l := range s.spec.Sort {
-		out = append(out, at.Get(l.Field))
+	return s.position(at, who, childKey(text))
+}
+
+// position is where something sits in this sequence: a value for each step,
+// with the include's name and the child's key where the key step falls.
+//
+// The child's key goes in as the child holds it, not as the composed key
+// spells it, so an include's records keep exactly the order the include put
+// them in.
+func (s *composedSet) position(from wire.Fields, name string, key *wire.Value) []*wire.Value {
+	out := make([]*wire.Value, 0, len(s.levels))
+	for _, st := range s.steps {
+		if st.field == "" {
+			out = append(out, wire.NewString(name), key)
+			continue
+		}
+		out = append(out, from.Get(st.field))
 	}
-	return append(out, wire.NewString(who), childKey(text))
+	return out
+}
+
+// boundaryBag writes a position the way a boundary is written: the fields this
+// sequence sorts by, and the composed key. The key is written once, at the
+// end, wherever the sort names it -- a bag is read by name, not by order.
+func (s *composedSet) boundaryBag(from wire.Fields, key *wire.Value) wire.Fields {
+	out := make(wire.Fields, 0, len(s.steps)+1)
+	for _, st := range s.steps {
+		if st.field == "" {
+			continue
+		}
+		out = append(out, &wire.Arg{Name: st.field, Value: from.Get(st.field)})
+	}
+	return append(out, &wire.Arg{Name: wire.KeyField, Value: key})
 }
 
 // --- the merge -----------------------------------------------------------
@@ -410,6 +697,12 @@ func (g *gathering) take(i int, key *wire.Value, fields wire.Fields, whole bool)
 		fields: fields,
 		whole:  whole,
 	}
+	// What the filter says about the composed key is settled here, because no
+	// include could say it: the include was asked a question in its own terms,
+	// which admits at least every record this one does.
+	if g.set.keyed && keyMatch(g.set.spec.Filter, rec.key) == no {
+		return nil
+	}
 	// An include asked from before where the scope starts answers from there,
 	// so what the boundary already covered is dropped here rather than sent
 	// twice.
@@ -450,16 +743,8 @@ func (g *gathering) settle() {
 
 // place is where a record sits in this sequence: its sort values, the
 // include's name, and its own key.
-//
-// The child's key goes in as the child holds it, not as the composed key
-// spells it, so an include's records keep exactly the order the include put
-// them in.
 func (g *gathering) place(name string, key *wire.Value, fields wire.Fields) []*wire.Value {
-	out := make([]*wire.Value, 0, len(g.set.spec.Sort)+2)
-	for _, l := range g.set.spec.Sort {
-		out = append(out, fields.Get(l.Field))
-	}
-	return append(out, wire.NewString(name), key)
+	return g.set.position(fields, name, key)
 }
 
 // release hands on every record whose place is settled.
@@ -540,11 +825,7 @@ func (g *gathering) hand(rec waiting) {
 // mark is a record's position, written the way a boundary is: the sort fields,
 // and the composed key.
 func (g *gathering) mark(rec waiting) wire.Fields {
-	out := make(wire.Fields, 0, len(g.set.spec.Sort)+1)
-	for _, l := range g.set.spec.Sort {
-		out = append(out, &wire.Arg{Name: l.Field, Value: rec.fields.Get(l.Field)})
-	}
-	return append(out, &wire.Arg{Name: wire.KeyField, Value: rec.key})
+	return g.set.boundaryBag(rec.fields, rec.key)
 }
 
 // allSaidOrdered reports whether every include declared its records in order.
@@ -616,15 +897,7 @@ func (g *gathering) watermark(i int) ([]*wire.Value, wire.Fields) {
 	if len(a.c.Watermark) == 0 {
 		return nil, nil
 	}
-	tuple := make([]*wire.Value, 0, len(g.set.spec.Sort)+2)
-	bag := make(wire.Fields, 0, len(g.set.spec.Sort)+1)
-	for _, l := range g.set.spec.Sort {
-		v := a.c.Watermark.Get(l.Field)
-		tuple = append(tuple, v)
-		bag = append(bag, &wire.Arg{Name: l.Field, Value: v})
-	}
 	key := a.c.Watermark.Key()
-	tuple = append(tuple, wire.NewString(a.name), key)
-	bag = append(bag, &wire.Arg{Name: wire.KeyField, Value: composedKey(a.name, key)})
-	return tuple, bag
+	return g.set.position(a.c.Watermark, a.name, key),
+		g.set.boundaryBag(a.c.Watermark, composedKey(a.name, key))
 }

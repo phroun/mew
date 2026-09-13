@@ -107,10 +107,51 @@ to a point means every one of them is complete up to it, so the one that swept
 least far holds the claim back for all of them — and it can be no further than
 the last record that actually went out.
 
-Two things it refuses. A **sort level or filter predicate naming `key`**: the
-key it hands out is not one any include holds, so every include would answer
-about its own instead. And an **include name holding a slash**, which is what
-tells a name from a key. There are no amendments in it: one include may be an
+### Sorting and filtering on the composed key
+
+**The composed key is two sort levels, not one** — the include's name and then
+the child's key — and both take the direction the sort asked of `key`. So
+`sort={ key desc }` reverses the includes as well as the records inside them.
+Anything less would leave each include delivering in one order while the merge
+expected another, and the merge only ever sees a queue's head: it would hand
+records on backwards and call them ordered.
+
+**A filter on the key is read here and put to each include in its own terms.**
+Every key an include hands out begins with its own name and a slash, which
+settles most predicates for all of that include's records at once — and an
+include the filter shuts out entirely is never opened:
+
+| the filter | what `left` is asked | what `right` is asked |
+|---|---|---|
+| `eq key (left/1)` | `in key "1" 1` | *nothing — it is not opened* |
+| `ge key (right/0)` | *nothing — it is not opened* | nothing, and everything it has comes back |
+| `lt .size 100; gt key (left/0)` | `lt .size 100` | `lt .size 100` |
+
+`eq` goes down as an `in` over both spellings of the text, because which of a
+number, a name and a string an include keys its records by is its own business
+and the text between the slashes says nothing about it. A question narrow
+enough to miss would lose the record, and that is the one thing that cannot
+happen.
+
+What cannot be put in an include's terms is **dropped on the way down and
+settled here** instead, where the composed key is in hand. So an include is
+always asked a question that admits at least every record the outer filter
+does. Reading the answer here is three-valued: a predicate on the composed key
+answers yes or no, a predicate on any other field answers *nothing at all* —
+the include was asked that one and applied it already — and a record is dropped
+only on a definite no. Saying nothing is not saying no, which is what keeps a
+negation over an ordinary field from taking out a record the include had just
+vouched for.
+
+A text predicate on the key — `starts`, `ends`, `contains` — is false for every
+record, the composed key being a symbol and a symbol having no inside for a
+string to sit in (`sort-and-filter.md`). Selecting one include is `eq` or a
+range. And note that an ordering comparison compares the composed key as the
+symbol it is, which is text: `left/10` is below `left/2` to a filter, where the
+*sequence's* order puts it after `left/9`.
+
+One thing it refuses: an **include name holding a slash**, which is what tells
+a name from a key. There are no amendments in it: one include may be an
 `AmendedSource`, or an `AmendedSource` may wrap the whole of it.
 
 ## Two spaces, one sequence

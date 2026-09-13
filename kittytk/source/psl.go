@@ -115,21 +115,30 @@ func (p *PSLSource) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
-	if err := supported(spec.Sort); err != nil {
+	if err := supported(spec.Sort, p.reading); err != nil {
 		return nil, err
 	}
 	return &pslResultSet{src: p, spec: spec, ord: p.order(spec)}, nil
 }
 
 // supported refuses a sort this source cannot produce exactly. A collation it
-// does not carry would yield an order that is nearly right, which is worse than
-// a refusal: a refusal is recoverable and says what is wrong.
-func supported(levels []wire.SortLevel) error {
+// does not carry, or a field this reading cannot reach, would yield an order
+// that is nearly right, which is worse than a refusal: a refusal is
+// recoverable and says what is wrong.
+func supported(levels []wire.SortLevel, reading Reading) error {
 	for _, l := range levels {
 		switch l.Collation {
 		case "", wire.CollateExact, wire.CollateFold, wire.CollateNatural:
 		default:
 			return fmt.Errorf("sort %s: no collation called %q", l.Field, l.Collation)
+		}
+		if reading == Members && l.Field == wire.KeyField {
+			// Members cannot name the key, so the level would read as
+			// undefined for every record and settle nothing -- and the
+			// sequence would come out in the source's own order while saying
+			// it was in the one that was asked for.
+			return fmt.Errorf("sort %s: this source is read for its members, "+
+				"and a record's key is not one of them", wire.KeyField)
 		}
 	}
 	return nil
