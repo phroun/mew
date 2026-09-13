@@ -75,26 +75,24 @@ func Val(v any) *Value {
 // Named is one named value, for building an event's fields or a record's.
 func Named(name string, v any) *Arg { return &Arg{Name: name, Value: Val(v)} }
 
-// IsWord reports whether a string can be written as a bare word, which is what
-// the parser will read back as one: a word start, and then word runes.
+// IsWord reports whether a string can be written as a bare word and read back
+// as the same one.
 //
 // A word is encoded as itself with nothing around it, so a caller building one
-// out of text from somewhere else has to ask. Text that is not a word has to
-// cross as a string instead -- a word that cannot be spelled would be written
-// as characters the parser reads as something else, or as nothing at all.
+// out of text from somewhere else has to ask. Three things stop a string: a
+// character a bare token cannot hold, a leading sign -- which says the token is
+// a number and nothing else -- and spelling a number, which is what it would
+// come back as.
 func IsWord(s string) bool {
-	for i, r := range s {
-		if i == 0 {
-			if !isWordStart(r) {
-				return false
-			}
-			continue
-		}
-		if !isWordRune(r) {
+	if s == "" || s[0] == '+' || s[0] == '-' {
+		return false
+	}
+	for _, r := range s {
+		if !isTokenRune(r) {
 			return false
 		}
 	}
-	return s != ""
+	return numberValue(s) == nil
 }
 
 // EncodeValue renders one value as wire text.

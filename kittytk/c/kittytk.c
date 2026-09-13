@@ -524,7 +524,54 @@ static void p_skip_inline(kt_p *p) {
    something rather than a word in its own right: `.size` is the member called
    size, and `size` is the word size. */
 static int is_word_start(char c) { return c == '_' || c == '.' || isalpha((unsigned char)c); }
-static int is_word_rune(char c) { return is_word_start(c) || isdigit((unsigned char)c); }
+/* A name carries digits and hyphens after its first character, so `kebab-case`
+   is one name rather than a name, a minus and a number. */
+static int is_word_rune(char c) { return is_word_start(c) || c == '-' || isdigit((unsigned char)c); }
+/* What a bare token is made of -- a number or a symbol, which are one run of
+   characters and told apart by what they say rather than by what they start
+   with. The plus is in for the exponent's sign, `1e+21`. */
+static int is_token_rune(char c) { return is_word_rune(c) || c == '+'; }
+
+/* A bare token read as a number, written into a, and 0 where the token is not
+   one:
+
+     [+-]? digits ( "." digits )? ( [eE] [+-]? digits )?
+
+   The form is written out rather than handed to the language's own parser,
+   because three implementations have to agree on exactly where a number stops
+   and a symbol begins -- and each language's parser accepts a different set of
+   extras: infinities, not-a-numbers, hexadecimal floats, digit separators. */
+static int number_value(const char *t, kt_arg *a) {
+    size_t i = 0, n = strlen(t), start;
+    int dot = 0, exp = 0;
+    if (i < n && (t[i] == '+' || t[i] == '-')) i++;
+    start = i;
+    while (i < n && isdigit((unsigned char)t[i])) i++;
+    if (i == start) return 0;
+    if (i < n && t[i] == '.') {
+        i++; start = i;
+        while (i < n && isdigit((unsigned char)t[i])) i++;
+        if (i == start) return 0;
+        dot = 1;
+    }
+    if (i < n && (t[i] == 'e' || t[i] == 'E')) {
+        i++;
+        if (i < n && (t[i] == '+' || t[i] == '-')) i++;
+        start = i;
+        while (i < n && isdigit((unsigned char)t[i])) i++;
+        if (i == start) return 0;
+        exp = 1;
+    }
+    if (i != n) return 0;
+    a->has_value = 1;
+    if (!dot && !exp) {
+        errno = 0;
+        long long v = strtoll(t, NULL, 10);
+        if (errno != ERANGE) { a->kind = 0; a->ival = v; return 1; }
+    }
+    a->kind = 1; a->fval = strtod(t, NULL);
+    return 1;
+}
 
 static char *p_word(kt_p *p) {
     kt_buf b = {0};
@@ -585,23 +632,26 @@ static void p_value(kt_p *p, kt_arg *a) {
         a->kind = 4; a->has_value = 1; a->block = sc;
     } else if (c == '"') {
         a->kind = 2; a->has_value = 1; a->sval = p_string(p, &a->slen);
-    } else if (c == '-' || isdigit((unsigned char)c)) {
+    } else if (is_token_rune(c)) {
+        /* A number and a symbol are the same run of characters, so which one it
+           is cannot be decided from the first character: `2026-09-13` starts
+           like a number and is a date, and `1e+21` starts like a date and is a
+           number. A token written with a leading sign is a number and nothing
+           else, so one that does not measure up is refused rather than quietly
+           becoming a symbol. */
         kt_buf b = {0};
-        int dot = 0;
-        if (c == '-') buf_put(&b, p->s[p->pos++]);
-        while (!p_eof(p)) {
-            char d = p_peek(p);
-            if (isdigit((unsigned char)d)) buf_put(&b, p->s[p->pos++]);
-            else if (d == '.' && !dot) { dot = 1; buf_put(&b, p->s[p->pos++]); }
-            else break;
+        while (!p_eof(p) && is_token_rune(p_peek(p))) buf_put(&b, p->s[p->pos++]);
+        char *tok = buf_dup(&b); free(b.p);
+        if (number_value(tok, a)) {
+            free(tok);
+        } else if (tok[0] == '+' || tok[0] == '-') {
+            p->bad = 1;
+            free(tok);
+        } else {
+            a->kind = 3; a->has_value = 1; a->sval = tok; a->slen = strlen(tok);
         }
-        char *num = buf_dup(&b); free(b.p);
-        a->has_value = 1;
-        if (dot) { a->kind = 1; a->fval = strtod(num, NULL); }
-        else { a->kind = 0; a->ival = strtoll(num, NULL, 10); }
-        free(num);
     } else {
-        a->kind = 3; a->has_value = 1; a->sval = p_word(p); a->slen = strlen(a->sval);
+        p->bad = 1;
     }
 }
 
@@ -641,7 +691,7 @@ static int p_statement(kt_p *p, kt_stmt *st, int in_block) {
             p_skip_inline(p);
             if (!p_eof(p) && p_peek(p) == '=') { p->pos++; p_value(p, &a); a.flag = KT_FLAG_NONE; }
             else a.flag = KT_FLAG_TRUE;
-        } else if (c == '-' || isdigit((unsigned char)c) || c == '"' || c == '{') {
+        } else if (is_token_rune(c) || c == '"' || c == '{') {
             /* An operand: a value with no name, in the order it was written.
              * A target reference is one, and so is a filter's field and what
              * it is matched against. */

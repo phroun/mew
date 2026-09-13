@@ -467,21 +467,37 @@ func TestABareWordIsASymbolAndAQuotedOneIsAString(t *testing.T) {
 	}
 }
 
-// PSL spells a symbol more widely than the wire spells a word, and a word is
-// written as itself with nothing around it. One the wire cannot spell crosses
-// as a string rather than as text the far end would read as something else.
+// A bare token is a number or a symbol and is told apart by what it says, so
+// most of what PSL calls a symbol is a symbol here too: a hyphen, a leading
+// digit and a date all cross as themselves.
+//
+// PSL still spells one more widely, though -- punctuation the wire reserves for
+// its own grammar has no place in a bare token -- and a word is written as
+// itself with nothing around it. One the wire cannot spell crosses as a string
+// rather than as text the far end would read as something else.
 func TestASymbolTheWireCannotSpellCrossesAsAString(t *testing.T) {
-	v := open(t, `( (ok: plain, digits: 1x, dashed: kebab-case, starred: *star) )`, "")
+	v := open(t, `( (ok: plain, digits: 1x, dashed: kebab-case, dated: 2026-09-13, starred: *star) )`, "")
 	out, _ := fill(t, v, "have=0 need=1")
 
 	got := out.fields[0].Encode()
-	want := `{ .dashed "kebab-case"; .digits "1x"; .ok plain; .starred "*star" }`
+	want := `{ .dashed kebab-case; .dated 2026-09-13; .digits 1x; .ok plain; .starred "*star" }`
 	if got != want {
 		t.Errorf("the record carries %s", got)
 	}
 	// Which is text the far end reads back as what was sent.
-	if _, err := wire.Parse("result 1 fields=" + got); err != nil {
-		t.Errorf("what went out does not read back: %v", err)
+	script, err := wire.Parse("result 1 fields=" + got)
+	if err != nil {
+		t.Fatalf("what went out does not read back: %v", err)
+	}
+	back, err := wire.ParseFields(script.Statements[0].Args[1].Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := back.Get(".dated"); v == nil || v.Kind != wire.WordValue || v.Word != "2026-09-13" {
+		t.Errorf("the date read back as %#v", v)
+	}
+	if v := back.Get(".starred"); v == nil || v.Kind != wire.StringValue {
+		t.Errorf("the unspellable symbol read back as %#v", v)
 	}
 }
 

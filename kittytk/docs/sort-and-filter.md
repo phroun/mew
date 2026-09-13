@@ -91,6 +91,16 @@ needs the distinction — otherwise a member called `key` and the record key are
 the same name — and one that does not need it never writes a dot.
 `psl-as-a-data-source.md` is where it is put to work.
 
+**A symbol is a bare token that is not a number**, which is decided by what the
+token says rather than by what it starts with: `2026-09-13` is a symbol,
+`1e+21` is a number, and a token written with a leading sign is a number and
+nothing else. The numeric form is
+`[+-]? digits ( "." digits )? ( [eE] [+-]? digits )?`, written out rather than
+handed to each language's own number parser — those accept different sets of
+extras (infinities, hexadecimal floats, digit separators), and three
+implementations have to agree on exactly where a number stops and a symbol
+begins.
+
 The first level that separates two records decides. A level settles only what
 the levels above it left equal, so "by department, then by salary, highest
 first" is two levels and the answer never depends on what the records were

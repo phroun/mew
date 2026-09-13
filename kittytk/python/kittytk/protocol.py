@@ -320,11 +320,75 @@ def _is_word_start(ch: str) -> bool:
 
 
 def _is_word_rune(ch: str) -> bool:
-    return _is_word_start(ch) or ('0' <= ch <= '9')
+    # A name carries digits and hyphens after its first character, so
+    # `kebab-case` is one name rather than a name, a minus and a number.
+    return _is_word_start(ch) or ch == '-' or ('0' <= ch <= '9')
+
+
+def _is_token_rune(ch: str) -> bool:
+    """What a bare token is made of -- a number or a symbol, which are one run
+    of characters and told apart by what they say rather than by what they start
+    with. The plus is in for the exponent's sign, `1e+21`."""
+    return _is_word_rune(ch) or ch == '+'
 
 
 def _is_number_start(ch: str) -> bool:
     return ch == '-' or ('0' <= ch <= '9')
+
+
+def _number_value(text: str):
+    """A bare token as a number, or None where the token is not one:
+
+        [+-]? digits ( "." digits )? ( [eE] [+-]? digits )?
+
+    The form is written out rather than handed to the language's own parser,
+    because three implementations have to agree on exactly where a number stops
+    and a symbol begins -- and each language's parser accepts a different set of
+    extras: infinities, not-a-numbers, hexadecimal floats, digit separators."""
+    i, n = 0, len(text)
+
+    def digits() -> bool:
+        nonlocal i
+        start = i
+        while i < n and '0' <= text[i] <= '9':
+            i += 1
+        return i > start
+
+    if i < n and text[i] in '+-':
+        i += 1
+    if not digits():
+        return None
+    dot = False
+    if i < n and text[i] == '.':
+        i += 1
+        if not digits():
+            return None
+        dot = True
+    exp = False
+    if i < n and text[i] in 'eE':
+        i += 1
+        if i < n and text[i] in '+-':
+            i += 1
+        if not digits():
+            return None
+        exp = True
+    if i != n:
+        return None
+    # A whole number is read as an integer, so an id or a nanosecond stamp
+    # arrives with every digit it was sent with. Python integers are unbounded,
+    # so nothing here has to widen.
+    if not dot and not exp:
+        return Value(kind=ValueKind.NUMBER, number=int(text), is_int=True)
+    return Value(kind=ValueKind.NUMBER, number=float(text), is_int=False)
+
+
+def is_word(s: str) -> bool:
+    """Whether a string can be written as a bare word and read back as the same
+    one. A word is encoded as itself with nothing around it, so a caller
+    building one out of text from somewhere else has to ask."""
+    if not s or s[0] in '+-':
+        return False
+    return all(_is_token_rune(c) for c in s) and _number_value(s) is None
 
 
 def _hex_val(ch: str) -> int:
@@ -450,38 +514,38 @@ class _Parser:
             else:
                 out.append(ch)
 
-    def parse_number(self) -> Value:
+    def scan_token(self) -> str:
+        """The whole run of a bare token. What it is is decided after it has
+        been read, not from the character it starts with."""
         out = []
-        if self.peek() == '-':
+        while not self.eof() and _is_token_rune(self.peek()):
             out.append(self.advance())
-        digits = 0
-        dot = False
-        while not self.eof():
-            ch = self.peek()
-            if '0' <= ch <= '9':
-                digits += 1
-                out.append(self.advance())
-            elif ch == '.' and not dot:
-                dot = True
-                out.append(self.advance())
-            else:
-                break
-        if digits == 0:
-            raise self._errf("malformed number")
-        text = ''.join(out)
-        # A whole number is read as an integer, so an id or a nanosecond stamp
-        # arrives with every digit it was sent with. Python integers are
-        # unbounded, so nothing here has to widen.
-        if not dot:
-            try:
-                return Value(kind=ValueKind.NUMBER, number=int(text), is_int=True)
-            except ValueError:
-                pass
-        try:
-            f = float(text)
-        except ValueError:
+        return ''.join(out)
+
+    def parse_number(self) -> Value:
+        text = self.scan_token()
+        v = _number_value(text)
+        if v is None:
             raise self._errf("malformed number %r" % text)
-        return Value(kind=ValueKind.NUMBER, number=f, is_int=False)
+        return v
+
+    def parse_number_or_word(self) -> Value:
+        """One bare token, and what it is.
+
+        A number and a symbol are the same run of characters, so which one it is
+        cannot be decided from the first character: `2026-09-13` starts like a
+        number and is a date, and `1e+21` starts like a date and is a number.
+
+        A token written with a leading sign is a number and nothing else, so one
+        that does not measure up is refused rather than quietly becoming a
+        symbol -- `-` on its own is a mistake, not an identifier."""
+        text = self.scan_token()
+        v = _number_value(text)
+        if v is not None:
+            return v
+        if text[0] in '+-':
+            raise self._errf("malformed number %r" % text)
+        return Value(kind=ValueKind.WORD, word=text)
 
     def parse_value(self, in_block: bool) -> Value:
         self.skip_inline()
@@ -497,10 +561,8 @@ class _Parser:
                 raise self._errf("unterminated block: expected '}'")
             self.advance()  # '}'
             return Value(kind=ValueKind.BLOCK, block=block)
-        if _is_number_start(c):
-            return self.parse_number()
-        if _is_word_start(c):
-            return Value(kind=ValueKind.WORD, word=self.parse_word())
+        if _is_token_rune(c):
+            return self.parse_number_or_word()
         raise self._errf("unexpected character %r in value position" % c)
 
     def parse_args(self, in_block: bool) -> List[Arg]:

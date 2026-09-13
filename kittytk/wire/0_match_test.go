@@ -154,9 +154,22 @@ func TestWhatCanBeWrittenAsABareWord(t *testing.T) {
 		{"has9digits", true},
 		{".member", true},
 		{"_leading", true},
+		{"kebab-case", true},
+		{"2026-09-13", true},
+		{"1x", true},
+		{"1e5x", true},
+		{"e5", true},
+
 		{"", false},
-		{"1x", false},         // a word does not start with a digit
-		{"kebab-case", false}, // nor hold a hyphen
+		// What spells a number comes back as one.
+		{"3", false},
+		{"3.5", false},
+		{"1e+21", false},
+		// A leading sign says the token is a number and nothing else.
+		{"-3", false},
+		{"+x", false},
+		{"-", false},
+		// And what a bare token cannot hold.
 		{"*star", false},
 		{"two words", false},
 		{"quote\"inside", false},
@@ -176,6 +189,70 @@ func TestWhatCanBeWrittenAsABareWord(t *testing.T) {
 		}
 		if v := script.Statements[0].Args[0].Value; v == nil || v.Kind != WordValue || v.Word != c.text {
 			t.Errorf("%q read back as %#v", c.text, v)
+		}
+	}
+}
+
+// A bare token is read whole and then measured, so what decides between a
+// number and a symbol is what the token says rather than what it starts with.
+func TestABareTokenIsANumberOrASymbolByWhatItSays(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		kind ValueKind
+		num  float64
+	}{
+		{"3", NumberValue, 3},
+		{"-3", NumberValue, -3},
+		{"+3", NumberValue, 3},
+		{"3.5", NumberValue, 3.5},
+		{"1e5", NumberValue, 100000},
+		{"1E5", NumberValue, 100000},
+		{"1e+21", NumberValue, 1e21},
+		{"6.02e+23", NumberValue, 6.02e23},
+		{"1e-10", NumberValue, 1e-10},
+
+		{"1x", WordValue, 0},
+		{"1e5x", WordValue, 0},
+		{"kebab-case", WordValue, 0},
+		{"2026-09-13", WordValue, 0},
+		{".0", WordValue, 0},
+		{"e5", WordValue, 0},
+		{"3.5.7", WordValue, 0},
+
+		// The numeric form is written out rather than handed to the language's
+		// own number parser, because each accepts a different set of extras.
+		// These are the ones Go's would take and C's and Python's would not.
+		{"0x1p4", WordValue, 0},
+		{"inf", WordValue, 0},
+		{"nan", WordValue, 0},
+		{"infinity", WordValue, 0},
+		{"1_000", WordValue, 0},
+	} {
+		script, err := Parse("f v=" + c.text)
+		if err != nil {
+			t.Errorf("%s: %v", c.text, err)
+			continue
+		}
+		v := script.Statements[0].Args[0].Value
+		if v == nil || v.Kind != c.kind {
+			t.Errorf("%s came out as %#v", c.text, v)
+			continue
+		}
+		if c.kind == NumberValue && v.Number != c.num {
+			t.Errorf("%s came out as %v", c.text, v.Number)
+		}
+		if c.kind == WordValue && v.Word != c.text {
+			t.Errorf("%s came out as the word %q", c.text, v.Word)
+		}
+	}
+}
+
+// A token written with a leading sign is a number and nothing else, so one that
+// does not measure up is refused rather than quietly becoming a symbol.
+func TestALeadingSignSaysNumberAndNothingElse(t *testing.T) {
+	for _, text := range []string{"-x", "+x", "-", "+", "+1e", "-1.", "-."} {
+		if _, err := Parse("f v=" + text); err == nil {
+			t.Errorf("%q was accepted", text)
 		}
 	}
 }

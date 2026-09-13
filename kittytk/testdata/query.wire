@@ -241,3 +241,57 @@ want source="f" fields={ key; .name; value }
 
 fill have=0 need=10 from={ .name "a"; key 3 }
 want from={ .name "a"; key 3 } have=0 need=10
+
+# --- a bare token is a number or a symbol, by what it says ---
+#
+# The two are one run of characters, so which one it is cannot be decided from
+# the character it starts with: `2026-09-13` starts like a number and is a date,
+# and `1e+21` starts like a date and is a number. The token is read whole and
+# measured against the numeric form:
+#
+#   [+-]? digits ( "." digits )? ( [eE] [+-]? digits )?
+#
+# written out rather than handed to each language's own number parser, which
+# accept different sets of extras. Anything that is not a number is a symbol,
+# except a token with a leading sign: that says number and nothing else, so one
+# that does not measure up is refused.
+
+spec source=f filter={ eq .when 2026-09-13 }
+want source="f" filter={ eq .when 2026-09-13 }
+
+spec source=f filter={ eq .kind kebab-case }
+want source="f" filter={ eq .kind kebab-case }
+
+spec source=f filter={ eq .id 1x }
+want source="f" filter={ eq .id 1x }
+
+spec source=f filter={ eq .n 1e5x }
+want source="f" filter={ eq .n 1e5x }
+
+# And what does measure up is a number, integer or float. A float's canonical
+# spelling is not settled between the three -- `1e5` writes back as 100000.0
+# here and as 1e+05 there -- so the cases below are ones they already agree on,
+# and each language covers the rest in its own tests.
+spec source=f filter={ eq .n 1e+21 }
+want source="f" filter={ eq .n 1e+21 }
+
+spec source=f filter={ eq .n 6.02e+23 }
+want source="f" filter={ eq .n 6.02e+23 }
+
+spec source=f filter={ eq .n +3 }
+want source="f" filter={ eq .n 3 }
+
+spec source=f filter={ eq .n -3.5 }
+want source="f" filter={ eq .n -3.5 }
+
+# A leading sign is a number and nothing else.
+spec source=f filter={ eq .n -x }
+bad
+
+spec source=f filter={ eq .n +1e }
+bad
+
+# A dot leads a member name, so it never leads a number: `.0` is the item at
+# position 0 and not the number zero.
+spec source=f sort={ .0 natural }
+want source="f" sort={ .0 natural }

@@ -205,14 +205,22 @@ func hexVal(ch rune) int {
 
 // A word may begin with a dot, which is how a name says it is a member of
 // something rather than a word in its own right: `.size` is the member called
-// size, and `size` is the word size. Nothing is taken away by allowing it,
-// because a number never starts with a dot either (isNumberStart).
+// size, and `size` is the word size.
 func isWordStart(ch rune) bool {
 	return ch == '_' || ch == '.' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
+// A name carries digits and hyphens after its first character, so `kebab-case`
+// is one name rather than a name, a minus and a number.
 func isWordRune(ch rune) bool {
-	return isWordStart(ch) || (ch >= '0' && ch <= '9')
+	return isWordStart(ch) || ch == '-' || (ch >= '0' && ch <= '9')
+}
+
+// isTokenRune is what a bare token is made of -- a number or a symbol, which
+// are one run of characters and told apart by what they say rather than by what
+// they start with. The plus is in for the exponent's sign, `1e+21`.
+func isTokenRune(ch rune) bool {
+	return isWordRune(ch) || ch == '+'
 }
 
 func isNumberStart(ch rune) bool {
@@ -307,43 +315,107 @@ func (p *parser) parseString() (string, error) {
 	}
 }
 
-func (p *parser) parseNumber() (*Value, error) {
+// scanToken takes the whole run of a bare token. What it is is decided after
+// it has been read, not from the character it starts with.
+func (p *parser) scanToken() string {
 	var sb strings.Builder
-	if p.peek() == '-' {
+	for !p.eof() && isTokenRune(p.peek()) {
 		sb.WriteRune(p.advance())
 	}
-	digits := 0
-	dot := false
-	for !p.eof() {
-		ch := p.peek()
-		if ch >= '0' && ch <= '9' {
-			digits++
-			sb.WriteRune(p.advance())
-		} else if ch == '.' && !dot {
-			dot = true
-			sb.WriteRune(p.advance())
-		} else {
-			break
+	return sb.String()
+}
+
+func (p *parser) parseNumber() (*Value, error) {
+	text := p.scanToken()
+	v := numberValue(text)
+	if v == nil {
+		return nil, p.errf("malformed number %q", text)
+	}
+	return v, nil
+}
+
+// parseNumberOrWord reads one bare token and says what it is.
+//
+// A number and a symbol are the same run of characters, so which one it is
+// cannot be decided from the first character: `2026-09-13` starts like a number
+// and is a date, and `1e+21` starts like a date and is a number. The token is
+// read whole and then measured against the numeric form; anything that is not
+// one is a symbol.
+//
+// A token written with a leading sign is a number and nothing else, so one that
+// does not measure up is refused rather than quietly becoming a symbol -- `-`
+// on its own is a mistake, not an identifier.
+func (p *parser) parseNumberOrWord() (*Value, error) {
+	text := p.scanToken()
+	if v := numberValue(text); v != nil {
+		return v, nil
+	}
+	if text[0] == '+' || text[0] == '-' {
+		return nil, p.errf("malformed number %q", text)
+	}
+	return &Value{Kind: WordValue, Word: text}, nil
+}
+
+// numberValue reads a bare token as a number, and is nil where the token is not
+// one:
+//
+//	[+-]? digits ( "." digits )? ( [eE] [+-]? digits )?
+//
+// The form is written out rather than handed to the language's own parser,
+// because three implementations have to agree on exactly where a number stops
+// and a symbol begins -- and each language's parser accepts a different set of
+// extras: infinities, not-a-numbers, hexadecimal floats, digit separators.
+func numberValue(text string) *Value {
+	i, n := 0, len(text)
+	digits := func() bool {
+		start := i
+		for i < n && text[i] >= '0' && text[i] <= '9' {
+			i++
 		}
+		return i > start
 	}
-	if digits == 0 {
-		return nil, p.errf("malformed number")
+	if i < n && (text[i] == '+' || text[i] == '-') {
+		i++
 	}
-	text := sb.String()
+	if !digits() {
+		return nil
+	}
+	dot := false
+	if i < n && text[i] == '.' {
+		i++
+		if !digits() {
+			return nil
+		}
+		dot = true
+	}
+	exp := false
+	if i < n && (text[i] == 'e' || text[i] == 'E') {
+		i++
+		if i < n && (text[i] == '+' || text[i] == '-') {
+			i++
+		}
+		if !digits() {
+			return nil
+		}
+		exp = true
+	}
+	if i != n {
+		return nil
+	}
 	// A whole number is read as an integer first, so an id or a nanosecond
 	// stamp arrives with every digit it was sent with -- a float64 stops being
 	// able to tell two integers apart at 2^53. One too large even for an
 	// int64 is a float, and says so: IsInt means the exact value is there.
-	if !dot {
-		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
-			return &Value{Kind: NumberValue, Number: float64(i), Int: i, IsInt: true}, nil
+	if !dot && !exp {
+		if v, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return &Value{Kind: NumberValue, Number: float64(v), Int: v, IsInt: true}
 		}
 	}
 	f, err := strconv.ParseFloat(text, 64)
 	if err != nil {
-		return nil, p.errf("malformed number %q", text)
+		return nil
 	}
-	return &Value{Kind: NumberValue, Number: f}, nil
+	return &Value{Kind: NumberValue, Number: f}
 }
 
 func (p *parser) parseValue(inBlock bool) (*Value, error) {
@@ -369,14 +441,8 @@ func (p *parser) parseValue(inBlock bool) (*Value, error) {
 		}
 		p.advance() // '}'
 		return &Value{Kind: BlockValue, Block: block}, nil
-	case isNumberStart(p.peek()):
-		return p.parseNumber()
-	case isWordStart(p.peek()):
-		w, err := p.parseWord()
-		if err != nil {
-			return nil, err
-		}
-		return &Value{Kind: WordValue, Word: w}, nil
+	case isTokenRune(p.peek()):
+		return p.parseNumberOrWord()
 	default:
 		return nil, p.errf("unexpected character %q in value position", p.peek())
 	}

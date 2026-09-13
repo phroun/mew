@@ -98,7 +98,7 @@ filter={ eq .key "figaro" }
 | a whole number | an integer, exact, however large |
 | a fractional number | a float |
 | `true`, `false`, `nil` | the words |
-| a bare word | a symbol, or a string where the wire cannot spell the word |
+| a bare word | a symbol, or a string where the wire reserves its punctuation |
 | a nested list | a block of its own members, which is the unordered rank |
 | absent | nothing is sent, and an absent field reads as `undefined` |
 
@@ -110,9 +110,22 @@ differently and so does the wire, so the two reach a filter as the two
 different questions they were written as: `eq .kind text` asks about the
 identifier and `eq .kind "text"` asks about the four characters.
 
-PSL spells a symbol more widely than the wire spells a word, though — `1x`,
-`kebab-case` and `*star` are all symbols, and none of them can be written as a
-bare word. A word is written as itself with nothing around it, so one the wire
+A bare token in the wire is a number or a symbol, and which it is depends on
+what the token says rather than on the character it starts with — so
+`2026-09-13` is a date, `kebab-case` is a name, `1x` is an identifier, and
+`1e+21` is a number. The numeric form is written out rather than handed to each
+language's own number parser:
+
+```
+[+-]? digits ( "." digits )? ( [eE] [+-]? digits )?
+```
+
+A token with a leading sign is a number and nothing else, so one that does not
+measure up is refused rather than quietly becoming a symbol.
+
+PSL still spells a symbol a little more widely — punctuation the wire reserves
+for its own grammar has no place in a bare token — so `*star` cannot be written
+as a word. A word is written as itself with nothing around it, so one the wire
 cannot spell crosses as a **string** rather than as text the far end would read
 as something else. `wire.IsWord` is what decides.
 
