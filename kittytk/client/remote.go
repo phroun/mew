@@ -113,10 +113,25 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	if err != nil {
 		dbg("dial app=%q: reading welcome failed: %v", appName, err)
 		nc.Close()
-		return nil, fmt.Errorf("handshake: %w", err)
+		return nil, handshakeSilence(ep, err)
 	}
 	script, err := wire.Parse(welcome)
-	if err != nil || len(script.Statements) == 0 || script.Statements[0].Verb != "welcome" {
+	if err != nil || len(script.Statements) == 0 {
+		nc.Close()
+		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
+	}
+	// A display that will not have this connection says so, and what it says is
+	// worth more than the line it arrived on.
+	if stmt := script.Statements[0]; stmt.Verb == "error" {
+		nc.Close()
+		for _, a := range stmt.Args {
+			if a.Name == "text" && a.Value != nil && a.Value.Kind == wire.StringValue {
+				return nil, fmt.Errorf("handshake: %s", a.Value.Str)
+			}
+		}
+		return nil, fmt.Errorf("handshake: refused")
+	}
+	if script.Statements[0].Verb != "welcome" {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
 	}
@@ -148,6 +163,22 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	go rt.eventLoop()
 	go rt.inboundLoop()
 	return c, nil
+}
+
+// handshakeSilence explains a display that accepted the connection and then
+// closed it without a word.
+//
+// There is one way for that to happen and it is worth naming: a tls:// display
+// answers a plaintext client inside TLS, so its refusal cannot be written at
+// all and the socket simply ends. The scheme is the client's to get right and
+// nothing on the wire can tell it so.
+func handshakeSilence(ep endpoint, err error) error {
+	if ep.network == "tcp" && !ep.useTLS {
+		return fmt.Errorf("handshake: %w -- the display said nothing at all, "+
+			"which is what a tls:// display does to a tcp:// client; try "+
+			"tls://%s", err, ep.address)
+	}
+	return fmt.Errorf("handshake: %w", err)
 }
 
 type replyOrError struct {
