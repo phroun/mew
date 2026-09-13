@@ -16,25 +16,34 @@ bundle layers, whatever ephemeral material the server holds itself, and — if
 this source has an application behind it — material cached from corresponding
 with that application.
 
-**A view** is server-side: one query against one data source, like a cursor.
+**A result set** is server-side: one stated sequence over one data source — one
+filter, one sort — that scopes are drawn from. It holds no position of its own,
+so readers at different places share one. It is `source.ResultSet`, and it is
+built (`psl-as-a-data-source.md`).
 
 **A query** is the application's side of that correspondence: an equivalent
 sequence, the same filter and the same sort, with far less management. It
 exists only when a data source has an application component, and its interface
-is deliberately much smaller than a view's.
+is deliberately much smaller than the server's own.
 
-The display opens a **view** and manages position, generation, watermark and
-coverage; it also opens the **query** on the application's side, because only
-it knows one is wanted and what sort and filter it carries. The application
-holds that query, names it, and answers scopes of it. Nothing about views
+**What a reader holds** — where it is scrolled to, which sequence it is
+reading, how far its watermark runs, what it depends on — is per-reader, and it
+is neither of the two above: several readers at different positions share one
+result set and one query. It has no name yet; the last open question at the
+bottom is that it needs one.
+
+The display opens a result set and keeps that bookkeeping against it; it also
+opens the **query** on the application's side, because only it knows one is
+wanted and what sort and filter it carries. The application holds that query,
+names it, and answers scopes of it. None of the server's own bookkeeping
 reaches the application; it hears about its query and nothing else.
 
 ## The query
 
 A query is a source, the columns to include, the columns to exclude, a filter
-and a sort. It says *what sequence this view is*, and it is stated **once**,
-when the view is opened; everything after that is positional. That is what
-keeps the wire quiet.
+and a sort. It says *what sequence this is*, and it is stated **once**, when the
+query is opened; everything after that is positional. That is what keeps the
+wire quiet.
 
 Four properties matter:
 
@@ -43,8 +52,13 @@ Four properties matter:
   place. Without that, two fills of a scope can overlap or skip.
 - **Both ends compute that sequence independently**, from the rules in
   `sort-and-filter.md`. Neither confers with the other about order.
-- **Changing it is a new generation, not a new view.** Scopes, watermark and
-  counts held against the old spec are dropped; the view's identity persists.
+- **It cannot be changed.** A different sort or a different filter is a
+  different query, so **the id IS the generation** — results still in flight for
+  the old sequence are told apart from the new ones by the number they are
+  addressed to rather than by where they fall in a stream. `set` addressed to a
+  query is refused. The display opens the replacement *before* it destroys what
+  it is replacing, which is what keeps the source in use while the reader moves
+  across; records are held against the source's name, not against any one query.
 - **It can be refused.** An end that cannot honour a query exactly says so when
   it is asked. A refusal is recoverable; an ordering that is quietly a little
   different corrupts everything after it and looks like data.
@@ -53,15 +67,15 @@ Four properties matter:
 
 **Positionless is what makes dedup safe.** Every fill request carries its own
 boundaries, so a query holds no cursor of its own — nothing about where anybody
-is reading. The watermark belongs to the *view*. Two views scrolled to
+is reading. The watermark belongs to the reader. Two readers scrolled to
 different places can therefore share one query without interfering. If a query
 ever grew a position, dedup would break the same day.
 
-**Dedup by the query as sent.** The server renders a view's filter and sort
-into text to put them on the wire, and renders the same spec the same way every
-time, so the application can key its table on that text — a string compare, not
-a structural walk of two filter trees. That matters most where structural
-comparison is real work and string comparison is not.
+**Dedup by the query as sent.** The server renders a result set's filter and
+sort into text to put them on the wire, and renders the same spec the same way
+every time, so the application can key its table on that text — a string
+compare, not a structural walk of two filter trees. That matters most where
+structural comparison is real work and string comparison is not.
 
 **The application counts.** If it hands the same query back to two requests, it
 knows when the last of them goes and drops it at zero.
@@ -175,8 +189,10 @@ it is not, nothing happens at all.
 
 And the common one: **the user re-sorts or re-filters.** That invalidates count,
 positions, membership, order and the watermark — but **not content**, which is
-keyed by record identity rather than by position. So re-sorting what is already
-held costs no data transfer.
+keyed by record identity rather than by position. So re-sorting costs no data
+transfer for the records held **whole**. One held as a subset answers only the
+question that asked for it, which is why a result carries `record={…}` or
+`fields={…}` and says which (`hosting-a-query.md`).
 
 ## Coverage: what the server says it depends on
 
@@ -207,10 +223,10 @@ per scroll would throw away the application's evidence every time and rebuild it
 from nothing, which is the opposite of the point. The application keeps what
 still applies to the overlap and computes only for what is newly covered.
 
-**Coverage is the union of everything sharing that query.** One view's extent
+**Coverage is the union of everything sharing that query.** One reader's extent
 falling inside another's collapses to one by construction, and their drifting
 apart grows a second extent again — no special rule, and the application never
-hears the word *view*. Extents coalesce when the gap between two is small
+hears that there were two readers. Extents coalesce when the gap between two is small
 relative to their size.
 
 **Coverage follows the cache, not the viewport.** If the server keeps rows
@@ -352,7 +368,7 @@ it is correct rather than merely throttled: the rate limit falls out of a rule
 that is already there instead of being policy bolted on beside it.
 
 The same applies to shrinking, which already has no correctness deadline, and to
-the visible chunk, whose boundaries are worth restating once the view has
+the visible chunk, whose boundaries are worth restating once the scrolling has
 settled rather than while it is in motion.
 
 ## Eviction: flesh before skeleton
@@ -403,3 +419,7 @@ either end chooses to speak is its own.
   wants a low watermark.
 - **The jump into an uncovered middle**, when the user drags the thumb to
   nowhere in particular and there is no watermark to stand on.
+- **A name for what a reader holds.** Position, the sequence being read, the
+  watermark and the coverage are per-reader, and the thing that carries them is
+  not the result set and not the query — several readers share one of each. It
+  needs a word of its own before anything can be written about it precisely.

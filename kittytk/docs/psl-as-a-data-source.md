@@ -1,8 +1,8 @@
 # A PSL list as a data source
 
 > **Status: built, and flat.** One PSL list, read as records, with scopes drawn
-> out of it. Nothing here follows an include, applies an amendment or resolves a
-> hash — layering and shadowing are the next thing and are built on this rather
+> out of it. The reading follows no include, resolves no hash and merges no
+> layer — layering and shadowing are the next thing and are built on this rather
 > than into it. `data-sources-and-bundles.md` is the conversation those belong
 > to, `hosting-a-query.md` is the wire spelling, and `sort-and-filter.md` is the
 > comparison both ends stand on.
@@ -39,13 +39,19 @@ sink as they are produced — at once for `PSL`, whose records are here, and as
 they arrive for `Hosted`, whose records are an application's. The error is for
 a request that could not be started, never for one that has not finished.
 
-Two kinds are behind the interface today, and a third is a third
+Three kinds are behind the interface today, and a fourth is a fourth
 implementation:
 
 | | |
 |---|---|
 | `source.PSL` | records here, in a parsed PSL list |
 | `source.Hosted` | records an application's, asked for with `query` and answered with `result` |
+| `source.Amended` | any other kind, with replacements and deletions held over it |
+
+The third one wraps rather than holds. It answers the scope itself — it asks
+the child the same question and merges what comes back with what it holds of
+its own — which is what lets it stand in front of either of the others, or in
+front of another amended source.
 
 The shapes are the wire's own. A `Spec` and a `Fill` arrive exactly as
 `wire/query.go` takes them off a statement, and `Complete` is the three things
@@ -256,9 +262,13 @@ crossed rather than as a table.
 
 ## What is not here
 
-Layers, shadowing, the merge, nested bundles, `_amendments`, `_hash`, includes
-and version expressions. A source that combines a large static bundle with a
-small run-time delta has to be careful about which ranges it asks for, how many,
-and when — and has to hold the shadow across the lag while it waits. None of
-that is built, and all of it is built on a flat reading rather than instead of
-one.
+Layers, shadowing, the merge, nested bundles, `_hash`, includes and version
+expressions.
+
+The delta half of that is built. `source.Amended` combines a large static
+source with a small run-time set of replacements and deletions: it asks the
+child for enough extra to cover what its own deletions will take out of the
+answer, and goes back for another round from where the child got to when that
+prediction was wrong. What is not built is reading a bundle's `_amendments`
+into one, or stacking several sources into a layer — and both are built on a
+flat reading rather than instead of one.
