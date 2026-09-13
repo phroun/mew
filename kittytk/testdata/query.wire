@@ -324,3 +324,43 @@ bad
 
 spec source=f filter={ eq .kind (unterminated }
 bad
+
+# --- has, lacks, and what cannot be compared ---
+#
+# A field holding something with no order of its own -- a nested list -- cannot
+# be compared against anything: the comparison core calls every such value equal
+# to every other, which is what a sort needs and what a filter must not
+# inherit. So presence gets operators that do not try to compare, and they take
+# no value.
+
+spec source=f filter={ has .tags }
+want source="f" filter={ has .tags }
+
+spec source=f filter={ lacks .thumbnail }
+want source="f" filter={ lacks .thumbnail }
+
+spec source=f filter={ has .tags; lacks .thumbnail; ge .size 1024 }
+want source="f" filter={ has .tags; lacks .thumbnail; ge .size 1024 }
+
+spec source=f filter={ not { lacks .tags } }
+want source="f" filter={ not { lacks .tags } }
+
+spec source=f filter={ has .tags "x" }
+bad
+
+spec source=f filter={ lacks .tags undefined }
+bad
+
+spec source=f filter={ has }
+bad
+
+# A comparison takes a simple value. A block is a set, and a set is only
+# something `in` can be asked about.
+spec source=f filter={ eq .tags { a; b } }
+bad
+
+spec source=f filter={ ge .tags {} }
+bad
+
+spec source=f filter={ in .kind { folder; disk } }
+want source="f" filter={ in .kind folder disk }

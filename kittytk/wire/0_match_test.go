@@ -300,3 +300,66 @@ func TestABracketedSymbolIsAName(t *testing.T) {
 		}
 	}
 }
+
+// A field holding something with no order of its own -- a nested list -- cannot
+// be compared against anything, so every comparison naming one is false.
+//
+// The comparison core calls all such values equal, which is what a sort needs:
+// they tie, and the record key settles them. A filter inheriting that would
+// answer yes to `eq tags { ... }` for any record with any tags at all, having
+// looked inside nothing.
+func TestAListCannotBeCompared(t *testing.T) {
+	tagged := rec("name", "a", "tags", NewBlock(&Statement{Verb: "red"}))
+	plain := rec("name", "b")
+
+	for _, text := range []string{
+		"{ eq tags undefined }",
+		"{ ne tags undefined }",
+		`{ eq tags "red" }`,
+		"{ lt tags 3 }",
+		"{ ge tags 3 }",
+		"{ in tags red blue }",
+		`{ contains tags "red" }`,
+	} {
+		if Match(tagged, filter(t, text)) {
+			t.Errorf("%s matched a record whose field is a list", text)
+		}
+	}
+
+	// And the field being absent is a different thing from being a list, so
+	// comparisons against a record that has not got it are untouched.
+	if !Match(plain, filter(t, "{ eq tags undefined }")) {
+		t.Error("a record without the field stopped comparing as undefined")
+	}
+}
+
+// Which is why presence has operators of its own: they ask whether the record
+// carries the field, whatever it holds, and take no value.
+func TestHasAndLacksAskWhetherTheFieldIsThere(t *testing.T) {
+	tagged := rec("name", "a", "tags", NewBlock(&Statement{Verb: "red"}))
+	plain := rec("name", "b")
+
+	for _, c := range []struct {
+		text string
+		on   Record
+		want bool
+	}{
+		{"{ has tags }", tagged, true},
+		{"{ has tags }", plain, false},
+		{"{ lacks tags }", tagged, false},
+		{"{ lacks tags }", plain, true},
+
+		// Whatever the field holds, including a plain value.
+		{"{ has name }", tagged, true},
+		{"{ lacks name }", tagged, false},
+
+		// And they compose like any other predicate.
+		{"{ has tags; eq name \"a\" }", tagged, true},
+		{"{ not { lacks tags } }", tagged, true},
+		{"{ not { lacks tags } }", plain, false},
+	} {
+		if got := Match(c.on, filter(t, c.text)); got != c.want {
+			t.Errorf("%s matched %v", c.text, got)
+		}
+	}
+}

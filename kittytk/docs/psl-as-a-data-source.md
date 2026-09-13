@@ -156,6 +156,9 @@ nothing added:
   unordered` — and `lt` and `gt` still answer.
 - **A text predicate against a value that is not text** is `false`, not an
   error.
+- **A field holding a nested list** cannot be compared against anything, so
+  every comparison naming one is `false`. `has .tags` and `lacks .tags` ask
+  whether the field is there, whatever it holds.
 
 One consequence is worth knowing before it surprises somebody: **`undefined`
 sits below every number**, so `filter={ lt .size 1000 }` holds every record that

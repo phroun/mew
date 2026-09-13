@@ -63,9 +63,16 @@ OP_CONTAINS = "contains"
 OP_STARTS = "starts"
 OP_ENDS = "ends"
 
+# OP_HAS and OP_LACKS ask whether a record carries a field at all, and take no
+# value. Every other operator compares one, and a field holding something with
+# no order of its own -- a nested list -- cannot be compared, so presence needs
+# an operator that does not try.
+OP_HAS = "has"
+OP_LACKS = "lacks"
+
 _GROUPS = (OP_AND, OP_OR, OP_NOT)
 _PREDICATES = (OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE, OP_IN,
-               OP_CONTAINS, OP_STARTS, OP_ENDS)
+               OP_CONTAINS, OP_STARTS, OP_ENDS, OP_HAS, OP_LACKS)
 
 
 class QueryError(ValueError):
@@ -351,6 +358,11 @@ def _parse_predicate(st: Statement) -> Filter:
             if a.value is not None or a.flag != FlagState.TRUE:
                 raise QueryError("%s: names no field" % st.verb)
             f.field = a.name
+        elif a.value is not None and a.value.kind == ValueKind.BLOCK and f.op != OP_IN:
+            # A comparison takes a simple value. A block is a set, and a set is
+            # only something `in` can be asked about.
+            raise QueryError("%s %s: compares against a value, not a block"
+                             % (st.verb, f.field))
         elif a.value is not None and a.value.kind == ValueKind.BLOCK and f.op == OP_IN:
             # A set of words, which is what a block can hold: every statement
             # in it is one bare name.
@@ -363,6 +375,11 @@ def _parse_predicate(st: Statement) -> Filter:
             f.values.append(_operand_value(st.verb, a))
     if not f.field:
         raise QueryError("%s: names no field" % st.verb)
+    if f.op in (OP_HAS, OP_LACKS):
+        if f.values:
+            raise QueryError("%s %s: asks whether the field is there, and takes no value"
+                             % (f.op, f.field))
+        return f
     if not f.values:
         raise QueryError("%s %s: nothing to compare against" % (st.verb, f.field))
     if f.op != OP_IN and len(f.values) > 1:

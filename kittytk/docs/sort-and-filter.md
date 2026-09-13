@@ -155,6 +155,7 @@ instead of inventing an argument name for every operand.
 | `eq` `ne` `lt` `le` `gt` `ge` | comparison, by the core above |
 | `in` | one field against a set: `in kind { folder; disk }` |
 | `contains` `starts` `ends` | strings only, collation-aware |
+| `has` `lacks` | whether the record carries the field at all; no value |
 | `and` `or` `not` | a block of predicates |
 
 A text op carries its collation where it differs from the default:
@@ -178,12 +179,28 @@ not.
 symbol and a string are different values. So a filter needs no type
 annotations: the value's own spelling says what it is.
 
-**There is no presence operator.** `undefined` is a value with a rank, so
-`eq thumbnail undefined` already asks whether a record has the field — one less
-thing to specify and one less thing to learn.
+**A comparison takes a simple value**, and the last rank is not one. A field
+holding something with no order of its own — a nested list — cannot be compared
+against anything, so **every comparison naming one is false**.
 
-For the same reason there is no `nulls first` knob: `undefined` sits at the
-bottom of the rank, and `desc` lifts it to the top along with everything else.
+That is a rule the filter has and the sort does not. The comparison core calls
+all such values equal, which is exactly what a sort needs: they tie, and the
+record key settles them. A filter inheriting it would answer *yes* to
+`eq tags { … }` for any record carrying any tags at all, having looked inside
+nothing — a false positive, in the direction a filter should never fail. It
+cannot answer, so it does not admit.
+
+A block is refused as an operand for the same reason: `eq tags { a; b }` is not
+a question this grammar asks. A block after a field is a **set**, and a set is
+only something `in` can be asked about.
+
+**`has` and `lacks` are how presence is asked**, and they take no value. They
+work whatever the field holds, which is the point — `eq thumbnail undefined`
+still answers for a field holding a simple value, but it cannot serve a field
+holding a list, and presence is not a comparison.
+
+There is no `nulls first` knob: `undefined` sits at the bottom of the rank, and
+`desc` lifts it to the top along with everything else.
 
 ## Agreement is settled at open, not discovered later
 

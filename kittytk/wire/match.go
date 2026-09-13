@@ -50,18 +50,39 @@ func Match(rec Record, f *Filter) bool {
 		// which is how a negation is nearly always written -- the two readings
 		// agree anyway.
 		return !all(rec, f.Children)
+	case OpHas:
+		return rec.Field(f.Field) != nil
+	case OpLacks:
+		return rec.Field(f.Field) == nil
 	case OpContains, OpStarts, OpEnds:
 		return matchText(f.Op, rec.Field(f.Field), f.Value(), f.Collate)
-	case OpIn:
+	}
+
+	have := rec.Field(f.Field)
+
+	// A value with no order of its own -- a nested list -- cannot be compared
+	// against anything, so every comparison naming one is false.
+	//
+	// The comparison core says such values are all equal, which is what a sort
+	// needs: they tie, and the record key settles them. A filter asking `eq
+	// .tags { ... }` would inherit that and answer yes for any record with any
+	// tags at all, having looked inside nothing. It cannot answer, so it does
+	// not admit -- a filter narrows, and that is the direction to fail in.
+	// Whether the field is there at all is what `has` and `lacks` are for.
+	if Rank(have) == RankUnordered {
+		return false
+	}
+
+	if f.Op == OpIn {
 		for _, v := range f.Values {
-			if Compare(rec.Field(f.Field), v, f.Collate) == 0 {
+			if Compare(have, v, f.Collate) == 0 {
 				return true
 			}
 		}
 		return false
 	}
 
-	c := Compare(rec.Field(f.Field), f.Value(), f.Collate)
+	c := Compare(have, f.Value(), f.Collate)
 	switch f.Op {
 	case OpEq:
 		return c == 0

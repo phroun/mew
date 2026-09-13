@@ -1114,8 +1114,13 @@ bad:
 static int parse_filter_block(const kt_script *sc, const char *op, kt_filter *out, char *err);
 
 static int parse_predicate(const kt_stmt *st, kt_filter *out, char *err) {
+    /* `has` and `lacks` ask whether a record carries a field at all, and take
+       no value. Every other operator compares one, and a field holding
+       something with no order of its own -- a nested list -- cannot be
+       compared, so presence needs an operator that does not try. */
     static const char *preds[] = {"eq", "ne", "lt", "le", "gt", "ge", "in",
-                                  "contains", "starts", "ends", NULL};
+                                  "contains", "starts", "ends",
+                                  "has", "lacks", NULL};
     memset(out, 0, sizeof *out);
     if (is_group(st->verb)) {
         if (st->n != 1 || !st->args[0].has_value || st->args[0].kind != 4) {
@@ -1158,6 +1163,13 @@ static int parse_predicate(const kt_stmt *st, kt_filter *out, char *err) {
             out->field = strdup(a->name);
             continue;
         }
+        if (a->has_value && a->kind == 4 && strcmp(out->op, "in") != 0) {
+            /* A comparison takes a simple value. A block is a set, and a set is
+               only something `in` can be asked about. */
+            qfail(err, "%s %s: compares against a value, not a block",
+                  st->verb, out->field);
+            goto bad;
+        }
         if (a->has_value && a->kind == 4 && !strcmp(out->op, "in")) {
             /* A set of words, which is what a block can hold: every statement
              * in it is one bare name. */
@@ -1185,6 +1197,14 @@ static int parse_predicate(const kt_stmt *st, kt_filter *out, char *err) {
         ((kt_value *)out->values)[out->nvalues++] = v;
     }
     if (!*out->field) { qfail(err, "%s: names no field", st->verb); goto bad; }
+    if (!strcmp(out->op, "has") || !strcmp(out->op, "lacks")) {
+        if (out->nvalues > 0) {
+            qfail(err, "%s %s: asks whether the field is there, and takes no value",
+                  out->op, out->field);
+            goto bad;
+        }
+        return 1;
+    }
     if (out->nvalues == 0) {
         qfail(err, "%s %s: nothing to compare against", st->verb, out->field);
         goto bad;

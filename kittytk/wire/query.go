@@ -49,6 +49,13 @@ const (
 	OpContains = "contains"
 	OpStarts   = "starts"
 	OpEnds     = "ends"
+
+	// OpHas and OpLacks ask whether a record carries a field at all, and take
+	// no value. Every other operator compares one, and a field holding
+	// something with no order of its own -- a nested list -- cannot be
+	// compared, so presence needs an operator that does not try.
+	OpHas   = "has"
+	OpLacks = "lacks"
 )
 
 // Fields is a bag of named values, and one shape serves three jobs: the fields
@@ -373,7 +380,8 @@ func parsePredicate(st *Statement) (*Filter, error) {
 			return nil, fmt.Errorf("not: takes something to negate")
 		}
 		return inner, nil
-	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpIn, OpContains, OpStarts, OpEnds:
+	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpIn, OpContains, OpStarts, OpEnds,
+		OpHas, OpLacks:
 	default:
 		return nil, fmt.Errorf("no filter operator called %q", st.Verb)
 	}
@@ -393,6 +401,11 @@ func parsePredicate(st *Statement) (*Filter, error) {
 				return nil, fmt.Errorf("%s: names no field", st.Verb)
 			}
 			f.Field = a.Name
+		case a.Value != nil && a.Value.Kind == BlockValue && f.Op != OpIn:
+			// A comparison takes a simple value. A block is a set, and a set is
+			// only something `in` can be asked about.
+			return nil, fmt.Errorf("%s %s: compares against a value, not a block",
+				st.Verb, f.Field)
 		case a.Value != nil && a.Value.Kind == BlockValue && f.Op == OpIn:
 			// A set of words, which is what a block can hold: every statement
 			// in it is one bare name.
@@ -412,6 +425,13 @@ func parsePredicate(st *Statement) (*Filter, error) {
 	}
 	if f.Field == "" {
 		return nil, fmt.Errorf("%s: names no field", st.Verb)
+	}
+	if f.Op == OpHas || f.Op == OpLacks {
+		if len(f.Values) > 0 {
+			return nil, fmt.Errorf("%s %s: asks whether the field is there, and takes no value",
+				f.Op, f.Field)
+		}
+		return f, nil
 	}
 	if len(f.Values) == 0 {
 		return nil, fmt.Errorf("%s %s: nothing to compare against", st.Verb, f.Field)
