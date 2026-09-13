@@ -101,6 +101,14 @@ extras (infinities, hexadecimal floats, digit separators), and three
 implementations have to agree on exactly where a number stops and a symbol
 begins.
 
+**A symbol with no bare spelling is bracketed**: `(objectLibrary/figaro/3)`,
+`(*star)`. Parentheses because that is what they already mean — PawScript
+evaluates a block written in braces and preserves what is written in
+parentheses, and the wire's block is braces too, so both languages say the same
+thing with the same brackets. There are no escapes inside and none are needed: a
+symbol cannot hold a closing parenthesis in PawScript either, and a newline is
+refused for the same reason it ends a statement.
+
 The first level that separates two records decides. A level settles only what
 the levels above it left equal, so "by department, then by salary, highest
 first" is two levels and the answer never depends on what the records were

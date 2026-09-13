@@ -256,3 +256,47 @@ func TestALeadingSignSaysNumberAndNothingElse(t *testing.T) {
 		}
 	}
 }
+
+// A symbol the grammar has no bare spelling for is bracketed rather than
+// turned into something else, so every symbol crosses as a symbol.
+func TestASymbolWithNoBareSpellingIsBracketed(t *testing.T) {
+	for _, c := range []struct{ word, text string }{
+		{"plain", "plain"},
+		{"kebab-case", "kebab-case"},
+		{"2026-09-13", "2026-09-13"},
+		{"objectLibrary/figaro/3", "(objectLibrary/figaro/3)"},
+		{"*star", "(*star)"},
+		{"two words", "(two words)"},
+		{"quote\"inside", `(quote"inside)`},
+		{"semi;colon", "(semi;colon)"},
+		{"{braced}", "({braced})"},
+		// What spells a number is bracketed too, or it would come back as one.
+		{"3", "(3)"},
+		{"1e+21", "(1e+21)"},
+		{"-3", "(-3)"},
+	} {
+		got := EncodeValue(NewWord(c.word))
+		if got != c.text {
+			t.Errorf("the symbol %q was written %s", c.word, got)
+		}
+		script, err := Parse("f v=" + got)
+		if err != nil {
+			t.Errorf("%s did not read back: %v", got, err)
+			continue
+		}
+		v := script.Statements[0].Args[0].Value
+		if v == nil || v.Kind != WordValue || v.Word != c.word {
+			t.Errorf("%s read back as %#v", got, v)
+		}
+	}
+}
+
+// An empty bracket names nothing, and one that does not close runs past the
+// end of the statement, so both are refused rather than half-read.
+func TestABracketedSymbolIsAName(t *testing.T) {
+	for _, text := range []string{"f v=()", "f v=(unterminated", "f v=(two\nlines)"} {
+		if _, err := Parse(text); err == nil {
+			t.Errorf("%q was accepted", text)
+		}
+	}
+}

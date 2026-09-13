@@ -248,14 +248,10 @@ func pslValue(v any) *wire.Value {
 		// `kind: text` and `kind: "text"` reach a filter as the two different
 		// questions they were written as.
 		//
-		// PSL spells a symbol more widely than the wire spells a word -- `1x`,
-		// `kebab-case` and `*star` are all symbols -- and a word is written as
-		// itself with nothing around it. One the wire cannot spell crosses as a
-		// string rather than as text the far end would read as something else.
-		if wire.IsWord(string(x)) {
-			return wire.NewWord(string(x))
-		}
-		return wire.NewString(string(x))
+		// Every symbol crosses as one. The wire writes what it can read back
+		// bare -- `kebab-case`, `2026-09-13` -- and brackets the rest:
+		// `(objectLibrary/figaro/3)`. Nothing turns into a string on the way.
+		return wire.NewWord(string(x))
 	case *pawscript.PSLNode:
 		return pslRecord{reading: Whole, value: x}.fields().Block()
 	}

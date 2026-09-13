@@ -119,3 +119,29 @@ class FilterShapeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProtectedSymbolTest(unittest.TestCase):
+    """A symbol the grammar has no bare spelling for is bracketed. The corpus is
+    a line per case and cannot hold a newline inside a value, so the one that
+    runs past the end of its statement is checked here."""
+
+    def test_a_bracketed_symbol_is_a_name_on_one_line(self):
+        for text in ("f v=()", "f v=(unterminated", "f v=(two\nlines)"):
+            with self.assertRaises(protocol.ParseError, msg=repr(text)):
+                protocol.parse(text)
+
+    def test_a_bracketed_symbol_reads_back_as_the_symbol_it_was(self):
+        for word, text in (
+            ("plain", "plain"),
+            ("kebab-case", "kebab-case"),
+            ("objectLibrary/figaro/3", "(objectLibrary/figaro/3)"),
+            ("*star", "(*star)"),
+            ("two words", "(two words)"),
+            ("3", "(3)"),
+        ):
+            got = protocol.encode_value(protocol.new_word(word))
+            self.assertEqual(got, text)
+            v = protocol.parse("f v=" + got).statements[0].args[0].value
+            self.assertEqual(v.kind, protocol.ValueKind.WORD)
+            self.assertEqual(v.word, word)

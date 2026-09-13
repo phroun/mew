@@ -134,7 +134,13 @@ def encode_value(v: Optional[Value]) -> str:
     if v is None:
         return WORD_UNDEFINED
     if v.kind == ValueKind.WORD:
-        return v.word
+        # Bare where the grammar can read it back as itself, and bracketed
+        # where it cannot: `(objectLibrary/figaro/3)`. A symbol holding a
+        # closing parenthesis or a newline has no spelling at all, which is no
+        # loss -- neither can be written as a symbol in PawScript either.
+        if is_word(v.word):
+            return v.word
+        return "(" + v.word + ")"
     if v.kind == ValueKind.NUMBER:
         if v.is_int:
             return str(int(v.number))
@@ -470,6 +476,30 @@ class _Parser:
             out.append(self.advance())
         return ''.join(out)
 
+    def parse_protected_symbol(self) -> str:
+        """A symbol the grammar has no bare spelling for:
+        `(objectLibrary/figaro/3)`.
+
+        Parentheses because that is what they already mean. PawScript evaluates
+        a block written in braces and preserves what is written in parentheses
+        -- literal content, held unparsed -- and the wire's block is braces too.
+
+        There are no escapes inside, and none are needed: a symbol cannot
+        contain a closing parenthesis in PawScript either. A newline is refused
+        for the same reason it ends a statement."""
+        self.advance()  # '('
+        out = []
+        while True:
+            if self.eof() or self.peek() == '\n':
+                raise self._errf("unterminated symbol: expected ')'")
+            if self.peek() == ')':
+                self.advance()
+                break
+            out.append(self.advance())
+        if not out:
+            raise self._errf("a symbol is a name, and () is not one")
+        return ''.join(out)
+
     def parse_string(self) -> str:
         if self.peek() != '"':
             raise self._errf("expected string")
@@ -554,6 +584,8 @@ class _Parser:
         c = self.peek()
         if c == '"':
             return Value(kind=ValueKind.STRING, str=self.parse_string())
+        if c == '(':
+            return Value(kind=ValueKind.WORD, word=self.parse_protected_symbol())
         if c == '{':
             self.advance()  # '{'
             block = self.parse_script(False)

@@ -102,7 +102,14 @@ func EncodeValue(v *Value) string {
 	}
 	switch v.Kind {
 	case WordValue:
-		return v.Word
+		// Bare where the grammar can read it back as itself, and bracketed
+		// where it cannot: `(objectLibrary/figaro/3)`. A symbol holding a
+		// closing parenthesis or a newline has no spelling at all, which is no
+		// loss -- neither can be written as a symbol in PawScript either.
+		if IsWord(v.Word) {
+			return v.Word
+		}
+		return "(" + v.Word + ")"
 	case NumberValue:
 		if v.IsInt {
 			return strconv.FormatInt(v.Int, 10)

@@ -98,7 +98,7 @@ filter={ eq .key "figaro" }
 | a whole number | an integer, exact, however large |
 | a fractional number | a float |
 | `true`, `false`, `nil` | the words |
-| a bare word | a symbol, or a string where the wire reserves its punctuation |
+| a bare word | a symbol, bare or bracketed |
 | a nested list | a block of its own members, which is the unordered rank |
 | absent | nothing is sent, and an absent field reads as `undefined` |
 
@@ -123,11 +123,20 @@ language's own number parser:
 A token with a leading sign is a number and nothing else, so one that does not
 measure up is refused rather than quietly becoming a symbol.
 
-PSL still spells a symbol a little more widely — punctuation the wire reserves
-for its own grammar has no place in a bare token — so `*star` cannot be written
-as a word. A word is written as itself with nothing around it, so one the wire
-cannot spell crosses as a **string** rather than as text the far end would read
-as something else. `wire.IsWord` is what decides.
+A symbol with no bare spelling is **bracketed**, not turned into something
+else, so every symbol crosses as a symbol:
+
+```
+{ .addr (objectLibrary/figaro/3); .dashed kebab-case; .starred (*star) }
+```
+
+Parentheses because that is what they already mean. PawScript evaluates a block
+written in braces and preserves what is written in parentheses — literal
+content, held unparsed — and the wire's block is braces too, so both languages
+say the same thing with the same brackets. There are no escapes inside and none
+are needed: a symbol cannot hold a closing parenthesis in PawScript either.
+`wire.IsWord` decides which spelling is written, and a bundle address stays an
+address rather than becoming a string.
 
 `undefined` says the same thing in both languages, so it crosses as the word —
 which makes `thumbnail: undefined` in the document and a record with no

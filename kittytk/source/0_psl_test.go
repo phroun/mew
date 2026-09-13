@@ -471,20 +471,21 @@ func TestABareWordIsASymbolAndAQuotedOneIsAString(t *testing.T) {
 // most of what PSL calls a symbol is a symbol here too: a hyphen, a leading
 // digit and a date all cross as themselves.
 //
-// PSL still spells one more widely, though -- punctuation the wire reserves for
-// its own grammar has no place in a bare token -- and a word is written as
-// itself with nothing around it. One the wire cannot spell crosses as a string
-// rather than as text the far end would read as something else.
-func TestASymbolTheWireCannotSpellCrossesAsAString(t *testing.T) {
-	v := open(t, `( (ok: plain, digits: 1x, dashed: kebab-case, dated: 2026-09-13, starred: *star) )`, "")
+// And the rest crosses as a symbol as well, bracketed rather than bare. Nothing
+// turns into a string on the way, so a bundle address stays an address.
+func TestEverySymbolCrossesAsASymbol(t *testing.T) {
+	v := open(t, `( (ok: plain, digits: 1x, dashed: kebab-case, dated: 2026-09-13,
+	                starred: *star, addr: objectLibrary/figaro/3) )`, "")
 	out, _ := fill(t, v, "have=0 need=1")
 
 	got := out.fields[0].Encode()
-	want := `{ .dashed kebab-case; .dated 2026-09-13; .digits 1x; .ok plain; .starred "*star" }`
+	want := `{ .addr (objectLibrary/figaro/3); .dashed kebab-case; .dated 2026-09-13; ` +
+		`.digits 1x; .ok plain; .starred (*star) }`
 	if got != want {
 		t.Errorf("the record carries %s", got)
 	}
-	// Which is text the far end reads back as what was sent.
+
+	// And every one of them reads back as the symbol it was sent as.
 	script, err := wire.Parse("result 1 fields=" + got)
 	if err != nil {
 		t.Fatalf("what went out does not read back: %v", err)
@@ -493,11 +494,15 @@ func TestASymbolTheWireCannotSpellCrossesAsAString(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := back.Get(".dated"); v == nil || v.Kind != wire.WordValue || v.Word != "2026-09-13" {
-		t.Errorf("the date read back as %#v", v)
-	}
-	if v := back.Get(".starred"); v == nil || v.Kind != wire.StringValue {
-		t.Errorf("the unspellable symbol read back as %#v", v)
+	for name, word := range map[string]string{
+		".dated":   "2026-09-13",
+		".starred": "*star",
+		".addr":    "objectLibrary/figaro/3",
+	} {
+		v := back.Get(name)
+		if v == nil || v.Kind != wire.WordValue || v.Word != word {
+			t.Errorf("%s read back as %#v", name, v)
+		}
 	}
 }
 

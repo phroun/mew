@@ -295,3 +295,32 @@ bad
 # position 0 and not the number zero.
 spec source=f sort={ .0 natural }
 want source="f" sort={ .0 natural }
+
+# --- a symbol the grammar has no bare spelling for ---
+#
+# Parentheses because that is what they already mean: PawScript evaluates a
+# block written in braces and preserves what is written in parentheses, and the
+# wire's block is braces too. So both languages say the same thing with the same
+# brackets -- braces for what is read, parentheses for what is kept as it
+# stands.
+#
+# What can be written bare is written bare, so the brackets appear only where
+# they are carrying something.
+
+spec source=f filter={ eq .addr (objectLibrary/figaro/3) }
+want source="f" filter={ eq .addr (objectLibrary/figaro/3) }
+
+spec source=f filter={ eq .kind (*star) }
+want source="f" filter={ eq .kind (*star) }
+
+spec source=f filter={ eq .n (1e+21) }
+want source="f" filter={ eq .n (1e+21) }
+
+spec source=f filter={ eq .kind (plain) }
+want source="f" filter={ eq .kind plain }
+
+spec source=f filter={ eq .kind () }
+bad
+
+spec source=f filter={ eq .kind (unterminated }
+bad

@@ -140,6 +140,19 @@ int main(int argc, char **argv) {
     fclose(f);
     if (open_line) { printf("line %d: a case with no answer\n", open_line); failures++; }
 
+    /* A bracketed symbol that runs past the end of its statement. The corpus is
+       a line per case and cannot hold a newline inside a value, so this one is
+       checked here instead. */
+    {
+        const char *runs_on = "filter={ eq .kind (two\nlines) }";
+        char got[4096];
+        if (answer("spec", runs_on, got, sizeof got)) {
+            printf("a symbol running past its statement was read as %s\n", got);
+            failures++;
+        }
+        cases++;
+    }
+
     printf("cases %d\n", cases);
     printf("DONE\n");
     return failures ? 1 : 0;

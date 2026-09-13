@@ -621,9 +621,36 @@ static char *p_string(kt_p *p, size_t *outlen) {  /* assumes current char is '"'
 
 static int p_script(kt_p *p, kt_script *out, int in_block);
 
+/* A symbol the grammar has no bare spelling for: `(objectLibrary/figaro/3)`.
+
+   Parentheses because that is what they already mean. PawScript evaluates a
+   block written in braces and preserves what is written in parentheses --
+   literal content, held unparsed -- and the wire's block is braces too. So the
+   two languages say the same thing with the same brackets.
+
+   There are no escapes inside, and none are needed: a symbol cannot contain a
+   closing parenthesis in PawScript either. A newline is refused for the same
+   reason it ends a statement. */
+static char *p_protected_symbol(kt_p *p, size_t *len) {
+    kt_buf b = {0};
+    p->pos++;  /* '(' */
+    for (;;) {
+        if (p_eof(p) || p_peek(p) == '\n') { p->bad = 1; break; }
+        if (p_peek(p) == ')') { p->pos++; break; }
+        buf_put(&b, p->s[p->pos++]);
+    }
+    if (b.len == 0) p->bad = 1;
+    *len = b.len;
+    char *w = buf_dup(&b);
+    free(b.p);
+    return w;
+}
+
 static void p_value(kt_p *p, kt_arg *a) {
     char c = p_peek(p);
-    if (c == '{') {
+    if (c == '(') {
+        a->kind = 3; a->has_value = 1; a->sval = p_protected_symbol(p, &a->slen);
+    } else if (c == '{') {
         p->pos++;  /* '{' */
         kt_script *sc = calloc(1, sizeof *sc);
         p_script(p, sc, 1);
@@ -691,7 +718,7 @@ static int p_statement(kt_p *p, kt_stmt *st, int in_block) {
             p_skip_inline(p);
             if (!p_eof(p) && p_peek(p) == '=') { p->pos++; p_value(p, &a); a.flag = KT_FLAG_NONE; }
             else a.flag = KT_FLAG_TRUE;
-        } else if (is_token_rune(c) || c == '"' || c == '{') {
+        } else if (is_token_rune(c) || c == '"' || c == '{' || c == '(') {
             /* An operand: a value with no name, in the order it was written.
              * A target reference is one, and so is a filter's field and what
              * it is matched against. */
@@ -784,6 +811,18 @@ const kt_value *kt_bag_get(const kt_bag *b, const char *name) {
 
 const kt_value *kt_bag_key(const kt_bag *b) { return kt_bag_get(b, KT_KEY_FIELD); }
 
+/* Whether a string can be written as a bare word and read back as the same one.
+   Three things stop it: a character a bare token cannot hold, a leading sign --
+   which says the token is a number and nothing else -- and spelling a number,
+   which is what it would come back as. */
+static int kt_is_word(const char *s) {
+    if (!s || !*s || s[0] == '+' || s[0] == '-') return 0;
+    for (const char *c = s; *c; c++) if (!is_token_rune(*c)) return 0;
+    kt_arg probe;
+    memset(&probe, 0, sizeof probe);
+    return !number_value(s, &probe);
+}
+
 /* --- writing a value back out --- */
 
 /* A float in as few digits as read it back exactly, and never in a spelling
@@ -818,9 +857,21 @@ static void enc_value(kt_buf *b, const kt_value *v) {
         free(t);
         break;
     }
-    case KT_V_WORD:
-        buf_puts(b, v->sval ? v->sval : "");
+    case KT_V_WORD: {
+        /* Bare where the grammar can read it back as itself, and bracketed
+           where it cannot. A symbol holding a closing parenthesis or a newline
+           has no spelling at all, which is no loss -- neither can be written as
+           a symbol in PawScript either. */
+        const char *w = v->sval ? v->sval : "";
+        if (kt_is_word(w)) {
+            buf_puts(b, w);
+        } else {
+            buf_put(b, '(');
+            buf_puts(b, w);
+            buf_put(b, ')');
+        }
         break;
+    }
     default:
         buf_puts(b, "undefined");
         break;

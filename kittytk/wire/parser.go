@@ -254,6 +254,38 @@ func (p *parser) parseWord() (string, error) {
 	return sb.String(), nil
 }
 
+// parseProtectedSymbol reads a symbol the grammar has no bare spelling for:
+// `(objectLibrary/figaro/3)`.
+//
+// Parentheses because that is what they already mean. PawScript evaluates a
+// block written in braces and preserves what is written in parentheses --
+// literal content, held unparsed -- and the wire's block is braces too. So the
+// two languages say the same thing with the same brackets: braces for what is
+// read, parentheses for what is kept as it stands.
+//
+// There are no escapes inside, and none are needed: a symbol cannot contain a
+// closing parenthesis in PawScript either, so nothing that can be written there
+// is unwritable here. A newline is refused for the same reason it ends a
+// statement -- an identifier does not hold one.
+func (p *parser) parseProtectedSymbol() (string, error) {
+	p.advance() // '('
+	var sb strings.Builder
+	for {
+		if p.eof() || p.peek() == '\n' {
+			return "", p.errf("unterminated symbol: expected ')'")
+		}
+		if p.peek() == ')' {
+			p.advance()
+			break
+		}
+		sb.WriteRune(p.advance())
+	}
+	if sb.Len() == 0 {
+		return "", p.errf("a symbol is a name, and () is not one")
+	}
+	return sb.String(), nil
+}
+
 func (p *parser) parseString() (string, error) {
 	if p.peek() != '"' {
 		return "", p.errf("expected string")
@@ -430,6 +462,12 @@ func (p *parser) parseValue(inBlock bool) (*Value, error) {
 			return nil, err
 		}
 		return &Value{Kind: StringValue, Str: s}, nil
+	case p.peek() == '(':
+		w, err := p.parseProtectedSymbol()
+		if err != nil {
+			return nil, err
+		}
+		return &Value{Kind: WordValue, Word: w}, nil
 	case p.peek() == '{':
 		p.advance() // '{'
 		block, err := p.parseScript(false)
