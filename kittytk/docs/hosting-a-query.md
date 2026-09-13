@@ -224,11 +224,12 @@ between where you asked from and this point that you do not now have*, and
 `exhausted` says it of the whole sequence. Those are the only statements the
 display takes on trust, because they are the only ones it cannot check.
 
-So the single mistake is **cutting records out and then claiming the range
-anyway** — filtering too hard, and saying the result was complete. An
-application that filters too hard and stays quiet about coverage has corrupted
-nothing; the display simply never gets a complete range out of it and goes on
-asking.
+So the single mistake is **cutting out records that match, and then claiming
+the range anyway**. Cutting out records that do not match is the filtering; it
+is what the filter is for. An application that drops matching records and stays
+quiet about coverage has still corrupted nothing — the display simply never
+gets a complete range out of it and goes on asking. It is the claim that makes
+the loss a lie.
 
 Which is why an application never has to reproduce the comparison core exactly.
 Exactness buys a smaller answer, not a correct one.
