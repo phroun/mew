@@ -17,7 +17,6 @@ type Source interface{ Open(spec *wire.Spec) (View, error) }
 
 type View interface {
     Fill(f *wire.Fill, out Sink) (Complete, error)
-    Respec(spec *wire.Spec) error
     Close()
 }
 
@@ -28,6 +27,10 @@ The shapes are the wire's own. A `Spec` and a `Fill` arrive exactly as
 `wire/query.go` takes them off a statement, and `Complete` is the three things
 `result <id> complete` can carry — `ordered`, a watermark, `exhausted`. So a
 source backed by an application is a relay rather than a translation.
+
+A view does not change. A different sort or a different filter is a different
+view, opened alongside the one it replaces and closed after it — which is what
+keeps the source in use while the reader moves across.
 
 ## Two spaces, one sequence
 
@@ -101,9 +104,16 @@ filter={ eq .key "figaro" }
 A nested list's contents are written the `Whole` way whatever the reading,
 because a position inside one has no other spelling.
 
-**PSL has no symbol.** A bare word in a PSL document comes back as a string, so
-`kind: text` is `"text"` and `eq .kind text` — which asks about the *word* text
-— matches nothing. `eq .kind "text"` is the question to ask.
+**A symbol arrives as a string.** PSL carries symbols — it is a canonical
+spelling of PawScript's paren lists, and its parser has the type — but
+`PSLNode` does not keep them: `convertFromPawValue` maps a `Symbol` to a Go
+string, keeping only `nil`, `true` and `false` apart. So a document written
+`kind: text` reaches here as `"text"`, and `eq .kind text` — which asks about
+the *word* — matches nothing where `eq .kind "text"` does.
+
+That is the node accessor rather than the format, and it is one branch in
+pawscript to change. Until it is, the symbol rank is unreachable from a
+PSL-backed source.
 
 ## Records that are not uniform
 
@@ -135,7 +145,7 @@ The sort tuples are kept beside the rows rather than recomputed, because
 extracting a field is a map lookup and a conversion, and a sort that did it per
 comparison would read the data `n log n` times instead of once. Orderings are
 cached on the spec that names them, so two views of one sequence share the work
-and a re-sort back to a column somebody clicked before is free.
+and going back to a column somebody clicked before is free.
 
 A window emits every record in `(from..to]` and then carries on past `to` only
 while it is still short of `need` — which is what the far end has to merge
@@ -178,14 +188,14 @@ kittytk-queryrun -psl objects.psl -reading members query.txt
 ```
 q=new query source="objects" filter={ not { starts .0 "." } } sort={ .0 natural } have=0 need=5
 query q from={ .0 "src/file10.go"; key 6 } have=0 need=5
-set q sort={ .size desc }
-query q have=0 need=5
+r=new query source="objects" sort={ .size desc } have=0 need=5
 destroy q
 ```
 
-The file holds `new`, `query`, `set` and `destroy`, which are the statements a
-display would have sent. `-raw` prints them as they would have crossed rather
-than as a table.
+The file holds `new`, `query` and `destroy`, which are the statements a display
+would have sent — and a different sequence is another `new query`, opened
+before the one it replaces is let go. `-raw` prints them as they would have
+crossed rather than as a table.
 
 ## What is not here
 

@@ -62,13 +62,13 @@ func TestAQueryFileIsAnsweredOutOfAPSLFile(t *testing.T) {
 }
 
 // Opening carries the first window, and every statement after it addresses the
-// query that is open: another window, a restatement, and letting it go.
-func TestAFileOpensRefillsRestatesAndLetsGo(t *testing.T) {
+// query that is open: another window, and letting it go. A different sequence
+// is another `new query`, so the file says so.
+func TestAFileOpensRefillsAndLetsGo(t *testing.T) {
 	p := drive(t, source.Whole, strings.Join([]string{
 		`q=new query source="objects" sort={ .size } have=0 need=2`,
 		`query q from={ .size 310; key 1 } have=0 need=1`,
-		`set q sort={ .size desc }`,
-		`query q have=0 need=1`,
+		`r=new query source="objects" sort={ .size desc } have=0 need=1`,
 		`destroy q`,
 	}, "\n"))
 
@@ -77,10 +77,27 @@ func TestAFileOpensRefillsRestatesAndLetsGo(t *testing.T) {
 		keys = append(keys, row[0])
 	}
 	// By size ascending the bare string has none and leads, then go.mod and
-	// build.sh; the window after build.sh is README.md; and re-sorted the
-	// other way the first record is the largest.
+	// build.sh; the window after build.sh is README.md; and the other way
+	// round the first record is the largest.
 	if strings.Join(keys, ",") != `"notes",2,0,3` {
 		t.Errorf("the records that came back are %v", keys)
+	}
+}
+
+// A query cannot be restated, so a file that tries is refused rather than
+// quietly answering the wrong sequence.
+func TestAFileCannotRestateAQuery(t *testing.T) {
+	src, err := source.ParsePSL(objects, source.Whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := wire.Parse(`q=new query source="objects" have=0 need=1` + "\n" +
+		`set q sort={ .size }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run(src, script, &printer{}); err == nil {
+		t.Error("a restatement was accepted")
 	}
 }
 
@@ -112,7 +129,6 @@ func TestAFileThatIsNotAQueryIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, text := range []string{
-		`set 1 sort={ .size }`,
 		`query 1 have=0 need=5`,
 		`b=new button caption="press me"`,
 	} {

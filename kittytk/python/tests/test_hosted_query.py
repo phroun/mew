@@ -167,21 +167,39 @@ class ServingAQueryTest(unittest.TestCase):
             self.assertIn("key %d;" % i, lines[i])
         self.assertTrue(lines[records].startswith("result 1 complete"))
 
-    def test_the_display_can_restate_the_sequence(self):
-        told, at_window = [], []
-        c, s = serve_one(lambda f: (at_window.append(f.spec), f.exhausted()))
-        s.on_respec(lambda q, spec: told.append(spec))
+    def test_a_different_sequence_is_a_different_query(self):
+        """A query is stated when it is made and does not change, so the id IS
+        the generation: results still in flight for the sort somebody just
+        abandoned cannot be taken for results of the one they chose. The
+        display opens the replacement before destroying what it replaces, which
+        keeps the source in use while the reader moves across."""
+        specs = []
+        c, _ = serve_one(lambda f: (specs.append(f.spec), f.exhausted()))
 
         send(c, 'q=new query source="files" sort={ name natural } have=0 need=1')
-        send(c, "set 1 sort={ size desc; name fold } filter={ ge size 1024 }")
-        self.assertEqual(len(told), 1, "the application was not told")
-        self.assertEqual([(l.field, l.descending) for l in told[0].sort],
-                         [("size", True), ("name", False)])
-        self.assertEqual(told[0].filter.children[0].op, query.OP_GE)
+        n = len(c.sent)
+        send(c, 'r=new query source="files" sort={ size desc } have=0 need=1')
+        answered = "\n".join(c.sent[n:])
+        self.assertIn("reply r=2", answered,
+                      "the second query was not named in its own right")
+        self.assertEqual([s.sort[0].field for s in specs], ["name", "size"])
+        self.assertEqual(len(c.queries()), 2)
 
-        send(c, "query 1 have=0 need=1")
-        self.assertEqual(len(at_window[-1].sort), 2,
-                         "the window carried the old spec")
+        send(c, "destroy 1")
+        self.assertIsNone(c.query(1))
+        self.assertIsNotNone(c.query(2),
+                             "destroying the old query took the new one too")
+
+    def test_a_query_cannot_be_restated(self):
+        c, _ = serve_one(lambda f: f.exhausted())
+        send(c, 'q=new query source="files" sort={ name natural } have=0 need=1')
+
+        n = len(c.sent)
+        send(c, "set 1 sort={ size desc }")
+        self.assertIn("error", "\n".join(c.sent[n:]),
+                      "a restatement was accepted")
+        self.assertEqual(c.query(1).spec().sort[0].field, "name",
+                         "the refused restatement changed the query anyway")
 
     def test_the_display_can_drop_the_query(self):
         dropped, served = [], []

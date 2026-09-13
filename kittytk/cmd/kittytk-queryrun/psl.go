@@ -93,16 +93,8 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 			}
 
 		case "set":
-			if view == nil {
-				return fmt.Errorf("set: nothing has been opened")
-			}
-			spec, err := wire.ParseSpec(afterTarget(stmt))
-			if err != nil {
-				return err
-			}
-			if err := view.Respec(spec); err != nil {
-				return err
-			}
+			return fmt.Errorf("set: a query is the sequence it was opened " +
+				"with; a different sequence is another `new query`")
 
 		case "destroy":
 			if view != nil {
@@ -111,7 +103,7 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 			}
 
 		default:
-			return fmt.Errorf("%s: a query file holds new, query, set and destroy", stmt.Verb)
+			return fmt.Errorf("%s: a query file holds new, query and destroy", stmt.Verb)
 		}
 	}
 	return nil

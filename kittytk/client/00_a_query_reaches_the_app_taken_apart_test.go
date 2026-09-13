@@ -262,33 +262,58 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 	}
 }
 
-// The display restating the sequence is a new generation of the same query:
-// the spec changes underneath, and the next window carries the new one.
-func TestTheDisplayCanRestateTheSequence(t *testing.T) {
-	var told *wire.Spec
-	var atWindow *wire.Spec
-	c, _, s := serveOne(t, func(f *Fill) {
-		atWindow = f.Spec
+// A different sequence is a different query.
+//
+// A query is stated when it is made and does not change, so the id IS the
+// generation: results still in flight for the sort somebody just abandoned
+// cannot be taken for results of the one they chose, because they are
+// addressed to a different number. The display opens the replacement before it
+// destroys what it is replacing, which is what keeps the source in use while
+// the reader moves across.
+func TestADifferentSequenceIsADifferentQuery(t *testing.T) {
+	var specs []*wire.Spec
+	c, r, _ := serveOne(t, func(f *Fill) {
+		specs = append(specs, f.Spec)
 		_ = f.Exhausted()
 	})
-	s.OnRespec(func(_ *Query, spec *wire.Spec) { told = spec })
 
 	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=1`)
-	send(t, c, `set 1 sort={ size desc; name fold } filter={ ge size 1024 }`)
-	if told == nil {
-		t.Fatal("the application was not told the sequence changed")
+	n := r.count()
+	send(t, c, `r=new query source="files" sort={ size desc } have=0 need=1`)
+	if answered := strings.Join(r.since(n), "\n"); !strings.Contains(answered, "reply r=2") {
+		t.Errorf("the second query was not named in its own right: %q", answered)
 	}
-	if len(told.Sort) != 2 || told.Sort[0].Field != "size" || !told.Sort[0].Descending {
-		t.Errorf("the new sort came through as %#v", told.Sort)
+	if len(specs) != 2 {
+		t.Fatalf("%d windows were served", len(specs))
 	}
-	if told.Filter == nil || len(told.Filter.Children) != 1 ||
-		told.Filter.Children[0].Op != wire.OpGe {
-		t.Errorf("the new filter came through as %#v", told.Filter)
+	if specs[0].Sort[0].Field != "name" || specs[1].Sort[0].Field != "size" {
+		t.Errorf("the two queries did not carry their own specs: %v", specs)
+	}
+	if len(c.Queries()) != 2 {
+		t.Errorf("the application is serving %d queries", len(c.Queries()))
 	}
 
-	send(t, c, `query 1 have=0 need=1`)
-	if atWindow == nil || len(atWindow.Sort) != 2 {
-		t.Errorf("the window carried the old spec: %#v", atWindow)
+	// And only then does the old one go.
+	send(t, c, `destroy 1`)
+	if c.Query(1) != nil || c.Query(2) == nil {
+		t.Error("destroying the old query took the new one with it")
+	}
+}
+
+// A query cannot be restated. It is the sequence it was opened with, and a
+// display asking for a different one asks for a different query.
+func TestAQueryCannotBeRestated(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) { _ = f.Exhausted() })
+	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=1`)
+
+	n := r.count()
+	send(t, c, `set 1 sort={ size desc }`)
+	answered := strings.Join(r.since(n), "\n")
+	if !strings.Contains(answered, "error") {
+		t.Errorf("a restatement was accepted: %q", answered)
+	}
+	if q := c.Query(1); q == nil || q.Spec().Sort[0].Field != "name" {
+		t.Error("the refused restatement changed the query anyway")
 	}
 }
 

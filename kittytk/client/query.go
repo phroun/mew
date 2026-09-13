@@ -57,7 +57,6 @@ type Source struct {
 
 	mu      sync.Mutex
 	fill    func(*Fill)
-	respec  func(*Query, *wire.Spec)
 	dropped func(*Query)
 	other   func(*Query, *wire.Statement)
 }
@@ -65,20 +64,13 @@ type Source struct {
 // Name is what a display asks for this source by.
 func (s *Source) Name() string { return s.name }
 
-// OnRespec registers a handler for the display restating a query's sequence: a
-// re-sort, a new filter, a different set of fields. Everything the application
-// cached against the old spec that was keyed by position is stale; what was
-// keyed by record identity is not.
-//
-// A source that ignores this is still correct -- the next window carries the
-// new spec -- so it is for applications with something to tear down.
-func (s *Source) OnRespec(fn func(*Query, *wire.Spec)) {
-	s.mu.Lock()
-	s.respec = fn
-	s.mu.Unlock()
-}
-
 // OnDropped registers a handler for the display letting a query go.
+//
+// Records are held against the SOURCE rather than against any one query, so
+// what this says is that one reader has finished. An application that
+// materialised something may let it go when the last query against that source
+// has gone -- which is why a display opens the query it is replacing something
+// with before it destroys the old one.
 func (s *Source) OnDropped(fn func(*Query)) {
 	s.mu.Lock()
 	s.dropped = fn
@@ -128,13 +120,17 @@ func (c *Conn) HostSource(name string, fill func(*Fill)) (*Source, error) {
 //
 // The display opens it; the application names it, because the ids in every
 // statement that follows are the application's own.
+//
+// **A query does not change.** It is stated when it is made and it is that
+// sequence until it is destroyed; a different sort or a different filter is a
+// different query. So the id IS the generation, and results that are still in
+// flight when the display changes its mind are separated from the new ones by
+// the number they are addressed to rather than by where they fall in a stream.
 type Query struct {
 	c      *Conn
 	source *Source
 	id     uint64
-
-	mu   sync.Mutex
-	spec *wire.Spec
+	spec   *wire.Spec
 }
 
 // ID is what this application calls the query, and what the display addresses
@@ -144,13 +140,8 @@ func (q *Query) ID() uint64 { return q.id }
 // Source is where its records come from.
 func (q *Query) Source() *Source { return q.source }
 
-// Spec is the sequence as it currently stands. It changes when the display
-// restates it, which is a new generation of the same query.
-func (q *Query) Spec() *wire.Spec {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.spec
-}
+// Spec is the sequence this query names, which is what it was opened with.
+func (q *Query) Spec() *wire.Spec { return q.spec }
 
 // Queries lists what this connection is currently serving.
 func (c *Conn) Queries() []*Query {
@@ -250,20 +241,8 @@ func (c *Conn) inbound(stmt *wire.Statement, keys map[string]uint64,
 	}
 	switch stmt.Verb {
 	case "set":
-		spec, err := wire.ParseSpec(rest)
-		if err != nil {
-			return fmt.Errorf("set %d: %w", id, err)
-		}
-		q.mu.Lock()
-		q.spec = spec
-		q.mu.Unlock()
-		q.source.mu.Lock()
-		fn := q.source.respec
-		q.source.mu.Unlock()
-		if fn != nil {
-			*pending = append(*pending, func() { fn(q, spec) })
-		}
-		return nil
+		return fmt.Errorf("set %d: a query is the sequence it was opened with "+
+			"and does not change; a different sequence is a different query", id)
 	case "destroy":
 		c.mu.Lock()
 		delete(c.queries, id)
@@ -335,14 +314,11 @@ func (q *Query) window(args []*wire.Arg, pending *[]func()) error {
 	if err != nil {
 		return fmt.Errorf("query %d: %w", q.id, err)
 	}
-	q.mu.Lock()
-	spec := q.spec
-	q.mu.Unlock()
 	q.source.mu.Lock()
 	fn := q.source.fill
 	q.source.mu.Unlock()
 
-	f := &Fill{Fill: req, Query: q, Spec: spec}
+	f := &Fill{Fill: req, Query: q, Spec: q.spec}
 	*pending = append(*pending, func() { fn(f) })
 	return nil
 }

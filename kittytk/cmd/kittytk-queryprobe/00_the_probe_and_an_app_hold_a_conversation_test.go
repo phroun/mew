@@ -108,14 +108,17 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		`-> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3`,
 		`<- result 1 fields={ key 6; name "src/file2.go"; size 1200 }`,
 		`<- result 1 fields={ key 7; name "src/file10.go"; size 880 }`,
-		// Restating the sort is a new generation of the same query.
-		"-> set 1 sort={ size desc }",
-		"-> query 1 have=0 need=3",
-		`<- result 1 fields={ key 4; name "src/parser.go"; size 14022 }`,
-		`<- result 1 complete ordered watermark={ size 6100; key 8 }`,
-		// And letting it go, which is how the application learns it may drop
-		// what it was holding.
+		// A different sort is a different query, named in its own right -- and
+		// opened before the one it replaces is let go, so the source stays in
+		// use while the reader moves across.
+		`-> r=new query source="files" sort={ size desc } have=0 need=3`,
+		"<- reply r=2",
+		`<- result 2 fields={ key 4; name "src/parser.go"; size 14022 }`,
+		`<- result 2 complete ordered watermark={ size 6100; key 8 }`,
 		"-> destroy 1",
+		// And letting the last one go, which is how the application learns
+		// every reader has finished.
+		"-> destroy 2",
 	})
 }
 

@@ -239,17 +239,29 @@ func TestAWindowAsksForFewerFieldsThanTheQuery(t *testing.T) {
 	}
 }
 
-// Restating the sequence is a new generation of the same view.
-func TestRespecReordersTheView(t *testing.T) {
-	v := open(t, doc, "sort={ .0 natural }")
-	out, _ := fill(t, v, "have=0 need=1")
+// A different sequence is a different view, opened alongside the one it
+// replaces and closed after it -- which is what keeps the source in use while
+// the reader moves across.
+func TestADifferentSequenceIsADifferentView(t *testing.T) {
+	src, err := ParsePSL(doc, Whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName, err := src.Open(parseSpec(t, "sort={ .0 natural }"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := fill(t, byName, "have=0 need=1")
 	if out.joined() != `"plain"` {
 		t.Errorf("by name the first record is %s", out.joined())
 	}
-	if err := v.Respec(parseSpec(t, "sort={ .size desc }")); err != nil {
+
+	bySize, err := src.Open(parseSpec(t, "sort={ .size desc }"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	out, _ = fill(t, v, "have=0 need=1")
+	byName.Close()
+	out, _ = fill(t, bySize, "have=0 need=1")
 	if out.joined() != "3" {
 		t.Errorf("by size the first record is %s", out.joined())
 	}
@@ -267,8 +279,8 @@ func TestASortNobodyCanProduceIsRefused(t *testing.T) {
 	}
 }
 
-// The same sequence is ordered once. Two views of it, and a view re-sorted back
-// to an order it had before, draw on the ordering that is already built.
+// The same sequence is ordered once. Two views of it, and a view opened again
+// on an order somebody had before, draw on the ordering that is already built.
 func TestOneSequenceIsOrderedOnce(t *testing.T) {
 	src, err := ParsePSL(doc, Whole)
 	if err != nil {

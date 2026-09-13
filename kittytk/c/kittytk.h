@@ -325,11 +325,16 @@ int kt_fill_sent(const kt_fill *f);
 
 /* One sequence of a source's records that a display is reading. The display
    opens it; this application names it, because the ids in every statement that
-   follows are this application's own. */
+   follows are this application's own.
+
+   A query does not change. It is stated when it is made and it is that sequence
+   until it is destroyed; a different sort or a different filter is a different
+   query. So the id IS the generation, and results still in flight when the
+   display changes its mind are told from the new ones by the number they are
+   addressed to. */
 typedef struct kt_query kt_query;
 
 typedef void (*kt_fill_cb)(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud);
-typedef void (*kt_respec_cb)(kt_query *q, const kt_qspec *spec, void *ud);
 typedef void (*kt_hstmt_cb)(kt_query *q, const char *text, void *ud);
 typedef void (*kt_dropped_cb)(kt_query *q, void *ud);
 
@@ -343,14 +348,12 @@ typedef struct kt_source kt_source;
 kt_source *kt_host_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud);
 const char *kt_source_name(const kt_source *s);
 
-/* A handler for the display restating a query's sequence: a re-sort, a new
-   filter, a different set of fields. A source that ignores this is still
-   correct -- the next window carries the new spec -- so it is for applications
-   with something to tear down. */
-void kt_source_on_respec(kt_source *s, kt_respec_cb cb, void *ud);
+/* A handler for the display letting a query go, which is one reader finishing.
 
-/* A handler for the display letting a query go, which is how the application
-   learns it may drop the records it was holding for it. */
+   Records are held against the SOURCE rather than against any one query, so an
+   application that materialised something may let it go when the last query
+   against that source has gone -- which is why a display opens the query it is
+   replacing something with before destroying the old one. */
 void kt_source_on_dropped(kt_source *s, kt_dropped_cb cb, void *ud);
 
 /* A handler for anything else the display addresses to one of this source's

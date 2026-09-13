@@ -1308,7 +1308,6 @@ struct kt_source {
     kt_conn *c;
     char *name;
     kt_fill_cb fill;       void *fill_ud;
-    kt_respec_cb respec;   void *respec_ud;
     kt_hstmt_cb other;     void *other_ud;
     kt_dropped_cb dropped; void *dropped_ud;
 };
@@ -1710,13 +1709,6 @@ kt_source *kt_host_source(kt_conn *c, const char *name, kt_fill_cb cb, void *ud)
 
 const char *kt_source_name(const kt_source *s) { return s ? s->name : NULL; }
 
-void kt_source_on_respec(kt_source *s, kt_respec_cb cb, void *ud) {
-    if (!s) return;
-    kt_mutex_lock(&s->c->hmu);
-    s->respec = cb; s->respec_ud = ud;
-    kt_mutex_unlock(&s->c->hmu);
-}
-
 void kt_source_on_dropped(kt_source *s, kt_dropped_cb cb, void *ud) {
     if (!s) return;
     kt_mutex_lock(&s->c->hmu);
@@ -1882,7 +1874,7 @@ int kt_fill_fail(kt_fill *f, const char *message) {
 
 /* One thing to do once the batch has been replied to. */
 typedef struct {
-    int kind;            /* 0=fill 1=respec 2=dropped 3=other */
+    int kind;            /* 0=fill 2=dropped 3=other */
     kt_query *q;
     kt_fill *sink;
     kt_qfill req;
@@ -2010,15 +2002,9 @@ static int batch_one(kt_conn *c, kt_batch *b, const kt_stmt *st, const char *tex
     memset(&d, 0, sizeof d);
     d.q = q;
     if (!strcmp(st->verb, "set")) {
-        kt_qspec spec;
-        if (!parse_qspec(rest, nrest, &spec, b->err)) return 0;
-        kt_mutex_lock(&c->hmu);
-        qspec_release(&q->spec);
-        q->spec = spec;
-        kt_mutex_unlock(&c->hmu);
-        d.kind = 1;
-        batch_defer(b, d);
-        return 1;
+        qfail(b->err, "set: a query is the sequence it was opened with and "
+                      "does not change; a different sequence is a different query");
+        return 0;
     }
     if (!strcmp(st->verb, "destroy")) {
         kt_mutex_lock(&c->hmu);
@@ -2082,7 +2068,6 @@ static void run_batch(kt_conn *c, kt_stmt *stmts, const char **texts, int n) {
         kt_source *s = d->q->source;
         kt_mutex_lock(&c->hmu);
         kt_fill_cb fill = s->fill;         void *fill_ud = s->fill_ud;
-        kt_respec_cb respec = s->respec;   void *respec_ud = s->respec_ud;
         kt_dropped_cb drop = s->dropped;   void *drop_ud = s->dropped_ud;
         kt_hstmt_cb other = s->other;      void *other_ud = s->other_ud;
         kt_mutex_unlock(&c->hmu);
@@ -2093,9 +2078,6 @@ static void run_batch(kt_conn *c, kt_stmt *stmts, const char **texts, int n) {
             if (ok && fill) fill(d->q, &d->req, d->sink, fill_ud);
             else kt_fill_fail(d->sink, ok ? "this source has nothing to fill it" : b.err);
             qfill_release(&d->req);
-            break;
-        case 1:
-            if (respec) respec(d->q, &d->q->spec, respec_ud);
             break;
         case 2:
             if (drop) drop(d->q, drop_ud);

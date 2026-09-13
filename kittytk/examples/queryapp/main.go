@@ -52,14 +52,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Neither of these is needed to be correct. The first is where an
-	// application with something to tear down tears it down; the second is
-	// where one holding a large result set lets it go.
-	files.OnRespec(func(q *client.Query, spec *wire.Spec) {
-		fmt.Fprintf(os.Stderr, "query %d: re-sorted to %s\n", q.ID(), wire.EncodeSort(spec.Sort))
-	})
+	// Not needed to be correct: it is where an application holding something
+	// for a reader finds out that reader has finished. What is held belongs to
+	// the source rather than to any one query, so the moment to let it go is
+	// when the last query against the source has gone.
 	files.OnDropped(func(q *client.Query) {
-		fmt.Fprintf(os.Stderr, "query %d: let go, dropping what it held\n", q.ID())
+		fmt.Fprintf(os.Stderr, "query %d: let go\n", q.ID())
 	})
 
 	fmt.Fprintln(os.Stderr, "serving; ^C to stop")

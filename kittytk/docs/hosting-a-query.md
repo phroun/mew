@@ -223,27 +223,39 @@ nothing means unordered, which is always safe.
 
 **Nothing is stamped**, because nothing needs to be. The application's replies
 and its results travel one ordered stream, so a window's results are the ones
-between the reply that accepted it and the result that completes it — and that
-same boundary is what separates the generation before a re-sort from the one
-after it.
+between the reply that accepted it and the result that completes it.
 
-**The display restates the sequence** when the user re-sorts or re-filters.
-That is a property change on the query that exists, not a new query:
+## A query does not change
+
+There is no re-sort. A query is the sequence it was opened with, and a
+different sort or a different filter is a **different query** — `set` addressed
+to one is refused.
 
 ```
-DISPLAY → APP   set 9 sort={ size desc; name fold } filter={ ge size 1024 }
+DISPLAY → APP   r=new query source="files" sort={ size desc } have=0 need=30
+                end
+APP → DISPLAY   reply r=10
+                end
+                …
+DISPLAY → APP   destroy 9
                 end
 ```
 
-Everything the application cached against the old spec that was keyed by
-*position* is stale; what was keyed by *record identity* is not. A query that
-ignores the restatement is still correct, because the next window carries the
-new spec with it.
+That is what makes the id the generation. Results for the sort somebody just
+abandoned are still crossing when the results of the one they chose begin, and
+nothing has to work out where one generation ended: they are addressed to
+different numbers.
 
-**And the display lets it go** with `destroy 9`, which is how the application
-learns it may drop the records it was holding. That is why a query is an object
-with a lifetime rather than a standing arrangement: without an ending, nothing
-ever tells the application to let go.
+**The new one is opened before the old one is destroyed.** Records are held
+against the *source* — the application has them because there are queries open
+against that name — so opening first is what keeps the source in use while the
+reader moves across, instead of letting it fall out of use and be built again a
+statement later.
+
+**And the display lets a query go** with `destroy 9`, which is one reader
+finishing. That is why a query is an object with a lifetime rather than a
+standing arrangement: without an ending, nothing ever tells the application
+that the last reader has gone.
 
 ## A field bag
 
@@ -297,9 +309,8 @@ because the display rejects what it did not ask for.
 
 ## Where a larger library plugs in
 
-The client libraries understand the open, the window, the restatement and the
-drop. Anything else the display addresses to a query reaches the application
-whole:
+The client libraries understand the open, the window and the drop. Anything
+else the display addresses to a query reaches the application whole:
 
 ```go
 src.OnStatement(func(q *client.Query, stmt *wire.Statement) { … })

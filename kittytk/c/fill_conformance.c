@@ -185,18 +185,6 @@ static void fill_long(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud)
     kt_fill_exhausted(sink);
 }
 
-static int respec_told;
-static int respec_levels;
-static char respec_op[16];
-
-static void on_respec(kt_query *q, const kt_qspec *spec, void *ud) {
-    (void)q; (void)ud;
-    respec_told++;
-    respec_levels = spec->nsort;
-    snprintf(respec_op, sizeof respec_op, "%s",
-             spec->filter && spec->filter->nchildren
-                 ? spec->filter->children[0].op : "");
-}
 
 static int dropped_told;
 
@@ -323,20 +311,24 @@ int main(void) {
         "the reply comes before the records");
     free(answer);
 
-    /* The display restating the sequence is a new generation of the same
-       query: the spec changes underneath, and the next window carries it. */
-    kt_source_on_respec(source, on_respec, NULL);
-    say("set 1 sort={ size desc; name fold } filter={ ge size 1024 }\nend");
-    for (int i = 0; i < 2000 && !respec_told; i++) {
-        struct timespec ts = {0, 1000000};
-        nanosleep(&ts, NULL);
-    }
-    expect(respec_told == 1, "the application was told the sequence changed");
-    expect(respec_levels == 2, "the new sort came through");
-    expect_str(respec_op, "ge", "the new filter came through");
+    /* A different sequence is a different query, and the id is what tells the
+       two apart -- so results still in flight for the old one cannot be taken
+       for results of the new one. The display opens the replacement before it
+       destroys what it is replacing, which is what keeps the source in use
+       while the reader moves across. */
     n = sent_count();
-    ask("query 1 have=0 need=2\nend", n);
-    expect(seen_sort_levels == 2, "the next window carried the new spec");
+    ask("r=new query source=\"files\" sort={ size desc } have=0 need=2\nend", n);
+    expect(seen_sort_levels == 1, "the second query carried its own spec");
+    answer = since(n);
+    expect(!!strstr(answer, "reply r=2"), "the second query was named in its own right");
+    free(answer);
+
+    /* And a query cannot be restated: it is the sequence it was opened with. */
+    n = sent_count();
+    ask("set 1 sort={ name }\nend", n);
+    answer = since(n);
+    expect(!!strstr(answer, "error"), "a restatement was refused");
+    free(answer);
 
     /* Anything this library does not understand reaches the application
        whole, so what it does not implement is still reachable. */

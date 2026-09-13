@@ -526,14 +526,9 @@ class Conn:
         rest = stmt.args[1:]
 
         if stmt.verb == "set":
-            spec = _query.parse_spec(rest)
-            with q._lock:
-                q._spec = spec
-            with q._source._lock:
-                fn = q._source._respec
-            if fn is not None:
-                pending.append(lambda: fn(q, spec))
-            return
+            raise ValueError(
+                "set %d: a query is the sequence it was opened with and does "
+                "not change; a different sequence is a different query" % oid)
         if stmt.verb == "destroy":
             with self._lock:
                 self._queries.pop(oid, None)
@@ -929,7 +924,6 @@ class Source:
         self._name = name
         self._lock = threading.Lock()
         self._fill = fill
-        self._respec = None
         self._dropped = None
         self._other = None
 
@@ -937,20 +931,15 @@ class Source:
         """What a display asks for this source by."""
         return self._name
 
-    def on_respec(self, fn):
-        """A handler for the display restating a query's sequence: a re-sort, a
-        new filter, a different set of fields. Everything cached against the old
-        spec that was keyed by position is stale; what was keyed by record
-        identity is not.
-
-        A source that ignores this is still correct -- the next window carries
-        the new spec -- so it is for applications with something to tear down."""
-        with self._lock:
-            self._respec = fn
-
     def on_dropped(self, fn):
-        """A handler for the display letting a query go, which is how the
-        application learns it may drop the records it was holding."""
+        """A handler for the display letting a query go, which is one reader
+        finishing.
+
+        Records are held against the SOURCE rather than against any one query,
+        so an application that materialised something may let it go when the
+        last query against that source has gone -- which is why a display opens
+        the query it is replacing something with before destroying the old
+        one."""
         with self._lock:
             self._dropped = fn
 
@@ -989,8 +978,8 @@ class Query:
         return self._source
 
     def spec(self):
-        """The sequence as it currently stands. It changes when the display
-        restates it, which is a new generation of the same query."""
+        """The sequence this query names, which is what it was opened with. A
+        query does not change."""
         with self._lock:
             return self._spec
 

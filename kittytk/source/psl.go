@@ -30,10 +30,9 @@ import (
 	"github.com/phroun/pawscript"
 )
 
-// orderingsKept is how many orderings of one source are held at once. A
-// re-sort is a column header somebody clicked, and clicking back is the next
-// thing they do, so the previous few are worth keeping and an unbounded pile of
-// them is not.
+// orderingsKept is how many orderings of one source are held at once. Each is a
+// column header somebody clicked, and clicking back is the next thing they do,
+// so the previous few are worth keeping and an unbounded pile of them is not.
 const orderingsKept = 4
 
 // ValueField is the record itself, as a field name. It is the companion of
@@ -315,8 +314,8 @@ func (o *ordering) Less(i, j int) bool {
 
 // order is the sequence a spec names, built if it has not been built already.
 //
-// Two views of the same sequence share one, and so does a view re-sorted back
-// to an order it had before -- which is the same click that produced it the
+// Two views of the same sequence share one, and so does a view opened again on
+// an order somebody had before -- which is the same click that produced it the
 // first time.
 func (p *PSL) order(spec *wire.Spec) *ordering {
 	key := orderKey(spec)
@@ -384,20 +383,6 @@ type pslView struct {
 	src  *PSL
 	spec *wire.Spec
 	ord  *ordering
-}
-
-// Respec restates the sequence, which replaces the ordering the view draws
-// from. Windows asked for afterwards carry the new spec's positions; the ones
-// the far end already holds are a generation it is about to discard.
-func (v *pslView) Respec(spec *wire.Spec) error {
-	if spec == nil {
-		spec = &wire.Spec{}
-	}
-	if err := supported(spec.Sort); err != nil {
-		return err
-	}
-	v.spec, v.ord = spec, v.src.order(spec)
-	return nil
 }
 
 // Close lets the view go. The ordering stays in the source's cache until

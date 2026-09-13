@@ -30,13 +30,13 @@ type Source interface {
 
 // A View is one stated sequence, which windows are drawn from until it is let
 // go.
+//
+// It does not change. A different sort or a different filter is a different
+// view, opened alongside this one and taking its place -- which is also what
+// keeps the source in use while the reader moves from one to the other.
 type View interface {
 	// Fill produces one window into the sink, and reports what ends it.
 	Fill(f *wire.Fill, out Sink) (Complete, error)
-
-	// Respec restates the sequence -- a re-sort, a new filter -- which is a new
-	// generation of the same view rather than a new view.
-	Respec(spec *wire.Spec) error
 
 	// Close lets the view go, and with it whatever it was holding.
 	Close()

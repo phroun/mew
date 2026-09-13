@@ -36,7 +36,7 @@ func main() {
 	fields := flag.String("fields", "", "the fields to ask for, as wire text inside the braces")
 	need := flag.Int("need", 10, "how many rows the window is")
 	more := flag.Int("more", 0, "ask for a second window of this many rows, past the first")
-	resort := flag.String("resort", "", "restate the sort afterwards, as wire text inside the braces")
+	resort := flag.String("resort", "", "open a second query on this sort afterwards, as wire text inside the braces")
 	wait := flag.Duration("wait", 3*time.Second, "how long to wait for an answer")
 	flag.Parse()
 
@@ -91,16 +91,22 @@ func main() {
 		p.collect(true)
 	}
 
-	// Restating the sort is a new generation of the same query, not a new one.
+	// A different sort is a different query. The replacement is opened before
+	// the first one is let go, so the source stays in use while the reader
+	// moves across rather than falling out of use and being built again.
 	if *resort != "" {
-		p.say(fmt.Sprintf("set %d sort={ %s }", id, *resort))
-		p.collect(false)
-		p.say(fmt.Sprintf("query %d have=0 need=%d", id, *need))
-		p.collect(true)
+		p.say(fmt.Sprintf("r=new query source=%s sort={ %s } have=0 need=%d",
+			wire.Quote(*source), *resort, *need))
+		next, ok := p.collect(true)
+		if ok {
+			p.say(fmt.Sprintf("destroy %d", id))
+			p.collect(false)
+			id = next
+		}
 	}
 
-	// And letting it go is how the application learns it may drop what it was
-	// holding, which is the half of a lifetime that is easy to forget.
+	// And letting it go is how the application learns the last reader has
+	// gone, which is the half of a lifetime that is easy to forget.
 	p.say(fmt.Sprintf("destroy %d", id))
 	p.collect(false)
 }
