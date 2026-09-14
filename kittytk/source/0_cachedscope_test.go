@@ -195,6 +195,15 @@ func TestRunsThatDoNotMeetDoNotJoin(t *testing.T) {
 	if tail.merge(run("files", nil, wire.NewInt(2), 1, 2)) {
 		t.Error("the end of the sequence was joined to the start of it")
 	}
+	// Nor do two runs carrying different fields, however their ends line up: a
+	// run half of which holds `name` and half `size` covers neither.
+	named := run("files", nil, wire.NewInt(3), 1, 3)
+	named.carried = wire.Fields{wire.Named("name", 0)}
+	sized := run("files", wire.NewInt(3), wire.NewInt(5), 4, 5)
+	sized.carried = wire.Fields{wire.Named("size", 0)}
+	if named.merge(sized) {
+		t.Error("runs carrying different fields were joined")
+	}
 }
 
 // A record the cache has let go of lets go of the cache.

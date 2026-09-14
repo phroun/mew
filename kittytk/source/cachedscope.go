@@ -75,13 +75,22 @@ type entry struct {
 	// nobody can work out.
 	gen uint64
 
-	// hit is the tick this entry was last handed to somebody.
+	// hit is the tick this entry was last handed to somebody, and zero for one
+	// that never has been.
 	//
 	// A tick rather than a clock: it only has to order, it is compared far more
 	// often than it is set, and a monotonic counter cannot go backwards when the
 	// machine's time does. It is per entry rather than per run so that a cold
 	// end can be trimmed off a warm one instead of dropping the lot.
 	hit uint64
+
+	// warm says this record has been handed out more than once.
+	//
+	// Once is no evidence: a walk that reads a million records and never looks
+	// back touches every one of them exactly once, and each is the most recently
+	// used thing in the cache the moment it lands. Twice is evidence, and it is
+	// what divides the two segments -- see cache.go.
+	warm bool
 }
 
 // newEntry is one record as an entry, costed once.
@@ -148,11 +157,36 @@ type cachedScope struct {
 	head, tail *entry
 	n          int
 	cost       int
+
+	// cold is what the run's UNWARM records cost -- the part of it that is
+	// still on probation. A run streaming in from a source is entirely cold,
+	// which is how a scan is told from a working set that happens to be large.
+	cold int
 }
 
 // Len is how many records the run holds, and Cost what it costs to hold them.
 func (s *cachedScope) Len() int  { return s.n }
 func (s *cachedScope) Cost() int { return s.cost }
+
+// Cold is what the run's records cost that have not proved themselves.
+func (s *cachedScope) Cold() int { return s.cold }
+
+// warmUp and coolDown move one record between the segments, keeping the run's
+// share of each right. What they cost the cache as a whole is the cache's own
+// bookkeeping; this is only the run's part of it.
+func (s *cachedScope) warmUp(e *entry) {
+	if !e.warm {
+		e.warm = true
+		s.cold -= e.cost
+	}
+}
+
+func (s *cachedScope) coolDown(e *entry) {
+	if e.warm {
+		e.warm = false
+		s.cold += e.cost
+	}
+}
 
 // pushBack and pushFront add one entry at an end, which is what answering a
 // scope just past one of them amounts to.
@@ -166,6 +200,9 @@ func (s *cachedScope) pushBack(e *entry) {
 	s.tail = e
 	s.n++
 	s.cost += e.cost
+	if !e.warm {
+		s.cold += e.cost
+	}
 }
 
 func (s *cachedScope) pushFront(e *entry) {
@@ -178,6 +215,9 @@ func (s *cachedScope) pushFront(e *entry) {
 	s.head = e
 	s.n++
 	s.cost += e.cost
+	if !e.warm {
+		s.cold += e.cost
+	}
 }
 
 // unlink takes one entry out and gives back what that freed.
@@ -199,6 +239,9 @@ func (s *cachedScope) unlink(e *entry) int {
 	e.prev, e.next = nil, nil
 	s.n--
 	s.cost -= e.cost
+	if !e.warm {
+		s.cold -= e.cost
+	}
 	return e.cost
 }
 
@@ -231,8 +274,12 @@ func (s *cachedScope) splitAfter(at *entry, id cachedScopeID) *cachedScope {
 	for e := left.head; e != nil; e = e.next {
 		left.n++
 		left.cost += e.cost
+		if !e.warm {
+			left.cold += e.cost
+		}
 	}
 	right.n, right.cost = s.n-left.n, s.cost-left.cost
+	right.cold = s.cold - left.cold
 
 	// The id is opaque, so it stays with whichever side is longer and the
 	// shorter one is relabelled. Either would be correct; this is the cheaper.
@@ -255,8 +302,15 @@ func (s *cachedScope) splitAfter(at *entry, id cachedScopeID) *cachedScope {
 // that between them nothing is unaccounted for. It is what a split undoes, and
 // what two scopes answered back to back amount to: one link is made, and the
 // other run's entries are relabelled.
+//
+// Two runs carrying different fields never meet, however their ends line up: a
+// run answers a query by covering what it wants, and a run half of which holds
+// `name` and half `size` covers neither.
 func (s *cachedScope) merge(other *cachedScope) bool {
 	if s.set != other.set || s.end == nil || other.begin == nil {
+		return false
+	}
+	if !sameCarried(s.carried, other.carried) {
 		return false
 	}
 	if wire.EncodeValue(s.end) != wire.EncodeValue(other.begin) {
@@ -277,6 +331,7 @@ func (s *cachedScope) merge(other *cachedScope) bool {
 	s.end = other.end
 	s.n += other.n
 	s.cost += other.cost
+	s.cold += other.cold
 	return true
 }
 
