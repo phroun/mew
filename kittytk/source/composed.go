@@ -240,7 +240,7 @@ func narrowID(p *wire.Filter, name string) (*wire.Filter, bool) {
 		// its own -- so the same value would otherwise pile up a layer at a
 		// time.
 		for _, one := range spellings(text) {
-			if written := wire.EncodeValue(one); !seen[written] {
+			if written := wire.Key(one); !seen[written] {
 				seen[written] = true
 				mine = append(mine, one)
 			}
@@ -822,8 +822,7 @@ func (g *gathering) full() bool { return g.sent >= g.want.Count }
 // sequence's own: no include has ever seen it, and what each of them stood at
 // when it crossed is the record before it, not the record itself.
 func (g *gathering) reached(rec waiting) bool {
-	if g.want.Until == nil ||
-		wire.EncodeValue(rec.key) != wire.EncodeValue(g.want.Until) {
+	if g.want.Until == nil || !wire.Equal(rec.key, g.want.Until) {
 		return false
 	}
 	g.joined = true
@@ -915,8 +914,7 @@ func (g *gathering) close() {
 		// record it delivered can be placed -- what puts a record somewhere are
 		// its own values, and those arrive with it -- so a claim that stops
 		// anywhere else stops nobody anywhere.
-		if a.c.Watermark == nil || a.tail == nil ||
-			wire.EncodeValue(a.c.Watermark) != wire.EncodeValue(a.tail) {
+		if a.c.Watermark == nil || !wire.Equal(a.c.Watermark, a.tail) {
 			claimable = false
 			continue
 		}

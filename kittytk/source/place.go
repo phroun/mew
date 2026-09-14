@@ -48,7 +48,7 @@ func (p *places) put(id *wire.Value, tuple []*wire.Value) {
 	if id == nil {
 		return
 	}
-	k := wire.EncodeValue(id)
+	k := wire.Key(id)
 	if _, had := p.at[k]; !had {
 		p.seen = append(p.seen, k)
 	}
@@ -67,7 +67,7 @@ func (p *places) get(id *wire.Value) ([]*wire.Value, bool) {
 	if id == nil {
 		return nil, false
 	}
-	t, ok := p.at[wire.EncodeValue(id)]
+	t, ok := p.at[wire.Key(id)]
 	return t, ok
 }
 

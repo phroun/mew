@@ -117,7 +117,7 @@ func (a *AmendedSource) Replace(key *wire.Value, fields wire.Fields) {
 		return
 	}
 	a.mu.Lock()
-	a.amend[wire.EncodeValue(key)] = &amendment{key: key, fields: fields}
+	a.amend[wire.Key(key)] = &amendment{key: key, fields: fields}
 	a.gen++
 	a.mu.Unlock()
 }
@@ -134,7 +134,7 @@ func (a *AmendedSource) Add(key *wire.Value, fields wire.Fields) {
 		return
 	}
 	a.mu.Lock()
-	a.amend[wire.EncodeValue(key)] = &amendment{key: key, fields: fields, added: true}
+	a.amend[wire.Key(key)] = &amendment{key: key, fields: fields, added: true}
 	a.gen++
 	a.mu.Unlock()
 }
@@ -150,7 +150,7 @@ func (a *AmendedSource) Delete(key *wire.Value, known wire.Fields) {
 		return
 	}
 	a.mu.Lock()
-	a.amend[wire.EncodeValue(key)] = &amendment{key: key, deleted: true, seen: known}
+	a.amend[wire.Key(key)] = &amendment{key: key, deleted: true, seen: known}
 	a.gen++
 	a.mu.Unlock()
 }
@@ -161,7 +161,7 @@ func (a *AmendedSource) Forget(key *wire.Value) {
 		return
 	}
 	a.mu.Lock()
-	delete(a.amend, wire.EncodeValue(key))
+	delete(a.amend, wire.Key(key))
 	a.gen++
 	a.mu.Unlock()
 }
@@ -171,7 +171,7 @@ func (a *AmendedSource) Forget(key *wire.Value) {
 // shortfall instead of discovering it.
 func (a *AmendedSource) learn(key *wire.Value, fields wire.Fields) {
 	a.mu.Lock()
-	if am := a.amend[wire.EncodeValue(key)]; am != nil && am.deleted {
+	if am := a.amend[wire.Key(key)]; am != nil && am.deleted {
 		// Not just a note: a deletion with a placement is one this source can
 		// rule out of a scope, so it moves from being counted for every scope
 		// to standing somewhere in the order.
@@ -186,7 +186,7 @@ func (a *AmendedSource) learn(key *wire.Value, fields wire.Fields) {
 // From here on the child's record stands and this one does not go out.
 func (a *AmendedSource) clash(key *wire.Value) {
 	a.mu.Lock()
-	if am := a.amend[wire.EncodeValue(key)]; am != nil && am.added && !am.clashed {
+	if am := a.amend[wire.Key(key)]; am != nil && am.added && !am.clashed {
 		am.clashed = true
 		a.gen++
 	}
@@ -197,7 +197,7 @@ func (a *AmendedSource) clash(key *wire.Value) {
 func (a *AmendedSource) lookup(key *wire.Value) *amendment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.amend[wire.EncodeValue(key)]
+	return a.amend[wire.Key(key)]
 }
 
 // Open states a sequence, and opens the same one on the child.
@@ -445,7 +445,7 @@ func (m *merge) theirs(key *wire.Value, fields wire.Fields, whole bool) error {
 		// has ours out and the child's in.
 		m.set.src.clash(key)
 		m.drop(am)
-		if m.gone[wire.EncodeValue(key)] {
+		if m.gone[wire.Key(key)] {
 			// Ours has already crossed in this scope. Sending the child's now
 			// would put one identity on the wire twice, which is worse than
 			// either record winning, so this scope keeps ours and the next one
@@ -470,7 +470,7 @@ func (m *merge) drop(am *amendment) {
 	if m.dropped == nil {
 		m.dropped = map[string]bool{}
 	}
-	m.dropped[wire.EncodeValue(am.key)] = true
+	m.dropped[wire.Key(am.key)] = true
 }
 
 // Done is the end of one round of the child's answer.
@@ -546,7 +546,7 @@ func (m *merge) flushBefore(at []*wire.Value) {
 			return
 		}
 		m.i += m.step
-		if m.dropped[wire.EncodeValue(am.key)] {
+		if m.dropped[wire.Key(am.key)] {
 			// Its key turned out to be the child's after all, and the child's
 			// record has already gone out in its place.
 			continue
@@ -558,7 +558,7 @@ func (m *merge) flushBefore(at []*wire.Value) {
 			if m.gone == nil {
 				m.gone = map[string]bool{}
 			}
-			m.gone[wire.EncodeValue(am.key)] = true
+			m.gone[wire.Key(am.key)] = true
 		}
 		// A replacement is the record entire -- that is what Replace states --
 		// and so is an addition. Both go out as one.

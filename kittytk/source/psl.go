@@ -349,7 +349,7 @@ type ordering struct {
 // not in it. A record can fail to be here by having been filtered out as
 // easily as by not existing.
 func (o *ordering) index(id *wire.Value) (int, bool) {
-	i, ok := o.at[wire.EncodeValue(id)]
+	i, ok := o.at[wire.Key(id)]
 	return i, ok
 }
 
@@ -391,7 +391,7 @@ func (p *PSLSource) order(spec *wire.Spec) *ordering {
 
 	o.at = make(map[string]int, len(o.rows))
 	for i, row := range o.rows {
-		o.at[wire.EncodeValue(p.recs[row].key)] = i
+		o.at[wire.Key(p.recs[row].key)] = i
 	}
 
 	p.cache[key] = o
@@ -423,7 +423,7 @@ func ordering1(spec *wire.Spec) []wire.Level {
 // The source itself is not in the string because the table it keys is the
 // source's own.
 func dataSetKey(spec *wire.Spec) string {
-	return wire.EncodeSort(spec.Sort) + "\x00" + spec.Filter.Encode()
+	return wire.SortKey(spec.Sort) + "\x00" + wire.FilterKey(spec.Filter)
 }
 
 // tupleOf is a record's position: the value at each sort level, and then its

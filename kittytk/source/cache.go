@@ -176,8 +176,14 @@ func carriedKey(f wire.Fields) string {
 func sameCarried(a, b wire.Fields) bool { return carriedKey(a) == carriedKey(b) }
 
 // recordKey finds a record of one data set by identity.
+//
+// wire.Key and not the wire spelling: a table keyed by how a value is WRITTEN
+// files a nil identity and a record actually called `undefined` in the same
+// place, and moves every key it holds the day a float is spelled differently.
 func recordKey(set string, id *wire.Value) string {
-	return set + "\x00" + wire.EncodeValue(id)
+	b := make([]byte, 0, len(set)+24)
+	b = append(append(b, set...), 0)
+	return string(wire.AppendKey(b, id))
 }
 
 // --- answering -----------------------------------------------------------
@@ -213,7 +219,7 @@ func (c *cache) serve(set string, wanted wire.Fields, sc *wire.Scope) ([]*entry,
 	var done wire.Complete
 	out := make([]*entry, 0, sc.Count)
 	for at != nil && (sc.Count <= 0 || len(out) < sc.Count) {
-		if sc.Until != nil && wire.EncodeValue(at.id) == wire.EncodeValue(sc.Until) {
+		if sc.Until != nil && wire.Equal(at.id, sc.Until) {
 			done.Stop = wire.StopJoined
 			break
 		}
@@ -269,8 +275,7 @@ func (c *cache) find(set string, wanted wire.Fields, sc *wire.Scope) (*cachedSco
 	// past it does. Reading backwards, one guaranteed TO it ends there.
 	for _, s := range c.sets[set] {
 		edge := s.beyond(!sc.Reversed)
-		if edge != nil && wire.EncodeValue(edge) == wire.EncodeValue(sc.After) &&
-			covers(s.carried, wanted) {
+		if edge != nil && wire.Equal(edge, sc.After) && covers(s.carried, wanted) {
 			return s, nil
 		}
 	}
@@ -399,8 +404,7 @@ func (c *cache) endingAt(set string, at *wire.Value, carried wire.Fields, not *c
 		return nil
 	}
 	for _, s := range c.sets[set] {
-		if s != not && s.end != nil && wire.EncodeValue(s.end) == wire.EncodeValue(at) &&
-			sameCarried(s.carried, carried) {
+		if s != not && wire.Equal(s.end, at) && sameCarried(s.carried, carried) {
 			return s
 		}
 	}
@@ -412,8 +416,7 @@ func (c *cache) beginningAt(set string, at *wire.Value, carried wire.Fields, not
 		return nil
 	}
 	for _, s := range c.sets[set] {
-		if s != not && s.begin != nil && wire.EncodeValue(s.begin) == wire.EncodeValue(at) &&
-			sameCarried(s.carried, carried) {
+		if s != not && wire.Equal(s.begin, at) && sameCarried(s.carried, carried) {
 			return s
 		}
 	}

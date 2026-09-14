@@ -313,7 +313,7 @@ func (s *cachedScope) merge(other *cachedScope) bool {
 	if !sameCarried(s.carried, other.carried) {
 		return false
 	}
-	if wire.EncodeValue(s.end) != wire.EncodeValue(other.begin) {
+	if !wire.Equal(s.end, other.begin) {
 		return false
 	}
 	for e := other.head; e != nil; e = e.next {
