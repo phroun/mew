@@ -1,91 +1,108 @@
 package source
 
-// A run of records the cache holds, and what it costs to hold.
+// Runs of records the cache holds, and what it costs to hold them.
 //
-// A cached scope is a stretch of one data set that is **complete between its
-// ends**:
-// every record of the sequence that falls between them is here, in order, with
-// nothing missing. That is the same claim a watermark makes, which is why a
-// scope's answer and a cache entry are the same object -- what came back from
-// one question is exactly what can be handed to the next.
+// A **cached scope** is a stretch of one data set that is guaranteed complete
+// between its two ends: every record of the sequence falling between them is
+// here, in order, with nothing missing. That is the same claim a watermark
+// makes, which is why a scope's answer and a cache entry are the same object --
+// what came back from one question is what can be handed to the next.
 //
-// Both ends are optional, and their absence is not ignorance but a stronger
-// claim. No start means from the beginning of the sequence; no end means to the
-// end of it. So a source that ignores every hint, sends all its records and says
-// `exhausted` produces one cached scope with neither end -- the whole sequence,
-// cached entire, and never asked for again.
+// Both ends are optional, and their absence is a stronger claim rather than
+// ignorance. No beginning means from the start of the sequence; no end means to
+// the end of it. So a source that ignores every hint, sends everything and says
+// `exhausted` leaves one cached scope with neither end: the whole sequence,
+// held entire, never asked for again.
 //
-// What the ends are is identities, because that is what a scope names its ends
-// by and what a watermark is.
+// **The records are a doubly linked list, and the order is the data set's own.**
+// A data set is a source, a sort and a filter, which is already an order, so
+// there is no second one to invent and no ordinal to keep -- an entry's place is
+// where its own values put it. Linked rather than laid out in order because of
+// what happens to a run when the data changes underneath it: an insert splices
+// one node in and cuts one link, and a merge joins one tail to one head, where
+// an array would copy. Doubly linked because a scope can be read backwards, and
+// because trimming the cold end off the back would otherwise walk the whole run
+// to find the node before the last.
 //
-// Two things change a cached scope and neither re-queries anything. A scope
-// answered immediately past its end EXTENDS it: the end moves and the records
-// are appended. A record inserted inside it SLICES it: the guarantee holds on
-// both sides of the insert and not across it, so it becomes two cached scopes
-// and the records stay where they are.
+// Nothing is searched. An entry is found by identity in one lookup, and serving
+// a scope is walking that many links from it -- forwards or backwards -- ending
+// at the run's own end, which is exactly where the guarantee ends.
 
 import "github.com/phroun/kittytk/wire"
 
 // The estimated cost of the parts a record is made of.
 //
 // These are for deciding when to evict, not for reporting memory, so what
-// matters is that they are CONSISTENT rather than exact: a record's size is
+// matters is that they are CONSISTENT rather than exact: an entry's cost is
 // worked out once and kept, and eviction subtracts what insertion added. The
-// counter then cannot drift however wrong the estimate is, and being wrong only
+// total then cannot drift however wrong the estimate is, and being wrong only
 // makes a byte limit nominal.
 //
-// They are calibrated against the real heap rather than guessed -- see
-// 0_cached scope_test.go, which fails if the structure changes enough that the
-// estimate stops tracking reality.
-// The numbers are the real struct sizes rather than guesses: a wire.Value is 80
-// bytes, a wire.Arg 32, a cached record 64, each rounded up for the allocator's
-// size class and the pointer that reaches it.
+// The numbers are the real struct sizes rather than guesses -- a wire.Value is
+// 80 bytes, a wire.Arg 32 -- rounded up for the allocator's size class and the
+// pointers that reach them. 0_cachedscope_test.go holds them to within a factor
+// of the heap they model, and fails when the shape of what is held changes.
 const (
-	recordOverhead = 80 // a cached record in the run, plus its slot
-	fieldOverhead  = 48 // one wire.Arg and the pointer to it
-	valueOverhead  = 80 // a wire.Value beyond whatever it carries
+	entryOverhead = 112 // an entry's own struct, its two links and its slot
+	fieldOverhead = 48  // one wire.Arg and the pointer to it
+	valueOverhead = 80  // a wire.Value beyond whatever it carries
 )
 
-// A cached record: what came back, and what the cache needs to know about it.
-type cached struct {
+// A cachedScopeID names one run. Entries carry it so that a record found by
+// identity says which guarantee it falls under without walking to find out.
+type cachedScopeID uint64
+
+// An entry is one record the cache holds, and its place in the run.
+type entry struct {
+	scope      cachedScopeID
+	prev, next *entry
+
 	id     *wire.Value
 	fields wire.Fields
 	whole  bool // the record entire, rather than the fields one query asked for
 
-	// size is what this record added to the cache's total, worked out once when
-	// it went in. Eviction subtracts this rather than measuring again: a record
+	// cost is what this entry added to the cache's total, worked out once when
+	// it went in. Eviction subtracts this rather than measuring again: an entry
 	// whose fields were patched by an invalidation in between would otherwise
 	// give back a different number than it took.
-	size int
+	cost int
 
 	// gen is the generation of the data set this record was fetched at.
 	//
-	// Nothing reads it yet. It is what invalidation will compare against to
-	// know whether a cached record predates a change, and it is here from the
-	// start because adding it afterwards means every record already cached has a
-	// generation nobody can work out.
+	// Nothing reads it yet. It is what invalidation will compare against to know
+	// whether an entry predates a change, and it is here from the start because
+	// adding it afterwards leaves every entry already held with a generation
+	// nobody can work out.
 	gen uint64
 
-	// read is the tick this record was last handed to somebody.
+	// hit is the tick this entry was last handed to somebody.
 	//
 	// A tick rather than a clock: it only has to order, it is compared far more
-	// often than it is set, and a monotonic counter cannot go backwards when
-	// the machine's time does. It is per record rather than per cached scope, so
-	// that a cold end can be trimmed off a warm one instead of dropping the lot.
-	read uint64
+	// often than it is set, and a monotonic counter cannot go backwards when the
+	// machine's time does. It is per entry rather than per run so that a cold
+	// end can be trimmed off a warm one instead of dropping the lot.
+	hit uint64
 }
 
-// size is what one record costs to hold, worked out once.
-func sizeOf(id *wire.Value, fields wire.Fields) int {
-	n := recordOverhead + sizeOfValue(id)
+// newEntry is one record as an entry, costed once.
+func newEntry(id *wire.Value, fields wire.Fields, whole bool, gen uint64) *entry {
+	return &entry{
+		id: id, fields: fields, whole: whole, gen: gen,
+		cost: costOf(id, fields),
+	}
+}
+
+// costOf is what one record costs to hold.
+func costOf(id *wire.Value, fields wire.Fields) int {
+	n := entryOverhead + costOfValue(id)
 	for _, f := range fields {
-		n += fieldOverhead + len(f.Name) + sizeOfValue(f.Value)
+		n += fieldOverhead + len(f.Name) + costOfValue(f.Value)
 	}
 	return n
 }
 
-// sizeOfValue is what one value costs, following a block into its members.
-func sizeOfValue(v *wire.Value) int {
+// costOfValue is what one value costs, following a block into its members.
+func costOfValue(v *wire.Value) int {
 	if v == nil {
 		return 0
 	}
@@ -100,7 +117,7 @@ func sizeOfValue(v *wire.Value) int {
 			for _, st := range v.Block.Statements {
 				n += fieldOverhead + len(st.Verb)
 				for _, a := range st.Args {
-					n += sizeOfValue(a.Value)
+					n += costOfValue(a.Value)
 				}
 			}
 		}
@@ -108,182 +125,231 @@ func sizeOfValue(v *wire.Value) int {
 	return n
 }
 
-// A cachedScope is a run of one data set's records, complete between its ends.
+// A cachedScope is a run of one data set's records, guaranteed complete between
+// its two ends.
 type cachedScope struct {
-	// set is the data set these records belong to: this source, this sort,
-	// this filter. Records of two different sequences are never in one cached
-	// scope, because "complete between its ends" is a claim about an order, and
-	// they have different ones.
+	id cachedScopeID
+
+	// set is the data set these records belong to: a source, a sort and a
+	// filter. Records of two sequences are never in one run, because "complete
+	// between its ends" is a claim about an order and they have different ones.
 	set string
 
-	// start is the record this run begins AFTER, and end the record it is
-	// complete UP TO. Nil start means the beginning of the sequence, nil end
-	// the end of it -- both being claims rather than gaps.
-	start *wire.Value
-	end   *wire.Value
+	// begin is the record this run is guaranteed FROM, exclusive, and end the
+	// one it is guaranteed TO, inclusive. Nil begin is the start of the sequence
+	// and nil end is the end of it -- both claims rather than gaps.
+	begin, end *wire.Value
 
-	recs []cached
+	// carried is what this run's records hold, which is not always what a later
+	// query wants: a run fetched for `fields={ name }` cannot answer one asking
+	// for `size`.
+	carried wire.Fields
 
-	// size is what this whole run costs: its records, and its own overhead.
-	size int
+	head, tail *entry
+	n          int
+	cost       int
 }
 
-// newCachedScope is a run of records as a cached scope of one data set.
-func newCachedScope(set string, start, end *wire.Value, recs []cached) *cachedScope {
-	e := &cachedScope{set: set, start: start, end: end, recs: recs}
-	for _, r := range recs {
-		e.size += r.size
-	}
-	return e
-}
+// Len is how many records the run holds, and Cost what it costs to hold them.
+func (s *cachedScope) Len() int  { return s.n }
+func (s *cachedScope) Cost() int { return s.cost }
 
-// Len is how many records the cached scope holds.
-func (e *cachedScope) Len() int { return len(e.recs) }
-
-// at is where in the run a record stands, and false for one this cached scope
-// does not hold.
-func (e *cachedScope) at(id *wire.Value) (int, bool) {
-	if id == nil {
-		return 0, false
-	}
-	want := wire.EncodeValue(id)
-	for i := range e.recs {
-		if wire.EncodeValue(e.recs[i].id) == want {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
-// from is where a scope starting after an identity would be served from, and
-// whether this cached scope can serve it at all.
-//
-// Two identities serve: the record it starts after, which is its own start, and
-// any record it holds. Anything else is outside what this cached scope claims,
-// and answering from it would be answering about a stretch nothing here covers.
-func (e *cachedScope) from(after *wire.Value) (int, bool) {
-	if after == nil {
-		return 0, e.start == nil
-	}
-	if e.start != nil && wire.EncodeValue(e.start) == wire.EncodeValue(after) {
-		return 0, true
-	}
-	if i, ok := e.at(after); ok {
-		return i + 1, true
-	}
-	return 0, false
-}
-
-// extend takes a run answered immediately past this one's end into it.
-//
-// The end moves and the records are appended. Nothing is re-queried and nothing
-// is copied twice: what the next scope asked for beginning where this one
-// stopped is the same stretch, so it is the same cached scope.
-//
-// It is refused where the run does not begin exactly at this end, because two
-// stretches with anything unknown between them are two cached scopes: joining
-// them would claim completeness across a gap nobody has looked at.
-func (e *cachedScope) extend(after *wire.Value, recs []cached, end *wire.Value) bool {
-	if e.end == nil {
-		return false // it already runs to the end of the sequence
-	}
-	if after == nil || wire.EncodeValue(after) != wire.EncodeValue(e.end) {
-		return false
-	}
-	e.recs = append(e.recs, recs...)
-	for _, r := range recs {
-		e.size += r.size
-	}
-	e.end = end
-	return true
-}
-
-// slice cuts this in two before the record at i, which is what an insert at that
-// point does to it.
-//
-// The guarantee holds on both sides and not across, so what comes back is two
-// cached scopes holding the same records between them: the first complete up to the
-// record before the cut, the second beginning after it. Nothing is re-queried,
-// because nothing either side of an insert has changed.
-//
-// The cut is refused at the very start, where there is no first half to make.
-func (e *cachedScope) slice(i int) (*cachedScope, *cachedScope) {
-	if i <= 0 || i >= len(e.recs) {
-		return e, nil
-	}
-	left := newCachedScope(e.set, e.start, e.recs[i-1].id, append([]cached(nil), e.recs[:i]...))
-	right := newCachedScope(e.set, e.recs[i-1].id, e.end, append([]cached(nil), e.recs[i:]...))
-	return left, right
-}
-
-// merge takes another cached scope into this one where they meet.
-//
-// They meet when this one is complete up to exactly where the other begins, so
-// that between them nothing is unaccounted for. It is what a slice undoes, and
-// what two scopes answered back to back amount to.
-func (e *cachedScope) merge(other *cachedScope) bool {
-	if e.set != other.set || e.end == nil || other.start == nil {
-		return false
-	}
-	if wire.EncodeValue(e.end) != wire.EncodeValue(other.start) {
-		return false
-	}
-	e.recs = append(e.recs, other.recs...)
-	e.size += other.size
-	e.end = other.end
-	return true
-}
-
-// trimFront and trimBack take the coldest end off, giving back what that freed.
-//
-// Trimming keeps a cached scope true: dropping records from an end and moving
-// that end in with them leaves the claim between the ends exactly as good as it
-// was. Taking something out of the MIDDLE would not -- that is a slice, and it
-// costs a cached scope rather than freeing one.
-func (e *cachedScope) trimFront(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	if n >= len(e.recs) {
-		n = len(e.recs)
-	}
-	freed := 0
-	for _, r := range e.recs[:n] {
-		freed += r.size
-	}
-	e.start = e.recs[n-1].id
-	e.recs = append([]cached(nil), e.recs[n:]...)
-	e.size -= freed
-	return freed
-}
-
-func (e *cachedScope) trimBack(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	if n >= len(e.recs) {
-		n = len(e.recs)
-	}
-	cut := len(e.recs) - n
-	freed := 0
-	for _, r := range e.recs[cut:] {
-		freed += r.size
-	}
-	if cut == 0 {
-		e.end = e.start
+// pushBack and pushFront add one entry at an end, which is what answering a
+// scope just past one of them amounts to.
+func (s *cachedScope) pushBack(e *entry) {
+	e.scope, e.prev, e.next = s.id, s.tail, nil
+	if s.tail != nil {
+		s.tail.next = e
 	} else {
-		e.end = e.recs[cut-1].id
+		s.head = e
 	}
-	e.recs = e.recs[:cut]
-	e.size -= freed
+	s.tail = e
+	s.n++
+	s.cost += e.cost
+}
+
+func (s *cachedScope) pushFront(e *entry) {
+	e.scope, e.prev, e.next = s.id, nil, s.head
+	if s.head != nil {
+		s.head.prev = e
+	} else {
+		s.tail = e
+	}
+	s.head = e
+	s.n++
+	s.cost += e.cost
+}
+
+// unlink takes one entry out and gives back what that freed.
+//
+// It says nothing about the guarantee. Taking a record out of the MIDDLE of a
+// run breaks the claim across it, so whoever does that splits the run as well;
+// taking one off an end is what trimming does, and it moves the end with it.
+func (s *cachedScope) unlink(e *entry) int {
+	if e.prev != nil {
+		e.prev.next = e.next
+	} else {
+		s.head = e.next
+	}
+	if e.next != nil {
+		e.next.prev = e.prev
+	} else {
+		s.tail = e.prev
+	}
+	e.prev, e.next = nil, nil
+	s.n--
+	s.cost -= e.cost
+	return e.cost
+}
+
+// splitAfter cuts the run in two just past one entry, which is what an insert
+// there does to it.
+//
+// The guarantee holds on both sides of the cut and not across it, so what comes
+// back is two runs holding the same records between them: this one now ends at
+// `at`, and the new one begins there. Nothing is copied and nothing is
+// re-queried -- one link is broken, and the shorter side is relabelled, because
+// an entry says which guarantee it falls under and half of them now fall under
+// another.
+//
+// Nil comes back where there is nothing past `at` to make a run of.
+func (s *cachedScope) splitAfter(at *entry, id cachedScopeID) *cachedScope {
+	if at == nil || at.next == nil {
+		return nil
+	}
+	rest := at.next
+	at.next, rest.prev = nil, nil
+
+	left := &cachedScope{
+		set: s.set, begin: s.begin, end: at.id, carried: s.carried,
+		head: s.head, tail: at,
+	}
+	right := &cachedScope{
+		set: s.set, begin: at.id, end: s.end, carried: s.carried,
+		head: rest, tail: s.tail,
+	}
+	for e := left.head; e != nil; e = e.next {
+		left.n++
+		left.cost += e.cost
+	}
+	right.n, right.cost = s.n-left.n, s.cost-left.cost
+
+	// The id is opaque, so it stays with whichever side is longer and the
+	// shorter one is relabelled. Either would be correct; this is the cheaper.
+	keep, move := left, right
+	if right.n > left.n {
+		keep, move = right, left
+	}
+	keep.id, move.id = s.id, id
+	for e := move.head; e != nil; e = e.next {
+		e.scope = move.id
+	}
+
+	*s = *left
+	return right
+}
+
+// merge takes another run into this one where they meet.
+//
+// They meet where this one's guarantee ends exactly at the other's beginning, so
+// that between them nothing is unaccounted for. It is what a split undoes, and
+// what two scopes answered back to back amount to: one link is made, and the
+// other run's entries are relabelled.
+func (s *cachedScope) merge(other *cachedScope) bool {
+	if s.set != other.set || s.end == nil || other.begin == nil {
+		return false
+	}
+	if wire.EncodeValue(s.end) != wire.EncodeValue(other.begin) {
+		return false
+	}
+	for e := other.head; e != nil; e = e.next {
+		e.scope = s.id
+	}
+	if other.head != nil {
+		if s.tail != nil {
+			s.tail.next = other.head
+			other.head.prev = s.tail
+		} else {
+			s.head = other.head
+		}
+		s.tail = other.tail
+	}
+	s.end = other.end
+	s.n += other.n
+	s.cost += other.cost
+	return true
+}
+
+// trimFront and trimBack take an end off, giving back what that freed.
+//
+// Trimming keeps a run true: dropping records from an end and moving that end in
+// with them leaves the claim between the ends exactly as good as it was. Taking
+// something out of the MIDDLE would not -- that is a split, and it costs a run
+// rather than freeing one.
+func (s *cachedScope) trimFront(n int) int {
+	freed := 0
+	for i := 0; i < n && s.head != nil; i++ {
+		e := s.head
+		s.begin = e.id
+		freed += s.unlink(e)
+	}
 	return freed
 }
 
-// coldest is the tick of the least recently read record at each end, which is
-// what says which end is worth trimming.
-func (e *cachedScope) coldest() (front, back uint64) {
-	if len(e.recs) == 0 {
+func (s *cachedScope) trimBack(n int) int {
+	freed := 0
+	for i := 0; i < n && s.tail != nil; i++ {
+		e := s.tail
+		if e.prev != nil {
+			s.end = e.prev.id
+		} else {
+			s.end = s.begin
+		}
+		freed += s.unlink(e)
+	}
+	return freed
+}
+
+// serve walks the run from one entry, the way a scope reads it.
+//
+// Forwards it starts at the entry past `from`; backwards, at the one before it.
+// Either way it stops at the run's own end, which is where the guarantee stops,
+// so nothing has to check whether it has walked out of what was promised.
+//
+// `from` is nil for a scope starting at the run's own beginning -- or, read
+// backwards, at its end.
+func (s *cachedScope) serve(from *entry, count int, back bool) []*entry {
+	var at *entry
+	switch {
+	case from == nil && back:
+		at = s.tail
+	case from == nil:
+		at = s.head
+	case back:
+		at = from.prev
+	default:
+		at = from.next
+	}
+	out := make([]*entry, 0, count)
+	for ; at != nil && len(out) < count; at = at.along(back) {
+		out = append(out, at)
+	}
+	return out
+}
+
+// along is the next entry in the direction a walk is going.
+func (e *entry) along(back bool) *entry {
+	if back {
+		return e.prev
+	}
+	return e.next
+}
+
+// coldest is when each end was last read, which is what says which end of a run
+// is worth trimming.
+func (s *cachedScope) coldest() (front, back uint64) {
+	if s.head == nil {
 		return 0, 0
 	}
-	return e.recs[0].read, e.recs[len(e.recs)-1].read
+	return s.head.hit, s.tail.hit
 }

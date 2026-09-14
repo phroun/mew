@@ -8,195 +8,291 @@ import (
 	"github.com/phroun/kittytk/wire"
 )
 
-func rec(id int64, name string) cached {
-	v := wire.NewInt(id)
-	f := wire.Fields{wire.Named("name", name), wire.Named("size", id*10)}
-	return cached{id: v, fields: f, whole: true, size: sizeOf(v, f)}
+func ent(id int64) *entry {
+	return newEntry(wire.NewInt(id), wire.Fields{
+		wire.Named("name", fmt.Sprintf("file-%d", id)),
+		wire.Named("size", id*10),
+	}, true, 0)
 }
 
-func runOf(from, to int64) []cached {
-	var out []cached
+// run builds a cached scope holding the records from..to, guaranteed between
+// the ends given.
+func run(set string, begin, end *wire.Value, from, to int64) *cachedScope {
+	s := &cachedScope{id: 1, set: set, begin: begin, end: end}
 	for i := from; i <= to; i++ {
-		out = append(out, rec(i, fmt.Sprintf("file-%d", i)))
-	}
-	return out
-}
-
-func ids(e *cachedScope) string {
-	s := ""
-	for i, r := range e.recs {
-		if i > 0 {
-			s += ","
-		}
-		s += wire.EncodeValue(r.id)
+		s.pushBack(ent(i))
 	}
 	return s
 }
 
+func walk(s *cachedScope) string {
+	out := ""
+	for e := s.head; e != nil; e = e.next {
+		if out != "" {
+			out += ","
+		}
+		out += wire.EncodeValue(e.id)
+	}
+	return out
+}
+
+// backwards reads the same run the other way, which is the check that both sets
+// of links are right rather than only the ones a forward walk follows.
+func backwards(s *cachedScope) string {
+	out := ""
+	for e := s.tail; e != nil; e = e.prev {
+		if out != "" {
+			out += ","
+		}
+		out += wire.EncodeValue(e.id)
+	}
+	return out
+}
+
+func ids(es []*entry) string {
+	out := ""
+	for _, e := range es {
+		if out != "" {
+			out += ","
+		}
+		out += wire.EncodeValue(e.id)
+	}
+	return out
+}
+
 // Both ends absent is the whole sequence, which is what the simplest possible
-// source produces: send everything, say exhausted.
-func TestAnExtentWithNoEndsIsTheWholeSequence(t *testing.T) {
-	e := newCachedScope("files", nil, nil, runOf(1, 5))
-	if i, ok := e.from(nil); !ok || i != 0 {
-		t.Errorf("it could not serve a scope from the beginning: %d %v", i, ok)
+// source leaves behind: send everything, say exhausted.
+func TestARunWithNoEndsIsTheWholeSequence(t *testing.T) {
+	s := run("files", nil, nil, 1, 5)
+	if walk(s) != "1,2,3,4,5" || backwards(s) != "5,4,3,2,1" {
+		t.Errorf("it reads %s forwards and %s backwards", walk(s), backwards(s))
 	}
-	if _, ok := e.from(wire.NewInt(3)); !ok {
-		t.Error("it could not serve a scope from a record it holds")
-	}
-	if e.extend(wire.NewInt(5), runOf(6, 7), nil) {
-		t.Error("something was appended past the end of the sequence")
+	if s.Len() != 5 || s.Cost() <= 0 {
+		t.Errorf("%d records at %d", s.Len(), s.Cost())
 	}
 }
 
-// A scope is served from the record it starts after, or from the cached scope's own
-// start. An identity the cached scope knows nothing about is not its to answer.
-func TestAnExtentServesFromWhatItHolds(t *testing.T) {
-	e := newCachedScope("files", wire.NewInt(10), wire.NewInt(5), runOf(1, 5))
+// Serving is walking links from where the scope starts, either way, and it stops
+// at the run's own end because that is where the guarantee stops.
+func TestServingWalksTheLinksEitherWay(t *testing.T) {
+	s := run("files", nil, nil, 1, 5)
+	third := s.head.next.next // record 3
+
+	if got := ids(s.serve(third, 2, false)); got != "4,5" {
+		t.Errorf("forwards from 3 it served %s", got)
+	}
+	if got := ids(s.serve(third, 2, true)); got != "2,1" {
+		t.Errorf("backwards from 3 it served %s", got)
+	}
+	// Asking for more than the run holds stops at the end rather than running
+	// off it: past the end is past the guarantee.
+	if got := ids(s.serve(third, 99, false)); got != "4,5" {
+		t.Errorf("forwards from 3 for 99 it served %s", got)
+	}
+	// From the run's own beginning, and from its end read backwards.
+	if got := ids(s.serve(nil, 2, false)); got != "1,2" {
+		t.Errorf("from the beginning it served %s", got)
+	}
+	if got := ids(s.serve(nil, 2, true)); got != "5,4" {
+		t.Errorf("from the end backwards it served %s", got)
+	}
+}
+
+// An insert cuts the run in two, and nothing is copied or re-queried.
+func TestAnInsertSplitsTheRun(t *testing.T) {
+	s := run("files", nil, wire.NewInt(5), 1, 5)
+	whole, count := s.Cost(), s.Len()
+	at := s.head.next.next // record 3
+
+	right := s.splitAfter(at, 2)
+	if right == nil {
+		t.Fatal("the cut made nothing")
+	}
+	if walk(s) != "1,2,3" || backwards(s) != "3,2,1" {
+		t.Errorf("the first run is %s / %s", walk(s), backwards(s))
+	}
+	if walk(right) != "4,5" || backwards(right) != "5,4" {
+		t.Errorf("the second run is %s / %s", walk(right), backwards(right))
+	}
+	if wire.EncodeValue(s.end) != "3" || wire.EncodeValue(right.begin) != "3" {
+		t.Errorf("the guarantees meet at %s and %s",
+			wire.EncodeValue(s.end), wire.EncodeValue(right.begin))
+	}
+	if s.Len()+right.Len() != count || s.Cost()+right.Cost() != whole {
+		t.Errorf("the halves hold %d at %d, the whole held %d at %d",
+			s.Len()+right.Len(), s.Cost()+right.Cost(), count, whole)
+	}
+	// Every entry says which guarantee it falls under.
 	for _, c := range []struct {
-		after *wire.Value
-		want  int
-		ok    bool
-	}{
-		{wire.NewInt(10), 0, true}, // its own start
-		{wire.NewInt(1), 1, true},  // the first record it holds
-		{wire.NewInt(4), 4, true},
-		{wire.NewInt(5), 5, true}, // its end: nothing left, but covered
-		{wire.NewInt(99), 0, false},
-		{nil, 0, false}, // the beginning of the sequence, which this is not
-	} {
-		i, ok := e.from(c.after)
-		if i != c.want || ok != c.ok {
-			t.Errorf("from %s gave %d,%v want %d,%v",
-				wire.EncodeValue(c.after), i, ok, c.want, c.ok)
+		of   *cachedScope
+		want cachedScopeID
+	}{{s, s.id}, {right, right.id}} {
+		for e := c.of.head; e != nil; e = e.next {
+			if e.scope != c.want {
+				t.Errorf("record %s says it is in run %d, and it is in %d",
+					wire.EncodeValue(e.id), e.scope, c.want)
+			}
 		}
 	}
 }
 
-// A scope answered immediately past the end moves the end rather than making a
-// second cached scope.
-func TestAScopeAnsweredPastTheEndExtendsIt(t *testing.T) {
-	e := newCachedScope("files", nil, wire.NewInt(3), runOf(1, 3))
-	was := e.size
+// The shorter side is the one relabelled, the id being opaque.
+func TestTheShorterSideIsRelabelled(t *testing.T) {
+	s := run("files", nil, wire.NewInt(9), 1, 9)
+	at := s.head.next // record 2, so two on the left and seven on the right
 
-	if !e.extend(wire.NewInt(3), runOf(4, 6), wire.NewInt(6)) {
-		t.Fatal("a run beginning exactly at the end was refused")
-	}
-	if ids(e) != "1,2,3,4,5,6" || wire.EncodeValue(e.end) != "6" {
-		t.Errorf("it came out as %s up to %s", ids(e), wire.EncodeValue(e.end))
-	}
-	if e.size <= was {
-		t.Error("the records went in and the size did not")
-	}
-
-	// A run that does not begin exactly at the end leaves a stretch nobody has
-	// looked at, and joining across it would claim what nothing checked.
-	if e.extend(wire.NewInt(9), runOf(10, 11), wire.NewInt(11)) {
-		t.Error("a run with a gap before it was joined on anyway")
+	right := s.splitAfter(at, 42)
+	if s.id != 42 || right.id != 1 {
+		t.Errorf("the short side kept %d and the long side took %d", s.id, right.id)
 	}
 }
 
-// An insert inside a cached scope cuts it in two and re-queries nothing.
-func TestAnInsertSlicesAnExtentInTwo(t *testing.T) {
-	e := newCachedScope("files", nil, wire.NewInt(5), runOf(1, 5))
-	left, right := e.slice(3)
-	if left == nil || right == nil {
-		t.Fatal("the cut did not make two")
-	}
-	if ids(left) != "1,2,3" || wire.EncodeValue(left.end) != "3" || left.start != nil {
-		t.Errorf("the first half is %s up to %s", ids(left), wire.EncodeValue(left.end))
-	}
-	if ids(right) != "4,5" || wire.EncodeValue(right.start) != "3" {
-		t.Errorf("the second half is %s from %s", ids(right), wire.EncodeValue(right.start))
-	}
-	if left.size+right.size != e.size {
-		t.Errorf("the halves cost %d and the whole cost %d", left.size+right.size, e.size)
-	}
+// A run cut in two goes back together, which is what two scopes answered back
+// to back amount to.
+func TestRunsThatMeetGoBackTogether(t *testing.T) {
+	s := run("files", nil, wire.NewInt(5), 1, 5)
+	whole, count := s.Cost(), s.Len()
+	right := s.splitAfter(s.head.next.next, 2)
 
-	// And the two meet, so they go back together.
-	if !left.merge(right) {
+	if !s.merge(right) {
 		t.Fatal("the halves would not join")
 	}
-	if ids(left) != "1,2,3,4,5" || left.size != e.size {
-		t.Errorf("rejoined it is %s at %d bytes", ids(left), left.size)
+	if walk(s) != "1,2,3,4,5" || backwards(s) != "5,4,3,2,1" {
+		t.Errorf("rejoined it reads %s / %s", walk(s), backwards(s))
+	}
+	if s.Len() != count || s.Cost() != whole || wire.EncodeValue(s.end) != "5" {
+		t.Errorf("rejoined it is %d at %d up to %s",
+			s.Len(), s.Cost(), wire.EncodeValue(s.end))
+	}
+	for e := s.head; e != nil; e = e.next {
+		if e.scope != s.id {
+			t.Errorf("record %s still says run %d", wire.EncodeValue(e.id), e.scope)
+		}
 	}
 }
 
-// Two cached scopes with anything unaccounted for between them are two cached scopes.
-func TestExtentsThatDoNotMeetDoNotMerge(t *testing.T) {
-	a := newCachedScope("files", nil, wire.NewInt(3), runOf(1, 3))
-	b := newCachedScope("files", wire.NewInt(7), wire.NewInt(9), runOf(8, 9))
-	if a.merge(b) {
-		t.Error("two cached scopes with a gap between them were joined")
+// Two runs with anything unaccounted for between them are two runs.
+func TestRunsThatDoNotMeetDoNotJoin(t *testing.T) {
+	a := run("files", nil, wire.NewInt(3), 1, 3)
+	if a.merge(run("files", wire.NewInt(7), wire.NewInt(9), 8, 9)) {
+		t.Error("two runs with a gap between them were joined")
 	}
-	other := newCachedScope("colours", wire.NewInt(3), wire.NewInt(5), runOf(4, 5))
-	if a.merge(other) {
-		t.Error("cached scopes of two different sequences were joined")
+	if a.merge(run("colours", wire.NewInt(3), wire.NewInt(5), 4, 5)) {
+		t.Error("runs of two different sequences were joined")
+	}
+	// And one guaranteed to the end of the sequence has nothing to join to.
+	whole := run("files", nil, nil, 1, 3)
+	if whole.merge(run("files", wire.NewInt(3), wire.NewInt(4), 4, 4)) {
+		t.Error("something was joined past the end of the sequence")
+	}
+	// Least obviously: a run that goes to the end of the sequence and one that
+	// comes from the start of it do not meet EACH OTHER either, however they are
+	// spelled. An absent end and an absent beginning are opposite claims, not two
+	// halves of the same one -- joining them would say everything between the
+	// first run's last record and the second run's first is here, which is the one
+	// thing neither of them ever said.
+	tail := run("files", wire.NewInt(3), nil, 4, 6)
+	if tail.merge(run("files", nil, wire.NewInt(2), 1, 2)) {
+		t.Error("the end of the sequence was joined to the start of it")
 	}
 }
 
-// Trimming an end keeps the cached scope true: the records go and the end moves in
-// with them, so what is claimed between the ends is as good as it was.
+// A record the cache has let go of lets go of the cache.
+//
+// An unlinked entry that kept its links would still reach the run it was dropped
+// from: nothing it was handed to could be told apart from a record still held,
+// and the run could not be collected while anything remembered one evicted
+// record of it -- so the cost would come off the total and not off the heap,
+// which is the one thing the total is for.
+func TestADroppedRecordDoesNotReachWhatIsStillHeld(t *testing.T) {
+	s := run("files", nil, wire.NewInt(5), 1, 5)
+	dropped := s.head
+
+	s.trimFront(1)
+	if dropped.next != nil || dropped.prev != nil {
+		t.Error("a dropped record still points into the run")
+	}
+	if got := ids(s.serve(dropped, 3, false)); got != "" {
+		t.Errorf("reading on from a dropped record served %s", got)
+	}
+}
+
+// Trimming an end keeps the claim true: the records go and the end moves in with
+// them, so what is guaranteed between the ends is as good as it was.
 func TestTrimmingAnEndKeepsTheClaimTrue(t *testing.T) {
-	e := newCachedScope("files", nil, wire.NewInt(5), runOf(1, 5))
-	whole := e.size
+	s := run("files", nil, wire.NewInt(5), 1, 5)
+	whole := s.Cost()
 
-	freed := e.trimFront(2)
-	if ids(e) != "3,4,5" || wire.EncodeValue(e.start) != "2" {
-		t.Errorf("trimmed at the front it is %s from %s", ids(e), wire.EncodeValue(e.start))
+	freed := s.trimFront(2)
+	if walk(s) != "3,4,5" || wire.EncodeValue(s.begin) != "2" {
+		t.Errorf("trimmed at the front it is %s from %s", walk(s), wire.EncodeValue(s.begin))
 	}
-	if e.size+freed != whole {
-		t.Errorf("it freed %d and shrank by %d", freed, whole-e.size)
+	if s.Cost()+freed != whole {
+		t.Errorf("it freed %d and shrank by %d", freed, whole-s.Cost())
 	}
-	// Still complete between its ends, and still serving from its own start.
-	if i, ok := e.from(wire.NewInt(2)); !ok || i != 0 {
-		t.Errorf("after trimming it serves from %d,%v", i, ok)
+	if backwards(s) != "5,4,3" {
+		t.Errorf("the back links did not follow: %s", backwards(s))
 	}
 
-	freed = e.trimBack(1)
-	if ids(e) != "3,4" || wire.EncodeValue(e.end) != "4" {
-		t.Errorf("trimmed at the back it is %s up to %s", ids(e), wire.EncodeValue(e.end))
+	freed = s.trimBack(1)
+	if walk(s) != "3,4" || wire.EncodeValue(s.end) != "4" || backwards(s) != "4,3" {
+		t.Errorf("trimmed at the back it is %s / %s up to %s",
+			walk(s), backwards(s), wire.EncodeValue(s.end))
 	}
 	if freed <= 0 {
 		t.Error("trimming the back freed nothing")
 	}
 }
 
-// What a record costs is worked out once and kept, so that eviction gives back
-// exactly what insertion took however wrong the estimate is.
-func TestARecordsCostIsWorkedOutOnceAndKept(t *testing.T) {
-	e := newCachedScope("files", nil, nil, runOf(1, 4))
-	whole := e.size
-
-	// A record patched after it went in still costs what it cost.
-	e.recs[0].fields = append(e.recs[0].fields, wire.Named("extra", "much longer value"))
-	if freed := e.trimFront(1); e.size+freed != whole {
-		t.Errorf("a patched record gave back %d of the %d it took", freed, whole-e.size)
+// Trimming everything leaves a run of none, still saying where it was.
+func TestTrimmingTheWholeRunLeavesNothing(t *testing.T) {
+	s := run("files", nil, wire.NewInt(3), 1, 3)
+	if freed := s.trimFront(99); freed == 0 || s.Len() != 0 || s.Cost() != 0 {
+		t.Errorf("%d records at %d after trimming the lot, freeing %d",
+			s.Len(), s.Cost(), freed)
+	}
+	if s.head != nil || s.tail != nil {
+		t.Error("an emptied run still points at records")
 	}
 }
 
-// The estimate is nominal, not exact -- but it has to keep tracking reality, or
-// a byte limit stops meaning anything at all.
+// What an entry costs is worked out once and kept, so that eviction gives back
+// exactly what insertion took however wrong the estimate is.
+func TestAnEntrysCostIsWorkedOutOnceAndKept(t *testing.T) {
+	s := run("files", nil, nil, 1, 4)
+	whole := s.Cost()
+
+	// Patched after it went in, as an invalidation would, it still costs what it
+	// cost.
+	s.head.fields = append(s.head.fields, wire.Named("extra", "a much longer value"))
+	if freed := s.trimFront(1); s.Cost()+freed != whole {
+		t.Errorf("a patched entry gave back %d of the %d it took", freed, whole-s.Cost())
+	}
+}
+
+// The estimate is nominal rather than exact -- but it has to keep tracking
+// reality, or a byte limit stops meaning anything.
 //
-// Not an exact assertion: it fails when the shape of what is cached changes
-// enough to move the estimate off by more than a factor, and not when a field
-// is added somewhere.
+// Not an exact assertion: it fails when the shape of what is held changes enough
+// to move the estimate off by more than a factor, and not when a field is added
+// somewhere.
 func TestTheEstimateTracksTheRealHeap(t *testing.T) {
 	const n = 20000
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 
-	e := newCachedScope("files", nil, nil, runOf(1, n))
+	s := run("files", nil, nil, 1, n)
 
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	real := int(after.HeapAlloc - before.HeapAlloc)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(s)
 
-	ratio := float64(e.size) / float64(real)
-	t.Logf("estimated %d bytes, heap grew %d, ratio %.2f", e.size, real, ratio)
+	ratio := float64(s.Cost()) / float64(real)
+	t.Logf("estimated %d bytes, the heap grew %d, ratio %.2f", s.Cost(), real, ratio)
 	if ratio < 0.5 || ratio > 2.0 {
-		t.Errorf("the estimate is %.2f of the real heap, which is too far off to "+
-			"cap anything by -- recalibrate the overheads in cached scope.go", ratio)
+		t.Errorf("the estimate is %.2f of the real heap, too far off to cap "+
+			"anything by -- recalibrate the overheads in cachedscope.go", ratio)
 	}
 }
