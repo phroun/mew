@@ -27,7 +27,7 @@ def read_corpus():
             if not line or line.startswith("#"):
                 continue
             verb, _, rest = line.partition(" ")
-            if verb in ("spec", "fill"):
+            if verb in ("spec", "scope"):
                 assert pending is None, "line %d: a case with no answer" % n
                 pending = [n, verb, rest, "", False]
             elif verb == "want":
@@ -52,7 +52,7 @@ def answer(kind, text):
     args = script.statements[0].args
     if kind == "spec":
         return query.parse_spec(args).encode()
-    return query.parse_fill(args).encode()
+    return query.parse_scope(args).encode()
 
 
 class QueryCorpusTest(unittest.TestCase):
@@ -86,7 +86,7 @@ class FieldBagTest(unittest.TestCase):
             protocol.parse('x f={ name "a"; size 12; key 7 }').statements[0].args[0].value)
         self.assertEqual(bag.names(), ["name", "size", "key"])
         self.assertEqual(bag.get("name").str, "a")
-        self.assertEqual(bag.key().number, 7)
+        self.assertEqual(bag.get("key").number, 7)
         self.assertIsNone(bag.get("absent"))
         self.assertTrue(bag.has("size"))
         self.assertFalse(bag.has("absent"))

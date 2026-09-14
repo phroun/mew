@@ -511,13 +511,6 @@ class Conn:
             return self._open_query(stmt, keys, ids, pending)
 
         oid = _hosted_target(stmt, keys)
-        if stmt.verb == _query.QUERY_VERB:
-            if oid is None:
-                raise ValueError("query: expected the query to ask")
-            q = self.query(oid)
-            if q is None:
-                raise ValueError("query %d: no query of mine" % oid)
-            return self._window(q, stmt.args[1:], pending)
         if oid is None:
             return  # not addressed to anything this application holds
         q = self.query(oid)
@@ -525,6 +518,10 @@ class Conn:
             raise ValueError("%s %d: no query of mine" % (stmt.verb, oid))
         rest = stmt.args[1:]
 
+        if stmt.verb == _query.QUERY_VERB:
+            raise ValueError(
+                "query %d: a query is asked when it is made and answered "
+                "once; ask a new one for the next scope" % oid)
         if stmt.verb == "set":
             raise ValueError(
                 "set %d: a query is the sequence it was opened with and does "
@@ -567,16 +564,10 @@ class Conn:
         if stmt.key:
             ids[stmt.key] = q.id()
             keys[stmt.key] = q.id()
-        return self._window(q, args, pending)
-
-    def _window(self, q, args, pending):
-        """Take a request for one scope apart and queue serving it."""
-        request = _query.parse_fill(args)
-        with q._lock:
-            spec = q._spec
+        scope = _query.parse_scope(args)
         with q._source._lock:
             fn = q._source._fill
-        f = Fill(q, request, spec)
+        f = Fill(q, scope, spec)
         pending.append(lambda: fn(f))
 
 
@@ -988,26 +979,23 @@ class Fill:
     """One scope of the sequence, asked for -- and where the records that
     answer it are written.
 
-    The reading side is what was asked: from_ and to are where the display's
-    own knowledge starts and how far it runs, have is how much of the scope it
-    can fill from that, and need is how many rows the scope is. Emit every
-    record of your own in (from_..to], and if that does not make up the
-    shortfall, keep going past to until it does.
+    The reading side is what was asked: start past after, walk the way
+    reversed says, and send count records -- stopping early if you reach until,
+    which is a record the display already holds.
 
     The writing side is record, as many times as there are records, and then
-    one of done, exhausted or fail. Records go out in batches as they
+    one of filled, joined, exhausted or fail. Records go out in batches as they
     accumulate, so the answer may be produced over as long as it takes and
     interleaved with other work; nothing has to be held until the end."""
 
-    def __init__(self, query: Query, request, spec):
+    def __init__(self, query: Query, scope, spec):
         self.query = query
         self.spec = spec
-        self.request = request
-        self.from_ = request.from_
-        self.to = request.to
-        self.have = request.have
-        self.need = request.need
-        self.fields = request.fields
+        self.scope = scope
+        self.after = scope.after
+        self.until = scope.until
+        self.count = scope.count
+        self.reversed = scope.reversed
 
         self._lock = threading.Lock()
         self._buf: List[str] = []
@@ -1015,10 +1003,11 @@ class Fill:
         self._sent = 0       # statements written, which is what decides a flush
         self._records = 0    # records among them, which is what sent() reports
         self._ordered = False
+        self._waiting = None  # the last record, held so the end can ride on it
         self._closed = False
 
-    def record(self, key, **fields):
-        """One whole record: its key, and every field it has.
+    def record(self, id, **fields):
+        """One whole record: its identity, and every field it has.
 
             f.record(17, name="src/parser.go", size=1024)
 
@@ -1028,27 +1017,41 @@ class Fill:
         asked for it. So say record when these are all the fields there are,
         and subset when they are the ones somebody asked for.
 
-        The key is what identifies the record, and it is the same key whatever
-        is being asked."""
-        self._write(_query.RECORD_ARG, key, fields)
+        The identity names the record and travels beside the fields rather
+        than among them: a record is free to carry a field called `key` of its
+        own, and that field is data like any other."""
+        self._write(True, id, fields)
 
-    def subset(self, key, **fields):
-        """Some of a record: its key, and the fields this scope asked for,
+    def subset(self, id, **fields):
+        """Some of a record: its identity, and the fields this query asked for,
         which are fewer than the record has. It crosses as `fields={ ... }`.
 
         It is the honest answer to a query that named a short list of fields --
         the skeleton of a wide scope -- and it is worth less afterwards than
         a whole record, because it can only answer the question it was
         asked."""
-        self._write(_query.FIELDS_ARG, key, fields)
+        self._write(False, id, fields)
 
-    def _write(self, what, key, fields):
-        bag = _query.Fields([protocol.named(_query.KEY_FIELD, key)])
+    def _write(self, whole, id, fields):
+        """Queue one record, holding it back until the next one or the end.
+
+        Held back because the statement that carries the last record can carry
+        the terminator too, and an answer of one record is then one line rather
+        than three. Nothing waits long: the next record releases it, so does
+        flush, and so does the end."""
+        bag = _query.Fields()
         for name, v in fields.items():
             bag.append(protocol.named(name, v))
-        self._emit(self._result(protocol.Arg(name=what, value=bag.block())))
+        rec = _query.Result(id=protocol.val(id), fields=bag, whole=whole)
         with self._lock:
+            if self._closed:
+                raise RuntimeError("this scope has already been answered")
+            held = self._waiting
+            rec.ordered = self._ordered and self._records == 0
+            self._waiting = rec
             self._records += 1
+        if held is not None:
+            self._emit(self._result(*held.args()))
 
     def ordered(self):
         """Declare that the records are being sent in the query's own order,
@@ -1064,25 +1067,29 @@ class Fill:
         after one has gone out is too late to be true of what has already
         crossed, and is dropped rather than sent."""
         with self._lock:
-            late = self._sent > 0 or self._closed or self._ordered
-            if not late:
-                self._ordered = True
-        if late:
-            return
-        self._emit(self._result(protocol.Arg(name="ordered", flag=FlagState.TRUE)))
+            # Late is measured in records produced, not statements sent: a
+            # record held back for the terminator to ride on has still been
+            # produced.
+            if self._records > 0 or self._closed or self._ordered:
+                return
+            self._ordered = True
 
-    def done(self, watermark=None):
-        """Finish with a watermark: there is nothing of mine between where you
-        asked from and this point that you do not now have.
+    def filled(self, watermark):
+        """Finish with the count reached, and a watermark: there is nothing of
+        mine between where you asked from and this record that you do not now
+        have.
 
-        It is a completeness guarantee rather than a position, and it is what
-        lets the display shrink the scope, grow it back and scroll inside it
-        without asking anything."""
-        extra = []
-        if watermark:
-            extra.append(protocol.Arg(name="watermark",
-                                      value=_query.Fields(watermark).block()))
-        self._finish(extra)
+        The watermark is a completeness guarantee rather than a position, and
+        it is what the next scope is asked from -- so it names a record this
+        source sent, or one it is otherwise prepared to place."""
+        self._finish(_query.Complete(stop=_query.STOP_FILLED,
+                                     watermark=protocol.val(watermark)))
+
+    def joined(self, watermark):
+        """Finish at the record the display said it already held. What it holds
+        on this side and what it holds on that are now one run."""
+        self._finish(_query.Complete(stop=_query.STOP_JOINED,
+                                     watermark=protocol.val(watermark)))
 
     def exhausted(self):
         """Finish with everything there is: no watermark, because there is
@@ -1092,13 +1099,13 @@ class Fill:
         hint, send all your records, say this -- and it is not a toy: the
         display then holds the whole layer and asks nothing again until
         something invalidates it."""
-        self._finish([protocol.Arg(name="exhausted", flag=FlagState.TRUE)])
+        self._finish(_query.Complete(stop=_query.STOP_EXHAUSTED))
 
     def fail(self, message: str):
         """Finish with a refusal: this query cannot be honoured, this scope
         cannot be produced, the records are gone. A refusal is an answer -- the
         display carries on with what it has."""
-        self._finish([protocol.named("error", message)])
+        self._finish(_query.Complete(error=message))
 
     def sent(self) -> int:
         """How many records have gone into the answer so far."""
@@ -1106,7 +1113,13 @@ class Fill:
             return self._records
 
     def flush(self):
-        """Send what has accumulated without finishing the answer."""
+        """Send what has accumulated without finishing the answer, the record
+        being held for the terminator included."""
+        with self._lock:
+            held = self._waiting
+            self._waiting = None
+        if held is not None:
+            self._emit(self._result(*held.args()))
         with self._lock:
             src = self._take()
         if src:
@@ -1134,13 +1147,18 @@ class Fill:
             src = self._take()
         self.query._conn.send(src)
 
-    def _finish(self, extra):
+    def _finish(self, done):
+        """End the answer, on the last record's own statement where there is
+        one, close it and send the rest."""
         with self._lock:
             if self._closed:
                 raise RuntimeError("this scope has already been answered")
-            args = [protocol.Arg(name=_query.RESULT_COMPLETE, flag=FlagState.TRUE)]
-            args.extend(extra)
-            self._buf.append(self._result(*args))
+            end = self._waiting
+            self._waiting = None
+            if end is None:
+                end = _query.Result(ordered=self._ordered and self._records == 0)
+            end.complete = done
+            self._buf.append(self._result(*end.args()))
             self._closed = True
             src = self._take()
         self.query._conn.send(src)

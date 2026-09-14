@@ -29,6 +29,7 @@ from .protocol import (
     ValueKind,
     encode_statement,
     encode_value,
+    new_string,
     new_word,
     quote,
 )
@@ -40,9 +41,15 @@ from .protocol import (
 # `result`, `ask` by `answer`, and `sub` -- or an object's mere existence -- by
 # `event`. So a record arriving for a list can never be mistaken for something
 # a subscription raised.
-QUERY_VERB = "query"      # `query 9 from={ ... } have=25 need=30`
-RESULT_VERB = "result"    # `result 9 record={ ... }`
-KEY_FIELD = "key"
+QUERY_VERB = "query"      # `new query source="files" sort={ name } count=30`
+RESULT_VERB = "result"    # `result 9 id=42 record={ ... }`
+
+# ID_ARG carries a record's identity, beside its fields rather than among them.
+#
+# An identity is not a field. A record can hold a field called `key` and that
+# field is data like any other -- it sorts, it filters, it is shown in a column
+# -- while what names the record travels here.
+ID_ARG = "id"
 
 # What a result carries, and how much of the record it is.
 #
@@ -53,9 +60,21 @@ KEY_FIELD = "key"
 RECORD_ARG = "record"
 FIELDS_ARG = "fields"
 
-# RESULT_COMPLETE ends a scope: everything for it has been sent. A result
-# without it carries a record.
+# RESULT_COMPLETE ends a scope: everything for it has been sent.
+#
+# It can ride on the statement carrying the last record, and `ordered` on the
+# one carrying the first, so a scope of a single record crosses as a single
+# line. Both forms are read.
 RESULT_COMPLETE = "complete"
+WATERMARK_ARG = "watermark"
+ORDERED_ARG = "ordered"
+ERROR_ARG = "error"
+
+# Why a scope ended, which the asker cannot work out for itself: a scope that
+# filled and one that ran out of records look identical from the far end.
+STOP_FILLED = "filled"        # the count was reached; there is more past it
+STOP_JOINED = "joined"        # the walk reached `until`, joining two runs
+STOP_EXHAUSTED = "exhausted"  # no more records this way, so no watermark
 
 # The operators a filter is built from.
 OP_AND = "and"
@@ -117,12 +136,6 @@ class Fields(list):
     def has(self, name: str) -> bool:
         """Whether the bag names a field at all, valued or not."""
         return any(a.name == name for a in self)
-
-    def key(self) -> Optional[Value]:
-        """The record key: the field every record and every boundary carries,
-        because it is the sort's implicit last level and what makes a position
-        mean exactly one record."""
-        return self.get(KEY_FIELD)
 
     def names(self) -> List[str]:
         """The fields, in the order they were written."""
@@ -198,27 +211,18 @@ class SortLevel:
 
 @dataclass
 class Spec:
-    """What sequence a query names. It is stated when the query is announced
-    and restated when the display changes it, which is a new generation of the
-    same query rather than a new query."""
+    """What sequence a query names: which records, in which order.
+
+    It is stated once, when the query is made, and never again. A query is the
+    sequence it was opened with and nothing restates it -- a different filter
+    or a different sort is a different sequence, which is a different query,
+    opened alongside this one and taking its place."""
 
     source: str = ""
     fields: Fields = dataclasses.field(default_factory=Fields)
     exclude: Fields = dataclasses.field(default_factory=Fields)
     filter: Optional[Filter] = None
     sort: List[SortLevel] = dataclasses.field(default_factory=list)
-
-    # Walk the stated sequence from its end.
-    #
-    # Every level turns over, the one the sort does not write included: a
-    # record key settles what the named levels leave equal, and a sequence read
-    # backwards settles it backwards too. That is what makes this the exact
-    # mirror -- `sort={ size desc }` reverses one level and leaves ties in the
-    # order they were already in, which is a different sequence again.
-    #
-    # It names no field, so it is the one way to turn over a sequence whose
-    # records are read in a way that cannot name their key at all.
-    reversed: bool = False
 
     def encode(self) -> str:
         """The spec as the arguments of the statement that carries it."""
@@ -233,43 +237,97 @@ class Spec:
             parts.append("filter=" + self.filter.encode())
         if self.sort:
             parts.append("sort=" + encode_sort(self.sort))
+        return " ".join(parts)
+
+
+@dataclass
+class Scope:
+    """The run of records a query asks for: where to start, which way to walk,
+    how many, and where the asker's own knowledge picks up again.
+
+    It is not a filter and it names no field. The sequence is already decided
+    by the spec, and a scope only says which part of it to read -- so a source
+    prepares one ordering and serves every scope of it cheaply, rather than
+    preparing a new one because the reader scrolled.
+
+    after and until are identities, not positions. An identity means something
+    only to the source that issued it, which is why a source made of several
+    others never passes one down: it hands each of them that one's own.
+
+    reversed walks the sequence from its end rather than its beginning. Every
+    level turns over, the one the sort does not write included -- an identity
+    settles what the named levels leave equal, and a sequence read backwards
+    settles it backwards too. It belongs to the scope rather than the sequence
+    because it costs nothing: one prepared ordering is read either way."""
+
+    after: Optional[Value] = None
+    until: Optional[Value] = None
+    count: int = 0
+    reversed: bool = False
+
+    def encode(self) -> str:
+        """The scope as the arguments that carry it."""
+        parts = []
+        if self.after is not None:
+            parts.append("after=" + encode_value(self.after))
+        if self.until is not None:
+            parts.append("until=" + encode_value(self.until))
+        parts.append("count=%d" % self.count)
         if self.reversed:
             parts.append("reversed")
         return " ".join(parts)
 
 
 @dataclass
-class Fill:
-    """One scope of the sequence, asked for.
+class Complete:
+    """What ends a scope: which of the three ways it ended, and how far the
+    answer is complete.
 
-    from_ and to are boundaries: where the display's own knowledge starts and
-    how far it runs. Both are empty at the beginning of the sequence. have is
-    how much of the scope the display can fill from what it already holds, and
-    need is how many rows the scope is.
+    watermark says there is nothing between where the scope was asked from and
+    that record that the asker does not now have. STOP_EXHAUSTED carries none,
+    because there is no point past the end to be complete up to."""
 
-    Nothing stamps it. The application's results and its replies travel one
-    ordered stream, so a scope's results are the ones between the reply that
-    accepted it and the result that completes it -- which is also what
-    separates the generation before a re-sort from the one after it."""
+    watermark: Optional[Value] = None
+    stop: str = ""
+    error: str = ""
 
-    from_: Fields = dataclasses.field(default_factory=Fields)
-    to: Fields = dataclasses.field(default_factory=Fields)
-    have: int = 0
-    need: int = 0
+
+@dataclass
+class Result:
+    """One `result` statement taken apart: the order declaration, a record, and
+    the terminator, any of which may be absent.
+
+    All three can ride on one statement. `ordered` is worth saying only before
+    the first record, and the terminator only after the last, so an answer of
+    one record carries all three and crosses as a single line. A reader takes
+    them in that order -- order, then record, then end -- whichever statement
+    they arrived on."""
+
+    ordered: bool = False
+    id: Optional[Value] = None   # nil where no record rides here
     fields: Fields = dataclasses.field(default_factory=Fields)
+    whole: bool = False          # `record=` rather than `fields=`
+    complete: Optional[Complete] = None
 
-    def encode(self) -> str:
-        """The fill as the arguments after the question word."""
-        parts = []
-        if self.from_:
-            parts.append("from=" + self.from_.encode())
-        if self.to:
-            parts.append("to=" + self.to.encode())
-        parts.append("have=%d" % self.have)
-        parts.append("need=%d" % self.need)
-        if self.fields:
-            parts.append("fields=" + self.fields.encode())
-        return " ".join(parts)
+    def args(self) -> List[Arg]:
+        """The result as the arguments after the query id."""
+        out: List[Arg] = []
+        if self.ordered:
+            out.append(Arg(name=ORDERED_ARG, flag=FlagState.TRUE))
+        if self.id is not None:
+            out.append(Arg(name=ID_ARG, value=self.id))
+            what = RECORD_ARG if self.whole else FIELDS_ARG
+            out.append(Arg(name=what, value=self.fields.block()))
+        c = self.complete
+        if c is not None:
+            out.append(Arg(name=RESULT_COMPLETE, flag=FlagState.TRUE))
+            if c.watermark is not None:
+                out.append(Arg(name=WATERMARK_ARG, value=c.watermark))
+            if c.stop:
+                out.append(Arg(name=c.stop, flag=FlagState.TRUE))
+            if c.error:
+                out.append(Arg(name=ERROR_ARG, value=new_string(c.error)))
+        return out
 
 
 def parse_fields(v: Optional[Value]) -> Fields:
@@ -335,6 +393,31 @@ def parse_spec(args: List[Arg]) -> Spec:
                 s.sort = parse_sort(a.value)
             except QueryError as e:
                 raise QueryError("sort: %s" % e)
+    return s
+
+
+def parse_scope(args: List[Arg]) -> Scope:
+    """The scope, from the same arguments the spec was read from.
+
+    The two travel together -- `new query` states the sequence and asks for a
+    run of it in one statement -- and they are read apart because they are
+    different things: the spec is what the query is, and the scope is what this
+    one question wanted."""
+    s = Scope()
+    for a in args:
+        if a.name == "count":
+            if a.value is None or a.value.kind != ValueKind.NUMBER or not a.value.is_int:
+                raise QueryError("count: expected a whole number")
+            if a.value.number < 0:
+                raise QueryError(
+                    "count: %d records is not a number of records" % a.value.number)
+            s.count = int(a.value.number)
+        elif a.name in ("after", "until"):
+            if a.value is None:
+                raise QueryError("%s: expected an identity" % a.name)
+            if a.value.kind == ValueKind.BLOCK:
+                raise QueryError("%s: an identity is a value, not a block" % a.name)
+            setattr(s, a.name, a.value)
         elif a.name == "reversed":
             if a.value is not None:
                 raise QueryError("reversed: it takes no value")
@@ -342,21 +425,44 @@ def parse_spec(args: List[Arg]) -> Spec:
     return s
 
 
-def parse_fill(args: List[Arg]) -> Fill:
-    """A fill request, from the arguments after the question word."""
-    f = Fill()
+def parse_result(args: List[Arg]) -> Result:
+    """A result, from the arguments after the query id."""
+    r = Result()
+    done = Complete()
+    ended = False
     for a in args:
-        if a.name in ("have", "need"):
-            if a.value is None or a.value.kind != ValueKind.NUMBER or not a.value.is_int:
-                raise QueryError("%s: expected a whole number" % a.name)
-            setattr(f, a.name, int(a.value.number))
-        elif a.name in ("from", "to", "fields"):
+        if a.name == ORDERED_ARG:
+            r.ordered = True
+        elif a.name == ID_ARG:
+            if a.value is None or a.value.kind == ValueKind.BLOCK:
+                raise QueryError("id: expected an identity")
+            r.id = a.value
+        elif a.name in (RECORD_ARG, FIELDS_ARG):
             try:
-                bag = parse_fields(a.value)
+                r.fields = parse_fields(a.value)
             except QueryError as e:
                 raise QueryError("%s: %s" % (a.name, e))
-            setattr(f, "from_" if a.name == "from" else a.name, bag)
-    return f
+            r.whole = a.name == RECORD_ARG
+        elif a.name == RESULT_COMPLETE:
+            ended = True
+        elif a.name == WATERMARK_ARG:
+            if a.value is None or a.value.kind == ValueKind.BLOCK:
+                raise QueryError("watermark: expected an identity")
+            done.watermark = a.value
+            ended = True
+        elif a.name == ERROR_ARG:
+            if a.value is None or a.value.kind != ValueKind.STRING:
+                raise QueryError("error: expected a message")
+            done.error = a.value.str
+            ended = True
+        elif a.name in (STOP_FILLED, STOP_JOINED, STOP_EXHAUSTED):
+            done.stop = a.name
+            ended = True
+    if r.fields and r.id is None:
+        raise QueryError("a record carries an identity; this one has none")
+    if ended:
+        r.complete = done
+    return r
 
 
 def parse_filter(v: Optional[Value]) -> Filter:
