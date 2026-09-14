@@ -2,21 +2,37 @@ package source
 
 // A source that amends another.
 //
-// The third kind, and the first that wraps. It holds replacements and
-// deletions against the records of a child source, and it answers the query
-// itself: it asks the child the same question, and merges what comes back with
-// what it holds of its own.
+// The third kind, and the first that wraps. It holds two different things over
+// a child source -- amendments against the child's records, and records of its
+// own -- and it answers the query itself: it asks the child the same question,
+// and merges what comes back with what it holds.
 //
 //	a record the child sent that we replace   ours goes out, so the values are right
 //	a record the child sent that we deleted   dropped
-//	a record of ours the child never sent     ours goes out anyway, if it matches
+//	a record of ours the child never sent     ours goes out, if it matches
+//	one of ours the child sent after all      THEIRS goes out; ours is a clash
 //	anything else the child sent              passed on
 //
-// **Our amendments are authoritative for their keys.** Whatever the child says
-// about a key we hold is suppressed, and what goes out is ours if it matches
-// the query and nothing if it does not. That is what makes the child's extras
-// harmless in both directions -- one more record is ignored, one missing is
-// supplied.
+// **An amendment is a statement about a record of the child's; an addition is
+// not.** An amendment names one of the child's and says "mine instead" or
+// "gone", and is authoritative for that key: whatever the child says about it
+// is suppressed. An addition names nothing of the child's -- it is a record
+// this source owns, keyed however its author likes, with no prefix imposed --
+// and where the two meet, the child wins.
+//
+// That is the opposite way round from a replacement, and deliberately. An
+// addition's key is the author's to choose and the author's to keep clear; the
+// child's records are not this source's to displace by accident. Where a child
+// is a ComposedSource every key it hands out carries a slash, so an addition
+// without one cannot collide at all -- and adding *into* an include's
+// namespace is a legitimate thing to do, for records meant to be moved there
+// later.
+//
+// **Nothing is asked to find a clash out.** It surfaces when the child's copy
+// arrives, which is a lookup this source does on every record anyway. On the
+// scope where it surfaces, ours has usually already gone and the child's is
+// dropped rather than send one identity twice; the clash is written down, and
+// every scope after that has ours out and the child's in.
 //
 // Amendments change at any time. This is a data source, not a query: it
 // answers against what it holds when it is asked, and two scopes of one
@@ -63,9 +79,15 @@ func NewAmendedSource(child Source) *AmendedSource {
 // predicted rather than discovered.
 type amendment struct {
 	key     *wire.Value
-	fields  wire.Fields // the replacement's content; nil for a deletion
+	fields  wire.Fields // the replacement's or addition's content; nil for a deletion
 	deleted bool
 	seen    wire.Fields // last known fields of a deleted record
+
+	// added marks a record of this source's own rather than a statement about
+	// one of the child's, and clashed marks one whose key turned out to be the
+	// child's after all. A clashed addition never goes out again.
+	added   bool
+	clashed bool
 }
 
 // place is what the amendment is positioned and filtered by.
@@ -87,6 +109,22 @@ func (a *AmendedSource) Replace(key *wire.Value, fields wire.Fields) {
 	}
 	a.mu.Lock()
 	a.amend[wire.EncodeValue(key)] = &amendment{key: key, fields: fields}
+	a.mu.Unlock()
+}
+
+// Add says this source holds a record of its own under this key.
+//
+// It is not a statement about anything the child holds: the key is the
+// author's to choose, and keeping it clear of the child's is the author's to
+// do. Where it turns out not to be clear, the child's record is the one that
+// stands and this one is dropped for good -- the opposite of Replace, which
+// displaces whatever the child has.
+func (a *AmendedSource) Add(key *wire.Value, fields wire.Fields) {
+	if key == nil {
+		return
+	}
+	a.mu.Lock()
+	a.amend[wire.EncodeValue(key)] = &amendment{key: key, fields: fields, added: true}
 	a.mu.Unlock()
 }
 
@@ -126,6 +164,17 @@ func (a *AmendedSource) learn(key *wire.Value, fields wire.Fields) {
 	a.mu.Unlock()
 }
 
+// clash writes down that an addition's key is the child's after all, which is
+// the one thing about an addition that cannot be known until the child answers.
+// From here on the child's record stands and this one does not go out.
+func (a *AmendedSource) clash(key *wire.Value) {
+	a.mu.Lock()
+	if am := a.amend[wire.EncodeValue(key)]; am != nil && am.added {
+		am.clashed = true
+	}
+	a.mu.Unlock()
+}
+
 // held is what the source holds, taken at the moment a scope is asked for.
 func (a *AmendedSource) held() []*amendment {
 	a.mu.Lock()
@@ -153,12 +202,14 @@ func (a *AmendedSource) Open(spec *wire.Spec) (DataSet, error) {
 	if err != nil {
 		return nil, err
 	}
+	notes := a.notes.of(spec, 2)
 	return &amendedSet{
 		src:    a,
 		spec:   spec,
 		child:  child,
 		levels: ordering1(spec),
-		placed: a.notes.of(spec, 1)[0],
+		placed: notes[0],
+		resume: notes[1],
 	}, nil
 }
 
@@ -173,6 +224,15 @@ type amendedSet struct {
 	// too -- it decides which of its own amendments come after it -- and an
 	// identity is not a position.
 	placed *places
+
+	// resume is where the CHILD stood as each of those records went out.
+	//
+	// This source has records of its own, so a scope can end on one the child
+	// has never heard of -- and handing that identity down would be asking the
+	// child to place something that is not its. What goes down instead is the
+	// last identity the child itself gave before that record crossed, which is
+	// the same place in the merged sequence.
+	resume *places
 }
 
 // Close lets this sequence go, and the child's with it.
@@ -199,7 +259,17 @@ func (s *amendedSet) Read(sc *wire.Scope, out Sink) error {
 		at = t
 	}
 
-	m := &merge{set: s, want: sc, out: out, at: at, levels: s.levels}
+	// Where the child carries on from. For a record of the child's this is the
+	// record itself; for one of ours it is whatever the child last gave before
+	// ours went out.
+	var from *wire.Value
+	if sc.After != nil {
+		if r, ok := s.resume.get(sc.After); ok && len(r) > 0 {
+			from = r[0]
+		}
+	}
+
+	m := &merge{set: s, want: sc, out: out, at: at, levels: s.levels, childAt: from}
 	if sc.Reversed {
 		// Walking the other way turns every comparison over, this source's
 		// own records included: what "before" means is the only thing that
@@ -207,7 +277,15 @@ func (s *amendedSet) Read(sc *wire.Scope, out Sink) error {
 		m.levels = wire.Reverse(s.levels)
 	}
 	m.prepare()
-	return m.ask(sc.After, sc.Count+m.slack)
+
+	// The child is asked for the shortfall: the scope, plus what our deletions
+	// will take out of its answer, less what we will put in ourselves. Asking
+	// for more than that is work nobody reads.
+	want := sc.Count + m.slack - len(m.mine)
+	if want < 0 {
+		want = 0
+	}
+	return m.ask(from, want)
 }
 
 // A merge is one scope being answered: this source's own records for it, and
@@ -222,12 +300,23 @@ type merge struct {
 	mine  []*amendment // ours, in the sequence's order, still to go out
 	slack int          // records of the child's this scope will take out
 
+	childAt *wire.Value     // the last identity the child gave
+	gone    map[string]bool // additions of ours that have already crossed
+
 	sent        int
 	round       int
 	last        *wire.Value // the identity of the last record that went out
+	joined      bool        // the walk reached the record the asker already held
 	done        bool
 	saidOrdered bool
 }
+
+// full reports whether the scope has as many records as it was asked for.
+//
+// Ours count towards it like anything else. A scope of thirty is thirty
+// records whoever they came from, and what is left over is not lost -- it is
+// the start of the next one.
+func (m *merge) full() bool { return m.sent >= m.want.Count }
 
 // prepare works out what this source has to say about the scope before the
 // child is asked anything.
@@ -250,10 +339,15 @@ func (m *merge) prepare() {
 		if !after {
 			continue
 		}
+		if am.added && am.clashed {
+			// Its key turned out to be the child's. The child's record stands
+			// and this one never goes out again.
+			continue
+		}
 		if am.deleted || !matches {
 			// Nothing of ours goes out for it, and one of the child's will not
 			// either -- as far as we can tell from where we last saw it.
-			if place != nil || am.deleted {
+			if (place != nil || am.deleted) && !am.added {
 				m.slack++
 			}
 			continue
@@ -313,16 +407,49 @@ func (m *merge) Subset(key *wire.Value, fields wire.Fields) error {
 // dropped, and ours goes out in its own place -- which is wherever the run of
 // ours reaches, not wherever the child's copy turned up.
 func (m *merge) theirs(key *wire.Value, fields wire.Fields, whole bool) error {
+	// The child gave it, so this is where the child now stands -- whether or
+	// not it is passed on, and that is what the next scope resumes it from.
+	m.childAt = key
+
 	if am := m.set.src.lookup(key); am != nil {
 		if am.deleted {
 			// The child still holds it, so this is where we find out where it
 			// sat. Next time the shortfall is predicted rather than met.
 			m.set.src.learn(key, fields)
+			return nil
 		}
-		return nil
+		if !am.added {
+			return nil // a replacement: ours stands in its place
+		}
+		// An addition whose key is the child's after all. The child's record
+		// is the one that stands, and this is the only moment that can be
+		// found out -- so it is written down, and every scope after this one
+		// has ours out and the child's in.
+		m.set.src.clash(key)
+		m.drop(am)
+		if m.gone[wire.EncodeValue(key)] {
+			// Ours has already crossed in this scope. Sending the child's now
+			// would put one identity on the wire twice, which is worse than
+			// either record winning, so this scope keeps ours and the next one
+			// -- and every one after it -- has the child's.
+			return nil
+		}
 	}
 	m.flushBefore(recordTuple(key, fields, m.set.spec.Sort))
+	if m.full() {
+		return nil
+	}
 	return m.emit(key, fields, whole)
+}
+
+// drop takes an amendment out of what is still to go out.
+func (m *merge) drop(am *amendment) {
+	for i, held := range m.mine {
+		if held == am {
+			m.mine = append(m.mine[:i], m.mine[i+1:]...)
+			return
+		}
+	}
 }
 
 // Done is the end of one round of the child's answer.
@@ -335,7 +462,13 @@ func (m *merge) Done(c Complete) {
 	if m.done {
 		return
 	}
-	short := m.sent < m.want.Count
+	if c.Stop == wire.StopJoined {
+		// The asker holds the record the walk stopped at and everything past
+		// it -- ours included, since ours crossed the same way. So nothing
+		// left of ours goes out, and nothing is claimed past that point.
+		m.joined = true
+	}
+	short := !m.full() && !m.joined
 	more := c.Stop == wire.StopFilled || c.Stop == wire.StopJoined
 	if short && more && c.Error == "" && c.Watermark != nil && m.round < rounds {
 		if err := m.ask(c.Watermark, m.want.Count-m.sent+1); err == nil {
@@ -343,20 +476,26 @@ func (m *merge) Done(c Complete) {
 		}
 	}
 
-	// Whatever is left of ours goes out: it is the end of the scope, and the
-	// records this source holds do not depend on the child having sent
-	// anything.
-	m.flushBefore(nil)
+	// Whatever is left of ours goes out, up to the count: it is the end of the
+	// scope, and the records this source holds do not depend on the child
+	// having sent anything.
+	if !m.joined {
+		m.flushBefore(nil)
+	}
 	m.done = true
 
 	out := Complete{Error: c.Error}
 	switch {
 	case c.Error != "":
-	case c.Stop == wire.StopExhausted:
-		// Everything of ours from the boundary on has just gone out, so where
-		// the child had nothing more, neither has anyone.
+	case m.joined:
+		out.Stop = wire.StopJoined
+	case c.Stop == wire.StopExhausted && len(m.mine) == 0:
+		// Everything of ours from the boundary on has gone out, so where the
+		// child had nothing more, neither has anyone. This outranks a scope
+		// that also happened to fill: there being nothing past the end is the
+		// stronger fact, and the one that saves the next question.
 		out.Stop = wire.StopExhausted
-	case m.sent >= m.want.Count:
+	case m.full():
 		out.Stop = wire.StopFilled
 	default:
 		out.Stop = c.Stop
@@ -378,7 +517,7 @@ func (m *merge) Done(c Complete) {
 // position, and everything left when there is none.
 func (m *merge) flushBefore(at []*wire.Value) {
 	s := m.set
-	for len(m.mine) > 0 {
+	for len(m.mine) > 0 && !m.full() {
 		am := m.mine[0]
 		if at != nil {
 			mine := amendTuple(am, am.place(), s.spec.Sort)
@@ -387,8 +526,17 @@ func (m *merge) flushBefore(at []*wire.Value) {
 			}
 		}
 		m.mine = m.mine[1:]
+		if am.added {
+			// Noted because the child may yet send a record under this key. If
+			// it does, ours has already crossed and the child's is held back
+			// rather than sending one identity twice.
+			if m.gone == nil {
+				m.gone = map[string]bool{}
+			}
+			m.gone[wire.EncodeValue(am.key)] = true
+		}
 		// A replacement is the record entire -- that is what Replace states --
-		// so it goes out as one.
+		// and so is an addition. Both go out as one.
 		if m.emit(am.key, am.fields, true) != nil {
 			return
 		}
@@ -398,9 +546,12 @@ func (m *merge) flushBefore(at []*wire.Value) {
 func (m *merge) emit(key *wire.Value, fields wire.Fields, whole bool) error {
 	m.sent++
 	m.last = key
-	// Noted as it goes, because the next scope will name it as `after` and
-	// this sequence will have to say where it stood.
+	// Noted as it goes, because the next scope will name it as `after`: where
+	// it stood, so this source can place its own records against it, and where
+	// the child stood, so the child can be resumed without being shown an
+	// identity that is not its.
 	m.set.placed.put(key, recordTuple(key, fields, m.set.spec.Sort))
+	m.set.resume.put(key, []*wire.Value{m.childAt})
 	if whole {
 		return m.out.Record(key, fields)
 	}

@@ -361,3 +361,255 @@ func TestAnAmendedSourceReverses(t *testing.T) {
 		t.Error("a reversed sequence did not say it was in order")
 	}
 }
+
+// --- records of this source's own ----------------------------------------
+
+// An addition is a record this source holds, not a statement about one of the
+// child's. It goes out in its sorted place among them.
+func TestAnAdditionGoesOutInItsPlace(t *testing.T) {
+	a := amendable(t)
+	a.Add(key(90), fields("added.go", 200))
+
+	out, _ := read(t, a, "sort={ .size }", "count=9")
+	if out.joined() != "2,90,1,0,3" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+}
+
+// The count is the count, whoever the records came from.
+//
+// Ours are not extra on top of the scope: a scope of three is three records,
+// and what is left over is the start of the next one rather than surplus
+// stapled to this one. Without that, a source holding a thousand additions
+// would answer every scope with the thousand that sort ahead of it.
+func TestAdditionsCountTowardsTheScope(t *testing.T) {
+	a := amendable(t)
+	for i := 90; i < 95; i++ {
+		a.Add(key(int64(i)), fields("added", int64(i)))
+	}
+
+	out, done := read(t, a, "sort={ .size }", "count=3")
+	if len(out.keys) != 3 {
+		t.Errorf("a scope of three came back %d long: %s", len(out.keys), out.joined())
+	}
+	if done.Stop != wire.StopFilled {
+		t.Errorf("a scope that filled said %q", done.Stop)
+	}
+}
+
+// A scope can end on a record of this source's own, and the next one carries
+// on from it.
+//
+// The child has never heard of that identity, so it is not the one handed
+// down: what goes down is the last identity the child itself gave before ours
+// crossed, which is the same place in the merged sequence.
+func TestAScopeResumesFromARecordOfOurOwn(t *testing.T) {
+	a := amendable(t)
+	for i := 90; i < 95; i++ {
+		a.Add(key(int64(i)), fields("added", int64(i)))
+	}
+	seq := opened(t, a, "sort={ .size }")
+
+	first, done := seq.scope("count=3")
+	if first.joined() != "90,91,92" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	if done.Watermark == nil {
+		t.Fatal("a scope that filled claimed nothing")
+	}
+
+	next, done := seq.scope("after=" + wire.EncodeValue(done.Watermark) + " count=9")
+	if next.joined() != "93,94,2,1,0,3" {
+		t.Errorf("the rest is %s", next.joined())
+	}
+	if done.Stop != wire.StopExhausted {
+		t.Error("the end of the sequence did not say so")
+	}
+}
+
+// Where an addition's key turns out to be the child's after all, the child's
+// record is the one that stands -- the opposite way round from a replacement.
+//
+// Nothing is asked to find that out. It surfaces when the child's copy
+// arrives, and this source writes it down: the scope it surfaced on keeps
+// ours, because ours had already crossed and one identity twice is worse than
+// either winning, and every scope after it has the child's.
+func TestAClashingAdditionLosesToTheChild(t *testing.T) {
+	a := amendable(t)
+	// Key 1 is the child's build.sh at size 310. Ours sorts ahead of it.
+	a.Add(key(1), fields("mine.go", 5))
+	seq := opened(t, a, "sort={ .size }")
+
+	first, _ := seq.scope("count=9")
+	if got := first.fields[0].Encode(); got != `{ .name "mine.go"; .size 5 }` {
+		t.Errorf("the scope it surfaced on carries %s first", got)
+	}
+	if n := strings.Count(first.joined(), "1"); n != 1 {
+		t.Errorf("one identity crossed twice: %s", first.joined())
+	}
+
+	// And from here on the child's record is the one that stands.
+	next, _ := seq.scope("count=9")
+	if next.joined() != "2,1,0,3" {
+		t.Errorf("the scope after the clash is %s", next.joined())
+	}
+	if got := next.fields[1].Encode(); got != `{ key 1; .name "build.sh"; .size 310 }` {
+		t.Errorf("the child's record came back as %s", got)
+	}
+}
+
+// An addition does not make the child be asked for more, the way a deletion
+// does: it fills a place in the scope that the child then need not.
+func TestAnAdditionAsksTheChildForLess(t *testing.T) {
+	s := &spy{inner: mustPSL(t, twoWays)}
+	a := NewAmendedSource(s)
+	a.Add(key(90), fields("added", 5))
+
+	read(t, a, "sort={ .size }", "count=3")
+	if s.asked.Count != 2 {
+		t.Errorf("the child was asked for %d, want 2 of the 3", s.asked.Count)
+	}
+}
+
+// The other way round: the child's copy arrives first, so the child's goes out
+// and ours is taken out of what is still to come.
+//
+// Without that, ours would follow its own copy a moment later and the same
+// identity would cross twice in one scope -- which is the thing the rule is
+// there to stop, whichever of the two happens to sort first.
+func TestAClashingAdditionIsDroppedWhenTheChildsCameFirst(t *testing.T) {
+	a := amendable(t)
+	// Key 1 is the child's build.sh at size 310. Ours sorts after it.
+	a.Add(key(1), fields("mine.go", 9999))
+
+	out, _ := read(t, a, "sort={ .size }", "count=9")
+	if out.joined() != "2,1,0,3" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if got := out.fields[1].Encode(); got != `{ key 1; .name "build.sh"; .size 310 }` {
+		t.Errorf("the child's record came back as %s", got)
+	}
+}
+
+// A scope that filled with records of ours still to come has not reached the
+// end, however exhausted the child is.
+//
+// The child having nothing more says nothing about this source: what is left
+// over is ours, and it is the start of the next scope rather than nothing.
+func TestOursLeftOverIsNotTheEndOfTheSequence(t *testing.T) {
+	a := amendable(t)
+	for i := 90; i < 95; i++ {
+		a.Add(key(int64(i)), fields("added", int64(90000+i)))
+	}
+	seq := opened(t, a, "sort={ .size }")
+
+	out, done := seq.scope("count=6")
+	if len(out.keys) != 6 {
+		t.Fatalf("a scope of six came back %d long: %s", len(out.keys), out.joined())
+	}
+	if done.Stop != wire.StopFilled {
+		t.Errorf("a scope with three of ours still to come said %q", done.Stop)
+	}
+
+	next, done := seq.scope("after=" + wire.EncodeValue(done.Watermark) + " count=9")
+	if next.joined() != "92,93,94" {
+		t.Errorf("the rest is %s", next.joined())
+	}
+	if done.Stop != wire.StopExhausted {
+		t.Error("the end of the sequence did not say so")
+	}
+}
+
+// A walk that reached the record the asker already held stops there, and this
+// source's own records do not run past it.
+//
+// `until` says the asker holds that record and everything beyond it -- ours
+// included, since ours crossed the same way when it got them. So nothing left
+// of ours goes out, nothing is asked of the child again, and the claim stops
+// where the walk did rather than at some record of ours past it.
+func TestOursDoNotRunPastAJoinedWalk(t *testing.T) {
+	a := amendable(t)
+	a.Add(key(90), fields("added", 99999)) // past everything
+
+	out, done := read(t, a, "sort={ .size }", "until=0 count=9")
+	if out.joined() != "2,1" {
+		t.Errorf("the walk to the record the asker held is %s", out.joined())
+	}
+	if done.Stop != wire.StopJoined {
+		t.Errorf("it stopped at that record and said %q", done.Stop)
+	}
+	if got := wire.EncodeValue(done.Watermark); got != "1" {
+		t.Errorf("the claim reaches %s, which is past where the walk stopped", got)
+	}
+}
+
+// A walk that joined is over, and nothing is asked again on the strength of it
+// being shorter than the count.
+//
+// The count is not short -- the records past `until` are ones the asker
+// already has -- so going back to the child for more would ask it to walk
+// ground the asker told it not to, four times over before giving up.
+func TestAJoinedWalkAsksTheChildNothingMore(t *testing.T) {
+	s := &spy{inner: mustPSL(t, twoWays)}
+	a := NewAmendedSource(s)
+	a.Add(key(90), fields("added", 99999))
+
+	read(t, a, "sort={ .size }", "until=0 count=9")
+	if s.reads != 1 {
+		t.Errorf("the child was asked %d times for a walk that had joined", s.reads)
+	}
+}
+
+// Joined outranks filled where a walk did both.
+//
+// Reaching the record the asker already held says its two runs are now one,
+// which is the fact worth having; that the count also happened to come out
+// even says nothing.
+func TestAWalkThatJoinedAndFilledSaysItJoined(t *testing.T) {
+	a := amendable(t)
+	out, done := read(t, a, "sort={ .size }", "until=0 count=2")
+	if out.joined() != "2,1" {
+		t.Fatalf("the walk is %s", out.joined())
+	}
+	if done.Stop != wire.StopJoined {
+		t.Errorf("a walk that reached the asker's own record said %q", done.Stop)
+	}
+}
+
+// The child is never asked for a negative number of records.
+//
+// More additions than the scope is long means this source fills it alone and
+// wants nothing from the child -- which is nought, not minus two. A source
+// whose records are here shrugs that off; one across the wire would have the
+// whole query refused, `count` being a number of records and there being no
+// such thing as fewer than none of them.
+func TestTheChildIsNeverAskedForFewerThanNone(t *testing.T) {
+	s := &spy{inner: mustPSL(t, twoWays)}
+	a := NewAmendedSource(s)
+	for i := 90; i < 95; i++ {
+		a.Add(key(int64(i)), fields("added", int64(i)))
+	}
+
+	read(t, a, "sort={ .size }", "count=3")
+	if s.asked.Count < 0 {
+		t.Errorf("the child was asked for %d records", s.asked.Count)
+	}
+}
+
+// An addition the filter does not admit takes nothing out of the child's
+// answer, so it buys the child no extra to send.
+//
+// Slack is for what this source REMOVES -- a deletion, or a replacement whose
+// new values no longer match and so loses the child's record too. An addition
+// that does not match was never in the sequence to begin with and removes
+// nothing.
+func TestAnAdditionTheFilterDropsIsNotSlack(t *testing.T) {
+	s := &spy{inner: mustPSL(t, twoWays)}
+	a := NewAmendedSource(s)
+	a.Add(key(90), fields("added", 99999)) // outside the filter below
+
+	read(t, a, "sort={ .size } filter={ lt .size 1000 }", "count=2")
+	if s.asked.Count != 2 {
+		t.Errorf("the child was asked for %d, want the 2 the scope wanted", s.asked.Count)
+	}
+}

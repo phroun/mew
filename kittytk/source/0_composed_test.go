@@ -748,6 +748,7 @@ func TestEveryIncludeIsAskedForTheWholeShortfall(t *testing.T) {
 type spy struct {
 	inner  Source
 	asked  *wire.Scope
+	reads  int // how many times a scope was put to it
 	spec   *wire.Spec
 	opened bool
 }
@@ -770,6 +771,7 @@ func (s *spySet) Close() { s.inner.Close() }
 
 func (s *spySet) Read(f *wire.Scope, out Sink) error {
 	s.src.asked = f
+	s.src.reads++
 	return s.inner.Read(f, out)
 }
 
