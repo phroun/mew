@@ -35,8 +35,8 @@ type amendOrder struct {
 	// out is what goes out, in the sequence's own order, with where each one
 	// stands beside it: the replacements and additions that match the filter
 	// and have a placement.
-	out    []*amendment
-	outAt  [][]*wire.Value
+	out   []*amendment
+	outAt [][]*wire.Value
 	// gone is what this source takes OUT of the child's answer, placed the same
 	// way: a deletion whose position is known, and a replacement whose new
 	// values no longer match and so loses the child's record too.

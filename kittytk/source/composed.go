@@ -894,7 +894,7 @@ func (g *gathering) close() {
 	g.ended = true
 
 	var out Complete
-	spent := true  // every include ran out of records
+	spent := true // every include ran out of records
 	joined := false
 	claimable := true
 	var lowest []*wire.Value

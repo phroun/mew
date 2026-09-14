@@ -381,7 +381,6 @@ func (m *merge) peek() (*amendment, []*wire.Value, bool) {
 	return m.order.out[m.i], m.order.outAt[m.i], true
 }
 
-
 // ask puts the scope to the child, with room for what this source will take
 // out of the answer.
 //

@@ -329,7 +329,7 @@ func TestAChildThatNeverCatchesUpIsNotAskedForever(t *testing.T) {
 type dribble struct{ rounds int }
 
 func (d *dribble) Open(*wire.Spec) (DataSet, error) { return d, nil }
-func (d *dribble) Close()                             {}
+func (d *dribble) Close()                           {}
 
 func (d *dribble) Read(f *wire.Scope, out Sink) error {
 	d.rounds++
@@ -694,7 +694,6 @@ func TestADeletionForgottenBetweenScopesIsGone(t *testing.T) {
 		t.Errorf("the scope after forgetting it is %s", next.joined())
 	}
 }
-
 
 // A deletion whose placement was learned stops being counted against every
 // scope and takes its place in the order, which is a change to what is held
