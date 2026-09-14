@@ -231,6 +231,14 @@ const kt_value *kt_bag_key(const kt_bag *b);
    difference is worth a word because a whole record answers any question about
    that record, and a subset answers only the one that asked for it -- which is
    what lets an answer be kept and reused rather than asked for again. */
+/* OP_ID matches a record's identity against a set of them, the way `in`
+   matches a field against a set of values. It names no field, because an
+   identity is not one: it travels beside a record's fields rather than among
+   them, and a field called `key` is a field like any other.
+
+       filter={ id (left/1) (left/note) } */
+#define KT_OP_ID "id"
+
 #define KT_RECORD_ARG "record"
 #define KT_FIELDS_ARG "fields"
 

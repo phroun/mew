@@ -79,6 +79,14 @@ OP_ENDS = "ends"
 OP_HAS = "has"
 OP_LACKS = "lacks"
 
+# OP_ID matches a record's identity against a set of them, the way `in` matches
+# a field against a set of values. It names no field, because an identity is not
+# one: it travels beside a record's fields rather than among them, and a field
+# called `key` is a field like any other.
+#
+#     filter={ id (left/1) (left/note) }
+OP_ID = "id"
+
 _GROUPS = (OP_AND, OP_OR, OP_NOT)
 _PREDICATES = (OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE, OP_IN,
                OP_CONTAINS, OP_STARTS, OP_ENDS, OP_HAS, OP_LACKS)
@@ -166,6 +174,10 @@ class Filter:
     def _encode_statement(self) -> str:
         if self.op in _GROUPS:
             return self.op + " " + self._encode_block()
+        if self.op == OP_ID:
+            # Every other operator names the field it tests. This one tests an
+            # identity, which is not a field and has no name to write.
+            return self.op + ''.join(" " + encode_value(v) for v in self.values)
         out = [self.op, " ", self.field]
         for v in self.values:
             out.append(" " + encode_value(v))
@@ -361,6 +373,28 @@ def _parse_filter_block(script: Script, op: str) -> Filter:
     return node
 
 
+def _parse_id(st: Statement) -> Filter:
+    """`id <identity> <identity> ...`.
+
+    Every argument is a value, with no field in front of them: an identity is
+    not a field, so there is nothing to name. That is also what keeps it apart
+    from `in key ...`, which is a question about a field that happens to be
+    called key."""
+    f = Filter(op=OP_ID, children=[])
+    for a in st.args:
+        if a.value is None:
+            raise QueryError(
+                "id: %r names no identity; write the identities as values" % a.name)
+        if a.name:
+            raise QueryError("id: takes identities, not %s=" % a.name)
+        if a.value.kind == ValueKind.BLOCK:
+            raise QueryError("id: an identity is a value, not a block")
+        f.values.append(a.value)
+    if not f.values:
+        raise QueryError("id: takes at least one identity")
+    return f
+
+
 def _parse_predicate(st: Statement) -> Filter:
     if st.verb in _GROUPS:
         if len(st.args) != 1 or st.args[0].value is None \
@@ -370,6 +404,8 @@ def _parse_predicate(st: Statement) -> Filter:
         if st.verb == OP_NOT and not inner.children:
             raise QueryError("not: takes something to negate")
         return inner
+    if st.verb == OP_ID:
+        return _parse_id(st)
     if st.verb not in _PREDICATES:
         raise QueryError("no filter operator called %r" % st.verb)
 

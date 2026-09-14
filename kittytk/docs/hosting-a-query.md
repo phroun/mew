@@ -234,6 +234,22 @@ every time. The display rejects what it did not ask for, so extra records cost
 bandwidth and nothing else — and it may keep them, because a record it has is a
 record it need not ask for later.
 
+## Identity is not a field
+
+Every record has an identity — it is what a boundary names, what a watermark
+names, and the sort's implicit last level. It travels **beside** a record's
+fields, never among them, and `id` is how a filter asks about it:
+
+```
+filter={ id (left/1) (left/note) }
+```
+
+It matches against a set of them, the way `in` matches a field against a set of
+values, and it names no field because an identity is not one. A record that
+carries a field called `key` is carrying data like any other — `eq key 1` is an
+ordinary question about an ordinary field, and says nothing about which record
+it is.
+
 ## Reversed
 
 `reversed` walks the stated sequence from its end:

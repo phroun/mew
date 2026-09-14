@@ -82,11 +82,9 @@ func (c *ComposedSource) Includes() []Include {
 // Open states a sequence, and opens it on every include that could hold
 // anything the filter admits.
 //
-// Each include gets the filter read in its own terms: what the composed key
-// says about it becomes what its own key must be, and an include the filter
-// shuts out entirely is never opened at all. `filter={ eq key (left/1) }` asks
-// `left` for its record 1 and asks `right` nothing, because no key `right`
-// holds can come out under a name that is not its own.
+// Each include gets the filter read in its own terms: an identity this source
+// made says which include it came from, so `filter={ id (left/1) }` asks
+// `left` about its own record 1 and never opens `right` at all.
 func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
@@ -94,7 +92,7 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 	steps, levels := plan(spec)
 	set := &composedSet{
 		src: c, spec: spec, steps: steps, levels: levels,
-		keyed: names(spec.Filter, wire.KeyField),
+		byID: hasID(spec.Filter),
 	}
 	for _, in := range c.includes {
 		asked, possible := narrow(spec.Filter, in.Name)
@@ -103,7 +101,7 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 		}
 		sub := *spec
 		sub.Filter = asked
-		sub.Sort, sub.Reversed = childSort(spec)
+		sub.Fields = withSortFields(spec)
 		child, err := in.Source.Open(&sub)
 		if err != nil {
 			set.Close()
@@ -114,6 +112,27 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 	return set, nil
 }
 
+// withSortFields is the field list to put to an include: the query's own, and
+// the fields this source sorts by.
+//
+// The merge reads a record's sort values back out of the fields it was sent,
+// so a sort on a field the query did not ask for would arrive here as
+// undefined for every record -- and the merge would then trust each include's
+// arrival order over an order it could not see. Asking for them costs a field
+// or two and is a superset of what was wanted, which is always allowed.
+func withSortFields(spec *wire.Spec) wire.Fields {
+	if len(spec.Fields) == 0 || len(spec.Sort) == 0 {
+		return spec.Fields
+	}
+	out := append(wire.Fields(nil), spec.Fields...)
+	for _, l := range spec.Sort {
+		if !out.Has(l.Field) {
+			out = append(out, &wire.Arg{Name: l.Field})
+		}
+	}
+	return out
+}
+
 // --- reading the filter in one include's terms ---------------------------
 
 // narrow is the filter as one include should be asked it, and whether that
@@ -122,8 +141,8 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 // What comes back is never NARROWER than the truth. A predicate this source
 // cannot put in the include's own terms is dropped rather than guessed at, so
 // the include answers a question that admits at least every record the outer
-// filter does -- and `keyMatch` settles the rest here, where the composed key
-// is in hand. Dropping too much is the one thing that cannot be recovered
+// filter does -- and `idMatch` settles the rest here, where the identity is in
+// hand. Dropping too much is the one thing that cannot be recovered
 // from, so nothing here ever does.
 func narrow(f *wire.Filter, name string) (*wire.Filter, bool) {
 	if f == nil {
@@ -164,7 +183,7 @@ func narrow(f *wire.Filter, name string) (*wire.Filter, bool) {
 		// A negation can only be handed down where what it negates came back
 		// settled either way: negating a filter that was WIDENED on the way
 		// would narrow it, and would cut records out.
-		if !names(f, wire.KeyField) {
+		if !hasID(f) {
 			return f, true
 		}
 		inner, possible := narrow(&wire.Filter{Op: wire.OpAnd, Children: f.Children}, name)
@@ -177,10 +196,10 @@ func narrow(f *wire.Filter, name string) (*wire.Filter, bool) {
 		return nil, true
 	}
 
-	if f.Field != wire.KeyField {
+	if f.Op != wire.OpID {
 		return f, true
 	}
-	return narrowKey(f, name)
+	return narrowID(f, name)
 }
 
 // group is one node over what is left of a branch, and nothing where nothing
@@ -195,78 +214,45 @@ func group(op string, kept []*wire.Filter) *wire.Filter {
 	return &wire.Filter{Op: op, Children: kept}
 }
 
-// narrowKey reads one predicate on the composed key in an include's own terms.
+// narrowID reads one identity test in an include's own terms.
 //
-// Every key this include hands out begins with its name and a slash, which is
-// what makes most of these answerable without asking it anything: a value
-// under that prefix is the include's own business, and one outside it settles
-// the predicate for every record the include holds at once.
-func narrowKey(p *wire.Filter, name string) (*wire.Filter, bool) {
-	prefix := name + separator
-	switch p.Op {
-	case wire.OpHas:
-		return nil, true // every record has a key
-	case wire.OpLacks:
-		return nil, false
-	case wire.OpContains, wire.OpStarts, wire.OpEnds:
-		// The composed key is a symbol, and a symbol has no inside for a
-		// string to sit in -- so these answer no for every record, here as
-		// anywhere else (docs/sort-and-filter.md).
-		return nil, false
-	case wire.OpIn:
-		var mine []*wire.Value
-		for _, v := range p.Values {
-			if who, text, ok := split(v); ok && who == name {
-				mine = append(mine, spellings(text)...)
+// Every identity this source hands out begins with an include's name and a
+// slash, so the names in the set say which includes could hold anything at
+// all: one that none of them name is not opened. The rest of each identity is
+// the include's own, and `id` composes -- what goes down is the same question
+// about the identities the include knows them by.
+func narrowID(p *wire.Filter, name string) (*wire.Filter, bool) {
+	var mine []*wire.Value
+	seen := map[string]bool{}
+	for _, v := range p.Values {
+		who, text, ok := split(v)
+		if !ok || who != name {
+			continue
+		}
+		// Every spelling of one identity asks the same question, and a
+		// composed source inside this one hands each of them back as a set of
+		// its own -- so the same value would otherwise pile up a layer at a
+		// time.
+		for _, one := range spellings(text) {
+			if written := wire.EncodeValue(one); !seen[written] {
+				seen[written] = true
+				mine = append(mine, one)
 			}
 		}
-		if len(mine) == 0 {
-			return nil, false
-		}
-		return &wire.Filter{Op: wire.OpIn, Field: wire.KeyField,
-			Values: mine, Collate: p.Collate}, true
 	}
-
-	who, text, ok := split(p.Value())
-	switch p.Op {
-	case wire.OpEq:
-		if !ok || who != name {
-			return nil, false
-		}
-		// Which of a number, a symbol and a string the include keys its
-		// records by is its own business, and the text says nothing about it,
-		// so it is asked about every spelling there could be. What comes back
-		// is then a superset, and keyMatch settles it exactly.
-		return &wire.Filter{Op: wire.OpIn, Field: wire.KeyField,
-			Values: spellings(text), Collate: p.Collate}, true
-	case wire.OpNe:
-		if !ok || who != name {
-			return nil, true // no key of this include is that one
-		}
-		return nil, true
+	if len(mine) == 0 {
+		return nil, false
 	}
-
-	// An ordering comparison. Where the value falls inside this include it is
-	// the include's own to answer, and there is no asking it in its own terms
-	// -- the include compares key VALUES and this compares the composed key as
-	// the symbol it is. Where the value falls outside, every key the include
-	// holds is on the same side of it, because they all share the prefix.
-	if ok && who == name {
-		return nil, true
-	}
-	c := wire.Compare(wire.NewWord(prefix), p.Value(), p.Collate)
-	below := c < 0 // every key of this include sorts below the value
-	switch p.Op {
-	case wire.OpLt, wire.OpLe:
-		return nil, below
-	case wire.OpGt, wire.OpGe:
-		return nil, !below
-	}
-	return nil, true
+	return &wire.Filter{Op: wire.OpID, Values: mine, Collate: p.Collate}, true
 }
 
-// spellings is every value a key could be that writes as this text: the text
-// itself, and the number or name a bare token of it reads as.
+// spellings is every value an identity could be that writes as this text: the
+// text itself, and the number or name a bare token of it reads as.
+//
+// Which of a number, a name and a string an include identifies its records by
+// is its own business, and the text between the slashes says nothing about it.
+// A question narrow enough to miss would lose the record, which is the one
+// thing that cannot happen.
 func spellings(text string) []*wire.Value {
 	out := []*wire.Value{wire.NewString(text)}
 	if v := childKey(text); v != nil {
@@ -287,24 +273,25 @@ const (
 	unsure
 )
 
-// keyMatch answers what the filter says about a record's composed key, leaving
-// every predicate on anything else unsaid.
+// idMatch answers what the filter says about a record's identity, leaving
+// every predicate on a field unsaid.
 //
 // Unsaid is not false. A record is dropped only where the filter definitely
 // excludes it, so a predicate on a field this scope never asked for cannot
 // take a record out on its own -- the include it came from applied that one
-// already. What this settles is the part no include could: the key.
-func keyMatch(f *wire.Filter, key *wire.Value) verdict {
+// already. What this settles is the part no include could: the identity this
+// source made, which no include has ever seen.
+func idMatch(f *wire.Filter, id *wire.Value) verdict {
 	if f == nil {
 		return yes
 	}
 	switch f.Op {
 	case wire.OpAnd:
-		return every(f.Children, key)
+		return every(f.Children, id)
 	case wire.OpOr:
 		out := no
 		for _, c := range f.Children {
-			switch keyMatch(c, key) {
+			switch idMatch(c, id) {
 			case yes:
 				return yes
 			case unsure:
@@ -313,28 +300,27 @@ func keyMatch(f *wire.Filter, key *wire.Value) verdict {
 		}
 		return out
 	case wire.OpNot:
-		switch every(f.Children, key) {
+		switch every(f.Children, id) {
 		case yes:
 			return no
 		case no:
 			return yes
 		}
 		return unsure
+	case wire.OpID:
+		if wire.Match(id, nil, f) {
+			return yes
+		}
+		return no
 	}
-	if f.Field != wire.KeyField {
-		return unsure
-	}
-	if wire.Match(wire.Fields{wire.Named(wire.KeyField, key)}, f) {
-		return yes
-	}
-	return no
+	return unsure
 }
 
 // every is the and of a run of filters, which is what a block is.
-func every(children []*wire.Filter, key *wire.Value) verdict {
+func every(children []*wire.Filter, id *wire.Value) verdict {
 	out := yes
 	for _, c := range children {
-		switch keyMatch(c, key) {
+		switch idMatch(c, id) {
 		case no:
 			return no
 		case unsure:
@@ -344,43 +330,6 @@ func every(children []*wire.Filter, key *wire.Value) verdict {
 	return out
 }
 
-// childSort is the sequence to ask an include for: this one, with the composed
-// key taken out of it.
-//
-// An include already orders its own records by its own key once the named
-// levels are spent, so the level this source writes as `key` is one it has
-// anyway -- and asking for it BY NAME would put the question to a reading that
-// may not be able to answer it at all. Which way round that last level goes is
-// said with `reversed` instead, which names no field and every reading can
-// therefore answer.
-//
-// Everything at or after the key level is dropped. A key names exactly one
-// record, so nothing written after it could separate two.
-func childSort(spec *wire.Spec) ([]wire.SortLevel, bool) {
-	rev := spec.Reversed
-	down := make([]wire.SortLevel, 0, len(spec.Sort))
-	keyDown := rev // with no level of its own, the key takes the reversal
-	for _, l := range spec.Sort {
-		if l.Field == wire.KeyField {
-			keyDown = l.Descending != rev
-			break
-		}
-		e := l
-		e.Descending = l.Descending != rev
-		down = append(down, e)
-	}
-	if !keyDown {
-		return down, false
-	}
-	// Reversed turns over every level, the include's own key included -- so
-	// what is asked for is the mirror of what is wanted, and reversing it
-	// lands on the sequence this source is after.
-	for i := range down {
-		down[i].Descending = !down[i].Descending
-	}
-	return down, true
-}
-
 // A step is one place in a position tuple: the value of a field, or -- where
 // the field is blank -- the two parts of the composed key.
 type step struct{ field string }
@@ -388,51 +337,39 @@ type step struct{ field string }
 // plan works out what a position in this sequence is made of, and what orders
 // it.
 //
-// **The composed key is two levels, not one.** It is the include's name and
-// then the child's key, and both take the direction and collation the sort
-// asked of `key`, so `sort={ key desc }` reverses the includes as well as the
-// records inside them. Anything less would leave each include delivering in
-// one order while the merge expected another, and the merge only ever looks at
-// a queue's head -- it would hand records on backwards and call them ordered.
+// A sort level names a field, and `key` is a field like any other -- whatever
+// the include exposes under that name, which is its own business. What settles
+// a position is the identity, and that is not a field: it goes on the end as
+// TWO levels, the include's name and then the child's own identity, because an
+// identity here is made of those two parts.
 //
-// Where the sort does not name the key at all, the two levels go on the end
-// ascending: they are what makes a position name exactly one record, and
-// ascending is the sequence's own order.
+// Reversed turns the lot over, those two included, which is the only thing
+// that touches the order identity falls in.
 func plan(spec *wire.Spec) ([]step, []wire.Level) {
-	sort := spec.Sort
-	steps := make([]step, 0, len(sort)+1)
-	levels := make([]wire.Level, 0, len(sort)+2)
-	keyed := false
-	for _, l := range sort {
-		if l.Field == wire.KeyField {
-			steps = append(steps, step{})
-			levels = append(levels, l.Level, l.Level)
-			keyed = true
-			continue
-		}
+	steps := make([]step, 0, len(spec.Sort)+1)
+	levels := make([]wire.Level, 0, len(spec.Sort)+2)
+	for _, l := range spec.Sort {
 		steps = append(steps, step{field: l.Field})
 		levels = append(levels, l.Level)
 	}
-	if !keyed {
-		steps = append(steps, step{})
-		levels = append(levels, wire.Level{}, wire.Level{})
-	}
+	steps = append(steps, step{})
+	levels = append(levels, wire.Level{}, wire.Level{})
 	if spec.Reversed {
 		return steps, wire.Reverse(levels)
 	}
 	return steps, levels
 }
 
-// names reports whether a filter tests a field anywhere in it.
-func names(f *wire.Filter, field string) bool {
+// hasID reports whether a filter asks about identity anywhere in it.
+func hasID(f *wire.Filter) bool {
 	if f == nil {
 		return false
 	}
-	if f.Field == field {
+	if f.Op == wire.OpID {
 		return true
 	}
 	for _, c := range f.Children {
-		if names(c, field) {
+		if hasID(c) {
 			return true
 		}
 	}
@@ -516,7 +453,7 @@ type composedSet struct {
 	parts  []part
 	steps  []step
 	levels []wire.Level
-	keyed  bool // the filter tests the composed key, so records are read here too
+	byID   bool // the filter tests identity, so records are read here too
 }
 
 type part struct {
@@ -742,7 +679,7 @@ func (g *gathering) take(i int, key *wire.Value, fields wire.Fields, whole bool)
 	// What the filter says about the composed key is settled here, because no
 	// include could say it: the include was asked a question in its own terms,
 	// which admits at least every record this one does.
-	if g.set.keyed && keyMatch(g.set.spec.Filter, rec.key) == no {
+	if g.set.byID && idMatch(g.set.spec.Filter, rec.key) == no {
 		return nil
 	}
 	// An include asked from before where the scope starts answers from there,

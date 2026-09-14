@@ -66,6 +66,14 @@ const (
 	// compared, so presence needs an operator that does not try.
 	OpHas   = "has"
 	OpLacks = "lacks"
+
+	// OpID matches a record's identity against a set of them, the way `in`
+	// matches a field against a set of values. It names no field, because an
+	// identity is not one: it travels beside a record's fields rather than
+	// among them, and a field called `key` is a field like any other.
+	//
+	//	filter={ id (left/1) (left/note) }
+	OpID = "id"
 )
 
 // Fields is a bag of named values, and one shape serves three jobs: the fields
@@ -409,6 +417,32 @@ func parseFilterBlock(script *Script, op string) (*Filter, error) {
 	return node, nil
 }
 
+// parseID reads `id <identity> <identity> ...`.
+//
+// Every argument is a value, with no field in front of them: an identity is
+// not a field, so there is nothing to name. That is also what keeps it apart
+// from `in key ...`, which is a question about a field that happens to be
+// called key.
+func parseID(st *Statement) (*Filter, error) {
+	f := &Filter{Op: OpID}
+	for _, a := range st.Args {
+		if a.Value == nil {
+			return nil, fmt.Errorf("id: %q names no identity; write the identities as values", a.Name)
+		}
+		if a.Name != "" {
+			return nil, fmt.Errorf("id: takes identities, not %s=", a.Name)
+		}
+		if a.Value.Kind == BlockValue {
+			return nil, fmt.Errorf("id: an identity is a value, not a block")
+		}
+		f.Values = append(f.Values, a.Value)
+	}
+	if len(f.Values) == 0 {
+		return nil, fmt.Errorf("id: takes at least one identity")
+	}
+	return f, nil
+}
+
 func parsePredicate(st *Statement) (*Filter, error) {
 	switch st.Verb {
 	case OpAnd, OpOr, OpNot:
@@ -423,6 +457,8 @@ func parsePredicate(st *Statement) (*Filter, error) {
 			return nil, fmt.Errorf("not: takes something to negate")
 		}
 		return inner, nil
+	case OpID:
+		return parseID(st)
 	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpIn, OpContains, OpStarts, OpEnds,
 		OpHas, OpLacks:
 	default:
@@ -513,8 +549,12 @@ func (f *Filter) encodeStatement() string {
 	}
 	var sb strings.Builder
 	sb.WriteString(f.Op)
-	sb.WriteByte(' ')
-	sb.WriteString(f.Field)
+	if f.Op != OpID {
+		// Every other operator names the field it tests. This one tests an
+		// identity, which is not a field and has no name to write.
+		sb.WriteByte(' ')
+		sb.WriteString(f.Field)
+	}
 	for _, v := range f.Values {
 		sb.WriteByte(' ')
 		sb.WriteString(EncodeValue(v))

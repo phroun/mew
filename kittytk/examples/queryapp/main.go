@@ -112,7 +112,7 @@ var entries = []entry{
 func serveWindow(f *client.Fill) {
 	rows := make([]entry, 0, len(entries))
 	for _, e := range entries {
-		if wire.Match(e, f.Spec.Filter) {
+		if wire.Match(wire.NewInt(e.key), e, f.Spec.Filter) {
 			rows = append(rows, e)
 		}
 	}

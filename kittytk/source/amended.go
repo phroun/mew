@@ -210,7 +210,7 @@ func (m *merge) prepare() {
 
 	for _, am := range s.src.held() {
 		place := am.place()
-		matches := place != nil && wire.Match(place, s.spec.Filter)
+		matches := place != nil && wire.Match(am.key, place, s.spec.Filter)
 		after := at == nil || place == nil ||
 			wire.CompareLevels(amendTuple(am, place, s.spec.Sort), at, s.levels) > 0
 

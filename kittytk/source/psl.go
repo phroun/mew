@@ -349,7 +349,7 @@ func (p *PSLSource) order(spec *wire.Spec) *ordering {
 	// sorted and never has its sort fields read.
 	o := &ordering{levels: ordering1(spec)}
 	for i := range p.recs {
-		if !wire.Match(p.recs[i], spec.Filter) {
+		if !wire.Match(p.recs[i].key, p.recs[i], spec.Filter) {
 			continue
 		}
 		o.rows = append(o.rows, i)

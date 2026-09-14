@@ -77,7 +77,7 @@ func TestAFilterDecidesWhatIsIn(t *testing.T) {
 		{`{ contains size "102" }`, false},
 		{`{ starts kind "sou" }`, false},
 	} {
-		if got := Match(file, filter(t, c.text)); got != c.want {
+		if got := Match(nil, file, filter(t, c.text)); got != c.want {
 			t.Errorf("%s matched %v", c.text, got)
 		}
 	}
@@ -85,7 +85,7 @@ func TestAFilterDecidesWhatIsIn(t *testing.T) {
 
 // A nil filter is an unfiltered sequence.
 func TestNoFilterHoldsEverything(t *testing.T) {
-	if !Match(rec("name", "anything"), nil) {
+	if !Match(nil, rec("name", "anything"), nil) {
 		t.Error("a record fell out of a filter that was not there")
 	}
 }
@@ -94,10 +94,10 @@ func TestNoFilterHoldsEverything(t *testing.T) {
 // nothing does not. `not` of nothing cannot be written -- the parser refuses
 // it -- so there is no third case.
 func TestAnEmptyOperatorIsItsOwnIdentity(t *testing.T) {
-	if !Match(rec(), filter(t, "{ and {} }")) {
+	if !Match(nil, rec(), filter(t, "{ and {} }")) {
 		t.Error("an empty AND excluded a record")
 	}
-	if Match(rec(), filter(t, "{ or {} }")) {
+	if Match(nil, rec(), filter(t, "{ or {} }")) {
 		t.Error("an empty OR admitted a record")
 	}
 }
@@ -107,10 +107,10 @@ func TestAnEmptyOperatorIsItsOwnIdentity(t *testing.T) {
 // negation is nearly always written, the two readings agree.
 func TestNotNegatesTheBlockAsAWhole(t *testing.T) {
 	f := filter(t, `{ not { starts name "src/"; gt size 5000 } }`)
-	if !Match(rec("name", "src/parser.go", "size", 1024), f) {
+	if !Match(nil, rec("name", "src/parser.go", "size", 1024), f) {
 		t.Error("a record matching one half of the negated block was excluded")
 	}
-	if Match(rec("name", "src/parser.go", "size", 9000), f) {
+	if Match(nil, rec("name", "src/parser.go", "size", 9000), f) {
 		t.Error("a record matching the whole negated block was admitted")
 	}
 }
@@ -135,7 +135,7 @@ func TestATextPredicateNeedsText(t *testing.T) {
 		{`{ contains data "ell" }`, false},
 		{`{ starts data "hel" }`, false},
 	} {
-		if got := Match(r, filter(t, c.text)); got != c.want {
+		if got := Match(nil, r, filter(t, c.text)); got != c.want {
 			t.Errorf("%s matched %v", c.text, got)
 		}
 	}
@@ -321,14 +321,14 @@ func TestAListCannotBeCompared(t *testing.T) {
 		"{ in tags red blue }",
 		`{ contains tags "red" }`,
 	} {
-		if Match(tagged, filter(t, text)) {
+		if Match(nil, tagged, filter(t, text)) {
 			t.Errorf("%s matched a record whose field is a list", text)
 		}
 	}
 
 	// And the field being absent is a different thing from being a list, so
 	// comparisons against a record that has not got it are untouched.
-	if !Match(plain, filter(t, "{ eq tags undefined }")) {
+	if !Match(nil, plain, filter(t, "{ eq tags undefined }")) {
 		t.Error("a record without the field stopped comparing as undefined")
 	}
 }
@@ -358,8 +358,65 @@ func TestHasAndLacksAskWhetherTheFieldIsThere(t *testing.T) {
 		{"{ not { lacks tags } }", tagged, true},
 		{"{ not { lacks tags } }", plain, false},
 	} {
-		if got := Match(c.on, filter(t, c.text)); got != c.want {
+		if got := Match(nil, c.on, filter(t, c.text)); got != c.want {
 			t.Errorf("%s matched %v", c.text, got)
 		}
+	}
+}
+
+// `id` asks about a record's identity, which is not a field.
+//
+// It travels beside the record rather than among its fields, so it comes into
+// Match as its own argument -- and a record that happens to carry a field
+// called `key` is answering an ordinary question about an ordinary field.
+func TestIDAsksAboutTheIdentityAndNotAField(t *testing.T) {
+	id := NewWord("left/1")
+	// The record's own `key` field says something else entirely.
+	r := rec("key", "not-really-a-key", "name", "gamma")
+
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{`{ id (left/1) }`, true},
+		{`{ id (left/0) }`, false},
+		{`{ id (left/0) (left/1) (right/9) }`, true},
+		{`{ not { id (left/1) } }`, false},
+
+		// A field called `key` is a field. These ask about the record's
+		// contents, and nothing about its identity.
+		{`{ eq key "not-really-a-key" }`, true},
+		{`{ eq key (left/1) }`, false},
+	} {
+		if got := Match(id, r, filter(t, c.text)); got != c.want {
+			t.Errorf("%s matched %v", c.text, got)
+		}
+	}
+
+	// A record with no identity matches no set of them.
+	if Match(nil, r, filter(t, `{ id (left/1) }`)) {
+		t.Error("a record with no identity matched one")
+	}
+}
+
+// It takes identities, written as values, and no field.
+func TestIDIsWrittenWithoutAField(t *testing.T) {
+	for _, text := range []string{
+		`{ id }`,
+		`{ id key (left/1) }`,
+		`{ id at=(left/1) }`,
+		`{ id { left/1 } }`,
+	} {
+		script, err := Parse("f filter=" + text)
+		if err != nil {
+			continue // refused at the grammar, which is refused
+		}
+		if _, err := ParseFilter(script.Statements[0].Args[0].Value); err == nil {
+			t.Errorf("%s was accepted", text)
+		}
+	}
+	f := filter(t, `{ id (left/1) 7 "notes" }`)
+	if got := f.Encode(); got != `{ id (left/1) 7 "notes" }` {
+		t.Errorf("it reads back as %s", got)
 	}
 }

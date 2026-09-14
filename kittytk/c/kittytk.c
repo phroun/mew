@@ -916,8 +916,12 @@ static void enc_filter_stmt(kt_buf *b, const kt_filter *f) {
         return;
     }
     buf_puts(b, f->op);
-    buf_put(b, ' ');
-    buf_puts(b, f->field);
+    if (strcmp(f->op, KT_OP_ID) != 0) {
+        /* Every other operator names the field it tests. This one tests an
+           identity, which is not a field and has no name to write. */
+        buf_put(b, ' ');
+        buf_puts(b, f->field);
+    }
     for (int i = 0; i < f->nvalues; i++) {
         buf_put(b, ' ');
         enc_value(b, &f->values[i]);
@@ -1117,6 +1121,47 @@ bad:
 
 static int parse_filter_block(const kt_script *sc, const char *op, kt_filter *out, char *err);
 
+/* `id <identity> <identity> ...`.
+
+   Every argument is a value, with no field in front of them: an identity is not
+   a field, so there is nothing to name. That is also what keeps it apart from
+   `in key ...`, which is a question about a field that happens to be called
+   key. */
+static int parse_id(const kt_stmt *st, kt_filter *out, char *err) {
+    out->op = strdup(KT_OP_ID);
+    out->field = strdup("");
+    out->collate = strdup("");
+    for (int i = 0; i < st->n; i++) {
+        const kt_arg *a = &st->args[i];
+        if (!a->has_value) {
+            qfail(err, "id: \"%s\" names no identity; write the identities as values",
+                  a->name ? a->name : "");
+            goto bad;
+        }
+        if (a->name && *a->name) {
+            qfail(err, "id: takes identities, not %s=", a->name);
+            goto bad;
+        }
+        if (a->kind == 4) {
+            qfail(err, "id: an identity is a value, not a block");
+            goto bad;
+        }
+        kt_value v;
+        if (!value_of(st->verb, a, &v, err)) goto bad;
+        v.name = strdup("");
+        out->values = realloc((void *)out->values, (out->nvalues + 1) * sizeof(kt_value));
+        ((kt_value *)out->values)[out->nvalues++] = v;
+    }
+    if (out->nvalues == 0) {
+        qfail(err, "id: takes at least one identity");
+        goto bad;
+    }
+    return 1;
+bad:
+    filter_release(out);
+    return 0;
+}
+
 static int parse_predicate(const kt_stmt *st, kt_filter *out, char *err) {
     /* `has` and `lacks` ask whether a record carries a field at all, and take
        no value. Every other operator compares one, and a field holding
@@ -1139,6 +1184,7 @@ static int parse_predicate(const kt_stmt *st, kt_filter *out, char *err) {
         }
         return 1;
     }
+    if (!strcmp(st->verb, KT_OP_ID)) return parse_id(st, out, err);
     int known = 0;
     for (int i = 0; preds[i]; i++) if (!strcmp(st->verb, preds[i])) { known = 1; break; }
     if (!known) {

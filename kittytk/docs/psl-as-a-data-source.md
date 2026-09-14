@@ -107,69 +107,68 @@ to a point means every one of them is complete up to it, so the one that swept
 least far holds the claim back for all of them — and it can be no further than
 the last record that actually went out.
 
-### Sorting and filtering on the composed key
+### Identity, and the field called `key`
 
-**The composed key is two sort levels, not one** — the include's name and then
-the child's key — and both take the direction the sort asked of `key`. So
-`sort={ key desc }` reverses the includes as well as the records inside them.
-Anything less would leave each include delivering in one order while the merge
-expected another, and the merge only ever sees a queue's head: it would hand
-records on backwards and call them ordered.
+A composed source's identity is the include's name, a slash, and the include's
+own identity. It settles what the sort leaves equal, as two levels — the name,
+then the child's — so that within one include the outer order and the child's
+own order are the same sequence.
 
-**No include is ever asked for that key by name.** It orders its own records by
-its own key once the named levels are spent, so the level written as `key` is
-one it has anyway — and asking for it by name would put the question to a
-reading that may not be able to answer it at all. Which way round that last
-level goes is said with `reversed` instead, which names no field:
+**No include is ever asked for that identity.** It orders its own records by
+its own identity once the named levels are spent, so the level this source adds
+is one it has anyway. Which way round it goes is said with `reversed`, which
+names no field — and `reversed` is the *only* thing that turns it over, because
+identity is not something a sort can name.
 
-| the query | what each include is asked |
-|---|---|
-| `sort={ key }` | `sort={}` |
-| `sort={ key desc }` | `sort={} reversed` |
-| `sort={ size; key desc }` | `sort={ size desc } reversed` |
-| `sort={ size desc; key }` | `sort={ size desc }` |
+**`key` is a field like any other.** Whatever an include exposes under that
+name is its own business: a `Whole` PSL reading puts its own key there as a
+convenience for sorting and display, a `Members` reading has whatever member
+was called that, and an application has whatever it sends. A sort or a filter
+naming `key` goes down to every include untouched and asks each of them about
+*its* field. It says nothing about the identity this source made.
 
-What is asked for is the mirror of what is wanted, and reversing it lands on
-the sequence — because `reversed` turns the include's own key over along with
-everything else. Anything written after the key level is dropped: a key names
-exactly one record, so nothing after it could separate two.
+**`id` is how identity is asked about.** It matches against a set of them, the
+way `in` matches a field against a set of values, and it names no field:
 
-**A filter on the key is read here and put to each include in its own terms.**
-Every key an include hands out begins with its own name and a slash, which
-settles most predicates for all of that include's records at once — and an
-include the filter shuts out entirely is never opened:
+```
+filter={ id (left/1) (left/note) }
+```
 
-| the filter | what `left` is asked | what `right` is asked |
+An identity says which include made it, so the includes none of them name are
+never opened at all:
+
+| the filter | `left` | `right` |
 |---|---|---|
-| `eq key (left/1)` | `in key "1" 1` | *nothing — it is not opened* |
-| `ge key (right/0)` | *nothing — it is not opened* | nothing, and everything it has comes back |
-| `lt .size 100; gt key (left/0)` | `lt .size 100` | `lt .size 100` |
+| `id (left/1)` | asked `id "1" 1` | *not opened* |
+| `id (left/1) (right/0)` | asked `id "1" 1` | asked `id "0" 0` |
+| `id (nobody/1)` | *not opened* | *not opened* |
+| `eq key 1` | asked `eq key 1` | asked `eq key 1` |
 
-`eq` goes down as an `in` over both spellings of the text, because which of a
-number, a name and a string an include keys its records by is its own business
-and the text between the slashes says nothing about it. A question narrow
-enough to miss would lose the record, and that is the one thing that cannot
-happen.
+It goes down as a set over both spellings of the text, because which of a
+number, a name and a string an include identifies its records by is its own
+business and the text between the slashes says nothing about it. A question
+narrow enough to miss would lose the record, and that is the one thing that
+cannot happen. And because the split takes the *first* slash, it composes:
+`id (nested/deep/1)` sheds one name per layer and reaches the innermost source
+as `id "1" 1`.
 
 What cannot be put in an include's terms is **dropped on the way down and
-settled here** instead, where the composed key is in hand. So an include is
-always asked a question that admits at least every record the outer filter
-does. Reading the answer here is three-valued: a predicate on the composed key
-answers yes or no, a predicate on any other field answers *nothing at all* —
-the include was asked that one and applied it already — and a record is dropped
-only on a definite no. Saying nothing is not saying no, which is what keeps a
-negation over an ordinary field from taking out a record the include had just
-vouched for.
+settled here** instead, where the identity is in hand. So an include is always
+asked a question that admits at least every record the outer filter does.
+Reading the answer here is three-valued: `id` answers yes or no, a predicate on
+any field answers *nothing at all* — the include was asked that one and applied
+it already — and a record is dropped only on a definite no. Saying nothing is
+not saying no, which is what keeps a negation over an ordinary field from
+taking out a record the include had just vouched for.
 
-A text predicate on the key — `starts`, `ends`, `contains` — is false for every
-record, the composed key being a symbol and a symbol having no inside for a
-string to sit in (`sort-and-filter.md`). Selecting one include is `eq` or a
-range. And note that an ordering comparison compares the composed key as the
-symbol it is, which is text: `left/10` is below `left/2` to a filter, where the
-*sequence's* order puts it after `left/9`.
+An include is also asked for **the fields this source sorts by**, on top of
+whatever the query asked for. The merge reads a record's sort values back out
+of the fields it was sent, so a sort on a field the query did not ask for would
+arrive as undefined for every record — and the merge would trust each
+include's arrival order over an order it could not see.
 
 One thing it refuses: an **include name holding a slash**, which is what tells
-a name from a key. There are no amendments in it: one include may be an
+a name from an identity. There are no amendments in it: one include may be an
 `AmendedSource`, or an `AmendedSource` may wrap the whole of it.
 
 ## Two spaces, one sequence

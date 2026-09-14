@@ -77,6 +77,32 @@ bad
 spec source=f sort=name
 bad
 
+# --- id: a record's identity, which is not a field ---
+
+# It names no field, because an identity is not one: it travels beside a
+# record's fields rather than among them.
+spec source=f filter={ id (left/1) }
+want source="f" filter={ id (left/1) }
+
+spec source=f filter={ id (left/1) (left/note) 7 "notes" }
+want source="f" filter={ id (left/1) (left/note) 7 "notes" }
+
+spec source=f filter={ not { id (left/1) } }
+want source="f" filter={ not { id (left/1) } }
+
+# A field called `key` is a field like any other, and asks something else.
+spec source=f filter={ eq key (left/1) }
+want source="f" filter={ eq key (left/1) }
+
+spec source=f filter={ id }
+bad
+
+spec source=f filter={ id key (left/1) }
+bad
+
+spec source=f filter={ id at=(left/1) }
+bad
+
 # --- reversed: the stated sequence, walked from its end ---
 
 # It names no field, which is what lets it turn over a sequence whose records

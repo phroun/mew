@@ -422,53 +422,11 @@ func TestAnIncludesClaimIsPassedThrough(t *testing.T) {
 	}
 }
 
-// The composed key is two sort levels -- the include's name and the child's
-// key -- and both take the direction the sort asked of `key`.
-//
-// So `key desc` is the sequence's own order reversed entire: the includes come
-// back to front, and the records inside each of them do too. Half a reversal
-// would be worse than a refusal -- each include would deliver in one order
-// while the merge expected another, and the merge only ever sees a queue's
-// head, so it would hand records on backwards and call them ordered.
-func TestTheKeyIsTwoSortLevelsAndBothTakeItsDirection(t *testing.T) {
-	up, _ := read(t, twoIncludes(t), "sort={ key }", "have=0 need=10")
-	if up.joined() != "(left/0),(left/1),(left/note),(right/0),(right/1)" {
-		t.Errorf("ascending, the sequence is %s", up.joined())
-	}
-
-	down, _ := read(t, twoIncludes(t), "sort={ key desc }", "have=0 need=10")
-	if down.joined() != "(right/1),(right/0),(left/note),(left/1),(left/0)" {
-		t.Errorf("descending, the sequence is %s", down.joined())
-	}
-	if !down.ordered {
-		t.Error("a reversed sequence did not say it was in order")
-	}
-}
-
-// The key can sit under a sort of its own, where it settles what that one left
-// equal -- and it still carries its own direction there.
-func TestTheKeyTakesItsDirectionUnderAnotherLevel(t *testing.T) {
-	// Two includes holding a record apiece of the same size, so the sort ties
-	// and the key decides.
-	c := composed(t,
-		Include{Name: "a", Source: mustPSL(t, `( (n: "one", size: 7) )`)},
-		Include{Name: "b", Source: mustPSL(t, `( (n: "two", size: 7) )`)})
-
-	up, _ := read(t, c, "sort={ .size; key }", "have=0 need=10")
-	if up.joined() != "(a/0),(b/0)" {
-		t.Errorf("ascending, the tie settles as %s", up.joined())
-	}
-	down, _ := read(t, c, "sort={ .size; key desc }", "have=0 need=10")
-	if down.joined() != "(b/0),(a/0)" {
-		t.Errorf("descending, the tie settles as %s", down.joined())
-	}
-}
-
 // A reversed sequence is read scope by scope like any other: the watermark is
 // a position in it, and the next scope carries on from there.
 func TestAReversedSequenceCarriesOn(t *testing.T) {
 	c := twoIncludes(t)
-	first, done := read(t, c, "sort={ key desc }", "have=0 need=2")
+	first, done := read(t, c, "reversed", "have=0 need=2")
 	if first.joined() != "(right/1),(right/0)" {
 		t.Fatalf("the first scope is %s", first.joined())
 	}
@@ -476,7 +434,7 @@ func TestAReversedSequenceCarriesOn(t *testing.T) {
 		t.Fatal("a scope with records past it claimed to be exhausted")
 	}
 
-	next, done := read(t, c, "sort={ key desc }",
+	next, done := read(t, c, "reversed",
 		"from="+done.Watermark.Encode()+" have=0 need=10")
 	if next.joined() != "(left/note),(left/1),(left/0)" {
 		t.Errorf("the rest is %s", next.joined())
@@ -486,19 +444,19 @@ func TestAReversedSequenceCarriesOn(t *testing.T) {
 	}
 }
 
-// A filter on the composed key is read here and asked of the includes in
-// their own terms.
+// `id` names identities, and an identity says which include it came from -- so
+// the includes none of them name are never opened.
 //
-// `eq key (left/1)` is a question about one record of one include. `left` is
-// asked for its own record 1; `right` is not asked anything at all, because no
-// key it holds can come out under a name that is not its own.
-func TestAFilterOnTheKeyReachesOneInclude(t *testing.T) {
+// `id (left/1)` asks `left` about its own record 1 and asks `right` nothing at
+// all, because no identity `right` hands out can begin with a name that is not
+// its own.
+func TestAnIDFilterReachesOneInclude(t *testing.T) {
 	left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
 	c := composed(t,
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: right})
 
-	out, _ := read(t, c, `filter={ eq key (left/1) }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ id (left/1) }`, "have=0 need=10")
 	if out.joined() != "(left/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -508,61 +466,61 @@ func TestAFilterOnTheKeyReachesOneInclude(t *testing.T) {
 	if !left.opened {
 		t.Fatal("the include that could hold it was not opened")
 	}
-	// Which of a number, a name and a string it keys its records by is its own
-	// business, so it is asked about every spelling of the text there could be.
-	if got := left.spec.Filter.Encode(); got != `{ in key "1" 1 }` {
+	// `id` composes: what goes down is the same question about the identities
+	// the include knows its records by. Which of a number, a name and a string
+	// that is is the include's own business, so it is asked about every
+	// spelling of the text there could be.
+	if got := left.spec.Filter.Encode(); got != `{ id "1" 1 }` {
 		t.Errorf("the include was asked %s", got)
 	}
 }
 
-// And the record keyed by a name rather than a number comes back too.
-//
-// A PSL list keys its members by string and its items by number, and the text
-// between the slashes says which it was for neither. So the include is asked
-// about both spellings, and the one that is right matches -- a question narrow
-// enough to miss would lose the record, which is the one thing that cannot
-// happen.
-func TestAFilterOnTheKeyReachesARecordKeyedByName(t *testing.T) {
+// And the record identified by a name rather than a number comes back too. A
+// question narrow enough to miss would lose it, which is the one thing that
+// cannot happen.
+func TestAnIDFilterReachesARecordKeyedByName(t *testing.T) {
 	left := &spy{inner: mustPSL(t, leftDoc)}
 	c := composed(t, Include{Name: "left", Source: left})
 
-	out, _ := read(t, c, `filter={ eq key (left/note) }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ id (left/note) }`, "have=0 need=10")
 	if out.joined() != "(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
-	if got := left.spec.Filter.Encode(); got != `{ in key "note" note }` {
+	if got := left.spec.Filter.Encode(); got != `{ id "note" note }` {
 		t.Errorf("the include was asked %s", got)
 	}
 }
 
-// The same reading answers a range: every key an include holds starts with its
-// own name, so a value outside that settles the predicate for all of them at
-// once and the include is skipped or asked nothing.
-func TestARangeOnTheKeyPicksTheIncludes(t *testing.T) {
-	for _, c := range []struct {
-		filter string
-		want   string
-	}{
-		{`filter={ gt key (left/note) }`, "(right/0),(right/1)"},
-		{`filter={ lt key (right/0) }`, "(left/0),(left/1),(left/note)"},
-		{`filter={ ge key (right/0) }`, "(right/0),(right/1)"},
-	} {
-		out, _ := read(t, twoIncludes(t), c.filter, "have=0 need=10")
-		if out.joined() != c.want {
-			t.Errorf("%s gave %s, want %s", c.filter, out.joined(), c.want)
-		}
+// A set of them reaches every include any of them names, and no others.
+func TestAnIDSetReachesEveryIncludeItNames(t *testing.T) {
+	left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
+	other := &spy{inner: mustPSL(t, rightDoc)}
+	c := composed(t,
+		Include{Name: "left", Source: left},
+		Include{Name: "right", Source: right},
+		Include{Name: "other", Source: other})
+
+	out, _ := read(t, c, `filter={ id (left/1) (right/0) }`, "have=0 need=10")
+	if out.joined() != "(left/1),(right/0)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if !left.opened || !right.opened {
+		t.Error("an include the set names was not opened")
+	}
+	if other.opened {
+		t.Error("an include the set does not name was opened")
 	}
 }
 
-// A filter that shuts every include out is a sequence with nothing in it, and
+// A filter that names no include at all is a sequence with nothing in it, and
 // it says so rather than leaving anybody waiting.
-func TestAFilterThatShutsEveryIncludeOutIsEmpty(t *testing.T) {
+func TestAnIDFilterThatNamesNoIncludeIsEmpty(t *testing.T) {
 	left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
 	c := composed(t,
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: right})
 
-	out, done := read(t, c, `filter={ eq key (nobody/1) }`, "have=0 need=10")
+	out, done := read(t, c, `filter={ id (nobody/1) }`, "have=0 need=10")
 	if len(out.keys) != 0 {
 		t.Errorf("records came back for a name no include has: %v", out.keys)
 	}
@@ -574,101 +532,40 @@ func TestAFilterThatShutsEveryIncludeOutIsEmpty(t *testing.T) {
 	}
 }
 
-// A predicate this source cannot put in an include's terms is dropped on the
-// way down rather than guessed at, and settled here instead -- so what the
-// include sends is a superset and nothing matching is ever cut.
-func TestAPredicateThatCannotBeHandedDownIsSettledHere(t *testing.T) {
-	left := &spy{inner: mustPSL(t, leftDoc)}
-	c := composed(t, Include{Name: "left", Source: left})
-
-	out, _ := read(t, c, `filter={ ne key (left/0) }`, "have=0 need=10")
-	if out.joined() != "(left/1),(left/note)" {
-		t.Errorf("the sequence is %s", out.joined())
-	}
-	// `ne` on one of its own keys is not a question the include can be asked
-	// in its own terms, so it was asked nothing and answered everything.
-	if left.spec.Filter != nil {
-		t.Errorf("the include was asked %s", left.spec.Filter.Encode())
-	}
-}
-
-// A filter mixing the key with an ordinary field keeps both: the include
-// answers the field, this source answers the key.
-func TestAFilterOnTheKeyAndAFieldKeepsBoth(t *testing.T) {
+// A filter mixing identity with an ordinary field keeps both: the include
+// answers the field, this source answers the identity.
+func TestAFilterOnIdentityAndAFieldKeepsBoth(t *testing.T) {
 	left := &spy{inner: mustPSL(t, leftDoc)}
 	c := composed(t,
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: mustPSL(t, rightDoc)})
 
-	out, _ := read(t, c, `filter={ lt .size 100; gt key (left/0) }`, "have=0 need=10")
-	if out.joined() != "(left/1),(left/note),(right/0),(right/1)" {
+	out, _ := read(t, c,
+		`filter={ lt .size 100; id (left/0) (left/note) }`, "have=0 need=10")
+	if out.joined() != "(left/0),(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
-	if got := left.spec.Filter.Encode(); got != `{ lt .size 100 }` {
+	// The field predicate went down; the identity became the include's own.
+	if got := left.spec.Filter.Encode(); got != `{ lt .size 100; id "0" 0 "note" note }` {
 		t.Errorf("the include was asked %s", got)
 	}
 }
 
-// An include is never asked for the composed key by name.
-//
-// It orders its own records by its own key once the named levels are spent, so
-// that level is one it has anyway -- and asking for it by NAME would put the
-// question to a reading that may not be able to answer it. A PSL source read
-// for its members cannot name a record's key at all, and answers this
-// perfectly well, because which way round that last level goes is said with
-// `reversed` instead.
-func TestAnIncludeIsNeverAskedForTheKeyByName(t *testing.T) {
-	members, err := ParsePSLSource(leftDoc, Members)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := &spy{inner: members}
-	c := composed(t, Include{Name: "m", Source: m})
-
-	out, _ := read(t, c, "sort={ key desc }", "have=0 need=10")
-	if out.joined() != "(m/note),(m/1),(m/0)" {
-		t.Errorf("reversed, the sequence is %s", out.joined())
-	}
-	if len(m.spec.Sort) != 0 || !m.spec.Reversed {
-		t.Errorf("the include was asked sort=%s reversed=%v",
-			wire.EncodeSort(m.spec.Sort), m.spec.Reversed)
-	}
-}
-
-// The same translation under a level of its own: what is asked for is the
-// mirror of what is wanted, and reversing it lands on the sequence.
-func TestTheKeyLevelBecomesReversedUnderAnotherLevel(t *testing.T) {
-	members, err := ParsePSLSource(leftDoc, Members)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := &spy{inner: members}
-	c := composed(t, Include{Name: "m", Source: m})
-
-	// By size ascending, and the key descending inside that -- which for these
-	// records is every one of them tied nowhere, so it is size order.
-	out, _ := read(t, c, "sort={ size; key desc }", "have=0 need=10")
-	if out.joined() != "(m/note),(m/0),(m/1)" {
-		t.Errorf("the sequence is %s", out.joined())
-	}
-	if got := wire.EncodeSort(m.spec.Sort); got != "{ size desc }" || !m.spec.Reversed {
-		t.Errorf("the include was asked sort=%s reversed=%v", got, m.spec.Reversed)
-	}
-}
-
-// An ascending key needs no reversal, and the level goes away rather than
-// going down -- a key names one record, so nothing written after it could
-// separate two.
-func TestAnAscendingKeyLevelIsSimplyDropped(t *testing.T) {
+// `key` is a field like any other now, so a sort or a filter naming it is an
+// ordinary question about whatever the include exposes under that name -- and
+// it goes down untouched.
+func TestKeyIsAnOrdinaryFieldName(t *testing.T) {
 	left := &spy{inner: mustPSL(t, leftDoc)}
 	c := composed(t, Include{Name: "left", Source: left})
 
-	out, _ := read(t, c, "sort={ .size desc; key; .name }", "have=0 need=10")
-	if out.joined() != "(left/1),(left/0),(left/note)" {
+	// Under Whole a PSL source exposes its own key under that name, so this
+	// asks each include about ITS key, not about the identity this source made.
+	out, _ := read(t, c, `filter={ eq key 1 }`, "have=0 need=10")
+	if out.joined() != "(left/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
-	if got := wire.EncodeSort(left.spec.Sort); got != "{ .size desc }" || left.spec.Reversed {
-		t.Errorf("the include was asked sort=%s reversed=%v", got, left.spec.Reversed)
+	if got := left.spec.Filter.Encode(); got != `{ eq key 1 }` {
+		t.Errorf("the include was asked %s", got)
 	}
 }
 
@@ -850,12 +747,12 @@ func TestAReversedBoundaryFallsInsideAnInclude(t *testing.T) {
 		Include{Name: "all", Source: &ignoresBoundaries{inner: mustPSL(t, leftDoc)}},
 		Include{Name: "other", Source: &ignoresBoundaries{inner: mustPSL(t, rightDoc)}})
 
-	whole, _ := read(t, c, "sort={ key desc }", "have=0 need=10")
+	whole, _ := read(t, c, "reversed", "have=0 need=10")
 	if whole.joined() != "(other/1),(other/0),(all/note),(all/1),(all/0)" {
 		t.Fatalf("reversed, the sequence is %s", whole.joined())
 	}
 
-	out, _ := read(t, c, "sort={ key desc }",
+	out, _ := read(t, c, "reversed",
 		`from={ key (all/note) } have=0 need=10`)
 	if out.joined() != "(all/1),(all/0)" {
 		t.Errorf("the scope after all/note is %s", out.joined())
@@ -874,7 +771,7 @@ func TestABoundaryWithNoKeyDropsNothing(t *testing.T) {
 		Include{Name: "all", Source: &ignoresBoundaries{inner: mustPSL(t, leftDoc)}},
 		Include{Name: "other", Source: &ignoresBoundaries{inner: mustPSL(t, rightDoc)}})
 
-	out, _ := read(t, c, "sort={ key desc }", `from={ .size 30 } have=0 need=10`)
+	out, _ := read(t, c, "reversed", `from={ .size 30 } have=0 need=10`)
 	if out.joined() != "(other/1),(other/0),(all/note),(all/1),(all/0)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -893,32 +790,32 @@ func TestAPredicateOnAnotherFieldIsNotAnsweredHere(t *testing.T) {
 	c := composed(t, Include{Name: "left", Source: left})
 
 	out, _ := read(t, c,
-		`filter={ not { gt .size 100 }; eq key (left/1) }`, "have=0 need=10")
+		`filter={ not { gt .size 100 }; id (left/1) }`, "have=0 need=10")
 	if out.joined() != "(left/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
 	// The negation went down whole, because it names no key.
-	if got := left.spec.Filter.Encode(); got != `{ not { gt .size 100 }; in key "1" 1 }` {
+	if got := left.spec.Filter.Encode(); got != `{ not { gt .size 100 }; id "1" 1 }` {
 		t.Errorf("the include was asked %s", got)
 	}
 }
 
 // A disjunction keeps every include that any branch admits, and the key
 // branches still pick which.
-func TestADisjunctionOnTheKeyKeepsEveryBranchsIncludes(t *testing.T) {
+func TestADisjunctionOnIdentityKeepsEveryBranchsIncludes(t *testing.T) {
 	out, _ := read(t, twoIncludes(t),
-		`filter={ or { eq key (left/1); eq key (right/0) } }`, "have=0 need=10")
+		`filter={ or { id (left/1); id (right/0) } }`, "have=0 need=10")
 	if out.joined() != "(left/1),(right/0)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
 }
 
 // A negation on the key is answered here and takes the record it names out.
-func TestANegationOnTheKeyTakesThatRecordOut(t *testing.T) {
+func TestANegationOnIdentityTakesThatRecordOut(t *testing.T) {
 	left := &spy{inner: mustPSL(t, leftDoc)}
 	c := composed(t, Include{Name: "left", Source: left})
 
-	out, _ := read(t, c, `filter={ not { eq key (left/1) } }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ not { id (left/1) } }`, "have=0 need=10")
 	if out.joined() != "(left/0),(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -938,7 +835,7 @@ func TestADisjunctionBranchThatAdmitsEverythingAsksNothing(t *testing.T) {
 	c := composed(t, Include{Name: "left", Source: left})
 
 	out, _ := read(t, c,
-		`filter={ or { ne key (nobody/0); eq .size 999 } }`, "have=0 need=10")
+		`filter={ or { not { id (nobody/0) }; eq .size 999 } }`, "have=0 need=10")
 	if out.joined() != "(left/0),(left/1),(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -947,24 +844,25 @@ func TestADisjunctionBranchThatAdmitsEverythingAsksNothing(t *testing.T) {
 	}
 }
 
-// Which includes are worth asking at all, for the predicates that settle it
-// without asking anything.
+// Which includes are worth asking at all.
+//
+// Only `id` says anything about that: it names identities, and an identity
+// says which include made it. Every other operator asks about a FIELD, and a
+// field called `key` is a field like any other -- this source knows nothing
+// about what any include holds under it, so the question goes down and every
+// include is opened.
 func TestWhichIncludesAreWorthAsking(t *testing.T) {
 	for _, c := range []struct {
 		filter string
 		open   []bool // left, right
 	}{
-		// A set names keys of one include, so the other holds none of them.
-		{`filter={ in key (left/1) (left/note) }`, []bool{true, false}},
-		// Every key of an include begins with its own name, so a text
-		// predicate on a symbol is false for all of them -- which is what a
-		// text predicate on any symbol is.
-		{`filter={ starts key "left/" }`, []bool{false, false}},
-		{`filter={ ends key "/1" }`, []bool{false, false}},
-		{`filter={ contains key "left" }`, []bool{false, false}},
-		// A record with no key is a record there is none of.
-		{`filter={ lacks key }`, []bool{false, false}},
-		// And every record has one.
+		{`filter={ id (left/1) (left/note) }`, []bool{true, false}},
+		{`filter={ id (right/0) }`, []bool{false, true}},
+		{`filter={ id (left/1) (right/0) }`, []bool{true, true}},
+		{`filter={ id (nobody/1) }`, []bool{false, false}},
+		// A field called `key` says nothing about which include holds what.
+		{`filter={ eq key 1 }`, []bool{true, true}},
+		{`filter={ starts key "left/" }`, []bool{true, true}},
 		{`filter={ has key }`, []bool{true, true}},
 	} {
 		left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
@@ -978,6 +876,31 @@ func TestWhichIncludesAreWorthAsking(t *testing.T) {
 			t.Errorf("%s opened left=%v right=%v, want %v",
 				c.filter, got[0], got[1], c.open)
 		}
+	}
+}
+
+// An identity composes with the slash, so it reaches through a composed source
+// inside a composed source: each layer strips its own name off the front and
+// asks the next about what is left.
+func TestAnIDFilterReachesThroughNesting(t *testing.T) {
+	deep := &spy{inner: mustPSL(t, rightDoc)}
+	inner := composed(t, Include{Name: "deep", Source: deep})
+	flat := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t,
+		Include{Name: "flat", Source: flat},
+		Include{Name: "nested", Source: inner})
+
+	out, _ := read(t, c, `filter={ id (nested/deep/1) }`, "have=0 need=10")
+	if out.joined() != "(nested/deep/1)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if flat.opened {
+		t.Error("the include the identity does not name was opened")
+	}
+	// One name came off at each level, and what reached the bottom is the
+	// identity that source knows the record by.
+	if got := deep.spec.Filter.Encode(); got != `{ id "1" 1 }` {
+		t.Errorf("the innermost source was asked %s", got)
 	}
 }
 
@@ -997,22 +920,6 @@ func TestAComposedSourceReverses(t *testing.T) {
 	}
 	if !mirror.ordered {
 		t.Error("a reversed sequence did not say it was in order")
-	}
-}
-
-// Naming the key descending and reversing an ascending one are the same
-// sequence, said two ways.
-func TestReversedAndAKeyLevelAgree(t *testing.T) {
-	for _, spec := range []string{"sort={ key desc }", "reversed", "sort={ key } reversed"} {
-		out, _ := read(t, twoIncludes(t), spec, "have=0 need=10")
-		if out.joined() != "(right/1),(right/0),(left/note),(left/1),(left/0)" {
-			t.Errorf("%q gave %s", spec, out.joined())
-		}
-	}
-	// And reversing a descending key level is the sequence as it stands.
-	out, _ := read(t, twoIncludes(t), "sort={ key desc } reversed", "have=0 need=10")
-	if out.joined() != "(left/0),(left/1),(left/note),(right/0),(right/1)" {
-		t.Errorf("reversed twice gave %s", out.joined())
 	}
 }
 
@@ -1039,5 +946,34 @@ func TestAComposedSourceReversesUnderASort(t *testing.T) {
 		if got := wire.EncodeSort(s.spec.Sort); got != "{ .size }" || !s.spec.Reversed {
 			t.Errorf("an include was asked sort=%s reversed=%v", got, s.spec.Reversed)
 		}
+	}
+}
+
+// An include is asked for the fields this source sorts by, whatever the query
+// asked for.
+//
+// The merge reads a record's sort values back out of the fields it was sent.
+// A sort on a field the query did not ask for would arrive here as undefined
+// for every record, and the merge would then trust each include's arrival
+// order over an order it could not see -- the includes would come out one
+// after another instead of interleaved, and it would say they were in order.
+func TestAnIncludeIsAskedForTheFieldsTheSortNeeds(t *testing.T) {
+	left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
+	c := composed(t,
+		Include{Name: "left", Source: left},
+		Include{Name: "right", Source: right})
+
+	out, _ := read(t, c, "fields={ .name } sort={ .size }", "have=0 need=10")
+	if out.joined() != "(left/note),(left/0),(right/0),(left/1),(right/1)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	for _, s := range []*spy{left, right} {
+		if got := s.spec.Fields.Encode(); got != "{ .name; .size }" {
+			t.Errorf("an include was asked for %s", got)
+		}
+	}
+	// What comes back is a superset of what was asked for, which is allowed.
+	if got := out.fields[0].Encode(); got != `{ .name "left note"; .size 5 }` {
+		t.Errorf("the first record carries %s", got)
 	}
 }

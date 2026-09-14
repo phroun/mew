@@ -27,16 +27,22 @@ func (f Fields) Field(name string) *Value { return f.Get(name) }
 
 // Match reports whether a record passes a filter. A nil filter passes
 // everything, which is what an unfiltered sequence is.
-func Match(rec Record, f *Filter) bool {
+//
+// The identity comes in beside the record rather than as a field of it,
+// because that is what it is: `id` asks about the identity, and every other
+// operator asks about a field. A record whose fields happen to include one
+// called `key` is answering an ordinary question about an ordinary field.
+// Pass nil for id where there is none, and `id` then matches nothing.
+func Match(id *Value, rec Record, f *Filter) bool {
 	if f == nil {
 		return true
 	}
 	switch f.Op {
 	case OpAnd:
-		return all(rec, f.Children)
+		return all(id, rec, f.Children)
 	case OpOr:
 		for _, c := range f.Children {
-			if Match(rec, c) {
+			if Match(id, rec, c) {
 				return true
 			}
 		}
@@ -49,7 +55,14 @@ func Match(rec Record, f *Filter) bool {
 		// a; b }` is the negation of `a and b`. With one predicate inside --
 		// which is how a negation is nearly always written -- the two readings
 		// agree anyway.
-		return !all(rec, f.Children)
+		return !all(id, rec, f.Children)
+	case OpID:
+		for _, v := range f.Values {
+			if id != nil && Compare(id, v, f.Collate) == 0 {
+				return true
+			}
+		}
+		return false
 	case OpHas:
 		return rec.Field(f.Field) != nil
 	case OpLacks:
@@ -100,9 +113,9 @@ func Match(rec Record, f *Filter) bool {
 	return false
 }
 
-func all(rec Record, children []*Filter) bool {
+func all(id *Value, rec Record, children []*Filter) bool {
 	for _, c := range children {
-		if !Match(rec, c) {
+		if !Match(id, rec, c) {
 			return false
 		}
 	}
