@@ -420,3 +420,28 @@ func TestIDIsWrittenWithoutAField(t *testing.T) {
 		t.Errorf("it reads back as %s", got)
 	}
 }
+
+// A record carries an identity, and a result claiming to carry a record
+// without one is refused rather than read as a record of nobody.
+func TestARecordWithoutAnIdentityIsRefused(t *testing.T) {
+	script, err := Parse(`result 9 record={ name "src/parser.go" }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := ParseResult(script.Statements[0].Args[1:]); err == nil {
+		t.Errorf("a record with no identity was read as %#v", r)
+	}
+
+	// And with one, it reads back as what was written.
+	script, err = Parse(`result 9 id=17 record={ name "src/parser.go" }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := ParseResult(script.Statements[0].Args[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ID == nil || r.ID.Int != 17 || !r.Whole {
+		t.Errorf("it came back as %#v", r)
+	}
+}

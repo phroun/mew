@@ -656,3 +656,17 @@ func reverseOf(s string) string {
 	}
 	return strings.Join(parts, ",")
 }
+
+// A scope that sent nothing is complete up to where it was asked from.
+//
+// Vacuously, and usefully: the asker needs somewhere to carry on from, and
+// where it asked from is somewhere it is still complete up to. Claiming
+// nothing at all would leave it with no way to ask for the next scope but to
+// start again.
+func TestAScopeThatSentNothingIsCompleteUpToWhereItStarted(t *testing.T) {
+	v := open(t, doc, "")
+	_, done := fill(t, v, "after=1 count=0")
+	if got := wire.EncodeValue(done.Watermark); got != "1" {
+		t.Errorf("a scope of none from 1 claims %s", got)
+	}
+}

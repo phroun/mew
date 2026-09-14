@@ -1003,3 +1003,60 @@ func TestAnIncludeIsAskedForTheFieldsTheSortNeeds(t *testing.T) {
 		t.Errorf("the first record carries %s", got)
 	}
 }
+
+// Each include is resumed from the last record IT gave, not from the last one
+// this source handed on.
+//
+// The two are different whenever the record that ended a scope came from one
+// include and another had already given something before it: resuming that
+// other one from where the scope ended would send its records again. They are
+// dropped on the way through, so nothing comes out wrong -- it is the include
+// that is asked the wrong question, and the only place to see that is the
+// question.
+func TestEachIncludeIsResumedFromItsOwnLastRecord(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	right := &spy{inner: mustPSL(t, rightDoc)}
+	c := composed(t,
+		Include{Name: "left", Source: left},
+		Include{Name: "right", Source: right})
+	seq := opened(t, c, "sort={ .size }")
+
+	// By size: (left/note), (left/0), (right/0), (left/1), (right/1).
+	first, _ := seq.scope("count=2")
+	if first.joined() != "(left/note),(left/0)" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+
+	seq.scope("after=(left/0) count=9")
+	if got := wire.EncodeValue(left.asked.After); got != "0" {
+		t.Errorf("left was resumed after %s, want its own 0", got)
+	}
+	// Right had given nothing before the scope ended, so it starts where it was.
+	if right.asked.After != nil {
+		t.Errorf("right was resumed after %s, having given nothing",
+			wire.EncodeValue(right.asked.After))
+	}
+}
+
+// `until` reaches the includes in their own terms, the way `after` does.
+//
+// Without it they walk to the count instead of stopping, and no include ever
+// reports that it joined -- so this source cannot say it either, and the asker
+// is never told its two runs have become one.
+func TestUntilReachesTheIncludes(t *testing.T) {
+	c := twoIncludes(t)
+	seq := opened(t, c, "sort={ .size }")
+
+	// Everything placed, so the identities below mean something to this source.
+	if all, _ := seq.scope("count=9"); all.joined() != "(left/note),(left/0),(right/0),(left/1),(right/1)" {
+		t.Fatalf("the sequence is %s", all.joined())
+	}
+
+	out, done := seq.scope("until=(right/0) count=9")
+	if out.joined() != "(left/note),(left/0)" {
+		t.Errorf("the walk up to the record the asker held is %s", out.joined())
+	}
+	if done.Stop != wire.StopJoined {
+		t.Errorf("it stopped at that record and said %q", done.Stop)
+	}
+}

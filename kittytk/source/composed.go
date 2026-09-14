@@ -514,10 +514,6 @@ func (s *composedSet) Read(sc *wire.Scope, out Sink) error {
 		out.Done(Complete{Error: err.Error()})
 		return nil
 	}
-	// An `until` this sequence cannot place is not a refusal: it only says
-	// where the asker's own knowledge picks up, and one that never arrives
-	// costs a walk to the count instead of a shorter one.
-	until, _ := s.resume(sc.Until)
 
 	g := &gathering{set: s, want: sc, out: out, levels: s.levels}
 	if sc.Reversed {
@@ -532,7 +528,7 @@ func (s *composedSet) Read(sc *wire.Scope, out Sink) error {
 	// Asked for outside the lock: an include whose records are here answers
 	// inside the call, and would reach for a lock this one was already holding.
 	for i, p := range s.parts {
-		if err := p.set.Read(s.ask(sc, after[i], until[i]), g.lane(i)); err != nil {
+		if err := p.set.Read(s.ask(sc, after[i]), g.lane(i)); err != nil {
 			g.failed(i, err)
 		}
 	}
@@ -565,13 +561,13 @@ func (s *composedSet) resume(id *wire.Value) ([]*wire.Value, error) {
 // out to come from any one of them. What comes back is then more than belongs
 // in the scope, which is allowed; asking for less than belongs is what would be
 // wrong.
-func (s *composedSet) ask(sc *wire.Scope, after, until *wire.Value) *wire.Scope {
-	return &wire.Scope{
-		After:    after,
-		Until:    until,
-		Count:    sc.Count,
-		Reversed: sc.Reversed,
-	}
+//
+// `until` does not go down at all, and could not: what an include stood at when
+// that record crossed is the record it gave BEFORE it, so handing that down as
+// a stop would cut the include one record short. The merge settles it here
+// instead, where every record's identity in this sequence is in hand.
+func (s *composedSet) ask(sc *wire.Scope, after *wire.Value) *wire.Scope {
+	return &wire.Scope{After: after, Count: sc.Count, Reversed: sc.Reversed}
 }
 
 // position is where something sits in this sequence: a value for each step,
@@ -613,6 +609,7 @@ type gathering struct {
 
 	settled bool          // every include has spoken, so the order is decided
 	inOrder bool          // and every one of them declared its records in order
+	joined  bool          // the walk reached the record the asker already held
 	sent    int           // records handed on
 	last    []*wire.Value // where the last of them sat
 	lastID  *wire.Value   // and what it is called here
@@ -779,6 +776,9 @@ func (g *gathering) release() {
 		// always allowed where a gap is not.
 		for i, a := range g.at {
 			for _, rec := range a.queue {
+				if g.reached(rec) {
+					return
+				}
 				g.hand(i, rec)
 			}
 			a.queue = nil
@@ -804,6 +804,9 @@ func (g *gathering) release() {
 			return // nothing anywhere is waiting
 		}
 		rec := g.at[next].queue[0]
+		if g.reached(rec) {
+			return
+		}
 		g.at[next].queue = g.at[next].queue[1:]
 		g.hand(next, rec)
 	}
@@ -811,6 +814,21 @@ func (g *gathering) release() {
 
 // full reports whether the scope has as many records as it was asked for.
 func (g *gathering) full() bool { return g.sent >= g.want.Count }
+
+// reached reports whether a record is the one the asker said it already held,
+// and notes that the two runs it holds have met if so.
+//
+// Settled here rather than by the includes because the identity is this
+// sequence's own: no include has ever seen it, and what each of them stood at
+// when it crossed is the record before it, not the record itself.
+func (g *gathering) reached(rec waiting) bool {
+	if g.want.Until == nil ||
+		wire.EncodeValue(rec.key) != wire.EncodeValue(g.want.Until) {
+		return false
+	}
+	g.joined = true
+	return true
+}
 
 // hand passes one record on and notes where every include stood as it went.
 //
@@ -909,6 +927,8 @@ func (g *gathering) close() {
 
 	switch {
 	case out.Error != "":
+	case g.joined:
+		out.Stop = wire.StopJoined
 	case spent && !held:
 		out.Stop = wire.StopExhausted
 	case g.full():
