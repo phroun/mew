@@ -16,10 +16,12 @@ bundle layers, whatever ephemeral material the server holds itself, and — if
 this source has an application behind it — material cached from corresponding
 with that application.
 
-**A result set** is server-side: one stated sequence over one data source — one
-filter, one sort — that scopes are drawn from. It holds no position of its own,
-so readers at different places share one. It is `source.ResultSet`, and it is
-built (`psl-as-a-data-source.md`).
+**A data set** is server-side: one stated sequence over one data source — this
+source, this sort, this filter — prepared once and drawn from. Those three name
+it and nothing else does, so two queries naming the same three are reading one
+data set, and whatever was worked out for either holds for both. It holds no
+position of its own, so readers at different places share one. It is
+`source.DataSet`, and it is built (`psl-as-a-data-source.md`).
 
 **A query** is the application's side of that correspondence: an equivalent
 sequence, the same filter and the same sort, with far less management. It
@@ -125,37 +127,40 @@ Two rules make ignoring hints safe:
   arrived: unordered means the server sorts it, ordered means it merges it
   as-is. A minimal query simply never sets the flag.
 
-Everything else — columns, exclusions, boundaries, counts — can be ignored with
-no flag at all, because ignoring them can only produce more data than was asked
+Everything else — columns, exclusions, the scope's ends, the count — can be
+ignored with no flag at all, because ignoring them can only produce more data than was asked
 for, never wrong data.
 
-## The fill itself
+## The scope itself
 
-The server states where it is, how far its own knowledge runs, how much of the
-scope it can fill itself, and how many rows the scope holds:
+The server names the record to carry on past, the record its own knowledge
+picks up at, and how many rows it wants:
 
 ```
-from=<boundary>  to=<boundary>  have=<n>  need=<n>
+after=<identity>  until=<identity>  count=<n>
 ```
+
+Both ends are identities, not positions. Where a record stands in a sequence is
+the business of whoever put it there, so the asker names the record and the
+source finds the place.
 
 The query's whole job:
 
 ```
-emit every record of mine in (from..to]        -> k of them
-if have + k < need:
-    keep going past `to` until have + k = need
+start past `after`
+send records until `count` of them have gone
+   or until `until` is reached, which says the asker's two runs are now one
 watermark = the furthest point swept
 ```
 
-It never needs to know where the server's own records sit. Inside `(from..to]`
-it sends all of its own — which the server needs anyway for that range to be
-*correct* — and past `to` it sends exactly the shortfall, because out there the
-server contributes nothing, so every row is one of the query's.
+It never needs to know where the server's own records sit, and it is told
+nothing about them: `until` says only where to stop, because out there the
+server already holds everything.
 
-**The scope is covered, and in one round trip.** The server is complete over
-`(from..to]` because the query sent everything of its own there, and complete
-from `to` to the watermark because the query swept it. Merged row `need` is at
-or before the watermark by construction.
+**The scope is covered, and in one round trip**, and the answer says which of
+three things ended it — `filled`, `joined` or `exhausted`. Those are different
+facts to the server and it cannot work out which from the records alone: a
+scope that filled and one that ran out look identical.
 
 **The watermark is a completeness guarantee, not a position**: *there is
 nothing of mine between your `from` and this point that you do not now have.*

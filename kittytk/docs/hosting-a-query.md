@@ -39,8 +39,7 @@ KITTYTK_DISPLAY=/tmp/kittytk-queryprobe.sock go run ./examples/queryapp
 
 `examples/queryapp` serves two sources, at the two ends of how much work an
 author wants to do: `colours` sends everything and says `exhausted`, and
-`files` honours the boundary, the sort and the scope and answers with a
-watermark. The probe's flags drive the rest — `-filter`, `-sort`, `-more`, and
+`files` honours the sort and the scope and answers with a watermark. The probe's flags drive the rest — `-filter`, `-sort`, `-more`, and
 `-resort`, which opens a second query on another sort and drops the first —
 and what it prints is this:
 
@@ -48,43 +47,42 @@ and what it prints is this:
 <- hello version=1 app="queryapp"
 -> welcome version=1 session=1
 -> init app=1 store=2 host=3
--> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } have=0 need=3
+-> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } count=3
 <- reply q=1
-<- result 1 ordered
-<- end
-<- result 1 record={ key 2; name "build.sh"; size 310 }
-<- result 1 record={ key 3; name "go.mod"; size 96 }
-<- result 1 record={ key 1; name "README.md"; size 2048 }
-<- result 1 complete watermark={ name "README.md"; key 1 }
--> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3
-<- reply
-<- end
-<- result 1 ordered
-<- result 1 record={ key 6; name "src/file2.go"; size 1200 }
-<- result 1 record={ key 7; name "src/file10.go"; size 880 }
-<- result 1 record={ key 4; name "src/parser.go"; size 14022 }
-<- result 1 complete watermark={ name "src/parser.go"; key 4 }
--> r=new query source="files" sort={ size desc } have=0 need=3
-<- reply r=2
-<- end
-<- result 2 record={ key 4; name "src/parser.go"; size 14022 }
-<- result 2 record={ key 5; name "src/window.go"; size 9310 }
-<- result 2 record={ key 8; name "testdata/query.wire"; size 6100 }
-<- result 2 complete watermark={ size 6100; key 8 }
+<- result 1 ordered id=2 record={ name "build.sh"; size 310 }
+<- result 1 id=3 record={ name "go.mod"; size 96 }
+<- result 1 id=1 record={ name "README.md"; size 2048 } complete watermark=1 filled
+-> n=new query source="files" filter={ not { starts name "." } } sort={ name natural } after=1 count=3
+<- reply n=2
+<- result 2 ordered id=6 record={ name "src/file2.go"; size 1200 }
+<- result 2 id=7 record={ name "src/file10.go"; size 880 }
+<- result 2 id=4 record={ name "src/parser.go"; size 14022 } complete watermark=4 filled
 -> destroy 1
 <- reply
-<- end
+-> r=new query source="files" sort={ size desc } count=3
+<- reply r=3
+<- result 3 ordered id=4 record={ name "src/parser.go"; size 14022 }
+<- result 3 id=5 record={ name "src/window.go"; size 9310 }
+<- result 3 id=8 record={ name "testdata/query.wire"; size 6100 } complete watermark=8 filled
 -> destroy 2
-<- reply
-<- end
+-> destroy 3
 ```
 
-**A boundary is the sort fields and the key, not the key alone.** The second
-scope asks `from={ key 1; name "README.md"; size 2048 }`; a boundary carrying
-only the key has nothing to compare against the levels, and lands at the start
-of the sequence rather than where it meant to. Fields the sort does not mention
-are ignored at the far end, so sending the whole record is the simplest thing
-that is right.
+**A query is asked once and answered once.** Nothing addresses one that already
+exists: `complete` ends the answer, `destroy` ends the interest, and neither is
+a way to ask for more. So the second scope above is a second query, stating the
+same sequence again and saying which record to carry on past -- and the first
+is let go once the records it answered with are held.
+
+**A scope names its ends by identity, and nothing else.** `after=1` is the whole
+of "carry on past README.md". Where a record stands in a sequence is the
+business of whoever put it there, so the asker has nothing to say about it and
+does not try: it names the record, and the source finds the place.
+
+**`ordered` rides on the first record and the terminator on the last.** Both may
+stand alone -- a source that does not yet know it has reached the end says so on
+a line of its own -- and a reader takes order, then record, then end, whichever
+statement they arrived on. An answer of one record is one line.
 
 ## Putting one through a real display
 
@@ -100,7 +98,7 @@ kittytk-queryrun -to queryapp query.txt
 where `query.txt` is the wire text and nothing else:
 
 ```
-q=new query source="files" filter={ not { starts name "." } } sort={ name natural } have=0 need=5
+q=new query source="files" filter={ not { starts name "." } } sort={ name natural } count=5
 ```
 
 ```
@@ -112,7 +110,7 @@ key  name             size
 6    "src/file2.go"   1200
 7    "src/file10.go"  880
 
-complete up to { name "src/file10.go"; key 7 }
+complete up to 7
 ```
 
 `-raw` prints the statements instead of the table. Under the tool it is one
@@ -137,10 +135,10 @@ as it fills.
 ```go
 src, _ := conn.ProvideSource("files", func(f *client.Fill) {
     f.Ordered()
-    for _, rec := range myRecords(f.From, f.To, f.Need-f.Have) {
+    for _, rec := range myRecords(f.After, f.Until, f.Count) {
         f.Record(rec.ID, wire.Named("name", rec.Name), wire.Named("size", rec.Size))
     }
-    f.Done(watermark)
+    f.Filled(last.ID)
 })
 ```
 
@@ -149,10 +147,15 @@ object**. The application tells whatever trinket is to show it `data="files"`,
 and the display opens queries against that name.
 
 `Record` says these are all the fields there are. `Subset` — `f.Subset(id, …)`,
-`f.subset(key, …)`, `kt_fill_subset` — says they are the ones this scope asked
+`f.subset(id, …)`, `kt_fill_subset` — says they are the ones this query asked
 for, and crosses as `fields={…}`.
 
-Python is the same shape (`conn.provide_source(name, fill)`, `f.record(key,
+**The identity is the first argument, not a field.** A record is free to carry a
+field called `key` of its own, and that field is data like any other: it sorts,
+it filters, it fills a column. What names the record travels beside the bag, and
+crosses as `id=`.
+
+Python is the same shape (`conn.provide_source(name, fill)`, `f.record(id,
 name=...)`), and so is C (`kt_provide_source(c, "files", fill, NULL)`).
 
 **The least an implementation can do is real.** Ignore every hint, send every
@@ -167,14 +170,13 @@ because it never wants a sequence without wanting rows of it.
 
 ```
 DISPLAY → APP   q=new query source="files" filter={ ge size 1024 } sort={ name natural }
-                  have=0 need=30
+                  count=30
                 end
 APP → DISPLAY   reply q=9
                 end
-APP → DISPLAY   result 9 ordered
-                result 9 record={ key 17; name "src/parser.go"; size 1024 }
-                result 9 record={ key 42; name "src/window.go"; size 2048 }
-                result 9 complete watermark={ name "src/window.go"; key 42 }
+APP → DISPLAY   result 9 ordered id=17 record={ name "src/parser.go"; size 1024 }
+                result 9 id=42 record={ name "src/window.go"; size 2048 }
+                  complete watermark=42 filled
 ```
 
 **The application names it.** Each end mints ids in its own space and the
@@ -183,45 +185,49 @@ and no range is reserved anywhere. The display has no id to offer for something
 the application holds, so the reply carries the application's.
 
 The reply goes out before any result, and that ordering is not policy: the
-application mints the id, so it writes it before anything that carries it. A
-display need not wait for it, though — it may address a query by the key it
-opened it under, in the same batch:
+application mints the id, so it writes it before anything that carries it.
+
+**Every scope after that is a query of its own**, stating the same sequence
+again and naming the record to carry on past:
 
 ```
-DISPLAY → APP   q=new query source="files" have=0 need=5
-                query q have=5 need=10
+DISPLAY → APP   n=new query source="files" filter={ ge size 1024 } sort={ name natural }
+                  after=42 count=30
+                end
+APP → DISPLAY   reply n=10
+                end
+APP → DISPLAY   result 10 ordered id=51 record={ … }
+                result 10 complete exhausted
+DISPLAY → APP   destroy 9
                 end
 ```
 
-**Every scope after that is the same, minus the making:**
+A query is asked when it is made and answered once. Nothing addresses one that
+already exists except `destroy`, which is how the application learns it may let
+those records go.
 
-```
-DISPLAY → APP   query 9 from={ name "build.sh"; key 42 } have=25 need=30
-                end
-APP → DISPLAY   reply
-                end
-APP → DISPLAY   result 9 ordered
-                result 9 record={ … }
-                result 9 complete exhausted
-```
-
-| on the query | |
+| naming the sequence | |
 |---|---|
 | `source` | the name the application serves these records under |
-| `filter` `sort` | the sequence: which records are in it, and in what order |
-| `fields` `exclude` | which of a record's fields the display wants |
+| `filter` `sort` | which records are in it, and in what order |
 | `reversed` | that sequence, walked from its end |
+| `fields` `exclude` | which of a record's fields the display wants |
 
-| on a scope request | |
+| naming the scope of it | |
 |---|---|
-| `from` `to` | boundaries. Absent or empty is the start of the sequence |
-| `have` | how much of the scope the display can fill from what it already holds |
-| `need` | how many rows the scope is |
-| `fields` | the fields wanted for *this* scope, where they are fewer than the query's — the skeleton of a wide scope rather than everything |
+| `after` | the identity to start past — the display holds that one. Absent is the start of the sequence |
+| `until` | the identity to stop before — the display holds that one and everything beyond it. Absent walks to the count or to the end |
+| `count` | how many records are wanted |
 
-The whole of what the application does with that: emit every record of its own
-in `(from..to]`, and if that does not make up the shortfall, keep going past
-`to` until it does.
+The whole of what the application does with that: start past `after`, send
+`count` records, and stop early if it reaches `until`.
+
+| ending the scope | |
+|---|---|
+| `filled` | the count was reached. There is more past the watermark |
+| `joined` | `until` was reached, so the display's two runs are now one |
+| `exhausted` | there is nothing more this way, and so no watermark |
+| `error` | a refusal, which is an answer |
 
 ## What may be sent, and what may be claimed
 
@@ -236,7 +242,7 @@ record it need not ask for later.
 
 ## Identity is not a field
 
-Every record has an identity — it is what a boundary names, what a watermark
+Every record has an identity — it is what a scope's ends name, what a watermark
 names, and the sort's implicit last level. It travels **beside** a record's
 fields, never among them, and `id` is how a filter asks about it:
 
@@ -255,17 +261,17 @@ it is.
 `reversed` walks the stated sequence from its end:
 
 ```
-DISPLAY → APP   q=new query source="files" sort={ size } reversed have=0 need=30
+DISPLAY → APP   q=new query source="files" sort={ size } reversed count=30
 ```
 
 **Every level turns over with it, the one the sort does not write included.**
-A record key settles what the named levels leave equal, and a sequence read
+An identity settles what the named levels leave equal, and a sequence read
 backwards settles it backwards too — which is what makes this the exact mirror.
 `sort={ size desc }` is a third sequence again: it turns one level over and
 leaves the records it ties facing the way they already were.
 
-It names no field, and that is the point of it. A record's key is not always
-something a query can name — an application that exposes a record's fields and
+It names no field, and that is the point of it. A record's identity is not
+something a query can name at all — an application that exposes a record's fields and
 not its identity has no way to write `sort={ key desc }` at all — so the one
 way to turn a sequence over that every implementation can answer is the one
 that asks for no field by name.
@@ -298,14 +304,15 @@ A record crosses under one of two words, and the difference is how much of the
 record is there:
 
 ```
-result 9 record={ key 17; name "src/parser.go"; size 1024 }
-result 9 fields={ key 17; name "src/parser.go" }
+result 9 id=17 record={ name "src/parser.go"; size 1024 }
+result 9 id=17 fields={ name "src/parser.go" }
 ```
 
 | | |
 |---|---|
+| `id=` | what names the record, beside its fields rather than among them |
 | `record={…}` | every field the record has |
-| `fields={…}` | some of them — the ones this scope asked for |
+| `fields={…}` | some of them — the ones this query asked for |
 
 A whole record answers **any** question about that record, so whoever asked can
 keep it and answer the next query out of it instead of asking again. A subset
@@ -355,7 +362,7 @@ different sort or a different filter is a **different query** — `set` addresse
 to one is refused.
 
 ```
-DISPLAY → APP   r=new query source="files" sort={ size desc } have=0 need=30
+DISPLAY → APP   r=new query source="files" sort={ size desc } count=30
                 end
 APP → DISPLAY   reply r=10
                 end
@@ -386,19 +393,17 @@ One shape does three jobs, and it is a block of one statement per field: the
 name first, and its value, if it has one, after.
 
 ```
-{ name "src/parser.go"; size 1024; key 17 }     a record's fields
-{ name "build.sh"; key 42 }                     a boundary: where it stands
+{ name "src/parser.go"; size 1024 }             a record's fields
 { name; size }                                  a bare list of fields
 ```
 
-`key` is reserved: the record key, which is the sort's implicit final level and
-what makes a position mean exactly one record. Every record carries it and so
-does every boundary.
+**Nothing is reserved in it.** A record may carry a field called `key`, and
+that field is data like any other: `eq key 1` is an ordinary question about an
+ordinary field, and says nothing about which record it is. What names the
+record travels beside the bag as `id=`, and no filter reaches it except `id`.
 
-A boundary is named rather than positional, so neither end has to agree on the
-order the sort levels were written in to read one. A field's value may be any
-kind the wire has — a word, a string, a number, and `undefined` for a field a
-record does not have.
+A field's value may be any kind the wire has — a word, a string, a number, and
+`undefined` for a field a record does not have.
 
 ## The filter and the sort
 

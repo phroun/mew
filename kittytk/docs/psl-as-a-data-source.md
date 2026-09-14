@@ -13,17 +13,17 @@ It is the same question either way — this filter, this sort, this scope — so
 static data sitting here.
 
 ```go
-type Source interface{ Open(spec *wire.Spec) (ResultSet, error) }
+type Source interface{ Open(spec *wire.Spec) (DataSet, error) }
 
-type ResultSet interface {
-    Fill(f *wire.Fill, out Sink) error
+type DataSet interface {
+    Read(s *wire.Scope, out Sink) error
     Close()
 }
 
 type Sink interface {
     Ordered()
-    Record(key *wire.Value, fields wire.Fields) error
-    Subset(key *wire.Value, fields wire.Fields) error
+    Record(id *wire.Value, fields wire.Fields) error
+    Subset(id *wire.Value, fields wire.Fields) error
     Done(c Complete)
 }
 ```
@@ -114,8 +114,12 @@ own identity. It settles what the sort leaves equal, as two levels — the name,
 then the child's — so that within one include the outer order and the child's
 own order are the same sequence.
 
-**No include is ever asked for that identity.** It orders its own records by
-its own identity once the named levels are spent, so the level this source adds
+**No include is ever shown an identity of this source's making.** An identity
+means something only where it was made, so a scope resuming after `left/7` asks
+each include from the last record *it* gave — which this source noted as it
+handed that record on, and which is the same place in the merged sequence. An
+include orders its own records by its own identity once the named levels are
+spent, so the level this source adds
 is one it has anyway. Which way round it goes is said with `reversed`, which
 names no field — and `reversed` is the *only* thing that turns it over, because
 identity is not something a sort can name.
@@ -357,15 +361,16 @@ kittytk-queryrun -psl objects.psl -reading members query.txt
 ```
 
 ```
-q=new query source="objects" filter={ not { starts .0 "." } } sort={ .0 natural } have=0 need=5
-query q from={ .0 "src/file10.go"; key 6 } have=0 need=5
-r=new query source="objects" sort={ .size desc } have=0 need=5
+q=new query source="objects" filter={ not { starts .0 "." } } sort={ .0 natural } count=5
+n=new query source="objects" filter={ not { starts .0 "." } } sort={ .0 natural } after=6 count=5
+r=new query source="objects" sort={ .size desc } count=5
 destroy q
 ```
 
-The file holds `new`, `query` and `destroy`, which are the statements a display
-would have sent — and a different sequence is another `new query`, opened
-before the one it replaces is let go. `-raw` prints them as they would have
+The file holds `new` and `destroy`, which are the statements a display would
+have sent. A query is asked once and answered once, so the second scope is a
+query of its own naming the record to carry on past — and a different sequence
+is another `new query` again, opened before the one it replaces is let go. `-raw` prints them as they would have
 crossed rather than as a table.
 
 ## What is not here
