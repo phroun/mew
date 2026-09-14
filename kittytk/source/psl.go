@@ -35,10 +35,17 @@ import (
 // so the previous few are worth keeping and an unbounded pile of them is not.
 const orderingsKept = 4
 
-// ValueField is the record itself, as a field name. It is the companion of
-// wire.KeyField: a record that is a bare string has a key and a value and
-// nothing else, and one that is a list has its members as well.
-const ValueField = "value"
+// The two names the Whole reading gives a record's own key and value.
+//
+// These are fields, and only fields. A record read this way carries `key`
+// because the document gave it one and somebody may want to sort or show it --
+// not because this end works by it. What identifies the record travels beside
+// the bag, and a document is free to hold a member called `key` of its own
+// without the two ever meaning the same thing.
+const (
+	KeyField   = "key"
+	ValueField = "value"
+)
 
 // A Reading is how a record's contents are named. Both are useful and neither
 // is a subset of the other's behaviour, so it is said once, when the source is
@@ -46,25 +53,30 @@ const ValueField = "value"
 type Reading int
 
 const (
-	// Whole exposes the record entire. `key` is its key and `value` is its
-	// value, and every member wears a dot: `.size` is the member called size,
-	// `.0` is the item at position 0.
+	// Whole exposes the record entire. `key` is the document's own key for it
+	// and `value` is its value, and every member wears a dot: `.size` is the
+	// member called size, `.0` is the item at position 0.
 	//
 	// Nothing can shadow anything, so a member called `key` -- which the bundle
 	// format's own `_bundle: (key: "figaro")` has -- is `.key` and is reachable
 	// like any other. It is the reading for data whose records are not all the
 	// same shape, and for anything that has to survive a round trip.
+	//
+	// `key` here is a field. It is what the document called this record, handy
+	// to sort or show; what this end identifies the record by travels beside
+	// the bag and is nobody's field.
 	Whole Reading = iota
 
 	// Members exposes the members alone, under their own names: `size`, not
 	// `.size`. It is the shorter reading, and it suits a source whose records
 	// are all lists of named fields -- which is most of them.
 	//
-	// It is deliberately not complete. The record's key and its value cannot be
-	// named; positions cannot be named at all, the wire grammar reading a bare
-	// `0` as a number rather than as a name; and a member called `key` is
-	// neither reachable nor sent, because the field bag already carries one and
-	// two of them would make the record's identity ambiguous.
+	// It is deliberately not complete: the record's own key and value have no
+	// name here, and positions have none either, the wire grammar reading a
+	// bare `0` as a number rather than as a name. A member called `key` is a
+	// member like any other and is reached and sent as one -- the point of this
+	// reading is the document at its face value, and nothing in the bag is an
+	// identity for it to collide with.
 	Members
 )
 
@@ -111,14 +123,14 @@ func NewPSLSource(n *pawscript.PSLNode, reading Reading) *PSLSource {
 func (p *PSLSource) Len() int { return len(p.recs) }
 
 // Open states a sequence over the records: one filter, one sort.
-func (p *PSLSource) Open(spec *wire.Spec) (ResultSet, error) {
+func (p *PSLSource) Open(spec *wire.Spec) (DataSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
 	if err := supported(spec.Sort, p.reading); err != nil {
 		return nil, err
 	}
-	return &pslResultSet{src: p, spec: spec, ord: p.order(spec)}, nil
+	return &pslDataSet{src: p, spec: spec, ord: p.order(spec)}, nil
 }
 
 // supported refuses a sort this source cannot produce exactly. A collation it
@@ -131,15 +143,6 @@ func supported(levels []wire.SortLevel, reading Reading) error {
 		case "", wire.CollateExact, wire.CollateFold, wire.CollateNatural:
 		default:
 			return fmt.Errorf("sort %s: no collation called %q", l.Field, l.Collation)
-		}
-		if reading == Members && l.Field == wire.KeyField {
-			// Members cannot name the key, so the level would read as
-			// undefined for every record and settle nothing -- and the
-			// sequence would come out in the source's own order while saying
-			// it was in the one that was asked for.
-			return fmt.Errorf("sort %s: this source is read for its members, "+
-				"and a record's key is not one of them; `reversed` turns the "+
-				"sequence over without naming a field", wire.KeyField)
 		}
 	}
 	return nil
@@ -158,9 +161,13 @@ type pslRecord struct {
 func (r pslRecord) Field(name string) *wire.Value {
 	node, isList := r.value.(*pawscript.PSLNode)
 	if r.reading == Members {
-		if !isList || name == wire.KeyField {
+		if !isList {
 			return nil
 		}
+		// A member called `key` is a member. Nothing here is the record's
+		// identity, so there is nothing for it to collide with and no reason
+		// to hide it -- the point of this reading is the document at its face
+		// value.
 		if v, ok := node.Get(name); ok {
 			return pslValue(v)
 		}
@@ -168,9 +175,15 @@ func (r pslRecord) Field(name string) *wire.Value {
 	}
 
 	switch {
-	case name == wire.KeyField:
+	case name == KeyField:
 		return r.key
 	case name == ValueField:
+		if isList {
+			// A list is its members. There is no value beside them, and a
+			// record that answered with the whole list here would carry it
+			// twice -- once under this name and once member by member.
+			return nil
+		}
 		return pslValue(r.value)
 	case len(name) < 2 || name[0] != '.':
 		return nil
@@ -190,13 +203,15 @@ func (r pslRecord) Field(name string) *wire.Value {
 	return nil
 }
 
-// fields is everything the record carries, once. The key is not among them
-// because it travels beside them.
+// fields is everything the record carries, once.
 //
-// Under Whole that is a list's members under their own names, or a bare value
-// under `value`. Under Members it is the keyed members alone: a record's
-// positions have no name to go out under, and a member called `key` would
-// collide with the key the bag already carries.
+// Under Whole that is `key`, `value`, and a list's members each wearing a dot.
+// Under Members it is the keyed members alone, under their own names: a
+// record's positions have no name to go out under.
+//
+// Nothing is dropped either way. A member called `key` is a member like the
+// rest, because the record's identity is not in this bag at all and there is
+// nothing for it to shadow.
 func (r pslRecord) fields() wire.Fields {
 	node, isList := r.value.(*pawscript.PSLNode)
 	if r.reading == Members {
@@ -205,9 +220,6 @@ func (r pslRecord) fields() wire.Fields {
 		}
 		out := make(wire.Fields, 0, len(node.Map()))
 		for _, k := range sortedKeys(node) {
-			if k == wire.KeyField {
-				continue
-			}
 			v, _ := node.Get(k)
 			out = append(out, &wire.Arg{Name: k, Value: pslValue(v)})
 		}
@@ -215,9 +227,13 @@ func (r pslRecord) fields() wire.Fields {
 	}
 
 	if !isList {
-		return wire.Fields{{Name: ValueField, Value: pslValue(r.value)}}
+		return wire.Fields{
+			{Name: KeyField, Value: r.key},
+			{Name: ValueField, Value: pslValue(r.value)},
+		}
 	}
-	out := make(wire.Fields, 0, node.Len()+len(node.Map()))
+	out := make(wire.Fields, 0, node.Len()+len(node.Map())+1)
+	out = append(out, &wire.Arg{Name: KeyField, Value: r.key})
 	for i := 0; i < node.Len(); i++ {
 		v, _ := node.Item(i)
 		out = append(out, &wire.Arg{Name: itemName(i), Value: pslValue(v)})
@@ -321,6 +337,20 @@ type ordering struct {
 	rows   []int
 	tuples [][]*wire.Value
 	levels []wire.Level
+
+	// at is where each record stands, by identity. A scope names its ends by
+	// identity rather than by position, so this is what turns `after=` into
+	// somewhere to start walking -- and it is built once, with the ordering,
+	// because every scope of this sequence needs it.
+	at map[string]int
+}
+
+// index is where a record stands in this sequence, and false for one that is
+// not in it. A record can fail to be here by having been filtered out as
+// easily as by not existing.
+func (o *ordering) index(id *wire.Value) (int, bool) {
+	i, ok := o.at[wire.EncodeValue(id)]
+	return i, ok
 }
 
 func (o *ordering) Len() int { return len(o.rows) }
@@ -334,11 +364,11 @@ func (o *ordering) Less(i, j int) bool {
 
 // order is the sequence a spec names, built if it has not been built already.
 //
-// Two result sets over the same sequence share one, and so does one opened
+// Two data sets over the same sequence share one, and so does one opened
 // again on an order somebody had before -- which is the same click that
 // produced it the first time.
 func (p *PSLSource) order(spec *wire.Spec) *ordering {
-	key := orderKey(spec)
+	key := dataSetKey(spec)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if o := p.cache[key]; o != nil {
@@ -355,9 +385,14 @@ func (p *PSLSource) order(spec *wire.Spec) *ordering {
 		o.rows = append(o.rows, i)
 		o.tuples = append(o.tuples, tupleOf(p.recs[i], spec.Sort))
 	}
-	// The record key is the last level and no two records share one, so no two
-	// tuples are equal and there is nothing for stability to settle.
+	// The record's identity is the last level and no two records share one, so
+	// no two tuples are equal and there is nothing for stability to settle.
 	sort.Sort(o)
+
+	o.at = make(map[string]int, len(o.rows))
+	for i, row := range o.rows {
+		o.at[wire.EncodeValue(p.recs[row].key)] = i
+	}
 
 	p.cache[key] = o
 	p.recent = append(p.recent, key)
@@ -369,24 +404,26 @@ func (p *PSLSource) order(spec *wire.Spec) *ordering {
 }
 
 // ordering1 is what the sequence compares positions by: a level per sort
-// level, and then the record key, which settles what the sort leaves equal.
-// Reversed turns the lot over, that last one included.
+// level, and then the record's identity, which settles what the sort leaves
+// equal.
 func ordering1(spec *wire.Spec) []wire.Level {
-	levels := append(wire.Levels(spec.Sort), wire.Level{})
-	if spec.Reversed {
-		return wire.Reverse(levels)
-	}
-	return levels
+	return append(wire.Levels(spec.Sort), wire.Level{})
 }
 
-// orderKey names a sequence by what decides it. The fields a query asks for do
-// not: they change what a scope carries, not which records are in it or where.
-func orderKey(spec *wire.Spec) string {
-	mirror := ""
-	if spec.Reversed {
-		mirror = "reversed"
-	}
-	return wire.EncodeSort(spec.Sort) + "\x00" + spec.Filter.Encode() + "\x00" + mirror
+// dataSetKey names a data set: this source, this sort, this filter. Those three
+// decide which records are in the sequence and where each one stands, and two
+// queries naming the same three are reading the same body of data -- so
+// whatever was worked out for one of them holds for the other.
+//
+// The fields a query asks for are not among them: they change what a scope
+// carries, not which records are in it or where. Neither is the direction it is
+// read in -- one prepared ordering is walked either way, which is the whole
+// reason `reversed` belongs to the scope and not to the sequence.
+//
+// The source itself is not in the string because the table it keys is the
+// source's own.
+func dataSetKey(spec *wire.Spec) string {
+	return wire.EncodeSort(spec.Sort) + "\x00" + spec.Filter.Encode()
 }
 
 // tupleOf is a record's position: the value at each sort level, and then its
@@ -400,65 +437,80 @@ func tupleOf(rec pslRecord, levels []wire.SortLevel) []*wire.Value {
 	return append(out, rec.key)
 }
 
-// boundaryTuple reads a boundary the same way, out of the bag it arrived in. A
-// boundary is named rather than positional, so neither end has to agree on the
-// order the levels were written in; a field the boundary does not carry is
-// undefined, which is a position of its own at the bottom of the order.
-func boundaryTuple(at wire.Fields, levels []wire.SortLevel) []*wire.Value {
-	out := make([]*wire.Value, 0, len(levels)+1)
-	for _, l := range levels {
-		out = append(out, at.Get(l.Field))
-	}
-	return append(out, at.Key())
-}
+// --- the data set ------------------------------------------------------
 
-// --- the result set ------------------------------------------------------
-
-type pslResultSet struct {
+type pslDataSet struct {
 	src  *PSLSource
 	spec *wire.Spec
 	ord  *ordering
 }
 
-// Close lets the result set go. The ordering stays in the source's cache until
+// Close lets the data set go. The ordering stays in the source's cache until
 // something newer pushes it out, because the records it orders have not moved.
-func (v *pslResultSet) Close() { v.ord = nil }
+func (v *pslDataSet) Close() { v.ord = nil }
 
-// Fill produces one scope.
+// Read produces one scope.
 //
-// Where it starts is a binary search: the ordering is total, so the first
-// record past a boundary is found in the log of the sequence's length rather
-// than by walking to it. Then it emits every record in (From..To], and carries
-// on past To only while the scope is still short of Need.
-func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
+// Where it starts is a map lookup: the ordering knows where every record of the
+// sequence stands, so `after=` becomes an index rather than a walk. From there
+// it is a step in one direction or the other, counting.
+//
+// An `after` this sequence does not hold is refused. It cannot be placed --
+// what put a record where it was were that record's own values, and they went
+// with it -- and guessing would hand back a run from somewhere the asker did
+// not ask about, with nothing to mark it as the wrong place.
+func (v *pslDataSet) Read(s *wire.Scope, out Sink) error {
 	o := v.ord
 	if o == nil {
-		return fmt.Errorf("this result set has been closed")
+		return fmt.Errorf("this data set has been closed")
 	}
 
-	start := 0
-	if len(f.From) > 0 {
-		at := boundaryTuple(f.From, v.spec.Sort)
-		start = sort.Search(len(o.rows), func(i int) bool {
-			return wire.CompareLevels(o.tuples[i], at, o.levels) > 0
-		})
+	step := 1
+	i := 0
+	if s.Reversed {
+		step = -1
+		i = len(o.rows) - 1
 	}
-	var to []*wire.Value
-	if len(f.To) > 0 {
-		to = boundaryTuple(f.To, v.spec.Sort)
+	if s.After != nil {
+		at, ok := o.index(s.After)
+		if !ok {
+			out.Done(Complete{Error: fmt.Sprintf(
+				"after %s: no record of mine is in this sequence under that identity",
+				wire.EncodeValue(s.After))})
+			return nil
+		}
+		i = at + step
+	}
+
+	// An `until` this sequence does not hold is not a refusal. It only says
+	// where the asker's own knowledge picks up again, and one that cannot be
+	// placed simply never arrives -- the walk runs to its count instead.
+	stop := -1
+	if s.Until != nil {
+		if at, ok := o.index(s.Until); ok {
+			stop = at
+		}
 	}
 
 	// Said before the records, which is where it can be acted on.
 	out.Ordered()
 
+	done := Complete{}
+	last := s.After
 	sent := 0
-	for i := start; i < len(o.rows); i++ {
-		past := to == nil || wire.CompareLevels(o.tuples[i], to, o.levels) > 0
-		if past && f.Have+sent >= f.Need {
+	for ; i >= 0 && i < len(o.rows); i += step {
+		if i == stop {
+			// The next record is one the asker already holds, so what it holds
+			// on this side and what it holds on that are now one run.
+			done.Stop = wire.StopJoined
+			break
+		}
+		if sent >= s.Count {
+			done.Stop = wire.StopFilled
 			break
 		}
 		rec := v.src.recs[o.rows[i]]
-		bag, whole := v.fields(rec, f)
+		bag, whole := v.fields(rec)
 		send := out.Subset
 		if whole {
 			send = out.Record
@@ -466,33 +518,19 @@ func (v *pslResultSet) Fill(f *wire.Fill, out Sink) error {
 		if err := send(rec.key, bag); err != nil {
 			return err
 		}
+		last = rec.key
 		sent++
 	}
 
-	done := Complete{}
-	switch {
-	case start+sent >= len(o.rows):
-		// Nothing past here, so there is no point past which to be complete.
-		done.Exhausted = true
-	case sent > 0:
-		done.Watermark = v.boundary(v.src.recs[o.rows[start+sent-1]])
-	default:
-		// The scope was already full. Nothing new crossed, and everything
-		// between where it was asked from and that same point is held: which is
-		// true, and is what the far end is told.
-		done.Watermark = f.From
+	if done.Stop == "" {
+		// Walked off the end: nothing more this way, and so no point past the
+		// end to be complete up to.
+		done.Stop = wire.StopExhausted
+	} else {
+		done.Watermark = last
 	}
 	out.Done(done)
 	return nil
-}
-
-// boundary is a record's position: its sort fields, and its key.
-func (v *pslResultSet) boundary(rec pslRecord) wire.Fields {
-	out := make(wire.Fields, 0, len(v.spec.Sort)+1)
-	for _, l := range v.spec.Sort {
-		out = append(out, &wire.Arg{Name: l.Field, Value: rec.Field(l.Field)})
-	}
-	return append(out, &wire.Arg{Name: wire.KeyField, Value: rec.key})
 }
 
 // fields is what one record carries in this scope -- the fields the scope
@@ -508,11 +546,8 @@ func (v *pslResultSet) boundary(rec pslRecord) wire.Fields {
 // A field the record has not got is left out rather than sent as `undefined`,
 // which is the same answer in fewer bytes: an absent field reads as undefined
 // at the far end.
-func (v *pslResultSet) fields(rec pslRecord, f *wire.Fill) (wire.Fields, bool) {
-	want := f.Fields
-	if len(want) == 0 {
-		want = v.spec.Fields
-	}
+func (v *pslDataSet) fields(rec pslRecord) (wire.Fields, bool) {
+	want := v.spec.Fields
 	if len(want) == 0 {
 		bag := rec.fields()
 		out := v.without(bag)
@@ -520,7 +555,7 @@ func (v *pslResultSet) fields(rec pslRecord, f *wire.Fill) (wire.Fields, bool) {
 	}
 	out := make(wire.Fields, 0, len(want))
 	for _, a := range want {
-		if a.Name == wire.KeyField || v.spec.Exclude.Has(a.Name) {
+		if v.spec.Exclude.Has(a.Name) {
 			continue
 		}
 		if val := rec.Field(a.Name); val != nil {
@@ -531,7 +566,7 @@ func (v *pslResultSet) fields(rec pslRecord, f *wire.Fill) (wire.Fields, bool) {
 }
 
 // without drops the fields the query said it did not want.
-func (v *pslResultSet) without(bag wire.Fields) wire.Fields {
+func (v *pslDataSet) without(bag wire.Fields) wire.Fields {
 	if len(v.spec.Exclude) == 0 {
 		return bag
 	}

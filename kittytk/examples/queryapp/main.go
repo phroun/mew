@@ -103,12 +103,11 @@ var entries = []entry{
 	{10, "tools/gen.go", 430},
 }
 
-// serveWindow honours what it was asked: the filter, the sort, the boundary
-// and the size of the window.
+// serveWindow honours what it was asked: the filter, the sort, and the scope.
 //
-// The whole of what it owes the display: every record of its own in
-// (From..To], and if that does not make up the shortfall, keep going past To
-// until it does.
+// The whole of what it owes the display: start past After, walk the way
+// Reversed says, and send Count records -- stopping early at Until, which is a
+// record the display already holds.
 func serveWindow(f *client.Fill) {
 	rows := make([]entry, 0, len(entries))
 	for _, e := range entries {
@@ -116,46 +115,67 @@ func serveWindow(f *client.Fill) {
 			rows = append(rows, e)
 		}
 	}
-	order(rows, f.Spec)
+	order(rows, f.Spec, f.Scope)
 
-	// Where to start: the boundary is exclusive, so skip everything at or
-	// before it. A boundary carries the sort fields and the key, which is what
-	// makes it name exactly one position even when two records tie.
+	// Where to start: the scope names the record it starts past, so find it
+	// and step over it. An identity means one record, which is why it is what
+	// a scope is named by -- two records that tie in every sorted field still
+	// have one each.
 	start := 0
-	if len(f.From) > 0 {
-		for start < len(rows) && compare(rows[start], f.From, f.Spec) <= 0 {
+	if f.After != nil {
+		for start < len(rows) && !sameKey(rows[start], f.After) {
 			start++
 		}
+		if start == len(rows) {
+			// Not one of mine, and nothing here can place it. Guessing would
+			// answer a question the display did not ask.
+			_ = f.Fail("after %s: no record of mine", wire.EncodeValue(f.After))
+			return
+		}
+		start++
 	}
 
 	f.Ordered()
 	sent, last := 0, -1
-	for i := start; i < len(rows) && f.Have+sent < f.Need; i++ {
+	for i := start; i < len(rows); i++ {
 		e := rows[i]
+		if f.Until != nil && sameKey(e, f.Until) {
+			// The display holds this one and everything past it, so the two
+			// runs it holds are now one.
+			_ = f.Joined(mark(rows, last, start))
+			return
+		}
+		if sent >= f.Count {
+			_ = f.Filled(mark(rows, last, start))
+			return
+		}
 		if err := f.Record(e.key, wire.Named("name", e.name), wire.Named("size", e.size)); err != nil {
 			return
 		}
 		sent, last = sent+1, i
 	}
 
-	if last < 0 || last == len(rows)-1 {
-		// Nothing past here, so there is no point past which to be complete.
-		_ = f.Exhausted()
-		return
-	}
-	// The watermark: there is nothing of mine between where you asked from and
-	// this point that you do not now have. It is what lets the display shrink
-	// the window, grow it back and scroll inside it without asking again.
-	_ = f.Done(boundary(rows[last], f.Spec.Sort))
+	// Walked off the end: nothing past here, so there is no point past which
+	// to be complete.
+	_ = f.Exhausted()
 }
 
-// boundary is a record's position: its sort fields, and its key.
-func boundary(e entry, levels []wire.SortLevel) wire.Fields {
-	out := make(wire.Fields, 0, len(levels)+1)
-	for _, l := range levels {
-		out = append(out, &wire.Arg{Name: l.Field, Value: e.Field(l.Field)})
+// mark is the record a claim is made up to: the last one that went out, or --
+// where none did -- the one the scope was asked from, which is complete up to
+// itself. Nothing at all is complete up to nothing, which is no claim.
+func mark(rows []entry, last, start int) any {
+	switch {
+	case last >= 0:
+		return rows[last].key
+	case start > 0:
+		return rows[start-1].key
 	}
-	return append(out, &wire.Arg{Name: wire.KeyField, Value: wire.NewInt(e.key)})
+	return nil
+}
+
+// sameKey reports whether a record is the one an identity names.
+func sameKey(e entry, id *wire.Value) bool {
+	return wire.Compare(wire.NewInt(e.key), id, "") == 0
 }
 
 // Field is one of a record's values by name, and undefined for a name this
@@ -167,17 +187,15 @@ func (e entry) Field(name string) *wire.Value {
 		return wire.NewString(e.name)
 	case "size":
 		return wire.NewInt(e.size)
-	case wire.KeyField:
-		return wire.NewInt(e.key)
 	}
 	return wire.NewWord(wire.WordUndefined)
 }
 
-// order sorts by the query's levels, with the record key as the implicit final
-// one -- without it two records could tie, and "the record after this point"
-// would name more than one place.
-func order(rows []entry, spec *wire.Spec) {
-	cmp := levels(spec)
+// order sorts by the query's levels, with the record's identity as the
+// implicit final one -- without it two records could tie, and "the record
+// after this one" would name more than one place.
+func order(rows []entry, spec *wire.Spec, sc *wire.Scope) {
+	cmp := levels(spec, sc)
 	sort.SliceStable(rows, func(i, j int) bool {
 		return wire.CompareLevels(
 			tuple(rows[i], spec.Sort), tuple(rows[j], spec.Sort), cmp) < 0
@@ -190,24 +208,12 @@ func order(rows []entry, spec *wire.Spec) {
 // which is why it has to be honoured rather than ignored. Every other hint an
 // application drops can only make the answer bigger; dropping this one makes
 // it wrong, and `Ordered` would then be a lie.
-func levels(spec *wire.Spec) []wire.Level {
+func levels(spec *wire.Spec, sc *wire.Scope) []wire.Level {
 	out := append(wire.Levels(spec.Sort), wire.Level{})
-	if spec.Reversed {
+	if sc != nil && sc.Reversed {
 		return wire.Reverse(out)
 	}
 	return out
-}
-
-// compare places one record against a boundary, under the same levels.
-func compare(e entry, at wire.Fields, spec *wire.Spec) int {
-	var mine, theirs []*wire.Value
-	for _, l := range spec.Sort {
-		mine = append(mine, e.Field(l.Field))
-		theirs = append(theirs, at.Get(l.Field))
-	}
-	mine = append(mine, wire.NewInt(e.key))
-	theirs = append(theirs, at.Key())
-	return wire.CompareLevels(mine, theirs, levels(spec))
 }
 
 func tuple(e entry, levels []wire.SortLevel) []*wire.Value {

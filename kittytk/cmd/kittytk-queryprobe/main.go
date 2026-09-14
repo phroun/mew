@@ -74,28 +74,36 @@ func main() {
 	if *sortBy != "" {
 		spec += " sort={ " + *sortBy + " }"
 	}
-	p.say(fmt.Sprintf("q=new query %s have=0 need=%d", spec, *need))
+	p.say(fmt.Sprintf("q=new query %s count=%d", spec, *need))
 	id, ok := p.collect(true)
 	if !ok {
 		os.Exit(1)
 	}
 
-	// A second scope, starting from where the first one left off. The probe
-	// holds no records, so it asks from the last key it saw.
+	// A second scope, starting from where the first one left off.
+	//
+	// A query is asked once and answered once, so this is a query of its own,
+	// stating the same sequence again and naming where to pick it up. The old
+	// one is let go when the records it answered with are.
 	if *more > 0 {
-		from := ""
+		after := ""
 		if p.lastRow != "" {
-			from = " from=" + p.lastRow
+			after = " after=" + p.lastRow
 		}
-		p.say(fmt.Sprintf("query %d%s have=0 need=%d", id, from, *more))
-		p.collect(true)
+		p.say(fmt.Sprintf("n=new query %s%s count=%d", spec, after, *more))
+		next, ok := p.collect(true)
+		if ok {
+			p.say(fmt.Sprintf("destroy %d", id))
+			p.collect(false)
+			id = next
+		}
 	}
 
 	// A different sort is a different query. The replacement is opened before
 	// the first one is let go, so the source stays in use while the reader
 	// moves across rather than falling out of use and being built again.
 	if *resort != "" {
-		p.say(fmt.Sprintf("r=new query source=%s sort={ %s } have=0 need=%d",
+		p.say(fmt.Sprintf("r=new query source=%s sort={ %s } count=%d",
 			wire.Quote(*source), *resort, *need))
 		next, ok := p.collect(true)
 		if ok {
@@ -216,17 +224,15 @@ func (p *probe) collect(withResults bool) (uint64, bool) {
 	}
 }
 
-// noteRow remembers the last record, so the next scope can ask from it.
+// noteRow remembers the last record's identity, so the next scope can ask from
+// it.
 //
-// A boundary is a record's position -- its sort fields AND its key -- not the
-// key alone: without the sort fields there is nothing to compare against the
-// levels, and the boundary lands at the very start of the sequence. Passing
-// the whole record is the simplest thing that is right, and harmless: a
-// boundary is looked up by name, so fields the sort does not mention are
-// ignored at the far end.
+// The identity alone is the whole of it. Where a record stands is the source's
+// own business -- it is the one that put it there -- so a reader that wants the
+// records after this one has nothing to say but which one it means.
 func (p *probe) noteRow(stmt *wire.Statement) {
 	for _, a := range stmt.Args {
-		if (a.Name == wire.RecordArg || a.Name == wire.FieldsArg) && a.Value != nil {
+		if a.Name == wire.IDArg && a.Value != nil {
 			p.lastRow = wire.EncodeValue(a.Value)
 		}
 	}

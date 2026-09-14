@@ -213,25 +213,16 @@ func (c *Conn) send(src string) {
 func (c *Conn) inbound(stmt *wire.Statement, keys map[string]uint64,
 	reply *wire.Reply, pending *[]func()) error {
 
-	// `new query ...` makes one; `query <id> ...` asks it for another scope.
-	// Two verbs because they are two things: the object has a lifetime the
-	// display ends with `destroy`, which is how the application learns it may
-	// let the records go.
+	// `new query ...` states a sequence and asks for one scope of it, which is
+	// the whole of what a display ever asks. Nothing addresses a query that
+	// already exists except `destroy`: a query is the sequence it was opened
+	// with, it answers once, and what keeps it alive afterwards is the
+	// application knowing these records are still held.
 	if stmt.Verb == "new" {
 		return c.open(stmt, keys, reply, pending)
 	}
 
-	id, rest, ok := hostedTarget(stmt, keys)
-	if stmt.Verb == wire.QueryVerb {
-		if !ok {
-			return fmt.Errorf("query: expected the query to ask")
-		}
-		q := c.Query(id)
-		if q == nil {
-			return fmt.Errorf("query %d: no query of mine", id)
-		}
-		return q.scope(rest, pending)
-	}
+	id, _, ok := hostedTarget(stmt, keys)
 	if !ok {
 		return nil // not addressed to anything this application holds
 	}
@@ -240,6 +231,9 @@ func (c *Conn) inbound(stmt *wire.Statement, keys map[string]uint64,
 		return fmt.Errorf("%s %d: no query of mine", stmt.Verb, id)
 	}
 	switch stmt.Verb {
+	case wire.QueryVerb:
+		return fmt.Errorf("query %d: a query is asked when it is made and "+
+			"answered once; ask a new one for the next scope", id)
 	case "set":
 		return fmt.Errorf("set %d: a query is the sequence it was opened with "+
 			"and does not change; a different sequence is a different query", id)
@@ -305,20 +299,15 @@ func (c *Conn) open(stmt *wire.Statement, keys map[string]uint64,
 		reply.IDs[stmt.Key] = q.id
 		keys[stmt.Key] = q.id
 	}
-	return q.scope(args, pending)
-}
-
-// scope takes a request for one scope apart and queues serving it.
-func (q *Query) scope(args []*wire.Arg, pending *[]func()) error {
-	req, err := wire.ParseFill(args)
+	scope, err := wire.ParseScope(args)
 	if err != nil {
-		return fmt.Errorf("query %d: %w", q.id, err)
+		return fmt.Errorf("query: %w", err)
 	}
 	q.source.mu.Lock()
 	fn := q.source.fill
 	q.source.mu.Unlock()
 
-	f := &Fill{Fill: req, Query: q, Spec: q.spec}
+	f := &Fill{Scope: scope, Query: q, Spec: spec}
 	*pending = append(*pending, func() { fn(f) })
 	return nil
 }
@@ -354,18 +343,16 @@ func hostedTarget(stmt *wire.Statement, keys map[string]uint64) (uint64, []*wire
 // A Fill is one scope of the sequence, asked for -- and where the records
 // that answer it are written.
 //
-// The reading side is what was asked: From and To are where the display's own
-// knowledge starts and how far it runs, Have is how much of the scope it can
-// fill from that, and Need is how many rows the scope is. Emit every record
-// of your own in (From..To], and if that does not make up the shortfall, keep
-// going past To until it does.
+// The reading side is what was asked: start past After, walk the way Reversed
+// says, and send Count records -- stopping early if you reach Until, which is
+// a record the display already holds.
 //
 // The writing side is Record, as many times as there are records, and then one
-// of Done, Exhausted or Fail. Records go out in batches as they accumulate, so
-// the answer may be produced over as long as it takes and interleaved with
-// other work; nothing has to be held until the end.
+// of Filled, Joined, Exhausted or Fail. Records go out in batches as they
+// accumulate, so the answer may be produced over as long as it takes and
+// interleaved with other work; nothing has to be held until the end.
 type Fill struct {
-	*wire.Fill
+	*wire.Scope
 	Query *Query
 	Spec  *wire.Spec
 
@@ -374,6 +361,7 @@ type Fill struct {
 	sent    int // statements written, which is what decides a flush
 	records int // records among them, which is what Sent reports
 	ordered bool
+	waiting *wire.Result // the last record, held so the end can ride on it
 	closed  bool
 }
 
@@ -387,10 +375,11 @@ type Fill struct {
 // So say Record when these are all the fields there are, and Subset when they
 // are the ones somebody asked for.
 //
-// The key is what identifies the record, and it is the same key whatever is
-// being asked.
-func (f *Fill) Record(key any, fields ...*wire.Arg) error {
-	return f.record(wire.RecordArg, key, fields)
+// The identity is what names the record, and it travels beside the fields
+// rather than among them: a record is free to carry a field called `key` of
+// its own, and that field is data like any other.
+func (f *Fill) Record(id any, fields ...*wire.Arg) error {
+	return f.record(wire.RecordArg, id, fields)
 }
 
 // Subset adds some of a record: its key, and the fields this scope asked
@@ -399,21 +388,38 @@ func (f *Fill) Record(key any, fields ...*wire.Arg) error {
 // It is the honest answer to a query that named a short list of fields -- the
 // skeleton of a wide scope -- and it is worth less afterwards than a whole
 // record, because it can only answer the question it was asked.
-func (f *Fill) Subset(key any, fields ...*wire.Arg) error {
-	return f.record(wire.FieldsArg, key, fields)
+func (f *Fill) Subset(id any, fields ...*wire.Arg) error {
+	return f.record(wire.FieldsArg, id, fields)
 }
 
-func (f *Fill) record(what string, key any, fields []*wire.Arg) error {
-	bag := make(wire.Fields, 0, len(fields)+1)
-	bag = append(bag, wire.Named(wire.KeyField, key))
-	bag = append(bag, fields...)
-	err := f.emit(f.result(&wire.Arg{Name: what, Value: bag.Block()}))
-	if err == nil {
-		f.mu.Lock()
-		f.records++
-		f.mu.Unlock()
+// record queues one record, holding it back until the next one or the end.
+//
+// Held back because the statement that carries the last record can carry the
+// terminator too, and an answer of one record is then one line rather than
+// three. Nothing waits long: the next record releases it, so does Flush, and so
+// does the end. Which form went out is not something the far end reads
+// differently.
+func (f *Fill) record(what string, id any, fields []*wire.Arg) error {
+	rec := &wire.Result{
+		ID:     wire.Val(id),
+		Fields: append(wire.Fields(nil), fields...),
+		Whole:  what == wire.RecordArg,
 	}
-	return err
+	f.mu.Lock()
+	if f.closed {
+		f.mu.Unlock()
+		return fmt.Errorf("this scope has already been answered")
+	}
+	held := f.waiting
+	rec.Ordered = f.ordered && f.records == 0
+	f.waiting = rec
+	f.records++
+	f.mu.Unlock()
+
+	if held == nil {
+		return nil
+	}
+	return f.emit(f.result(held.Args()...))
 }
 
 // Ordered declares that the records are being sent in the query's own order,
@@ -430,29 +436,33 @@ func (f *Fill) record(what string, key any, fields []*wire.Arg) error {
 // and is dropped rather than sent.
 func (f *Fill) Ordered() {
 	f.mu.Lock()
-	late := f.sent > 0 || f.closed || f.ordered
-	if !late {
-		f.ordered = true
-	}
-	f.mu.Unlock()
-	if late {
+	defer f.mu.Unlock()
+	// Late is measured in records produced, not statements sent. A record held
+	// back for the terminator to ride on has still been produced, and a
+	// declaration made after it is still a declaration made too late.
+	if f.records > 0 || f.closed || f.ordered {
 		return
 	}
-	_ = f.emit(f.result(&wire.Arg{Name: "ordered", Flag: wire.FlagTrue}))
+	f.ordered = true
 }
 
-// Done finishes the answer with a watermark: there is nothing of mine between
-// where you asked from and this point that you do not now have.
+// Filled finishes the answer with the count reached, and a watermark: there is
+// nothing of mine between where you asked from and this record that you do not
+// now have.
 //
-// It is a completeness guarantee rather than a position, and it is what lets
-// the display shrink the scope, grow it back and scroll inside it without
-// asking anything.
-func (f *Fill) Done(watermark wire.Fields) error {
-	var extra []*wire.Arg
-	if len(watermark) > 0 {
-		extra = append(extra, &wire.Arg{Name: "watermark", Value: watermark.Block()})
-	}
-	return f.finish(extra)
+// The watermark is a completeness guarantee rather than a position, and it is
+// what the next scope is asked from. So it names a record this source sent, or
+// one it is otherwise prepared to place: the display quotes it straight back as
+// `after`.
+func (f *Fill) Filled(watermark any) error {
+	return f.finish(&wire.Complete{Stop: wire.StopFilled, Watermark: wire.Val(watermark)})
+}
+
+// Joined finishes the answer at the record the display said it already held.
+// What it holds on this side and what it holds on that are now one run, and it
+// need not ask over this ground again.
+func (f *Fill) Joined(watermark any) error {
+	return f.finish(&wire.Complete{Stop: wire.StopJoined, Watermark: wire.Val(watermark)})
 }
 
 // Exhausted finishes the answer with everything there is: no watermark,
@@ -462,14 +472,14 @@ func (f *Fill) Done(watermark wire.Fields) error {
 // send all your records, say this -- and it is not a toy: the display then
 // holds the whole layer and asks nothing again until something invalidates it.
 func (f *Fill) Exhausted() error {
-	return f.finish([]*wire.Arg{{Name: "exhausted", Flag: wire.FlagTrue}})
+	return f.finish(&wire.Complete{Stop: wire.StopExhausted})
 }
 
 // Fail finishes the answer with a refusal: this query cannot be honoured, this
 // scope cannot be produced, the records are gone. A refusal is an answer --
 // the display carries on with what it has.
 func (f *Fill) Fail(format string, args ...any) error {
-	return f.finish([]*wire.Arg{wire.Named("error", fmt.Sprintf(format, args...))})
+	return f.finish(&wire.Complete{Error: fmt.Sprintf(format, args...)})
 }
 
 // Sent is how many records have gone into the answer so far.
@@ -479,8 +489,17 @@ func (f *Fill) Sent() int {
 	return f.records
 }
 
-// Flush sends what has accumulated without finishing the answer.
+// Flush sends what has accumulated without finishing the answer, the record
+// being held for the terminator included -- so a source that produces a record
+// every few seconds does not leave one sitting here waiting for the next.
 func (f *Fill) Flush() error {
+	f.mu.Lock()
+	held := f.waiting
+	f.waiting = nil
+	f.mu.Unlock()
+	if held != nil {
+		_ = f.emit(f.result(held.Args()...))
+	}
 	f.mu.Lock()
 	src := f.take()
 	f.mu.Unlock()
@@ -523,15 +542,21 @@ func (f *Fill) emit(stmt string) error {
 	return nil
 }
 
-// finish appends the terminator, closes the answer and sends the rest.
-func (f *Fill) finish(extra []*wire.Arg) error {
+// finish ends the answer, on the last record's own statement where there is
+// one, closes it and sends the rest.
+func (f *Fill) finish(done *wire.Complete) error {
 	f.mu.Lock()
 	if f.closed {
 		f.mu.Unlock()
 		return fmt.Errorf("this scope has already been answered")
 	}
-	args := []*wire.Arg{{Name: wire.ResultComplete, Flag: wire.FlagTrue}}
-	stmt := f.result(append(args, extra...)...)
+	end := f.waiting
+	f.waiting = nil
+	if end == nil {
+		end = &wire.Result{Ordered: f.ordered && f.records == 0}
+	}
+	end.Complete = done
+	stmt := f.result(end.Args()...)
 	if f.buf.Len() > 0 {
 		f.buf.WriteByte('\n')
 	}

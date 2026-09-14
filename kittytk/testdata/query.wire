@@ -103,27 +103,32 @@ bad
 spec source=f filter={ id at=(left/1) }
 bad
 
-# --- reversed: the stated sequence, walked from its end ---
+# --- reversed belongs to the scope, not to the sequence ---
+#
+# A sequence is one prepared ordering and a scope reads it either way, so the
+# direction is asked for with the records rather than stated with the sort. The
+# spec does not carry it at all.
 
-# It names no field, which is what lets it turn over a sequence whose records
-# are read in a way that cannot name their key at all.
 spec source=f reversed
-want source="f" reversed
+want source="f"
+
+scope count=10 reversed
+want count=10 reversed
 
 # Every level turns over with it, the one the sort does not write included -- so
 # this is the mirror of `sort={ size }`, where `sort={ size desc }` is a third
 # sequence again, with ties left facing the way they were.
-spec source=f sort={ size } reversed
-want source="f" sort={ size } reversed
+spec source=f sort={ size }
+want source="f" sort={ size }
 
-spec source=f sort={ size desc } reversed
-want source="f" sort={ size desc } reversed
+spec source=f sort={ size desc }
+want source="f" sort={ size desc }
 
 # Asserted false is the sequence as stated, said out loud.
-spec source=f !reversed
-want source="f"
+scope count=10 !reversed
+want count=10
 
-spec source=f reversed=1
+scope count=10 reversed=1
 bad
 
 # --- the filter: a block is an AND, so the top of a parsed tree always is ---
@@ -228,44 +233,48 @@ bad
 spec source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind folder; eq kind disk }; ge size 1024; not { starts name "." } } sort={ name natural; size desc }
 want source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind folder; eq kind disk }; ge size 1024; not { starts name "." } } sort={ name natural; size desc }
 
-# --- a fill ---
+# --- a scope ---
 
-fill have=0 need=30
-want have=0 need=30
+scope count=30
+want count=30
 
-fill have=0 need=10 have=x
+scope count=10 count=x
 bad
 
-fill from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
-want from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50
+# The ends are identities. They name records, not positions: what puts a record
+# somewhere are its own values, and those belong to whoever holds it.
+scope after=17 until=42 count=50
+want after=17 until=42 count=50
 
-# A boundary is a bag like any other: its fields may be any kind of value, and
-# the key is the one it always carries.
-fill from={ kind folder; size 1024; key "abc" } have=0 need=1
-want from={ kind folder; size 1024; key "abc" } have=0 need=1
+# An identity is whatever the source that issued it says it is -- a number, a
+# name, a composed one with a slash through it.
+scope after=(left/1) count=1
+want after=(left/1) count=1
 
-# This window wants fewer fields than the query asks for: the skeleton of a
-# wide stretch rather than everything.
-fill have=0 need=200 fields={ name; key }
-want have=0 need=200 fields={ name; key }
+scope after="abc" count=1
+want after="abc" count=1
 
-# An empty boundary is the start of the sequence, and says so by not being there.
-fill from={} to={} have=0 need=10
-want have=0 need=10
+# Walking the sequence from its end. It names no field, which is what lets it
+# turn over a sequence whose records cannot name their own identity at all.
+scope count=30 reversed
+want count=30 reversed
 
-fill have=0 need=10 nonsense=1
-want have=0 need=10
+# No ends at all is the beginning of the sequence, and says so by not being
+# there.
+scope count=10
+want count=10
 
-fill have=0 need=10 from={ name "a" "b" }
+scope count=10 nonsense=1
+want count=10
+
+# A count is a number of records, and there is no such thing as fewer than none.
+scope count=-1
 bad
 
-fill have=0 need=10 from={ !name }
+scope count=10 after={ name "a" }
 bad
 
-fill have=0 need=10 from={ name !x }
-bad
-
-fill have=0 need=10 from=17
+scope count=10 after=
 bad
 
 # --- a field that names a member of the record rather than a word ---
@@ -288,8 +297,8 @@ want source="f" filter={ ge .0 1024 }
 spec source=f fields={ key; .name; value }
 want source="f" fields={ key; .name; value }
 
-fill have=0 need=10 from={ .name "a"; key 3 }
-want from={ .name "a"; key 3 } have=0 need=10
+scope after=3 count=10
+want after=3 count=10
 
 # --- a bare token is a number or a symbol, by what it says ---
 #

@@ -20,7 +20,7 @@ package source
 //
 // Amendments change at any time. This is a data source, not a query: it
 // answers against what it holds when it is asked, and two scopes of one
-// result set need not agree.
+// data set need not agree.
 
 import (
 	"fmt"
@@ -39,6 +39,7 @@ const rounds = 4
 // An AmendedSource holds replacements and deletions against a child's records.
 type AmendedSource struct {
 	child Source
+	notes *placebook
 
 	mu    sync.Mutex
 	amend map[string]*amendment
@@ -47,7 +48,11 @@ type AmendedSource struct {
 // NewAmendedSource amends the records of a child source. The child is any kind
 // -- records here, records an application's, or another amended source.
 func NewAmendedSource(child Source) *AmendedSource {
-	return &AmendedSource{child: child, amend: map[string]*amendment{}}
+	return &AmendedSource{
+		child: child,
+		notes: newPlacebook(),
+		amend: map[string]*amendment{},
+	}
 }
 
 // An amendment is what is held against one of the child's records.
@@ -140,7 +145,7 @@ func (a *AmendedSource) lookup(key *wire.Value) *amendment {
 }
 
 // Open states a sequence, and opens the same one on the child.
-func (a *AmendedSource) Open(spec *wire.Spec) (ResultSet, error) {
+func (a *AmendedSource) Open(spec *wire.Spec) (DataSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
@@ -153,42 +158,73 @@ func (a *AmendedSource) Open(spec *wire.Spec) (ResultSet, error) {
 		spec:   spec,
 		child:  child,
 		levels: ordering1(spec),
+		placed: a.notes.of(spec, 1)[0],
 	}, nil
 }
 
 type amendedSet struct {
 	src    *AmendedSource
 	spec   *wire.Spec
-	child  ResultSet
+	child  DataSet
 	levels []wire.Level
+
+	// placed is where each record this sequence has handed out stood. The
+	// child places `after` for its own records, but this source has to place it
+	// too -- it decides which of its own amendments come after it -- and an
+	// identity is not a position.
+	placed *places
 }
 
 // Close lets this sequence go, and the child's with it.
 func (s *amendedSet) Close() { s.child.Close() }
 
-// Fill answers one scope out of the child's records and this source's own.
-func (s *amendedSet) Fill(f *wire.Fill, out Sink) error {
+// Read answers one scope out of the child's records and this source's own.
+func (s *amendedSet) Read(sc *wire.Scope, out Sink) error {
 	if out == nil {
-		return fmt.Errorf("a fill needs somewhere to put the answer")
+		return fmt.Errorf("a scope needs somewhere to put the answer")
+	}
+	if sc == nil {
+		sc = &wire.Scope{}
 	}
 
-	m := &merge{set: s, want: f, out: out}
+	var at []*wire.Value
+	if sc.After != nil {
+		t, ok := s.placed.get(sc.After)
+		if !ok {
+			out.Done(Complete{Error: fmt.Sprintf(
+				"after %s: this sequence has not placed that record",
+				wire.EncodeValue(sc.After))})
+			return nil
+		}
+		at = t
+	}
+
+	m := &merge{set: s, want: sc, out: out, at: at, levels: s.levels}
+	if sc.Reversed {
+		// Walking the other way turns every comparison over, this source's
+		// own records included: what "before" means is the only thing that
+		// changes, and it changes for everyone at once.
+		m.levels = wire.Reverse(s.levels)
+	}
 	m.prepare()
-	return m.ask(f.From, f.Need+m.slack)
+	return m.ask(sc.After, sc.Count+m.slack)
 }
 
 // A merge is one scope being answered: this source's own records for it, and
 // the child's, going out as one run.
 type merge struct {
-	set  *amendedSet
-	want *wire.Fill
-	out  Sink
+	set    *amendedSet
+	want   *wire.Scope
+	out    Sink
+	at     []*wire.Value // where the scope starts, nil at the sequence's end
+	levels []wire.Level  // the walk's own direction
 
 	mine  []*amendment // ours, in the sequence's order, still to go out
 	slack int          // records of the child's this scope will take out
 
 	sent        int
 	round       int
+	last        *wire.Value // the identity of the last record that went out
 	done        bool
 	saidOrdered bool
 }
@@ -203,16 +239,13 @@ type merge struct {
 // surely if the child still holds the old ones.
 func (m *merge) prepare() {
 	s := m.set
-	var at []*wire.Value
-	if len(m.want.From) > 0 {
-		at = boundaryTuple(m.want.From, s.spec.Sort)
-	}
+	at := m.at
 
 	for _, am := range s.src.held() {
 		place := am.place()
 		matches := place != nil && wire.Match(am.key, place, s.spec.Filter)
 		after := at == nil || place == nil ||
-			wire.CompareLevels(amendTuple(am, place, s.spec.Sort), at, s.levels) > 0
+			wire.CompareLevels(amendTuple(am, place, s.spec.Sort), at, m.levels) > 0
 
 		if !after {
 			continue
@@ -232,18 +265,22 @@ func (m *merge) prepare() {
 		a, b := m.mine[i], m.mine[j]
 		return wire.CompareLevels(
 			amendTuple(a, a.place(), s.spec.Sort),
-			amendTuple(b, b.place(), s.spec.Sort), s.levels) < 0
+			amendTuple(b, b.place(), s.spec.Sort), m.levels) < 0
 	})
 }
 
 // ask puts the scope to the child, with room for what this source will take
 // out of the answer.
-func (m *merge) ask(from wire.Fields, need int) error {
+//
+// The identity goes down untranslated: this source amends the child's records
+// rather than renaming them, so the two share one identity space and an `after`
+// that means something here means the same thing there.
+func (m *merge) ask(after *wire.Value, count int) error {
 	m.round++
 	next := *m.want
-	next.From = from
-	next.Need = need
-	return m.set.child.Fill(&next, m)
+	next.After = after
+	next.Count = count
+	return m.set.child.Read(&next, m)
 }
 
 // Ordered is the child saying its records are in the sequence's order, before
@@ -298,9 +335,10 @@ func (m *merge) Done(c Complete) {
 	if m.done {
 		return
 	}
-	short := m.sent < m.want.Have+m.want.Need
-	if short && !c.Exhausted && c.Error == "" && len(c.Watermark) > 0 && m.round < rounds {
-		if err := m.ask(c.Watermark, m.want.Have+m.want.Need-m.sent+1); err == nil {
+	short := m.sent < m.want.Count
+	more := c.Stop == wire.StopFilled || c.Stop == wire.StopJoined
+	if short && more && c.Error == "" && c.Watermark != nil && m.round < rounds {
+		if err := m.ask(c.Watermark, m.want.Count-m.sent+1); err == nil {
 			return
 		}
 	}
@@ -311,14 +349,27 @@ func (m *merge) Done(c Complete) {
 	m.flushBefore(nil)
 	m.done = true
 
-	out := Complete{
+	out := Complete{Error: c.Error}
+	switch {
+	case c.Error != "":
+	case c.Stop == wire.StopExhausted:
 		// Everything of ours from the boundary on has just gone out, so where
 		// the child had nothing more, neither has anyone.
-		Exhausted: c.Exhausted,
-		Error:     c.Error,
+		out.Stop = wire.StopExhausted
+	case m.sent >= m.want.Count:
+		out.Stop = wire.StopFilled
+	default:
+		out.Stop = c.Stop
 	}
-	if !out.Exhausted {
-		out.Watermark = c.Watermark
+	if out.Stop != wire.StopExhausted && out.Error == "" {
+		// Ours, not the child's. The next scope quotes this back as `after`,
+		// and it has to be a record this sequence can place -- which the
+		// child's last one need not be, since a record we amend away never
+		// reaches anybody and is never placed.
+		out.Watermark = m.last
+		if out.Watermark == nil {
+			out.Watermark = m.want.After
+		}
 	}
 	m.out.Done(out)
 }
@@ -331,7 +382,7 @@ func (m *merge) flushBefore(at []*wire.Value) {
 		am := m.mine[0]
 		if at != nil {
 			mine := amendTuple(am, am.place(), s.spec.Sort)
-			if wire.CompareLevels(mine, at, s.levels) > 0 {
+			if wire.CompareLevels(mine, at, m.levels) > 0 {
 				return
 			}
 		}
@@ -346,6 +397,10 @@ func (m *merge) flushBefore(at []*wire.Value) {
 
 func (m *merge) emit(key *wire.Value, fields wire.Fields, whole bool) error {
 	m.sent++
+	m.last = key
+	// Noted as it goes, because the next scope will name it as `after` and
+	// this sequence will have to say where it stood.
+	m.set.placed.put(key, recordTuple(key, fields, m.set.spec.Sort))
 	if whole {
 		return m.out.Record(key, fields)
 	}

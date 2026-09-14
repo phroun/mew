@@ -27,10 +27,12 @@ func TestAReplacementStandsInForTheChildsRecord(t *testing.T) {
 	a := amendable(t)
 	a.Replace(key(2), fields("go.mod", 96))
 
-	out, _ := read(t, a, "sort={ .size }", "have=0 need=4")
+	out, _ := read(t, a, "sort={ .size }", "count=4")
 	if out.joined() != "2,1,0,3" {
 		t.Fatalf("the sequence is %s", out.joined())
 	}
+	// What Replace stated, and only that: an amendment is the record entire,
+	// so the bag is exactly what was handed in.
 	if got := out.fields[0].Encode(); got != `{ .name "go.mod"; .size 96 }` {
 		t.Errorf("the replacement carries %s", got)
 	}
@@ -41,7 +43,7 @@ func TestAReplacementIsPlacedByItsOwnValues(t *testing.T) {
 	a := amendable(t)
 	a.Replace(key(2), fields("go.mod", 99999)) // was 96, the smallest
 
-	out, _ := read(t, a, "sort={ .size }", "have=0 need=4")
+	out, _ := read(t, a, "sort={ .size }", "count=4")
 	if out.joined() != "1,0,3,2" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -53,11 +55,11 @@ func TestADeletionIsCoveredBeforeTheChildIsAsked(t *testing.T) {
 	a := amendable(t)
 	a.Delete(key(1), fields("build.sh", 310))
 
-	out, done := read(t, a, "sort={ .size }", "have=0 need=3")
+	out, done := read(t, a, "sort={ .size }", "count=3")
 	if out.joined() != "2,0,3" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
-	if !done.Exhausted {
+	if done.Stop != wire.StopExhausted {
 		t.Error("the end of the sequence did not say so")
 	}
 }
@@ -69,7 +71,7 @@ func TestADeletionWithNoPlacementIsLearned(t *testing.T) {
 	a := amendable(t)
 	a.Delete(key(1), nil) // nothing known about where it sat
 
-	out, _ := read(t, a, "sort={ .size }", "have=0 need=3")
+	out, _ := read(t, a, "sort={ .size }", "count=3")
 	if out.joined() != "2,0,3" {
 		t.Fatalf("the sequence is %s", out.joined())
 	}
@@ -79,7 +81,7 @@ func TestADeletionWithNoPlacementIsLearned(t *testing.T) {
 	if am == nil || am.seen == nil {
 		t.Fatalf("nothing was learned: %#v", am)
 	}
-	if got := am.seen.Encode(); got != `{ .name "build.sh"; .size 310 }` {
+	if got := am.seen.Encode(); got != `{ key 1; .name "build.sh"; .size 310 }` {
 		t.Errorf("what it learned is %s", got)
 	}
 }
@@ -90,7 +92,7 @@ func TestAReplacementFilteredOutIsARecordGone(t *testing.T) {
 	a := amendable(t)
 	a.Replace(key(1), fields("build.sh", 99999)) // the filter below wants under 3000
 
-	out, _ := read(t, a, "filter={ lt .size 3000 } sort={ .size }", "have=0 need=2")
+	out, _ := read(t, a, "filter={ lt .size 3000 } sort={ .size }", "count=2")
 	if out.joined() != "2,0" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -102,7 +104,7 @@ func TestARecordTheChildNeverSendsStillGoesOut(t *testing.T) {
 	a := amendable(t)
 	a.Replace(key(3), fields("parser.go", 100)) // was 14022, the filter excludes it
 
-	out, _ := read(t, a, "filter={ lt .size 3000 } sort={ .size }", "have=0 need=4")
+	out, _ := read(t, a, "filter={ lt .size 3000 } sort={ .size }", "count=4")
 	if out.joined() != "2,3,1,0" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -122,7 +124,7 @@ func TestAmendmentsChangeBetweenScopes(t *testing.T) {
 	defer set.Close()
 
 	first := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=2"), first); err != nil {
+	if err := set.Read(parseScope(t, "count=2"), first); err != nil {
 		t.Fatal(err)
 	}
 	if first.joined() != "2,1" {
@@ -132,7 +134,7 @@ func TestAmendmentsChangeBetweenScopes(t *testing.T) {
 	a.Delete(key(1), fields("build.sh", 310))
 
 	second := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=2"), second); err != nil {
+	if err := set.Read(parseScope(t, "count=2"), second); err != nil {
 		t.Fatal(err)
 	}
 	if second.joined() != "2,0" {
@@ -146,11 +148,11 @@ func TestForgettingAnAmendmentLetsTheChildStand(t *testing.T) {
 	a.Replace(key(2), fields("go.mod", 99999))
 	a.Forget(key(2))
 
-	out, _ := read(t, a, "sort={ .size }", "have=0 need=1")
+	out, _ := read(t, a, "sort={ .size }", "count=1")
 	if out.joined() != "2" {
 		t.Errorf("the first record is %s", out.joined())
 	}
-	if got := out.fields[0].Encode(); got != `{ .name "go.mod"; .size 96 }` {
+	if got := out.fields[0].Encode(); got != `{ key 2; .name "go.mod"; .size 96 }` {
 		t.Errorf("the child's record carries %s", got)
 	}
 }
@@ -171,7 +173,7 @@ func TestItWrapsAnyKind(t *testing.T) {
 			a.Replace(key(2), fields("go.mod", 99999))
 			a.Delete(key(1), fields("build.sh", 310))
 
-			out, _ := read(t, a, "sort={ .size }", "have=0 need=3")
+			out, _ := read(t, a, "sort={ .size }", "count=3")
 			if out.joined() != "0,3,2" {
 				t.Errorf("the sequence is %s", out.joined())
 			}
@@ -187,7 +189,7 @@ func TestAnOrderedChildMakesAnOrderedAnswer(t *testing.T) {
 	a := amendable(t)
 	a.Replace(key(2), fields("go.mod", 96))
 
-	out, _ := read(t, a, "sort={ .size }", "have=0 need=4")
+	out, _ := read(t, a, "sort={ .size }", "count=4")
 	if !out.ordered {
 		t.Error("an ordered child did not make an ordered answer")
 	}
@@ -200,7 +202,7 @@ func TestItClaimsOrderOnlyWhenTheChildDid(t *testing.T) {
 	a := NewAmendedSource(&jumbled{inner: mustPSL(t, twoWays)})
 	a.Replace(key(2), fields("go.mod", 96))
 
-	out, _ := read(t, a, "sort={ .size }", "have=0 need=4")
+	out, _ := read(t, a, "sort={ .size }", "count=4")
 	if out.ordered {
 		t.Error("a jumble was claimed to be in order")
 	}
@@ -213,7 +215,7 @@ func TestItClaimsOrderOnlyWhenTheChildDid(t *testing.T) {
 // which every application is free to do.
 type jumbled struct{ inner Source }
 
-func (j *jumbled) Open(spec *wire.Spec) (ResultSet, error) {
+func (j *jumbled) Open(spec *wire.Spec) (DataSet, error) {
 	set, err := j.inner.Open(spec)
 	if err != nil {
 		return nil, err
@@ -221,11 +223,11 @@ func (j *jumbled) Open(spec *wire.Spec) (ResultSet, error) {
 	return &jumbledSet{inner: set}, nil
 }
 
-type jumbledSet struct{ inner ResultSet }
+type jumbledSet struct{ inner DataSet }
 
 func (j *jumbledSet) Close() { j.inner.Close() }
-func (j *jumbledSet) Fill(f *wire.Fill, out Sink) error {
-	return j.inner.Fill(f, &unordered{out: out})
+func (j *jumbledSet) Read(f *wire.Scope, out Sink) error {
+	return j.inner.Read(f, &unordered{out: out})
 }
 
 type unordered struct{ out Sink }
@@ -244,7 +246,7 @@ func TestAChildThatRefusesEndsTheScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=2"), out); err == nil {
+	if err := set.Read(parseScope(t, "count=2"), out); err == nil {
 		t.Fatal("a broken child was not reported")
 	}
 	if !out.ended || !strings.Contains(out.done.Error, "broken") {
@@ -264,9 +266,12 @@ func TestAStaleDeletionCostsASecondQuestion(t *testing.T) {
 	// believes it sits at 1, before the whole scope.
 	a.Delete(key(0), fields("README.md", 1))
 
-	out, _ := read(t, a, "sort={ .size }",
-		`from={ .size 96; key 2 } have=0 need=2`)
-	if out.joined() != "1,3" {
+	seq := opened(t, a, "sort={ .size }")
+	if head, _ := seq.scope("count=2"); head.joined() != "2,1" {
+		t.Fatalf("the first scope is %s", head.joined())
+	}
+	out, _ := seq.scope("after=1 count=2")
+	if out.joined() != "3" {
 		t.Errorf("the scope is %s", out.joined())
 	}
 
@@ -275,7 +280,7 @@ func TestAStaleDeletionCostsASecondQuestion(t *testing.T) {
 	if am == nil || am.seen == nil {
 		t.Fatalf("nothing was learned: %#v", am)
 	}
-	if got := am.seen.Encode(); got != `{ .name "README.md"; .size 2048 }` {
+	if got := am.seen.Encode(); got != `{ key 0; .name "README.md"; .size 2048 }` {
 		t.Errorf("what it learned is %s", got)
 	}
 }
@@ -286,8 +291,8 @@ func TestTheEndOfTheSequenceIsTheChildsEnd(t *testing.T) {
 	a := amendable(t)
 	a.Replace(key(9), fields("added-by-nobody", 99999))
 
-	out, done := read(t, a, "sort={ .size }", "have=0 need=99")
-	if !done.Exhausted {
+	out, done := read(t, a, "sort={ .size }", "count=99")
+	if done.Stop != wire.StopExhausted {
 		t.Error("the end of the sequence did not say so")
 	}
 	if out.keys[len(out.keys)-1] != "9" {
@@ -304,14 +309,14 @@ func TestAChildThatNeverCatchesUpIsNotAskedForever(t *testing.T) {
 	child := &dribble{}
 	a := NewAmendedSource(child)
 
-	out, done := read(t, a, "", "have=0 need=100")
+	out, done := read(t, a, "", "count=100")
 	if child.rounds < 2 {
 		t.Errorf("it gave up after %d round(s)", child.rounds)
 	}
 	if child.rounds > 8 {
 		t.Errorf("it asked %d times", child.rounds)
 	}
-	if done.Exhausted {
+	if done.Stop == wire.StopExhausted {
 		t.Error("a scope that never filled claimed to be exhausted")
 	}
 	if len(out.keys) != child.rounds {
@@ -323,15 +328,15 @@ func TestAChildThatNeverCatchesUpIsNotAskedForever(t *testing.T) {
 // a source that will never fill a scope however often it is asked.
 type dribble struct{ rounds int }
 
-func (d *dribble) Open(*wire.Spec) (ResultSet, error) { return d, nil }
+func (d *dribble) Open(*wire.Spec) (DataSet, error) { return d, nil }
 func (d *dribble) Close()                             {}
 
-func (d *dribble) Fill(f *wire.Fill, out Sink) error {
+func (d *dribble) Read(f *wire.Scope, out Sink) error {
 	d.rounds++
 	out.Ordered()
 	k := wire.NewInt(int64(d.rounds))
 	_ = out.Record(k, wire.Fields{wire.Named(".n", int64(d.rounds))})
-	out.Done(Complete{Watermark: wire.Fields{wire.Named(wire.KeyField, int64(d.rounds))}})
+	out.Done(Complete{Stop: wire.StopFilled, Watermark: k})
 	return nil
 }
 
@@ -341,14 +346,14 @@ func (d *dribble) Fill(f *wire.Fill, out Sink) error {
 func TestAnAmendedSourceReverses(t *testing.T) {
 	forward := amendable(t)
 	forward.Replace(key(2), fields("go.mod", 96))
-	up, _ := read(t, forward, "sort={ .size }", "have=0 need=4")
+	up, _ := read(t, forward, "sort={ .size }", "count=4")
 	if up.joined() != "2,1,0,3" {
 		t.Fatalf("forward, the sequence is %s", up.joined())
 	}
 
 	mirror := amendable(t)
 	mirror.Replace(key(2), fields("go.mod", 96))
-	down, _ := read(t, mirror, "sort={ .size } reversed", "have=0 need=4")
+	down, _ := read(t, mirror, "sort={ .size }", "count=4 reversed")
 	if down.joined() != "3,0,1,2" {
 		t.Errorf("reversed, the sequence is %s", down.joined())
 	}

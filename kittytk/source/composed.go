@@ -42,6 +42,7 @@ type Include struct {
 // A ComposedSource answers out of several sources at once.
 type ComposedSource struct {
 	includes []Include
+	notes    *placebook
 }
 
 // NewComposedSource composes sources under the names their records go out
@@ -68,7 +69,10 @@ func NewComposedSource(includes ...Include) (*ComposedSource, error) {
 		}
 		seen[in.Name] = true
 	}
-	return &ComposedSource{includes: append([]Include(nil), includes...)}, nil
+	return &ComposedSource{
+		includes: append([]Include(nil), includes...),
+		notes:    newPlacebook(),
+	}, nil
 }
 
 // separator stands between an include's name and the child's key.
@@ -85,7 +89,7 @@ func (c *ComposedSource) Includes() []Include {
 // Each include gets the filter read in its own terms: an identity this source
 // made says which include it came from, so `filter={ id (left/1) }` asks
 // `left` about its own record 1 and never opens `right` at all.
-func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
+func (c *ComposedSource) Open(spec *wire.Spec) (DataSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
@@ -94,6 +98,8 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 		src: c, spec: spec, steps: steps, levels: levels,
 		byID: hasID(spec.Filter),
 	}
+	notes := c.notes.of(spec, 2)
+	set.placed, set.stood = notes[0], notes[1]
 	for _, in := range c.includes {
 		asked, possible := narrow(spec.Filter, in.Name)
 		if !possible {
@@ -343,8 +349,9 @@ type step struct{ field string }
 // TWO levels, the include's name and then the child's own identity, because an
 // identity here is made of those two parts.
 //
-// Reversed turns the lot over, those two included, which is the only thing
-// that touches the order identity falls in.
+// The direction is not here. A scope is walked either way over one prepared
+// sequence, so which way is decided when the scope is read, not when the
+// sequence is stated.
 func plan(spec *wire.Spec) ([]step, []wire.Level) {
 	steps := make([]step, 0, len(spec.Sort)+1)
 	levels := make([]wire.Level, 0, len(spec.Sort)+2)
@@ -354,9 +361,6 @@ func plan(spec *wire.Spec) ([]step, []wire.Level) {
 	}
 	steps = append(steps, step{})
 	levels = append(levels, wire.Level{}, wire.Level{})
-	if spec.Reversed {
-		return steps, wire.Reverse(levels)
-	}
 	return steps, levels
 }
 
@@ -454,11 +458,28 @@ type composedSet struct {
 	steps  []step
 	levels []wire.Level
 	byID   bool // the filter tests identity, so records are read here too
+
+	// placed is where every include stood when this sequence handed on a
+	// record. It belongs to the sequence rather than to this reading of it --
+	// a reader may let one data set go and open another between two scopes
+	// -- so it comes from the source's book, keyed by what names the sequence. It is how an identity of this sequence's own becomes somewhere
+	// for each of the includes to carry on from, and it is the reason none of
+	// them is ever shown an identity that is not its own.
+	placed *places
+
+	// stood is where the record itself sat, in this sequence's own order.
+	//
+	// Resuming each include from its own cursor is enough for an include that
+	// honours what it was asked. One that ignores the boundary and answers
+	// from the top -- which is allowed, and is what the simplest possible
+	// implementation does -- would otherwise hand back records the scope
+	// before it already delivered, so they are dropped against this.
+	stood *places
 }
 
 type part struct {
 	name string
-	set  ResultSet
+	set  DataSet
 }
 
 // Close lets this sequence go, and every include's with it.
@@ -468,23 +489,50 @@ func (s *composedSet) Close() {
 	}
 }
 
-// Fill answers one scope out of every include at once.
-func (s *composedSet) Fill(f *wire.Fill, out Sink) error {
+// Read answers one scope out of every include at once.
+//
+// The scope's ends are identities of this sequence's own making, and an
+// identity means something only where it was made. So none of them goes down:
+// each include is asked from the last record *it* gave, which this sequence
+// noted when it handed that record on.
+//
+// That is exact rather than approximate. When a record was handed on, every
+// include either was finished or was holding something that sorted after it --
+// that is what let it be handed on at all -- so nothing an include has left to
+// say falls before it, and resuming each one where it left off picks the
+// sequence up at precisely the right place in all of them at once.
+func (s *composedSet) Read(sc *wire.Scope, out Sink) error {
 	if out == nil {
-		return fmt.Errorf("a fill needs somewhere to put the answer")
+		return fmt.Errorf("a scope needs somewhere to put the answer")
 	}
-	g := &gathering{set: s, want: f, out: out}
+	if sc == nil {
+		sc = &wire.Scope{}
+	}
+
+	after, err := s.resume(sc.After)
+	if err != nil {
+		out.Done(Complete{Error: err.Error()})
+		return nil
+	}
+	// An `until` this sequence cannot place is not a refusal: it only says
+	// where the asker's own knowledge picks up, and one that never arrives
+	// costs a walk to the count instead of a shorter one.
+	until, _ := s.resume(sc.Until)
+
+	g := &gathering{set: s, want: sc, out: out, levels: s.levels}
+	if sc.Reversed {
+		g.levels = wire.Reverse(s.levels)
+	}
+	g.from, _ = s.stood.get(sc.After)
 	g.at = make([]*arrivals, len(s.parts))
 	for i, p := range s.parts {
-		g.at[i] = &arrivals{name: p.name}
+		g.at[i] = &arrivals{name: p.name, cursor: after[i]}
 	}
-	g.from = s.boundary(f.From)
-	g.to = s.boundary(f.To)
 
 	// Asked for outside the lock: an include whose records are here answers
 	// inside the call, and would reach for a lock this one was already holding.
 	for i, p := range s.parts {
-		if err := p.set.Fill(s.ask(f, p.name), g.lane(i)); err != nil {
+		if err := p.set.Read(s.ask(sc, after[i], until[i]), g.lane(i)); err != nil {
 			g.failed(i, err)
 		}
 	}
@@ -492,64 +540,38 @@ func (s *composedSet) Fill(f *wire.Fill, out Sink) error {
 	return nil
 }
 
-// ask is the scope as one include is asked for it.
+// resume is where each include stood when this sequence last handed on the
+// record named, one identity per include and nil for an include that had given
+// nothing yet.
 //
-// The boundaries lose the composed key and keep the child's, where the
-// boundary names this include; where it names another, the key goes away
-// entirely, which asks the include from the start of that sort value. Either
-// way what comes back may be more than belongs in the scope, and the merge
-// drops what the boundary already covered. Asking for less than belongs is
-// what would be wrong.
-//
-// Every include is asked for the whole shortfall, because the whole of it may
-// turn out to come from any one of them.
-func (s *composedSet) ask(f *wire.Fill, name string) *wire.Fill {
-	next := *f
-	next.From = s.mapBoundary(f.From, name)
-	next.To = s.mapBoundary(f.To, name)
-	next.Have = 0
-	next.Need = f.Need - f.Have
-	if next.Need < 0 {
-		next.Need = 0
+// A nil identity resumes every include at its start, which is what the
+// beginning of the sequence is.
+func (s *composedSet) resume(id *wire.Value) ([]*wire.Value, error) {
+	if id == nil {
+		return make([]*wire.Value, len(s.parts)), nil
 	}
-	return &next
+	at, ok := s.placed.get(id)
+	if !ok {
+		return nil, fmt.Errorf("after %s: this sequence has not placed that record",
+			wire.EncodeValue(id))
+	}
+	return at, nil
 }
 
-// mapBoundary is a boundary as the named include reads it: the sort fields as
-// they stand, and the key only where it is one of that include's own.
-func (s *composedSet) mapBoundary(at wire.Fields, name string) wire.Fields {
-	if len(at) == 0 {
-		return nil
-	}
-	who, text, ok := split(at.Key())
-	out := make(wire.Fields, 0, len(at))
-	for _, a := range at {
-		if a.Name == wire.KeyField {
-			continue
-		}
-		out = append(out, a)
-	}
-	if ok && who == name {
-		if k := childKey(text); k != nil {
-			out = append(out, &wire.Arg{Name: wire.KeyField, Value: k})
-		}
-	}
-	return out
-}
-
-// boundary is a boundary as a position in this sequence: the sort values, the
-// include's name, and the child's key.
+// ask is the scope as one include is asked for it: that include's own
+// identities, and the whole count.
 //
-// A boundary carrying no key at all is not a position in this sequence -- it
-// names a sort value and says nothing about which of the records at it are
-// already held -- so there is nothing to drop against and the includes' own
-// answers stand. Whatever they send is then a superset, which is allowed.
-func (s *composedSet) boundary(at wire.Fields) []*wire.Value {
-	if len(at) == 0 || at.Key() == nil {
-		return nil
+// Every include is asked for the whole of it, because the whole of it may turn
+// out to come from any one of them. What comes back is then more than belongs
+// in the scope, which is allowed; asking for less than belongs is what would be
+// wrong.
+func (s *composedSet) ask(sc *wire.Scope, after, until *wire.Value) *wire.Scope {
+	return &wire.Scope{
+		After:    after,
+		Until:    until,
+		Count:    sc.Count,
+		Reversed: sc.Reversed,
 	}
-	who, text, _ := split(at.Key())
-	return s.position(at, who, childKey(text))
 }
 
 // position is where something sits in this sequence: a value for each step,
@@ -570,20 +592,6 @@ func (s *composedSet) position(from wire.Fields, name string, key *wire.Value) [
 	return out
 }
 
-// boundaryBag writes a position the way a boundary is written: the fields this
-// sequence sorts by, and the composed key. The key is written once, at the
-// end, wherever the sort names it -- a bag is read by name, not by order.
-func (s *composedSet) boundaryBag(from wire.Fields, key *wire.Value) wire.Fields {
-	out := make(wire.Fields, 0, len(s.steps)+1)
-	for _, st := range s.steps {
-		if st.field == "" {
-			continue
-		}
-		out = append(out, &wire.Arg{Name: st.field, Value: from.Get(st.field)})
-	}
-	return append(out, &wire.Arg{Name: wire.KeyField, Value: key})
-}
-
 // --- the merge -----------------------------------------------------------
 
 // A gathering is one scope being answered out of every include at once.
@@ -594,21 +602,21 @@ func (s *composedSet) boundaryBag(from wire.Fields, key *wire.Value) wire.Fields
 // how far the includes have drifted out of step with each other, and never the
 // answer itself.
 type gathering struct {
-	set  *composedSet
-	want *wire.Fill
-	out  Sink
+	set    *composedSet
+	want   *wire.Scope
+	out    Sink
+	levels []wire.Level // the walk's own direction
 
 	mu   sync.Mutex
 	at   []*arrivals
-	from []*wire.Value
-	to   []*wire.Value
+	from []*wire.Value // where the scope starts, for includes that ignore it
 
-	settled  bool          // every include has spoken, so the order is decided
-	inOrder  bool          // and every one of them declared its records in order
-	sent     int           // records handed on
-	last     []*wire.Value // where the last of them sat
-	lastMark wire.Fields
-	ended    bool
+	settled bool          // every include has spoken, so the order is decided
+	inOrder bool          // and every one of them declared its records in order
+	sent    int           // records handed on
+	last    []*wire.Value // where the last of them sat
+	lastID  *wire.Value   // and what it is called here
+	ended   bool
 }
 
 // arrivals is what one include has delivered and not yet handed on.
@@ -619,11 +627,26 @@ type arrivals struct {
 	said  bool // and it declared its records in order, before any of them
 	done  bool
 	c     Complete
+
+	// cursor is the last record of this include's that has been handed on, in
+	// that include's own terms. It is what the next scope resumes this include
+	// from, and what this scope started it at.
+	cursor *wire.Value
+
+	// The last record this include delivered, which is the only one of its own
+	// whose position this sequence can place. An include's completeness claim
+	// is nearly always that record, and where it is not, nothing here can say
+	// how far the claim reaches -- so it claims nothing, which is weaker and
+	// therefore safe.
+	tail      *wire.Value
+	tailAt    []*wire.Value
+	tailNamed *wire.Value // the same record's identity in this sequence
 }
 
 // waiting is one record held until its place is settled.
 type waiting struct {
-	key    *wire.Value
+	key    *wire.Value // as this sequence names it
+	child  *wire.Value // as the include that gave it does
 	tuple  []*wire.Value
 	fields wire.Fields
 	whole  bool
@@ -672,20 +695,23 @@ func (g *gathering) take(i int, key *wire.Value, fields wire.Fields, whole bool)
 
 	rec := waiting{
 		key:    composedKey(a.name, key),
+		child:  key,
 		tuple:  g.place(a.name, key, fields),
 		fields: fields,
 		whole:  whole,
 	}
+	a.tail, a.tailAt, a.tailNamed = key, rec.tuple, rec.key
+
 	// What the filter says about the composed key is settled here, because no
 	// include could say it: the include was asked a question in its own terms,
 	// which admits at least every record this one does.
 	if g.set.byID && idMatch(g.set.spec.Filter, rec.key) == no {
 		return nil
 	}
-	// An include asked from before where the scope starts answers from there,
-	// so what the boundary already covered is dropped here rather than sent
-	// twice.
-	if g.from == nil || wire.CompareLevels(rec.tuple, g.from, g.set.levels) > 0 {
+	// An include that answered from before where the scope starts -- one that
+	// ignores the boundary entirely -- would otherwise hand back what the last
+	// scope already delivered.
+	if g.from == nil || wire.CompareLevels(rec.tuple, g.from, g.levels) > 0 {
 		a.queue = append(a.queue, rec)
 	}
 	g.release()
@@ -751,9 +777,9 @@ func (g *gathering) release() {
 		// shortfall while it is at it: cutting the answer at some arbitrary
 		// record would drop ones that belong in the scope, and a superset is
 		// always allowed where a gap is not.
-		for _, a := range g.at {
+		for i, a := range g.at {
 			for _, rec := range a.queue {
-				g.hand(rec)
+				g.hand(i, rec)
 			}
 			a.queue = nil
 		}
@@ -770,7 +796,7 @@ func (g *gathering) release() {
 				return // and this one still might
 			}
 			if next < 0 || wire.CompareLevels(
-				a.queue[0].tuple, g.at[next].queue[0].tuple, g.set.levels) < 0 {
+				a.queue[0].tuple, g.at[next].queue[0].tuple, g.levels) < 0 {
 				next = i
 			}
 		}
@@ -779,32 +805,38 @@ func (g *gathering) release() {
 		}
 		rec := g.at[next].queue[0]
 		g.at[next].queue = g.at[next].queue[1:]
-		g.hand(rec)
+		g.hand(next, rec)
 	}
 }
 
 // full reports whether the scope has as many records as it was asked for.
-func (g *gathering) full() bool {
-	return g.want.Have+g.sent >= g.want.Need
-}
+func (g *gathering) full() bool { return g.sent >= g.want.Count }
 
-// hand passes one record on and remembers where it sat, which is as far as
-// this answer is complete.
-func (g *gathering) hand(rec waiting) {
+// hand passes one record on and notes where every include stood as it went.
+//
+// That note is what the next scope resumes from. It is taken here rather than
+// anywhere else because here is the moment it is true: a record is handed on
+// only when no include can still produce one before it, so each include's
+// cursor at this instant is exactly the point the sequence continues from in
+// that include.
+func (g *gathering) hand(from int, rec waiting) {
 	g.sent++
 	g.last = rec.tuple
-	g.lastMark = g.mark(rec)
+	g.lastID = rec.key
+	g.at[from].cursor = rec.child
+
+	where := make([]*wire.Value, len(g.at))
+	for i, a := range g.at {
+		where[i] = a.cursor
+	}
+	g.set.placed.put(rec.key, where)
+	g.set.stood.put(rec.key, rec.tuple)
+
 	if rec.whole {
 		_ = g.out.Record(rec.key, rec.fields)
 		return
 	}
 	_ = g.out.Subset(rec.key, rec.fields)
-}
-
-// mark is a record's position, written the way a boundary is: the sort fields,
-// and the composed key.
-func (g *gathering) mark(rec waiting) wire.Fields {
-	return g.set.boundaryBag(rec.fields, rec.key)
 }
 
 // allSaidOrdered reports whether every include declared its records in order.
@@ -843,40 +875,62 @@ func (g *gathering) close() {
 	}
 	g.ended = true
 
-	out := Complete{Exhausted: !held}
+	var out Complete
+	spent := true  // every include ran out of records
+	joined := false
+	claimable := true
 	var lowest []*wire.Value
-	for i, a := range g.at {
+	var lowestID *wire.Value
+
+	for _, a := range g.at {
 		if a.c.Error != "" && out.Error == "" {
 			out.Error = a.c.Error
 		}
-		if a.c.Exhausted {
+		if a.c.Stop == wire.StopExhausted {
 			continue // nothing past the end to hold anyone back
 		}
-		out.Exhausted = false
-		tuple, bag := g.watermark(i)
-		if bag == nil {
-			lowest, out.Watermark = nil, nil
-			break // an include that claimed nothing lets nobody claim anything
+		spent = false
+		if a.c.Stop == wire.StopJoined {
+			joined = true
 		}
-		if lowest == nil || wire.CompareLevels(tuple, lowest, g.set.levels) < 0 {
-			lowest, out.Watermark = tuple, bag
+		// How far this include is complete, as a position here. Only the last
+		// record it delivered can be placed -- what puts a record somewhere are
+		// its own values, and those arrive with it -- so a claim that stops
+		// anywhere else stops nobody anywhere.
+		if a.c.Watermark == nil || a.tail == nil ||
+			wire.EncodeValue(a.c.Watermark) != wire.EncodeValue(a.tail) {
+			claimable = false
+			continue
+		}
+		if lowest == nil || wire.CompareLevels(a.tailAt, lowest, g.levels) < 0 {
+			lowest, lowestID = a.tailAt, a.tailNamed
 		}
 	}
-	if !out.Exhausted && g.last != nil &&
-		(out.Watermark == nil || wire.CompareLevels(g.last, lowest, g.set.levels) < 0) {
-		out.Watermark = g.lastMark
+
+	switch {
+	case out.Error != "":
+	case spent && !held:
+		out.Stop = wire.StopExhausted
+	case g.full():
+		out.Stop = wire.StopFilled
+	case joined:
+		out.Stop = wire.StopJoined
+	default:
+		out.Stop = wire.StopFilled
+	}
+
+	if out.Stop != wire.StopExhausted && out.Error == "" && claimable {
+		// No further than the last record that went out: records held back at
+		// the shortfall are ones the far end has not got, however complete the
+		// includes were.
+		switch {
+		case lowest == nil:
+			out.Watermark = g.lastID
+		case g.last != nil && wire.CompareLevels(g.last, lowest, g.levels) < 0:
+			out.Watermark = g.lastID
+		default:
+			out.Watermark = lowestID
+		}
 	}
 	g.out.Done(out)
-}
-
-// watermark is one include's completeness claim as a position in this
-// sequence, and the bag that says it.
-func (g *gathering) watermark(i int) ([]*wire.Value, wire.Fields) {
-	a := g.at[i]
-	if len(a.c.Watermark) == 0 {
-		return nil, nil
-	}
-	key := a.c.Watermark.Key()
-	return g.set.position(a.c.Watermark, a.name, key),
-		g.set.boundaryBag(a.c.Watermark, composedKey(a.name, key))
 }

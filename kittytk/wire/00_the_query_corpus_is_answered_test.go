@@ -18,7 +18,7 @@ import (
 // queryCase is one corpus case: what arrived, and what it has to become.
 type queryCase struct {
 	line int
-	kind string // "spec" or "fill"
+	kind string // "spec" or "scope"
 	in   string
 	want string
 	bad  bool
@@ -41,7 +41,7 @@ func readQueryCorpus(t *testing.T) []queryCase {
 		}
 		verb, rest, _ := strings.Cut(line, " ")
 		switch verb {
-		case "spec", "fill":
+		case "spec", "scope":
 			if open != nil {
 				t.Fatalf("%s:%d: a case with no answer", path, open.line)
 			}
@@ -83,11 +83,11 @@ func answerQueryCase(c queryCase) (string, error) {
 		}
 		return spec.Encode(), nil
 	}
-	fill, err := ParseFill(args)
+	scope, err := ParseScope(args)
 	if err != nil {
 		return "", err
 	}
-	return fill.Encode(), nil
+	return scope.Encode(), nil
 }
 
 func TestTheQueryCorpusIsAnswered(t *testing.T) {

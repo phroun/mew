@@ -45,7 +45,7 @@ func drive(t *testing.T, reading source.Reading, query string) *printer {
 
 func TestAQueryFileIsAnsweredOutOfAPSLFile(t *testing.T) {
 	p := drive(t, source.Whole,
-		`q=new query source="objects" filter={ ge .size 1000 } sort={ .size desc } have=0 need=2`)
+		`q=new query source="objects" filter={ ge .size 1000 } sort={ .size desc } count=2`)
 
 	if strings.Join(p.columns, ",") != "key,.0,.size" {
 		t.Errorf("the columns are %v", p.columns)
@@ -63,14 +63,15 @@ func TestAQueryFileIsAnsweredOutOfAPSLFile(t *testing.T) {
 	}
 }
 
-// Opening carries the first scope, and every statement after it addresses the
-// query that is open: another scope, and letting it go. A different sequence
-// is another `new query`, so the file says so.
+// A query states its sequence and asks for one scope of it, and is answered
+// once. So a second scope is a second query, naming the sequence again and
+// saying which record to carry on past -- and letting the first one go is a
+// statement of its own.
 func TestAFileOpensRefillsAndLetsGo(t *testing.T) {
 	p := drive(t, source.Whole, strings.Join([]string{
-		`q=new query source="objects" sort={ .size } have=0 need=2`,
-		`query q from={ .size 310; key 1 } have=0 need=1`,
-		`r=new query source="objects" sort={ .size desc } have=0 need=1`,
+		`q=new query source="objects" sort={ .size } count=2`,
+		`n=new query source="objects" sort={ .size } after=1 count=1`,
+		`r=new query source="objects" sort={ .size desc } count=1`,
 		`destroy q`,
 	}, "\n"))
 
@@ -93,7 +94,7 @@ func TestAFileCannotRestateAQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script, err := wire.Parse(`q=new query source="objects" have=0 need=1` + "\n" +
+	script, err := wire.Parse(`q=new query source="objects" count=1` + "\n" +
 		`set q sort={ .size }`)
 	if err != nil {
 		t.Fatal(err)
@@ -105,20 +106,24 @@ func TestAFileCannotRestateAQuery(t *testing.T) {
 
 // The shorter reading names the members alone.
 //
-// The bare string is in the answer and carries nothing. Under Members it has no
-// members, so it has no size, and undefined sits below every number -- which is
-// what `lt` is being asked.
+// The bare string matches -- under Members it has no members, so it has no
+// size, and undefined sits below every number, which is what `lt` is being
+// asked -- but it carries nothing, so there is no cell of it to show. Its key
+// is not a column: what identifies a record is not one of its fields.
 func TestTheMembersReadingNamesTheMembersAlone(t *testing.T) {
 	p := drive(t, source.Members,
-		`q=new query source="objects" filter={ lt size 1000 } sort={ size } have=0 need=3`)
+		`q=new query source="objects" filter={ lt size 1000 } sort={ size } count=3`)
 
-	if strings.Join(p.columns, ",") != "key,size" {
+	if strings.Join(p.columns, ",") != "size" {
 		t.Errorf("the columns are %v", p.columns)
 	}
-	if strings.Join(p.rows[0], "|") != `"notes"|` {
+	if len(p.rows) != 2 {
+		t.Fatalf("%d rows: %v", len(p.rows), p.rows)
+	}
+	if strings.Join(p.rows[0], "|") != `96` {
 		t.Errorf("the first row is %v", p.rows[0])
 	}
-	if strings.Join(p.rows[1], "|") != `2|96` {
+	if strings.Join(p.rows[1], "|") != `310` {
 		t.Errorf("the second row is %v", p.rows[1])
 	}
 }
@@ -131,7 +136,7 @@ func TestAFileThatIsNotAQueryIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, text := range []string{
-		`query 1 have=0 need=5`,
+		`query 1 count=5`,
 		`b=new button caption="press me"`,
 	} {
 		script, err := wire.Parse(text)
@@ -147,16 +152,16 @@ func TestAFileThatIsNotAQueryIsRefused(t *testing.T) {
 // What `-raw` prints is the wire language the answer would have crossed as, so
 // the word that says how much of each record came back is in it.
 func TestTheRawTraceSaysHowMuchOfEachRecordCameBack(t *testing.T) {
-	whole := rawDrive(t, `q=new query source="objects" sort={ .size desc } have=0 need=1`)
-	if !strings.Contains(whole, `result 1 record={ key 3; .0 "src/parser.go"; .size 14022 }`) {
+	whole := rawDrive(t, `q=new query source="objects" sort={ .size desc } count=1`)
+	if !strings.Contains(whole, `result 1 id=3 record={ key 3; .0 "src/parser.go"; .size 14022 }`) {
 		t.Errorf("a record nothing narrowed was written as\n%s", whole)
 	}
 
-	// The same record, with the scope naming the one field it wants: what goes
+	// The same record, with the query naming the one field it wants: what goes
 	// out is some of the record, and it says so.
 	part := rawDrive(t,
-		`q=new query source="objects" sort={ .size desc } have=0 need=1 fields={ .size }`)
-	if !strings.Contains(part, `result 1 fields={ key 3; .size 14022 }`) {
+		`q=new query source="objects" sort={ .size desc } count=1 fields={ .size }`)
+	if !strings.Contains(part, `result 1 id=3 fields={ .size 14022 }`) {
 		t.Errorf("a narrowed record was written as\n%s", part)
 	}
 }

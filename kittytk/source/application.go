@@ -28,15 +28,15 @@ type ApplicationSource struct {
 	name string
 	send func(src string) error
 
-	mu   sync.Mutex
-	open []*appSet // opened, in the order their replies are owed
-	byID map[uint64]*appSet
+	mu      sync.Mutex
+	opening []*appScope // asked, in the order their replies are owed
+	byID    map[uint64]*appScope
 }
 
 // NewApplicationSource is a source backed by the application's records under
 // this name.
 func NewApplicationSource(name string, send func(src string) error) *ApplicationSource {
-	return &ApplicationSource{name: name, send: send, byID: map[uint64]*appSet{}}
+	return &ApplicationSource{name: name, send: send, byID: map[uint64]*appScope{}}
 }
 
 // Name is what the application serves these records under.
@@ -45,7 +45,7 @@ func (h *ApplicationSource) Name() string { return h.name }
 // Open states a sequence. Nothing is said on the wire yet: a query is opened
 // with the first scope of it, because there is no reason to name a sequence
 // nobody is reading.
-func (h *ApplicationSource) Open(spec *wire.Spec) (ResultSet, error) {
+func (h *ApplicationSource) Open(spec *wire.Spec) (DataSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
@@ -57,74 +57,69 @@ func (h *ApplicationSource) Open(spec *wire.Spec) (ResultSet, error) {
 	return &appSet{src: h, spec: &stated}, nil
 }
 
-// An appSet is one sequence the application is serving.
+// An appSet is one sequence, from this side.
 //
-// Its id is the application's, and it does not exist until the application
-// replies with it -- so a scope asked for before that reply arrives is
-// addressed by the key the query was opened under, which the same batch
-// surfaces (docs/hosting-a-query.md).
+// It says nothing on the wire of its own. A query states a sequence and asks
+// for one scope of it, and nothing restates it afterwards, so every scope read
+// here is a query of its own -- and this holds only what they are all queries
+// *of*.
 type appSet struct {
 	src  *ApplicationSource
 	spec *wire.Spec
 
-	mu      sync.Mutex
-	opened  bool
-	closed  bool
-	id      uint64
-	pending []Sink   // sinks awaiting an answer, oldest first
-	held    []string // scopes asked for before the id came back
+	mu     sync.Mutex
+	closed bool
+	live   []*appScope // scopes still being answered
 }
 
-// Fill asks the application for one scope and returns. The records reach the
+// An appScope is one scope asked for: one query on the wire, from the statement
+// that opens it to the result that completes it.
+//
+// Its id is the application's, and it does not exist until the application
+// replies with it. Nothing needs it before then: the whole question went out in
+// the statement that opened it, so there is nothing waiting on the number
+// except the results that will quote it back.
+type appScope struct {
+	set *appSet
+	out Sink
+
+	mu   sync.Mutex
+	id   uint64
+	done bool
+}
+
+// Read asks the application for one scope and returns. The records reach the
 // sink when the application sends them.
-func (s *appSet) Fill(f *wire.Fill, out Sink) error {
+func (s *appSet) Read(sc *wire.Scope, out Sink) error {
 	if out == nil {
-		return fmt.Errorf("a fill needs somewhere to put the answer")
+		return fmt.Errorf("a scope needs somewhere to put the answer")
+	}
+	if sc == nil {
+		sc = &wire.Scope{}
 	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return fmt.Errorf("this result set has been closed")
+		return fmt.Errorf("this data set has been closed")
 	}
-	var stmt string
-	opening := !s.opened
-	switch {
-	case opening:
-		// Opening carries the first scope, which is one statement.
-		s.opened = true
-		stmt = "q=new query " + s.spec.Encode() + " " + f.Encode()
-	case s.id != 0:
-		stmt = fmt.Sprintf("%s %d %s", wire.QueryVerb, s.id, f.Encode())
-	default:
-		// The application names the sequence, and its reply has not come back
-		// yet. The key it was opened under reaches it only inside the batch
-		// that opened it -- a later batch naming `q` reaches an application
-		// that has never heard of it -- so the request waits for the number.
-		s.held = append(s.held, f.Encode())
-	}
-	s.pending = append(s.pending, out)
+	q := &appScope{set: s, out: out}
+	s.live = append(s.live, q)
 	s.mu.Unlock()
 
-	if stmt == "" {
-		return nil
-	}
-
 	// Outside the sequence's own lock, because the source takes its lock and
-	// then each sequence's: holding one while reaching for the other in the
+	// then each scope's: holding one while reaching for the other in the
 	// opposite order is how two threads stop dead.
-	if opening {
-		s.src.enqueue(s)
-	}
+	s.src.asked(q)
 
+	stmt := "q=new query " + s.spec.Encode() + " " + sc.Encode()
 	if err := s.src.send(stmt + "\nend\n"); err != nil {
-		s.fail(err.Error())
+		q.finish(Complete{Error: err.Error()})
 		return err
 	}
 	return nil
 }
 
-// Close lets the sequence go, which is how the application learns this reader
-// has finished.
+// Close lets the sequence go, and with it any scope of it still unanswered.
 func (s *appSet) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -132,34 +127,44 @@ func (s *appSet) Close() {
 		return
 	}
 	s.closed = true
-	id, opened := s.id, s.opened
+	live := s.live
+	s.live = nil
 	s.mu.Unlock()
 
-	s.src.forget(s)
-	if opened && id != 0 {
-		_ = s.src.send(fmt.Sprintf("destroy %d\nend\n", id))
+	for _, q := range live {
+		q.finish(Complete{Error: "this data set has been closed"})
 	}
 }
 
-// enqueue and forget keep the source's record of which sequences are open.
-func (h *ApplicationSource) enqueue(s *appSet) {
+// asked and forget keep the source's record of which scopes are outstanding.
+func (h *ApplicationSource) asked(q *appScope) {
 	h.mu.Lock()
-	h.open = append(h.open, s)
+	h.opening = append(h.opening, q)
 	h.mu.Unlock()
 }
 
-func (h *ApplicationSource) forget(s *appSet) {
+func (h *ApplicationSource) forget(q *appScope) {
 	h.mu.Lock()
-	for i, o := range h.open {
-		if o == s {
-			h.open = append(h.open[:i], h.open[i+1:]...)
+	for i, o := range h.opening {
+		if o == q {
+			h.opening = append(h.opening[:i], h.opening[i+1:]...)
 			break
 		}
 	}
-	if s.id != 0 {
-		delete(h.byID, s.id)
+	if q.id != 0 {
+		delete(h.byID, q.id)
 	}
 	h.mu.Unlock()
+
+	set := q.set
+	set.mu.Lock()
+	for i, o := range set.live {
+		if o == q {
+			set.live = append(set.live[:i], set.live[i+1:]...)
+			break
+		}
+	}
+	set.mu.Unlock()
 }
 
 // Inbound hands over one statement the application said, and reports whether
@@ -177,8 +182,8 @@ func (h *ApplicationSource) Inbound(stmt *wire.Statement) bool {
 	return false
 }
 
-// name1 takes the reply that names a sequence. A reply carrying no id belongs
-// to a scope of one already named, and says nothing this source needs.
+// name1 takes the reply that names a query. Replies come back in the order the
+// queries went out, so the number belongs to the oldest one still unnamed.
 func (h *ApplicationSource) name1(stmt *wire.Statement) bool {
 	var id uint64
 	for _, a := range stmt.Args {
@@ -190,41 +195,20 @@ func (h *ApplicationSource) name1(stmt *wire.Statement) bool {
 		return false
 	}
 	h.mu.Lock()
-	var named *appSet
-	for _, s := range h.open {
-		s.mu.Lock()
-		unnamed := s.id == 0
+	defer h.mu.Unlock()
+	for _, q := range h.opening {
+		q.mu.Lock()
+		unnamed := q.id == 0
 		if unnamed {
-			s.id = id
+			q.id = id
 		}
-		s.mu.Unlock()
+		q.mu.Unlock()
 		if unnamed {
-			h.byID[id] = s
-			named = s
-			break
+			h.byID[id] = q
+			return true
 		}
 	}
-	h.mu.Unlock()
-	if named == nil {
-		return false
-	}
-	named.release()
-	return true
-}
-
-// release asks for the scopes that were waiting for the sequence to be
-// named, now that it has a number to address.
-func (s *appSet) release() {
-	s.mu.Lock()
-	held, id := s.held, s.id
-	s.held = nil
-	s.mu.Unlock()
-	for _, args := range held {
-		if err := s.src.send(fmt.Sprintf("%s %d %s\nend\n", wire.QueryVerb, id, args)); err != nil {
-			s.fail(err.Error())
-			return
-		}
-	}
+	return false
 }
 
 // result takes one record, or the statement that ends a scope.
@@ -237,113 +221,67 @@ func (h *ApplicationSource) result(stmt *wire.Statement) bool {
 		return false
 	}
 	h.mu.Lock()
-	s := h.byID[uint64(a.Value.Int)]
+	q := h.byID[uint64(a.Value.Int)]
 	h.mu.Unlock()
-	if s == nil {
+	if q == nil {
 		return false
 	}
-	s.take(stmt.Args[1:])
+	q.take(stmt.Args[1:])
 	return true
 }
 
 // take reads one result statement into the sink waiting for it.
-func (s *appSet) take(args []*wire.Arg) {
-	var (
-		bag      wire.Fields
-		whole    bool
-		done     Complete
-		complete bool
-		ordered  bool
-	)
-	for _, a := range args {
-		switch {
-		case a.Name == wire.ResultComplete && a.Value == nil:
-			complete = true
-		case a.Name == "ordered" && a.Value == nil:
-			ordered = true
-		case a.Name == "exhausted" && a.Value == nil:
-			done.Exhausted = true
-		case a.Name == wire.RecordArg && a.Value != nil:
-			bag, _ = wire.ParseFields(a.Value)
-			whole = true
-		case a.Name == wire.FieldsArg && a.Value != nil:
-			bag, _ = wire.ParseFields(a.Value)
-			whole = false
-		case a.Name == "watermark" && a.Value != nil:
-			done.Watermark, _ = wire.ParseFields(a.Value)
-		case a.Name == "error" && a.Value != nil:
-			done.Error = a.Value.Str
-		}
-	}
-
-	sink := s.waiting()
-	if sink == nil {
-		return // nothing is waiting for this, so nobody wants it
-	}
-	if !complete {
-		switch {
-		case ordered:
-			// The declaration that leads an answer, which is what lets whoever
-			// is reading act on the records as they arrive.
-			sink.Ordered()
-		case len(bag) > 0:
-			// The application said which it sent, and that is passed on as it
-			// stands: this source claims nothing about the records it relays
-			// beyond what the far end claimed about them.
-			send := sink.Subset
-			if whole {
-				send = sink.Record
-			}
-			_ = send(bag.Key(), withoutKey(bag))
-		}
+//
+// Order, record and end are taken in that order, whichever statement they
+// arrived on: an answer of one record carries all three on one line, and an
+// answer of many spreads them out, and neither end has to know which.
+func (q *appScope) take(args []*wire.Arg) {
+	r, err := wire.ParseResult(args)
+	if err != nil {
+		q.finish(Complete{Error: err.Error()})
 		return
 	}
-	s.finish(sink, done)
-}
-
-// waiting is the sink the next result belongs to: answers come back in the
-// order the scopes were asked for, one ordered stream.
-func (s *appSet) waiting() Sink {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.pending) == 0 {
-		return nil
+	if r.Ordered {
+		// The declaration that leads an answer, which is what lets whoever is
+		// reading act on the records as they arrive.
+		q.out.Ordered()
 	}
-	return s.pending[0]
-}
-
-// finish hands the sink what ended its scope and takes it off the queue.
-func (s *appSet) finish(sink Sink, done Complete) {
-	s.mu.Lock()
-	if len(s.pending) > 0 && s.pending[0] == sink {
-		s.pending = s.pending[1:]
-	}
-	s.mu.Unlock()
-	sink.Done(done)
-}
-
-// fail ends every scope still waiting, which is what a connection that will
-// not carry the question leaves them needing.
-func (s *appSet) fail(why string) {
-	s.mu.Lock()
-	waiting := s.pending
-	s.pending = nil
-	s.mu.Unlock()
-	for _, sink := range waiting {
-		sink.Done(Complete{Error: why})
-	}
-}
-
-// withoutKey is a record's fields with the key left out, the key travelling
-// beside them rather than among them.
-func withoutKey(bag wire.Fields) wire.Fields {
-	out := make(wire.Fields, 0, len(bag))
-	for _, a := range bag {
-		if a.Name != wire.KeyField {
-			out = append(out, a)
+	if r.ID != nil {
+		// The application said which it sent, and that is passed on as it
+		// stands: this source claims nothing about the records it relays
+		// beyond what the far end claimed about them.
+		send := q.out.Subset
+		if r.Whole {
+			send = q.out.Record
 		}
+		_ = send(r.ID, r.Fields)
 	}
-	return out
+	if r.Complete != nil {
+		q.finish(*r.Complete)
+	}
+}
+
+// finish hands the sink what ended its scope, once, and lets the query go.
+//
+// The query is destroyed with it. What keeps one alive past its answer is the
+// application knowing that these records are still being held -- which is what
+// invalidation will need and nothing yet does, so for now the honest thing is
+// to say at once that they may be let go.
+func (q *appScope) finish(done Complete) {
+	q.mu.Lock()
+	if q.done {
+		q.mu.Unlock()
+		return
+	}
+	q.done = true
+	id := q.id
+	q.mu.Unlock()
+
+	q.set.src.forget(q)
+	q.out.Done(done)
+	if id != 0 {
+		_ = q.set.src.send(fmt.Sprintf("destroy %d\nend\n", id))
+	}
 }
 
 // Statements reads a run of wire text and hands each statement to Inbound,

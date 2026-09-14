@@ -25,9 +25,18 @@ import (
 // by `event`. So a record arriving for a list can never be mistaken for
 // something a subscription raised.
 const (
-	QueryVerb  = "query"  // `query 9 from={ ... } have=25 need=30`
-	ResultVerb = "result" // `result 9 record={ ... }`
-	KeyField   = "key"    // the record key, inside a field bag
+	QueryVerb  = "query"  // `new query source="files" sort={ name } count=30`
+	ResultVerb = "result" // `result 9 id=42 record={ ... }`
+
+	// IDArg carries a record's identity, beside its fields rather than among
+	// them.
+	//
+	// An identity is not a field. A record can hold a field called `key` and
+	// that field is data like any other -- it sorts, it filters, it is shown
+	// in a column -- while what names the record travels here. Keeping the two
+	// apart is what lets a reading expose a document's own keys as ordinary
+	// data without those keys becoming the identities this end works by.
+	IDArg = "id"
 
 	// What a result carries, and how much of the record it is.
 	//
@@ -39,9 +48,36 @@ const (
 	RecordArg = "record"
 	FieldsArg = "fields"
 
-	// ResultComplete ends a scope: everything for it has been sent. A result
-	// without it carries a record.
+	// ResultComplete ends a scope: everything for it has been sent.
+	//
+	// It can ride on the statement carrying the last record, and `ordered` can
+	// ride on the one carrying the first, so a scope of a single record crosses
+	// as a single line. Both forms are read; which one was written is not
+	// something either end has to care about.
 	ResultComplete = "complete"
+	WatermarkArg   = "watermark"
+	OrderedArg     = "ordered"
+	ErrorArg       = "error"
+)
+
+// A Stop is why a scope ended, which the asker cannot work out for itself.
+//
+// A scope that filled and one that ran out of records look identical from the
+// far end -- both are a run of records that stopped -- and they mean opposite
+// things about whether there is any point asking again.
+type Stop string
+
+const (
+	// StopFilled: the count was reached. There is more past the watermark.
+	StopFilled Stop = "filled"
+
+	// StopJoined: the walk reached `until`, so what the asker holds on this
+	// side and what it holds on the other are now one run.
+	StopJoined Stop = "joined"
+
+	// StopExhausted: there are no more records this way. Nothing past the end
+	// to be complete up to, so there is no watermark either.
+	StopExhausted Stop = "exhausted"
 )
 
 // The operators a filter is built from.
@@ -105,11 +141,6 @@ func (f Fields) Has(name string) bool {
 	}
 	return false
 }
-
-// Key is the record key: the field every record and every boundary carries,
-// because it is the sort's implicit last level and what makes a position mean
-// exactly one record.
-func (f Fields) Key() *Value { return f.Get(KeyField) }
 
 // Names lists the fields in the order they were written.
 func (f Fields) Names() []string {
@@ -233,46 +264,59 @@ func Levels(levels []SortLevel) []Level {
 	return out
 }
 
-// A Spec says what sequence a query names. It is stated when the query is
-// announced and restated when the display changes it, which is a new
-// generation of the same query rather than a new query.
+// A Spec says what sequence a query names: which records, in which order.
+//
+// It is stated once, when the query is made, and never again. A query is the
+// sequence it was opened with and nothing restates it -- a different filter or
+// a different sort is a different sequence, which is a different query, opened
+// alongside this one and taking its place.
 type Spec struct {
 	Source  string
 	Fields  Fields // the fields asked for; empty means whatever the record has
 	Exclude Fields // the fields not wanted, valued the same way
 	Filter  *Filter
 	Sort    []SortLevel
-
-	// Reversed walks the stated sequence from its end.
-	//
-	// Every level turns over, the one the sort does not write included: a
-	// record key settles what the named levels leave equal, and a sequence
-	// read backwards settles it backwards too. That is what makes this the
-	// exact mirror -- `sort={ size desc }` reverses one level and leaves ties
-	// in the order they were already in, which is a different sequence again.
-	//
-	// It names no field, so it is the one way to turn over a sequence whose
-	// records are read in a way that cannot name their key at all.
-	Reversed bool
 }
 
-// A Fill is one scope of the sequence, asked for.
+// A Scope is the run of records a query asks for: where to start, which way to
+// walk, how many, and where the asker's own knowledge picks up again.
 //
-// From and To are boundaries: where the display's own knowledge starts and how
-// far it runs. Both are empty at the beginning of the sequence. Have is how
-// much of the scope the display can fill from what it already holds, and Need
-// is how many rows the scope is.
+// It is not a filter and it names no field. The sequence is already decided by
+// the spec, and a scope only says which part of it to read -- so a source
+// prepares one ordering and serves every scope of it cheaply, rather than
+// preparing a new one because the reader scrolled.
 //
-// Nothing stamps it. The application's results and its replies travel one
-// ordered stream, so a scope's results are the ones between the reply that
-// accepted it and the result that completes it -- which is also what separates
-// the generation before a re-sort from the one after it.
-type Fill struct {
-	From   Fields // empty: the start of the sequence
-	To     Fields // empty: nothing is known past From
-	Have   int
-	Need   int
-	Fields Fields // the fields wanted for this scope; empty means the spec's
+// After and Until are identities, not positions. An identity means something
+// only to the source that issued it, which is why a source made of several
+// others never passes one down: it hands each of them that one's own.
+type Scope struct {
+	// After is the record to start past: the asker holds it already. Nil
+	// starts at the first record in walk order.
+	After *Value
+
+	// Until is the record to stop before: the asker holds that one too, and
+	// everything beyond it, so a walk that reaches it has joined two runs the
+	// asker held separately. Nil walks until the count is reached or the
+	// records run out.
+	Until *Value
+
+	// Count is how many records are wanted.
+	Count int
+
+	// Reversed walks the sequence from its end rather than its beginning.
+	//
+	// Every level turns over, the one the sort does not write included: an
+	// identity settles what the named levels leave equal, and a sequence read
+	// backwards settles it backwards too. That is what makes this the exact
+	// mirror -- `sort={ size desc }` turns one level over and leaves ties
+	// facing the way they were, which is a different sequence again.
+	//
+	// It belongs to the scope rather than the sequence because it costs
+	// nothing: one prepared ordering is read either way, where a reversed
+	// *sequence* would be a second ordering of the same records. And it names
+	// no field, so it is the one way to turn over a sequence whose records are
+	// read in a way that cannot name their identity at all.
+	Reversed bool
 }
 
 // ParseSpec reads a query spec from the arguments of the statement carrying
@@ -315,11 +359,6 @@ func ParseSpec(args []*Arg) (*Spec, error) {
 				return nil, fmt.Errorf("sort: %w", err)
 			}
 			s.Sort = levels
-		case "reversed":
-			if a.Value != nil {
-				return nil, fmt.Errorf("reversed: it takes no value")
-			}
-			s.Reversed = a.Flag == FlagTrue
 		}
 	}
 	return s, nil
@@ -343,58 +382,174 @@ func (s *Spec) Encode() string {
 	if len(s.Sort) > 0 {
 		parts = append(parts, "sort="+EncodeSort(s.Sort))
 	}
+	return strings.Join(parts, " ")
+}
+
+// ParseScope reads the scope off the same arguments the spec was read from.
+//
+// The two travel together -- `new query` states the sequence and asks for a run
+// of it in one statement, because nobody wants a sequence without wanting
+// records of it -- and they are read apart because they are different things
+// with different lifetimes: the spec is what the query is, and the scope is
+// what this one question wanted.
+func ParseScope(args []*Arg) (*Scope, error) {
+	s := &Scope{}
+	for _, a := range args {
+		switch a.Name {
+		case "count":
+			if a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt {
+				return nil, fmt.Errorf("count: expected a whole number")
+			}
+			if a.Value.Int < 0 {
+				return nil, fmt.Errorf("count: %d records is not a number of records", a.Value.Int)
+			}
+			s.Count = int(a.Value.Int)
+		case "after", "until":
+			if a.Value == nil {
+				return nil, fmt.Errorf("%s: expected an identity", a.Name)
+			}
+			if a.Value.Kind == BlockValue {
+				return nil, fmt.Errorf("%s: an identity is a value, not a block", a.Name)
+			}
+			if a.Name == "after" {
+				s.After = a.Value
+			} else {
+				s.Until = a.Value
+			}
+		case "reversed":
+			if a.Value != nil {
+				return nil, fmt.Errorf("reversed: it takes no value")
+			}
+			s.Reversed = a.Flag == FlagTrue
+		}
+	}
+	return s, nil
+}
+
+// Encode renders the scope as the arguments that carry it.
+func (s *Scope) Encode() string {
+	var parts []string
+	if s.After != nil {
+		parts = append(parts, "after="+EncodeValue(s.After))
+	}
+	if s.Until != nil {
+		parts = append(parts, "until="+EncodeValue(s.Until))
+	}
+	parts = append(parts, fmt.Sprintf("count=%d", s.Count))
 	if s.Reversed {
 		parts = append(parts, "reversed")
 	}
 	return strings.Join(parts, " ")
 }
 
-// ParseFill reads a fill request from the arguments after the question word.
-func ParseFill(args []*Arg) (*Fill, error) {
-	f := &Fill{}
+// A Complete ends a scope: which of the three ways it ended, and how far the
+// answer is complete.
+//
+// Watermark says there is nothing between where the scope was asked from and
+// that record that the asker does not now have. StopExhausted carries none,
+// because there is no point past the end to be complete up to.
+type Complete struct {
+	Watermark *Value
+	Stop      Stop
+
+	// Error is a refusal, which is an answer: this scope cannot be produced,
+	// the records are gone, the connection carrying the question broke.
+	// Whoever asked carries on with what it has.
+	Error string
+}
+
+// A Result is one `result` statement taken apart: the order declaration, a
+// record, and the terminator, any of which may be absent.
+//
+// All three can ride on one statement. `ordered` is worth saying only before
+// the first record, and the terminator only after the last, so an answer of one
+// record carries all three and crosses as a single line. Which form was written
+// is not something either end has to care about: a reader takes them in that
+// order -- order, then record, then end -- whichever statement they arrived on.
+type Result struct {
+	Ordered  bool
+	ID       *Value // the record's identity; nil where no record rides here
+	Fields   Fields
+	Whole    bool // `record=` rather than `fields=`
+	Complete *Complete
+}
+
+// ParseResult reads a result from the arguments after the query id.
+func ParseResult(args []*Arg) (*Result, error) {
+	r := &Result{}
+	var done Complete
+	ended := false
 	for _, a := range args {
 		switch a.Name {
-		case "have", "need":
-			if a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt {
-				return nil, fmt.Errorf("%s: expected a whole number", a.Name)
+		case OrderedArg:
+			r.Ordered = true
+		case IDArg:
+			if a.Value == nil || a.Value.Kind == BlockValue {
+				return nil, fmt.Errorf("id: expected an identity")
 			}
-			if a.Name == "have" {
-				f.Have = int(a.Value.Int)
-			} else {
-				f.Need = int(a.Value.Int)
-			}
-		case "from", "to", "fields":
+			r.ID = a.Value
+		case RecordArg, FieldsArg:
 			bag, err := ParseFields(a.Value)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", a.Name, err)
 			}
-			switch a.Name {
-			case "from":
-				f.From = bag
-			case "to":
-				f.To = bag
-			case "fields":
-				f.Fields = bag
+			r.Fields = bag
+			r.Whole = a.Name == RecordArg
+		case ResultComplete:
+			ended = true
+		case WatermarkArg:
+			if a.Value == nil || a.Value.Kind == BlockValue {
+				return nil, fmt.Errorf("watermark: expected an identity")
 			}
+			done.Watermark = a.Value
+			ended = true
+		case ErrorArg:
+			if a.Value == nil || a.Value.Kind != StringValue {
+				return nil, fmt.Errorf("error: expected a message")
+			}
+			done.Error = a.Value.Str
+			ended = true
+		case string(StopFilled), string(StopJoined), string(StopExhausted):
+			done.Stop = Stop(a.Name)
+			ended = true
 		}
 	}
-	return f, nil
+	if r.Fields != nil && r.ID == nil {
+		return nil, fmt.Errorf("a record carries an identity; this one has none")
+	}
+	if ended {
+		r.Complete = &done
+	}
+	return r, nil
 }
 
-// Encode renders the fill as the arguments after the question word.
-func (f *Fill) Encode() string {
-	var parts []string
-	if len(f.From) > 0 {
-		parts = append(parts, "from="+f.From.Encode())
+// Args renders the result as the arguments after the query id.
+func (r *Result) Args() []*Arg {
+	var out []*Arg
+	if r.Ordered {
+		out = append(out, &Arg{Name: OrderedArg, Flag: FlagTrue})
 	}
-	if len(f.To) > 0 {
-		parts = append(parts, "to="+f.To.Encode())
+	if r.ID != nil {
+		out = append(out, &Arg{Name: IDArg, Value: r.ID})
+		what := FieldsArg
+		if r.Whole {
+			what = RecordArg
+		}
+		out = append(out, &Arg{Name: what, Value: r.Fields.Block()})
 	}
-	parts = append(parts, fmt.Sprintf("have=%d", f.Have), fmt.Sprintf("need=%d", f.Need))
-	if len(f.Fields) > 0 {
-		parts = append(parts, "fields="+f.Fields.Encode())
+	if c := r.Complete; c != nil {
+		out = append(out, &Arg{Name: ResultComplete, Flag: FlagTrue})
+		if c.Watermark != nil {
+			out = append(out, &Arg{Name: WatermarkArg, Value: c.Watermark})
+		}
+		if c.Stop != "" {
+			out = append(out, &Arg{Name: string(c.Stop), Flag: FlagTrue})
+		}
+		if c.Error != "" {
+			out = append(out, Named(ErrorArg, c.Error))
+		}
 	}
-	return strings.Join(parts, " ")
+	return out
 }
 
 // ParseFilter reads a filter tree from a block value. A block is an AND.

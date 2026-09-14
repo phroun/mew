@@ -97,31 +97,38 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		// one statement, because a display never wants one without the other.
 		`<- hello version=1 app="queryapp"`,
 		`-> welcome version=1`,
-		`-> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } have=0 need=3`,
+		`-> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } count=3`,
 		// The application names it, and the reply carries the name before
 		// anything that uses it.
 		"<- reply q=1",
 		// The order is declared before the records, which is the only place a
-		// reader can act on it.
-		"<- result 1 ordered",
-		`<- result 1 record={ key 2; name "build.sh"; size 310 }`,
-		`<- result 1 complete watermark={ name "README.md"; key 1 }`,
-		// A second scope from where the first stopped. file2 before file10 is
-		// the natural collation the sort asked for.
-		`-> query 1 from={ key 1; name "README.md"; size 2048 } have=0 need=3`,
-		`<- result 1 record={ key 6; name "src/file2.go"; size 1200 }`,
-		`<- result 1 record={ key 7; name "src/file10.go"; size 880 }`,
+		// reader can act on it -- so it rides on the first of them.
+		`<- result 1 ordered id=2 record={ name "build.sh"; size 310 }`,
+		// And the terminator rides on the last, which is what makes a scope of
+		// three records three statements.
+		`<- result 1 id=1 record={ name "README.md"; size 2048 } complete watermark=1 filled`,
+		// A second scope from where the first stopped -- a query of its own,
+		// because a query is asked once and answered once. It names the record
+		// to carry on past and nothing else: where that record stands is the
+		// application's own business. file2 before file10 is the natural
+		// collation the sort asked for.
+		`-> n=new query source="files" filter={ not { starts name "." } } sort={ name natural } after=1 count=3`,
+		"<- reply n=2",
+		`<- result 2 ordered id=6 record={ name "src/file2.go"; size 1200 }`,
+		`<- result 2 id=7 record={ name "src/file10.go"; size 880 }`,
+		// The one it carried on from is let go, the records it answered with
+		// being held here now.
+		"-> destroy 1",
 		// A different sort is a different query, named in its own right -- and
 		// opened before the one it replaces is let go, so the source stays in
 		// use while the reader moves across.
-		`-> r=new query source="files" sort={ size desc } have=0 need=3`,
-		"<- reply r=2",
-		`<- result 2 record={ key 4; name "src/parser.go"; size 14022 }`,
-		`<- result 2 complete watermark={ size 6100; key 8 }`,
-		"-> destroy 1",
+		`-> r=new query source="files" sort={ size desc } count=3`,
+		"<- reply r=3",
+		`<- result 3 ordered id=4 record={ name "src/parser.go"; size 14022 }`,
+		"-> destroy 2",
 		// And letting the last one go, which is how the application learns
 		// every reader has finished.
-		"-> destroy 2",
+		"-> destroy 3",
 	})
 }
 
@@ -130,10 +137,9 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 	trace := converse(t, "-source", "colours", "-need", "2")
 	inOrder(t, trace, []string{
-		`-> q=new query source="colours" sort={ name natural } have=0 need=2`,
-		`<- result 1 record={ key 0; name "amber" }`,
-		`<- result 1 record={ key 4; name "vermilion" }`,
-		"<- result 1 complete exhausted",
+		`-> q=new query source="colours" sort={ name natural } count=2`,
+		`<- result 1 id=0 record={ name "amber" }`,
+		`<- result 1 id=4 record={ name "vermilion" } complete exhausted`,
 	})
 	// It said nothing about order, which is what leaves the display to sort.
 	if strings.Contains(trace, "result 1 ordered") {
@@ -141,7 +147,7 @@ func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 	}
 	// Five records for a scope of two: the display asked for a scope and got
 	// a superset, which is correct.
-	if n := strings.Count(trace, "<- result 1 record="); n != 5 {
+	if n := strings.Count(trace, "<- result 1 id="); n != 5 {
 		t.Errorf("it sent %d records, want all 5", n)
 	}
 }

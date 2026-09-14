@@ -51,7 +51,7 @@ func fromPSL(path, reading, query string, raw bool) {
 // run drives the source through the statements the file holds, which are the
 // ones a display would have sent.
 func run(src source.Source, script *wire.Script, out *printer) error {
-	var set source.ResultSet
+	var set source.DataSet
 	defer func() {
 		if set != nil {
 			set.Close()
@@ -111,12 +111,12 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 
 // scope draws one and writes it out as the statements it would have crossed
 // as, so what is printed comes off the wire language either way.
-func scope(set source.ResultSet, args []*wire.Arg, out *printer) error {
-	f, err := wire.ParseFill(args)
+func scope(set source.DataSet, args []*wire.Arg, out *printer) error {
+	sc, err := wire.ParseScope(args)
 	if err != nil {
 		return err
 	}
-	return set.Fill(f, &results{out: out})
+	return set.Read(sc, &results{out: out})
 }
 
 // results writes each record as the result statement that carries one, and the
@@ -124,39 +124,32 @@ func scope(set source.ResultSet, args []*wire.Arg, out *printer) error {
 type results struct{ out *printer }
 
 // Ordered leads the answer, in the spelling the wire leads one with.
-func (r *results) Ordered() { r.out.take(result(&wire.Arg{Name: "ordered", Flag: wire.FlagTrue})) }
+func (r *results) Ordered() {
+	r.out.take(result((&wire.Result{Ordered: true}).Args()...))
+}
 
 func (r *results) Done(done source.Complete) { r.out.take(terminator(done)) }
 
 // Record and Subset write a record out under the word that says how much of it
 // came back: `record` for every field it has, `fields` for the ones this
 // scope asked for.
-func (r *results) Record(key *wire.Value, fields wire.Fields) error {
-	return r.write(wire.RecordArg, key, fields)
+func (r *results) Record(id *wire.Value, fields wire.Fields) error {
+	return r.write(true, id, fields)
 }
 
-func (r *results) Subset(key *wire.Value, fields wire.Fields) error {
-	return r.write(wire.FieldsArg, key, fields)
+func (r *results) Subset(id *wire.Value, fields wire.Fields) error {
+	return r.write(false, id, fields)
 }
 
-func (r *results) write(what string, key *wire.Value, fields wire.Fields) error {
-	bag := make(wire.Fields, 0, len(fields)+1)
-	bag = append(bag, &wire.Arg{Name: wire.KeyField, Value: key})
-	bag = append(bag, fields...)
-	r.out.take(result(&wire.Arg{Name: what, Value: bag.Block()}))
+func (r *results) write(whole bool, id *wire.Value, fields wire.Fields) error {
+	rec := &wire.Result{ID: id, Fields: fields, Whole: whole}
+	r.out.take(result(rec.Args()...))
 	return nil
 }
 
 // terminator is what ends the scope, in the spelling the wire ends one with.
 func terminator(done source.Complete) string {
-	args := []*wire.Arg{{Name: wire.ResultComplete, Flag: wire.FlagTrue}}
-	switch {
-	case done.Exhausted:
-		args = append(args, &wire.Arg{Name: "exhausted", Flag: wire.FlagTrue})
-	case len(done.Watermark) > 0:
-		args = append(args, &wire.Arg{Name: "watermark", Value: done.Watermark.Block()})
-	}
-	return result(args...)
+	return result((&wire.Result{Complete: &done}).Args()...)
 }
 
 // result builds one result statement. Everything here is one query, so it is

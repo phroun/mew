@@ -42,11 +42,11 @@ func twoIncludes(t *testing.T) *ComposedSource {
 // Every include's records are in the outer sequence, each under a key of its
 // own: the include's name, a slash, and the child's key.
 func TestEveryIncludesRecordsAreInTheSequence(t *testing.T) {
-	out, done := read(t, twoIncludes(t), "", "have=0 need=10")
+	out, done := read(t, twoIncludes(t), "", "count=10")
 	if out.joined() != "(left/0),(left/1),(left/note),(right/0),(right/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
-	if !done.Exhausted {
+	if done.Stop != wire.StopExhausted {
 		t.Error("a scope holding every record did not say so")
 	}
 }
@@ -58,7 +58,7 @@ func TestTwoIncludesKeyedAlikeDoNotCollide(t *testing.T) {
 		Include{Name: "one", Source: mustPSL(t, rightDoc)},
 		Include{Name: "two", Source: mustPSL(t, rightDoc)})
 
-	out, _ := read(t, c, "", "have=0 need=10")
+	out, _ := read(t, c, "", "count=10")
 	if out.joined() != "(one/0),(one/1),(two/0),(two/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -69,11 +69,11 @@ func TestTwoIncludesKeyedAlikeDoNotCollide(t *testing.T) {
 
 // The query's own sort comes first, and the includes interleave under it.
 func TestTheIncludesInterleaveUnderTheSort(t *testing.T) {
-	out, _ := read(t, twoIncludes(t), "sort={ .size }", "have=0 need=10")
+	out, _ := read(t, twoIncludes(t), "sort={ .size }", "count=10")
 	if out.joined() != "(left/note),(left/0),(right/0),(left/1),(right/1)" {
 		t.Errorf("by size the sequence is %s", out.joined())
 	}
-	if got := out.fields[2].Encode(); got != `{ .name "beta"; .size 40 }` {
+	if got := out.fields[2].Encode(); got != `{ key 0; .name "beta"; .size 40 }` {
 		t.Errorf("the third record carries %s", got)
 	}
 }
@@ -96,7 +96,7 @@ func TestAnIncludeKeepsItsOwnOrder(t *testing.T) {
 	b.WriteString(")")
 
 	c := composed(t, Include{Name: "many", Source: mustPSL(t, b.String())})
-	out, _ := read(t, c, "", "have=0 need=20")
+	out, _ := read(t, c, "", "count=20")
 	want := "(many/0),(many/1),(many/2),(many/3),(many/4),(many/5)," +
 		"(many/6),(many/7),(many/8),(many/9),(many/10)"
 	if out.joined() != want {
@@ -108,30 +108,37 @@ func TestAnIncludeKeepsItsOwnOrder(t *testing.T) {
 // stopped.
 func TestAScopeOfAComposedSourceCarriesOn(t *testing.T) {
 	c := twoIncludes(t)
-	first, done := read(t, c, "sort={ .size }", "have=0 need=2")
+	seq := opened(t, c, "sort={ .size }")
+	first, done := seq.scope("count=2")
 	if first.joined() != "(left/note),(left/0)" {
 		t.Fatalf("the first scope is %s", first.joined())
 	}
-	if done.Exhausted {
+	if done.Stop == wire.StopExhausted {
 		t.Error("a scope with records past it claimed to be exhausted")
 	}
 
-	next, done := read(t, c, "sort={ .size }",
-		"from="+done.Watermark.Encode()+" have=0 need=10")
+	next, done := seq.scope("after=" + wire.EncodeValue(done.Watermark) + " count=10")
 	if next.joined() != "(right/0),(left/1),(right/1)" {
 		t.Errorf("the rest is %s", next.joined())
 	}
-	if !done.Exhausted {
+	if done.Stop != wire.StopExhausted {
 		t.Error("the end of the sequence did not say so")
 	}
 }
 
-// The boundary names one include, and the others are asked from the start of
-// that sort value rather than being skipped: what they send that the boundary
-// already covered is dropped here.
-func TestABoundaryInOneIncludeDoesNotSkipTheOthers(t *testing.T) {
+// Resuming after a record of one include carries on in all of them.
+//
+// None of them is shown the outer identity, which would mean nothing to it.
+// Each is resumed from the last record it gave -- its own high watermark -- and
+// that is the same place in the merged sequence.
+func TestResumingInOneIncludeCarriesOnInTheOthers(t *testing.T) {
 	c := twoIncludes(t)
-	out, _ := read(t, c, "", `from={ key (left/0) } have=0 need=10`)
+	seq := opened(t, c, "")
+	first, _ := seq.scope("count=1")
+	if first.joined() != "(left/0)" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	out, _ := seq.scope("after=(left/0) count=10")
 	if out.joined() != "(left/1),(left/note),(right/0),(right/1)" {
 		t.Errorf("the scope after left/0 is %s", out.joined())
 	}
@@ -140,7 +147,7 @@ func TestABoundaryInOneIncludeDoesNotSkipTheOthers(t *testing.T) {
 // Order is claimed only when every include promised it, and it is claimed
 // before the records, which is the only place it is worth anything.
 func TestOrderIsClaimedOnlyWhenEveryIncludePromisedIt(t *testing.T) {
-	ordered, _ := read(t, twoIncludes(t), "sort={ .size }", "have=0 need=10")
+	ordered, _ := read(t, twoIncludes(t), "sort={ .size }", "count=10")
 	if !ordered.ordered {
 		t.Error("includes that were all in order made an answer that was not")
 	}
@@ -148,7 +155,7 @@ func TestOrderIsClaimedOnlyWhenEveryIncludePromisedIt(t *testing.T) {
 	c := composed(t,
 		Include{Name: "left", Source: mustPSL(t, leftDoc)},
 		Include{Name: "right", Source: &jumbled{inner: mustPSL(t, rightDoc)}})
-	mixed, _ := read(t, c, "sort={ .size }", "have=0 need=10")
+	mixed, _ := read(t, c, "sort={ .size }", "count=10")
 	if mixed.ordered {
 		t.Error("one include saying nothing about order still made an ordered answer")
 	}
@@ -169,15 +176,15 @@ func TestTheWatermarkIsTheLowestOfTheIncludes(t *testing.T) {
 		Include{Name: "left", Source: &short{inner: mustPSL(t, leftDoc)}},
 		Include{Name: "right", Source: &short{inner: mustPSL(t, rightDoc)}})
 
-	out, done := read(t, c, "sort={ .size }", "have=0 need=10")
+	out, done := read(t, c, "sort={ .size }", "count=10")
 	if out.joined() != "(left/note),(right/0)" {
 		t.Fatalf("the scope is %s", out.joined())
 	}
-	if done.Exhausted {
+	if done.Stop == wire.StopExhausted {
 		t.Fatal("includes that had more claimed the sequence was over")
 	}
 	// left swept to size 5 and right to size 40. Only 5 is true of both.
-	if got := done.Watermark.Encode(); got != `{ .size 5; key (left/note) }` {
+	if got := wire.EncodeValue(done.Watermark); got != `(left/note)` {
 		t.Errorf("the watermark is %s", got)
 	}
 }
@@ -194,7 +201,11 @@ func TestRecordsTheBoundaryAlreadyCoveredAreDropped(t *testing.T) {
 		Include{Name: "all", Source: &ignoresBoundaries{inner: mustPSL(t, leftDoc)}},
 		Include{Name: "other", Source: mustPSL(t, rightDoc)})
 
-	out, _ := read(t, c, "", `from={ key (all/0) } have=0 need=10`)
+	seq := opened(t, c, "")
+	if first, _ := seq.scope("count=1"); first.joined() != "(all/0)" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	out, _ := seq.scope("after=(all/0) count=10")
 	if out.joined() != "(all/1),(all/note),(other/0),(other/1)" {
 		t.Errorf("the scope after all/0 is %s", out.joined())
 	}
@@ -204,7 +215,7 @@ func TestRecordsTheBoundaryAlreadyCoveredAreDropped(t *testing.T) {
 // asked from, which is the least an implementation can do and is legal.
 type ignoresBoundaries struct{ inner Source }
 
-func (e *ignoresBoundaries) Open(spec *wire.Spec) (ResultSet, error) {
+func (e *ignoresBoundaries) Open(spec *wire.Spec) (DataSet, error) {
 	set, err := e.inner.Open(spec)
 	if err != nil {
 		return nil, err
@@ -212,15 +223,15 @@ func (e *ignoresBoundaries) Open(spec *wire.Spec) (ResultSet, error) {
 	return &everythingSet{inner: set}, nil
 }
 
-type everythingSet struct{ inner ResultSet }
+type everythingSet struct{ inner DataSet }
 
 func (e *everythingSet) Close() { e.inner.Close() }
 
-func (e *everythingSet) Fill(f *wire.Fill, out Sink) error {
+func (e *everythingSet) Read(f *wire.Scope, out Sink) error {
 	whole := *f
-	whole.From, whole.To, whole.Have = nil, nil, 0
-	whole.Need = 1 << 20
-	return e.inner.Fill(&whole, out)
+	whole.After, whole.Until = nil, nil
+	whole.Count = 1 << 20
+	return e.inner.Read(&whole, out)
 }
 
 // A composed source inside a composed source resumes from a boundary of its
@@ -234,21 +245,54 @@ func TestANestedComposedSourceResumes(t *testing.T) {
 			Include{Name: "nested", Source: inner})
 	}
 
-	first, done := read(t, nested(), "", "have=0 need=4")
+	seq := opened(t, nested(), "")
+	first, done := seq.scope("count=4")
 	if first.joined() != "(flat/0),(flat/1),(flat/note),(nested/deep/0)" {
 		t.Fatalf("the first scope is %s", first.joined())
 	}
-	if done.Exhausted {
+	if done.Stop == wire.StopExhausted {
 		t.Fatal("a scope with a record past it claimed to be exhausted")
 	}
 
-	next, done := read(t, nested(), "",
-		"from="+done.Watermark.Encode()+" have=0 need=10")
+	next, done := seq.scope("after=" + wire.EncodeValue(done.Watermark) + " count=10")
 	if next.joined() != "(nested/deep/1)" {
 		t.Errorf("the rest is %s", next.joined())
 	}
-	if !done.Exhausted {
+	if done.Stop != wire.StopExhausted {
 		t.Error("the end of the sequence did not say so")
+	}
+}
+
+// A sequence is the source, the sort and the filter -- not the reading of it.
+//
+// A reader may let one data set go and open another over the same three
+// between two scopes, and the second is the same sequence: the record the first
+// handed out is still placed, and the scope after it carries on where the other
+// stopped. That is why what places a record is kept beside the ordering it was
+// placed in rather than on whoever happened to be reading.
+func TestASequenceResumesThroughADifferentReading(t *testing.T) {
+	c := twoIncludes(t)
+
+	first, done := opened(t, c, "sort={ .size }").scope("count=3")
+	if first.joined() != "(left/note),(left/0),(right/0)" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+
+	// A second data set over the same sequence, the first one let go.
+	next, done := opened(t, c, "sort={ .size }").scope(
+		"after=" + wire.EncodeValue(done.Watermark) + " count=9")
+	if next.joined() != "(left/1),(right/1)" {
+		t.Errorf("the rest is %s", next.joined())
+	}
+	if done.Stop != wire.StopExhausted {
+		t.Error("the end of the sequence did not say so")
+	}
+
+	// A different sequence is a different one, and has never placed it.
+	other, done := opened(t, c, "sort={ .name }").scope(
+		"after=" + wire.EncodeValue(first.done.Watermark) + " count=9")
+	if done.Error == "" {
+		t.Errorf("another sequence resumed from it anyway: %s", other.joined())
 	}
 }
 
@@ -262,24 +306,24 @@ func TestANestedComposedSourceResumes(t *testing.T) {
 // it, and it says the position of the last record that actually went out
 // rather than how far the includes had swept.
 func TestAScopeThatFilledIsNotTheEndOfTheSequence(t *testing.T) {
-	out, done := read(t, twoIncludes(t), "sort={ .size }", "have=0 need=3")
+	seq := opened(t, twoIncludes(t), "sort={ .size }")
+	out, done := seq.scope("count=3")
 	if out.joined() != "(left/note),(left/0),(right/0)" {
 		t.Fatalf("the scope is %s", out.joined())
 	}
-	if done.Exhausted {
+	if done.Stop == wire.StopExhausted {
 		t.Error("a scope with two records still to come said there were none")
 	}
-	if got := done.Watermark.Encode(); got != "{ .size 40; key (right/0) }" {
+	if got := wire.EncodeValue(done.Watermark); got != "(right/0)" {
 		t.Errorf("the watermark is %s", got)
 	}
 
 	// And the next scope picks up exactly the two that were held.
-	next, done := read(t, twoIncludes(t), "sort={ .size }",
-		"from="+done.Watermark.Encode()+" have=0 need=9")
+	next, done := seq.scope("after=" + wire.EncodeValue(done.Watermark) + " count=9")
 	if next.joined() != "(left/1),(right/1)" {
 		t.Errorf("the rest is %s", next.joined())
 	}
-	if !done.Exhausted {
+	if done.Stop != wire.StopExhausted {
 		t.Error("the end of the sequence did not say so")
 	}
 }
@@ -288,7 +332,7 @@ func TestAScopeThatFilledIsNotTheEndOfTheSequence(t *testing.T) {
 // which every application is free to do.
 type short struct{ inner Source }
 
-func (s *short) Open(spec *wire.Spec) (ResultSet, error) {
+func (s *short) Open(spec *wire.Spec) (DataSet, error) {
 	set, err := s.inner.Open(spec)
 	if err != nil {
 		return nil, err
@@ -297,14 +341,14 @@ func (s *short) Open(spec *wire.Spec) (ResultSet, error) {
 }
 
 type shortSet struct {
-	inner ResultSet
+	inner DataSet
 	sort  []wire.SortLevel
 }
 
 func (s *shortSet) Close() { s.inner.Close() }
 
-func (s *shortSet) Fill(f *wire.Fill, out Sink) error {
-	return s.inner.Fill(f, &stopAfterOne{out: out, sort: s.sort})
+func (s *shortSet) Read(f *wire.Scope, out Sink) error {
+	return s.inner.Read(f, &stopAfterOne{out: out, sort: s.sort})
 }
 
 type stopAfterOne struct {
@@ -337,15 +381,10 @@ func (s *stopAfterOne) keep(k *wire.Value, f wire.Fields, whole bool) error {
 	return s.out.Subset(k, f)
 }
 
-// Done says where it got to: the sort fields of the one record it sent, and
-// its key, which is what a boundary is made of.
+// Done says where it got to: the one record it sent, which is the only one it
+// is in a position to claim.
 func (s *stopAfterOne) Done(Complete) {
-	mark := make(wire.Fields, 0, len(s.sort)+1)
-	for _, l := range s.sort {
-		mark = append(mark, &wire.Arg{Name: l.Field, Value: s.fields.Get(l.Field)})
-	}
-	mark = append(mark, wire.Named(wire.KeyField, s.key))
-	s.out.Done(Complete{Watermark: mark})
+	s.out.Done(Complete{Stop: wire.StopFilled, Watermark: s.key})
 }
 
 // An include that refuses ends the scope here too, rather than leaving whoever
@@ -363,7 +402,7 @@ func TestAnIncludeThatRefusesEndsTheScope(t *testing.T) {
 	defer set.Close()
 
 	out := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=10"), out); err != nil {
+	if err := set.Read(parseScope(t, "count=10"), out); err != nil {
 		t.Fatal(err)
 	}
 	if !out.ended || !strings.Contains(out.done.Error, "broken") {
@@ -385,8 +424,8 @@ func TestItComposesAnyKind(t *testing.T) {
 		Include{Name: "nested", Source: inner},
 		Include{Name: "amended", Source: amended})
 
-	out, done := read(t, c, "", "have=0 need=30")
-	if !done.Exhausted {
+	out, done := read(t, c, "", "count=30")
+	if done.Stop != wire.StopExhausted {
 		t.Error("the end of the sequence did not say so")
 	}
 	// The nested source's own composed keys arrive whole and are prefixed
@@ -413,7 +452,7 @@ func TestAnIncludesClaimIsPassedThrough(t *testing.T) {
 		Include{Name: "whole", Source: mustPSL(t, rightDoc)},
 		Include{Name: "part", Source: hosting(t, serveSubsets)})
 
-	out, _ := read(t, c, "", "have=0 need=30")
+	out, _ := read(t, c, "", "count=30")
 	for i, k := range out.keys {
 		want := strings.HasPrefix(k, "(whole/")
 		if out.whole[i] != want {
@@ -426,20 +465,21 @@ func TestAnIncludesClaimIsPassedThrough(t *testing.T) {
 // a position in it, and the next scope carries on from there.
 func TestAReversedSequenceCarriesOn(t *testing.T) {
 	c := twoIncludes(t)
-	first, done := read(t, c, "reversed", "have=0 need=2")
+	seq := opened(t, c, "")
+	first, done := seq.scope("count=2 reversed")
 	if first.joined() != "(right/1),(right/0)" {
 		t.Fatalf("the first scope is %s", first.joined())
 	}
-	if done.Exhausted {
+	if done.Stop == wire.StopExhausted {
 		t.Fatal("a scope with records past it claimed to be exhausted")
 	}
 
-	next, done := read(t, c, "reversed",
-		"from="+done.Watermark.Encode()+" have=0 need=10")
+	next, done := seq.scope(
+		"after=" + wire.EncodeValue(done.Watermark) + " count=10 reversed")
 	if next.joined() != "(left/note),(left/1),(left/0)" {
 		t.Errorf("the rest is %s", next.joined())
 	}
-	if !done.Exhausted {
+	if done.Stop != wire.StopExhausted {
 		t.Error("the end of the sequence did not say so")
 	}
 }
@@ -456,7 +496,7 @@ func TestAnIDFilterReachesOneInclude(t *testing.T) {
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: right})
 
-	out, _ := read(t, c, `filter={ id (left/1) }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ id (left/1) }`, "count=10")
 	if out.joined() != "(left/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -482,7 +522,7 @@ func TestAnIDFilterReachesARecordKeyedByName(t *testing.T) {
 	left := &spy{inner: mustPSL(t, leftDoc)}
 	c := composed(t, Include{Name: "left", Source: left})
 
-	out, _ := read(t, c, `filter={ id (left/note) }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ id (left/note) }`, "count=10")
 	if out.joined() != "(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -500,7 +540,7 @@ func TestAnIDSetReachesEveryIncludeItNames(t *testing.T) {
 		Include{Name: "right", Source: right},
 		Include{Name: "other", Source: other})
 
-	out, _ := read(t, c, `filter={ id (left/1) (right/0) }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ id (left/1) (right/0) }`, "count=10")
 	if out.joined() != "(left/1),(right/0)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -520,11 +560,11 @@ func TestAnIDFilterThatNamesNoIncludeIsEmpty(t *testing.T) {
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: right})
 
-	out, done := read(t, c, `filter={ id (nobody/1) }`, "have=0 need=10")
+	out, done := read(t, c, `filter={ id (nobody/1) }`, "count=10")
 	if len(out.keys) != 0 {
 		t.Errorf("records came back for a name no include has: %v", out.keys)
 	}
-	if !done.Exhausted {
+	if done.Stop != wire.StopExhausted {
 		t.Error("an empty sequence did not say it was over")
 	}
 	if left.opened || right.opened {
@@ -541,7 +581,7 @@ func TestAFilterOnIdentityAndAFieldKeepsBoth(t *testing.T) {
 		Include{Name: "right", Source: mustPSL(t, rightDoc)})
 
 	out, _ := read(t, c,
-		`filter={ lt .size 100; id (left/0) (left/note) }`, "have=0 need=10")
+		`filter={ lt .size 100; id (left/0) (left/note) }`, "count=10")
 	if out.joined() != "(left/0),(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -560,7 +600,7 @@ func TestKeyIsAnOrdinaryFieldName(t *testing.T) {
 
 	// Under Whole a PSL source exposes its own key under that name, so this
 	// asks each include about ITS key, not about the identity this source made.
-	out, _ := read(t, c, `filter={ eq key 1 }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ eq key 1 }`, "count=10")
 	if out.joined() != "(left/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -599,7 +639,7 @@ func TestAskingEveryIncludeDoesNotWait(t *testing.T) {
 	defer set.Close()
 
 	out := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=30"), out); err != nil {
+	if err := set.Read(parseScope(t, "count=30"), out); err != nil {
 		t.Fatal(err)
 	}
 	if len(out.keys) != 7 || !out.ended {
@@ -628,7 +668,7 @@ func TestOnlyWhatIsOutOfStepIsHeld(t *testing.T) {
 	defer set.Close()
 
 	out := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=10"), out); err != nil {
+	if err := set.Read(parseScope(t, "count=10"), out); err != nil {
 		t.Fatal(err)
 	}
 	if len(out.keys) != 0 {
@@ -652,7 +692,7 @@ type withheld struct {
 	held  []func()
 }
 
-func (w *withheld) Open(spec *wire.Spec) (ResultSet, error) {
+func (w *withheld) Open(spec *wire.Spec) (DataSet, error) {
 	set, err := w.inner.Open(spec)
 	if err != nil {
 		return nil, err
@@ -672,14 +712,14 @@ func (w *withheld) let() {
 
 type withheldSet struct {
 	src   *withheld
-	inner ResultSet
+	inner DataSet
 }
 
 func (s *withheldSet) Close() { s.inner.Close() }
 
-func (s *withheldSet) Fill(f *wire.Fill, out Sink) error {
+func (s *withheldSet) Read(f *wire.Scope, out Sink) error {
 	s.src.mu.Lock()
-	s.src.held = append(s.src.held, func() { _ = s.inner.Fill(f, out) })
+	s.src.held = append(s.src.held, func() { _ = s.inner.Read(f, out) })
 	s.src.mu.Unlock()
 	return nil
 }
@@ -696,11 +736,10 @@ func TestEveryIncludeIsAskedForTheWholeShortfall(t *testing.T) {
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: right})
 
-	read(t, c, "sort={ .size }", "have=2 need=5")
+	read(t, c, "sort={ .size }", "count=5")
 	for _, s := range []*spy{left, right} {
-		if s.asked.Need != 3 || s.asked.Have != 0 {
-			t.Errorf("an include was asked have=%d need=%d, want 0 and 3",
-				s.asked.Have, s.asked.Need)
+		if s.asked.Count != 5 {
+			t.Errorf("an include was asked for %d, want the whole 5", s.asked.Count)
 		}
 	}
 }
@@ -708,12 +747,12 @@ func TestEveryIncludeIsAskedForTheWholeShortfall(t *testing.T) {
 // spy is a source that keeps the request it was given.
 type spy struct {
 	inner  Source
-	asked  *wire.Fill
+	asked  *wire.Scope
 	spec   *wire.Spec
 	opened bool
 }
 
-func (s *spy) Open(spec *wire.Spec) (ResultSet, error) {
+func (s *spy) Open(spec *wire.Spec) (DataSet, error) {
 	set, err := s.inner.Open(spec)
 	if err != nil {
 		return nil, err
@@ -724,14 +763,14 @@ func (s *spy) Open(spec *wire.Spec) (ResultSet, error) {
 
 type spySet struct {
 	src   *spy
-	inner ResultSet
+	inner DataSet
 }
 
 func (s *spySet) Close() { s.inner.Close() }
 
-func (s *spySet) Fill(f *wire.Fill, out Sink) error {
+func (s *spySet) Read(f *wire.Scope, out Sink) error {
 	s.src.asked = f
-	return s.inner.Fill(f, out)
+	return s.inner.Read(f, out)
 }
 
 // Resuming a reversed sequence part way through one include.
@@ -747,33 +786,15 @@ func TestAReversedBoundaryFallsInsideAnInclude(t *testing.T) {
 		Include{Name: "all", Source: &ignoresBoundaries{inner: mustPSL(t, leftDoc)}},
 		Include{Name: "other", Source: &ignoresBoundaries{inner: mustPSL(t, rightDoc)}})
 
-	whole, _ := read(t, c, "reversed", "have=0 need=10")
+	seq := opened(t, c, "")
+	whole, _ := seq.scope("count=10 reversed")
 	if whole.joined() != "(other/1),(other/0),(all/note),(all/1),(all/0)" {
 		t.Fatalf("reversed, the sequence is %s", whole.joined())
 	}
 
-	out, _ := read(t, c, "reversed",
-		`from={ key (all/note) } have=0 need=10`)
+	out, _ := seq.scope("after=(all/note) count=10 reversed")
 	if out.joined() != "(all/1),(all/0)" {
 		t.Errorf("the scope after all/note is %s", out.joined())
-	}
-}
-
-// A boundary naming no key at all is not a position in this sequence.
-//
-// It says which sort value to start at and nothing about which of the records
-// there are already held, so there is nothing to drop against and whatever the
-// includes send stands. That is a superset, which is allowed; reading it as a
-// position instead would put it at one end of the order and silently cut the
-// records at the other.
-func TestABoundaryWithNoKeyDropsNothing(t *testing.T) {
-	c := composed(t,
-		Include{Name: "all", Source: &ignoresBoundaries{inner: mustPSL(t, leftDoc)}},
-		Include{Name: "other", Source: &ignoresBoundaries{inner: mustPSL(t, rightDoc)}})
-
-	out, _ := read(t, c, "reversed", `from={ .size 30 } have=0 need=10`)
-	if out.joined() != "(other/1),(other/0),(all/note),(all/1),(all/0)" {
-		t.Errorf("the sequence is %s", out.joined())
 	}
 }
 
@@ -790,7 +811,7 @@ func TestAPredicateOnAnotherFieldIsNotAnsweredHere(t *testing.T) {
 	c := composed(t, Include{Name: "left", Source: left})
 
 	out, _ := read(t, c,
-		`filter={ not { gt .size 100 }; id (left/1) }`, "have=0 need=10")
+		`filter={ not { gt .size 100 }; id (left/1) }`, "count=10")
 	if out.joined() != "(left/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -804,7 +825,7 @@ func TestAPredicateOnAnotherFieldIsNotAnsweredHere(t *testing.T) {
 // branches still pick which.
 func TestADisjunctionOnIdentityKeepsEveryBranchsIncludes(t *testing.T) {
 	out, _ := read(t, twoIncludes(t),
-		`filter={ or { id (left/1); id (right/0) } }`, "have=0 need=10")
+		`filter={ or { id (left/1); id (right/0) } }`, "count=10")
 	if out.joined() != "(left/1),(right/0)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -815,7 +836,7 @@ func TestANegationOnIdentityTakesThatRecordOut(t *testing.T) {
 	left := &spy{inner: mustPSL(t, leftDoc)}
 	c := composed(t, Include{Name: "left", Source: left})
 
-	out, _ := read(t, c, `filter={ not { id (left/1) } }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ not { id (left/1) } }`, "count=10")
 	if out.joined() != "(left/0),(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -835,7 +856,7 @@ func TestADisjunctionBranchThatAdmitsEverythingAsksNothing(t *testing.T) {
 	c := composed(t, Include{Name: "left", Source: left})
 
 	out, _ := read(t, c,
-		`filter={ or { not { id (nobody/0) }; eq .size 999 } }`, "have=0 need=10")
+		`filter={ or { not { id (nobody/0) }; eq .size 999 } }`, "count=10")
 	if out.joined() != "(left/0),(left/1),(left/note)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -869,7 +890,7 @@ func TestWhichIncludesAreWorthAsking(t *testing.T) {
 		set := composed(t,
 			Include{Name: "left", Source: left},
 			Include{Name: "right", Source: right})
-		read(t, set, c.filter, "have=0 need=10")
+		read(t, set, c.filter, "count=10")
 
 		got := []bool{left.opened, right.opened}
 		if got[0] != c.open[0] || got[1] != c.open[1] {
@@ -890,7 +911,7 @@ func TestAnIDFilterReachesThroughNesting(t *testing.T) {
 		Include{Name: "flat", Source: flat},
 		Include{Name: "nested", Source: inner})
 
-	out, _ := read(t, c, `filter={ id (nested/deep/1) }`, "have=0 need=10")
+	out, _ := read(t, c, `filter={ id (nested/deep/1) }`, "count=10")
 	if out.joined() != "(nested/deep/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}
@@ -910,11 +931,11 @@ func TestAnIDFilterReachesThroughNesting(t *testing.T) {
 // It names no field, so what goes down to every include is `reversed` as well,
 // and no include is ever asked about a key by name.
 func TestAComposedSourceReverses(t *testing.T) {
-	forward, _ := read(t, twoIncludes(t), "", "have=0 need=10")
+	forward, _ := read(t, twoIncludes(t), "", "count=10")
 	if forward.joined() != "(left/0),(left/1),(left/note),(right/0),(right/1)" {
 		t.Fatalf("forward, the sequence is %s", forward.joined())
 	}
-	mirror, _ := read(t, twoIncludes(t), "reversed", "have=0 need=10")
+	mirror, _ := read(t, twoIncludes(t), "", "count=10 reversed")
 	if mirror.joined() != "(right/1),(right/0),(left/note),(left/1),(left/0)" {
 		t.Errorf("reversed, the sequence is %s", mirror.joined())
 	}
@@ -926,7 +947,7 @@ func TestAComposedSourceReverses(t *testing.T) {
 // Under a sort of its own, the mirror is the whole sequence read backwards --
 // every level turned over, the one that settles ties included.
 func TestAComposedSourceReversesUnderASort(t *testing.T) {
-	forward, _ := read(t, twoIncludes(t), "sort={ .size }", "have=0 need=10")
+	forward, _ := read(t, twoIncludes(t), "sort={ .size }", "count=10")
 	if forward.joined() != "(left/note),(left/0),(right/0),(left/1),(right/1)" {
 		t.Fatalf("forward, the sequence is %s", forward.joined())
 	}
@@ -936,15 +957,18 @@ func TestAComposedSourceReversesUnderASort(t *testing.T) {
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: right})
 
-	mirror, _ := read(t, c, "sort={ .size } reversed", "have=0 need=10")
+	mirror, _ := read(t, c, "sort={ .size }", "count=10 reversed")
 	if mirror.joined() != "(right/1),(left/1),(right/0),(left/0),(left/note)" {
 		t.Errorf("reversed, the sequence is %s", mirror.joined())
 	}
-	// What is asked of an include is the mirror of what is wanted, and
-	// reversing it lands on the sequence this source is after.
+	// The direction goes down with the scope, not with the sequence: an
+	// include prepares one ordering and is asked to walk it backwards.
 	for _, s := range []*spy{left, right} {
-		if got := wire.EncodeSort(s.spec.Sort); got != "{ .size }" || !s.spec.Reversed {
-			t.Errorf("an include was asked sort=%s reversed=%v", got, s.spec.Reversed)
+		if got := wire.EncodeSort(s.spec.Sort); got != "{ .size }" {
+			t.Errorf("an include was asked sort=%s", got)
+		}
+		if !s.asked.Reversed {
+			t.Error("an include was not asked to walk its sequence backwards")
 		}
 	}
 }
@@ -963,7 +987,7 @@ func TestAnIncludeIsAskedForTheFieldsTheSortNeeds(t *testing.T) {
 		Include{Name: "left", Source: left},
 		Include{Name: "right", Source: right})
 
-	out, _ := read(t, c, "fields={ .name } sort={ .size }", "have=0 need=10")
+	out, _ := read(t, c, "fields={ .name } sort={ .size }", "count=10")
 	if out.joined() != "(left/note),(left/0),(right/0),(left/1),(right/1)" {
 		t.Errorf("the sequence is %s", out.joined())
 	}

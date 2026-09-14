@@ -97,7 +97,7 @@ func TestTheApplicationNamesTheQuery(t *testing.T) {
 		served = f
 		_ = f.Exhausted()
 	})
-	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=30`)
+	send(t, c, `q=new query source="files" sort={ name natural } count=30`)
 
 	if got := r.since(0)[0]; got != "reply q=1" {
 		t.Errorf("the reply was %q, want %q", got, "reply q=1")
@@ -121,18 +121,18 @@ func TestTheReplyComesBeforeTheRecords(t *testing.T) {
 		f.Ordered()
 		_ = f.Record(17, wire.Named("name", "src/parser.go"), wire.Named("size", 1024))
 		_ = f.Record(42, wire.Named("name", "src/window.go"), wire.Named("size", 2048))
-		_ = f.Done(wire.Fields{wire.Named("name", "src/window.go"), wire.Named(wire.KeyField, 42)})
+		_ = f.Filled(42)
 	})
-	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=30`)
+	send(t, c, `q=new query source="files" sort={ name natural } count=30`)
 
 	got := strings.Join(r.since(0), "\n")
 	want := "reply q=1\n" +
 		// The order is declared before the records rather than after them,
-		// which is the only place a far end can act on it.
-		"result 1 ordered\n" +
-		`result 1 record={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
-		`result 1 record={ key 42; name "src/window.go"; size 2048 }` + "\n" +
-		`result 1 complete watermark={ name "src/window.go"; key 42 }`
+		// which is the only place a far end can act on it -- so it rides on
+		// the first of them rather than costing a line of its own.
+		`result 1 ordered id=17 record={ name "src/parser.go"; size 1024 }` + "\n" +
+		// And the terminator rides on the last, for the same reason.
+		`result 1 id=42 record={ name "src/window.go"; size 2048 } complete watermark=42 filled`
 	if got != want {
 		t.Errorf("the answer was\n%s\nwant\n%s", got, want)
 	}
@@ -145,42 +145,62 @@ func TestAScopeArrivesTakenApart(t *testing.T) {
 		got = f
 		_ = f.Exhausted()
 	})
-	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=1`)
-	send(t, c, `query 1 from={ name "README.md"; key 17 } to={ name "build.sh"; key 42 } have=30 need=50 fields={ name; size }`)
+	send(t, c, `q=new query source="files" sort={ name natural } `+
+		`fields={ name; size } after=17 until=42 count=50 reversed`)
 
-	if got.Have != 30 || got.Need != 50 {
-		t.Errorf("have=%d need=%d, want 30 and 50", got.Have, got.Need)
+	if got.Count != 50 {
+		t.Errorf("count=%d, want 50", got.Count)
 	}
-	if v := got.From.Get("name"); v == nil || v.Str != "README.md" {
-		t.Errorf("from names %#v", v)
+	if v := got.After; v == nil || v.Int != 17 {
+		t.Errorf("it starts after %#v", v)
 	}
-	if v := got.From.Key(); v == nil || v.Int != 17 {
-		t.Errorf("from's key is %#v", v)
+	if v := got.Until; v == nil || v.Int != 42 {
+		t.Errorf("it stops before %#v", v)
 	}
-	if v := got.To.Key(); v == nil || v.Int != 42 {
-		t.Errorf("to's key is %#v", v)
-	}
-	if names := strings.Join(got.Fields.Names(), ","); names != "name,size" {
-		t.Errorf("this scope wants %q", names)
+	if !got.Reversed {
+		t.Error("it asked for the sequence backwards and that did not arrive")
 	}
 	// The sequence comes with it, so the handler need not have kept it.
 	if got.Spec.Source != "files" || len(got.Spec.Sort) != 1 {
 		t.Errorf("the spec came through as %#v", got.Spec)
 	}
+	if names := strings.Join(got.Spec.Fields.Names(), ","); names != "name,size" {
+		t.Errorf("this sequence wants %q", names)
+	}
 }
 
-// A display may address a query it opened in the same batch, without waiting
-// for the reply that names it.
-func TestAQueryIsAddressableInTheBatchThatMadeIt(t *testing.T) {
+// Nothing addresses a query that already exists but `destroy`. A query states
+// its sequence and asks for its scope in one statement and is answered once;
+// the next scope is a query of its own.
+func TestAQueryIsAskedOnceAndAnsweredOnce(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) { _ = f.Exhausted() })
+	send(t, c, `q=new query source="files" count=5`)
+	n := r.count()
+	send(t, c, `query 1 count=10`)
+
+	got := strings.Join(r.since(n), "\n")
+	if !strings.Contains(got, "answered once") {
+		t.Errorf("asking an open query for more was taken as\n  %s", got)
+	}
+}
+
+// Two scopes of one sequence are two queries, each naming the sequence again.
+// That is what "a query does not change" costs and what it buys: no statement
+// anywhere can alter one, so the id is the generation.
+func TestEachScopeIsAQueryOfItsOwn(t *testing.T) {
 	var asked []int
-	c, _, _ := serveOne(t, func(f *Fill) {
-		asked = append(asked, f.Need)
+	c, r, _ := serveOne(t, func(f *Fill) {
+		asked = append(asked, f.Count)
 		_ = f.Exhausted()
 	})
-	send(t, c, "q=new query source=\"files\" have=0 need=5\nquery q have=5 need=10")
+	send(t, c, "q=new query source=\"files\" count=5\n"+
+		"r=new query source=\"files\" after=4 count=10")
 
 	if len(asked) != 2 || asked[0] != 5 || asked[1] != 10 {
 		t.Errorf("the source was asked for %v", asked)
+	}
+	if got := strings.Join(r.since(0)[:1], ""); got != "reply q=1 r=2" {
+		t.Errorf("the reply was %q", got)
 	}
 }
 
@@ -192,11 +212,10 @@ func TestTheSimplestAnswerIsEverythingAndExhausted(t *testing.T) {
 		_ = f.Exhausted()
 	})
 	n := r.count()
-	send(t, c, `q=new query source="files" have=0 need=10`)
+	send(t, c, `q=new query source="files" count=10`)
 
 	got := strings.Join(r.since(n+1), "\n")
-	want := "result 1 record={ key \"a\" }\n" +
-		"result 1 complete exhausted"
+	want := `result 1 id="a" record={} complete exhausted`
 	if got != want {
 		t.Errorf("the answer was\n  %s\nwant\n  %s", got, want)
 	}
@@ -217,12 +236,11 @@ func TestAWholeRecordAndASubsetCrossUnderDifferentWords(t *testing.T) {
 		_ = f.Exhausted()
 	})
 	n := r.count()
-	send(t, c, `q=new query source="files" have=0 need=10 fields={ name }`)
+	send(t, c, `q=new query source="files" count=10 fields={ name }`)
 
 	got := strings.Join(r.since(n+1), "\n")
-	want := `result 1 record={ key 17; name "src/parser.go"; size 1024 }` + "\n" +
-		`result 1 fields={ key 42; name "src/window.go" }` + "\n" +
-		"result 1 complete exhausted"
+	want := `result 1 id=17 record={ name "src/parser.go"; size 1024 }` + "\n" +
+		`result 1 id=42 fields={ name "src/window.go" } complete exhausted`
 	if got != want {
 		t.Errorf("the answer was\n%s\nwant\n%s", got, want)
 	}
@@ -237,7 +255,7 @@ func TestASubsetCountsTowardsWhatWasSent(t *testing.T) {
 		sent = f.Sent()
 		_ = f.Exhausted()
 	})
-	send(t, c, `q=new query source="files" have=0 need=10`)
+	send(t, c, `q=new query source="files" count=10`)
 
 	if sent != 2 {
 		t.Errorf("two records went out and it counted %d", sent)
@@ -250,7 +268,7 @@ func TestARefusalIsAnAnswer(t *testing.T) {
 		_ = f.Fail("no records past %q", "build.sh")
 	})
 	n := r.count()
-	send(t, c, `q=new query source="files" have=0 need=10`)
+	send(t, c, `q=new query source="files" count=10`)
 
 	got := strings.Join(r.since(n+1), "\n")
 	want := `result 1 complete error="no records past \"build.sh\""`
@@ -265,9 +283,9 @@ func TestAnAnsweredScopeRefusesMore(t *testing.T) {
 	c, _, _ := serveOne(t, func(f *Fill) {
 		_ = f.Exhausted()
 		second = f.Record(1)
-		third = f.Done(nil)
+		third = f.Filled(1)
 	})
-	send(t, c, `q=new query source="files" have=0 need=1`)
+	send(t, c, `q=new query source="files" count=1`)
 	if second == nil || third == nil {
 		t.Errorf("a finished scope took more: record=%v done=%v", second, third)
 	}
@@ -286,29 +304,29 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 		_ = f.Exhausted()
 	})
 	n := r.count()
-	send(t, c, `q=new query source="files" have=0 need=400`)
+	send(t, c, `q=new query source="files" count=400`)
 
 	batches := r.since(n + 1) // past the reply
 	if len(batches) < 2 {
 		t.Fatalf("the whole answer went in %d message(s); it was meant to stream", len(batches))
 	}
-	// The declaration of order leads, every record arrives once and in order
-	// after it, and the terminator is last.
+	// The declaration of order leads on the first record, every record
+	// arrives once and in order, and the terminator rides on the last.
 	all := strings.Split(strings.Join(batches, "\n"), "\n")
-	if len(all) != records+2 {
-		t.Fatalf("%d statements for %d records, a declaration and a terminator",
-			len(all), records)
+	if len(all) != records {
+		t.Fatalf("%d statements for %d records, which should carry the "+
+			"declaration and the terminator between them", len(all), records)
 	}
-	if all[0] != "result 1 ordered" {
+	if !strings.HasPrefix(all[0], "result 1 ordered id=0 ") {
 		t.Fatalf("the answer leads with %.60s...", all[0])
 	}
 	for i := 0; i < records; i++ {
-		if !strings.Contains(all[i+1], fmt.Sprintf("key %d;", i)) {
-			t.Fatalf("statement %d is %.60s...", i, all[i+1])
+		if !strings.Contains(all[i], fmt.Sprintf("id=%d ", i)) {
+			t.Fatalf("statement %d is %.60s...", i, all[i])
 		}
 	}
-	if !strings.HasPrefix(all[records+1], "result 1 complete") {
-		t.Errorf("the last statement is %.60s...", all[records+1])
+	if !strings.Contains(all[records-1], "complete exhausted") {
+		t.Errorf("the last statement is %.60s...", all[records-1])
 	}
 }
 
@@ -327,9 +345,9 @@ func TestADifferentSequenceIsADifferentQuery(t *testing.T) {
 		_ = f.Exhausted()
 	})
 
-	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=1`)
+	send(t, c, `q=new query source="files" sort={ name natural } count=1`)
 	n := r.count()
-	send(t, c, `r=new query source="files" sort={ size desc } have=0 need=1`)
+	send(t, c, `r=new query source="files" sort={ size desc } count=1`)
 	if answered := strings.Join(r.since(n), "\n"); !strings.Contains(answered, "reply r=2") {
 		t.Errorf("the second query was not named in its own right: %q", answered)
 	}
@@ -354,7 +372,7 @@ func TestADifferentSequenceIsADifferentQuery(t *testing.T) {
 // display asking for a different one asks for a different query.
 func TestAQueryCannotBeRestated(t *testing.T) {
 	c, r, _ := serveOne(t, func(f *Fill) { _ = f.Exhausted() })
-	send(t, c, `q=new query source="files" sort={ name natural } have=0 need=1`)
+	send(t, c, `q=new query source="files" sort={ name natural } count=1`)
 
 	n := r.count()
 	send(t, c, `set 1 sort={ size desc }`)
@@ -377,7 +395,7 @@ func TestTheDisplayCanDropTheQuery(t *testing.T) {
 	})
 	s.OnDropped(func(q *Query) { dropped = true })
 
-	send(t, c, `q=new query source="files" have=0 need=1`)
+	send(t, c, `q=new query source="files" count=1`)
 	send(t, c, "destroy 1")
 	if !dropped {
 		t.Error("the application was not told the query was let go")
@@ -385,7 +403,7 @@ func TestTheDisplayCanDropTheQuery(t *testing.T) {
 	if c.Query(1) != nil {
 		t.Error("the connection is still serving it")
 	}
-	send(t, c, `query 1 have=0 need=1`)
+	send(t, c, `query 1 count=1`)
 	if served != 1 {
 		t.Errorf("a query that was let go was served %d times", served)
 	}
@@ -398,7 +416,7 @@ func TestWhatTheLibraryDoesNotKnowReachesTheApp(t *testing.T) {
 	c, _, s := serveOne(t, func(f *Fill) { _ = f.Exhausted() })
 	s.OnStatement(func(_ *Query, stmt *wire.Statement) { got = stmt })
 
-	send(t, c, `q=new query source="files" have=0 need=1`)
+	send(t, c, `q=new query source="files" count=1`)
 	send(t, c, `do 1 cover handle=3 from={ key 1 } to={ key 200 }`)
 	if got == nil {
 		t.Fatal("the statement reached nobody")
@@ -413,7 +431,7 @@ func TestWhatTheLibraryDoesNotKnowReachesTheApp(t *testing.T) {
 // the batch is answered with.
 func TestAnUnknownSourceIsRefused(t *testing.T) {
 	c, r, _ := serveOne(t, func(*Fill) {})
-	send(t, c, `q=new query source="ledgers" have=0 need=1`)
+	send(t, c, `q=new query source="ledgers" count=1`)
 
 	got := r.since(0)[0]
 	if !strings.HasPrefix(got, "error text=") || !strings.Contains(got, "ledgers") {
@@ -433,7 +451,7 @@ func TestOrderDeclaredLateIsNotSent(t *testing.T) {
 		f.Ordered() // too late
 		_ = f.Exhausted()
 	})
-	send(t, c, `q=new query source="files" have=0 need=2`)
+	send(t, c, `q=new query source="files" count=2`)
 
 	answered := strings.Join(r.since(0), "\n")
 	if strings.Contains(answered, "ordered") {
@@ -448,7 +466,7 @@ func TestOrderIsDeclaredOnce(t *testing.T) {
 		f.Ordered()
 		_ = f.Exhausted()
 	})
-	send(t, c, `q=new query source="files" have=0 need=2`)
+	send(t, c, `q=new query source="files" count=2`)
 
 	if n := strings.Count(strings.Join(r.since(0), "\n"), "ordered"); n != 1 {
 		t.Errorf("the order was declared %d times", n)

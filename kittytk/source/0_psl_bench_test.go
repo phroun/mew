@@ -111,24 +111,21 @@ func benchScope(b *testing.B, after int) {
 
 	// Walk to the boundary once, outside the timer, so what is measured is one
 	// scope drawn from where somebody has scrolled to.
-	from := wire.Fields{}
+	var from *wire.Value
 	if after > 0 {
 		c := &counter{}
-		if err := set.Fill(fillOf(b, 0, after), c); err != nil {
+		if err := set.Read(scopeOf(b, after), c); err != nil {
 			b.Fatal(err)
 		}
-		from = wire.Fields{
-			{Name: "name", Value: c.last.Get("name")},
-			{Name: wire.KeyField, Value: c.key},
-		}
+		from = c.key
 	}
 
-	f := fillOf(b, 0, 30)
-	f.From = from
+	f := scopeOf(b, 30)
+	f.After = from
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		c := &counter{}
-		if err := set.Fill(f, c); err != nil {
+		if err := set.Read(f, c); err != nil {
 			b.Fatal(err)
 		}
 		if c.n != 30 {
@@ -137,13 +134,13 @@ func benchScope(b *testing.B, after int) {
 	}
 }
 
-func fillOf(tb testing.TB, have, need int) *wire.Fill {
+func scopeOf(tb testing.TB, count int) *wire.Scope {
 	tb.Helper()
-	script, err := wire.Parse(fmt.Sprintf("query 1 have=%d need=%d", have, need))
+	script, err := wire.Parse(fmt.Sprintf("new query count=%d", count))
 	if err != nil {
 		tb.Fatal(err)
 	}
-	f, err := wire.ParseFill(script.Statements[0].Args[1:])
+	f, err := wire.ParseScope(script.Statements[0].Args[1:])
 	if err != nil {
 		tb.Fatal(err)
 	}

@@ -25,26 +25,37 @@ type Source interface {
 	// sequence cannot be produced exactly -- an op that is not implemented, a
 	// collation that is not carried -- because an ordering that is quietly a
 	// little different corrupts every answer after it and looks like data.
-	Open(spec *wire.Spec) (ResultSet, error)
+	Open(spec *wire.Spec) (DataSet, error)
 }
 
-// A ResultSet is one stated sequence, which scopes are drawn from until it is
-// let go. It is what a query names, seen from the end that holds the records.
+// A DataSet is one stated sequence -- this source, this sort, this filter --
+// prepared once and drawn from until it is let go. It is what a query names,
+// seen from the end that holds the records.
+//
+// Those three name it, and nothing else does: the fields a query asks for
+// change what a scope carries rather than which records are in the sequence,
+// and the direction belongs to the scope. So two queries naming the same three
+// are reading one data set, and whatever was worked out for either of them --
+// the ordering, where each record stands -- holds for both.
 //
 // It does not change. A different sort or a different filter is a different
-// result set, opened alongside this one and taking its place -- which is also
+// data set, opened alongside this one and taking its place -- which is also
 // what keeps the source in use while the reader moves from one to the other.
-type ResultSet interface {
-	// Fill asks for one scope of the sequence and says where to put it.
+type DataSet interface {
+	// Read asks for one scope of the sequence and says where to put it.
 	//
 	// It does not wait for the answer. Records reach the sink as they are
 	// produced -- immediately, for a source whose records are here; as they
 	// arrive, for one whose records are somewhere else -- and the sink is told
 	// what ended it when it ends. The error is for a request that could not be
 	// started at all, never for one that has not finished.
-	Fill(f *wire.Fill, out Sink) error
+	//
+	// A scope names its ends by identity, and an identity means something only
+	// to the source that issued it. So a scope handed here was issued here: a
+	// source made of several others translates rather than relays.
+	Read(s *wire.Scope, out Sink) error
 
-	// Close lets the result set go, and with it whatever it was holding.
+	// Close lets the data set go, and with it whatever it was holding.
 	Close()
 }
 
@@ -62,40 +73,32 @@ type Sink interface {
 	// ordered, which is always safe.
 	Ordered()
 
-	// Record takes one record entire: its key, and every field it has.
+	// Record takes one record entire: its identity, and every field it has.
 	//
 	// Whole is worth saying because it outlives the scope that asked for it.
 	// A record that arrived entire answers any question about that record, so
 	// whoever holds it can answer the next query out of it instead of asking
 	// again.
-	Record(key *wire.Value, fields wire.Fields) error
+	//
+	// The identity is beside the fields, not among them. A record may well
+	// carry a field called `key`, and that field is data: it sorts, it
+	// filters, it fills a column. What names the record is this.
+	Record(id *wire.Value, fields wire.Fields) error
 
-	// Subset takes some of a record: its key, and the fields that were asked
-	// for, which are fewer than the record has.
+	// Subset takes some of a record: its identity, and the fields that were
+	// asked for, which are fewer than the record has.
 	//
 	// It answers the question that asked for it and no other. A later question
 	// naming a field this one left out is not answered by what came back here,
 	// however many of the same records it names.
-	Subset(key *wire.Value, fields wire.Fields) error
+	Subset(id *wire.Value, fields wire.Fields) error
 
 	Done(c Complete)
 }
 
-// Complete is what ends a scope.
+// Complete is what ends a scope: the wire's own, because what a source says
+// here is what crosses.
 //
-// Watermark says there is nothing between where the scope was asked from and
-// that point that the far end does not now have. Exhausted says there is
-// nothing past the end at all, which is why it carries no watermark -- there is
-// no point past the end to be complete up to.
-//
-// Order is not here. It is said before the records, on the sink, because a
+// Order is not in it. It is said before the records, on the sink, because a
 // sink told afterwards cannot use it.
-type Complete struct {
-	Watermark wire.Fields
-	Exhausted bool
-
-	// Error is a refusal, which is an answer: this scope cannot be produced,
-	// the records are gone, the connection carrying the question broke. Whoever
-	// asked carries on with what it has.
-	Error string
-}
+type Complete = wire.Complete

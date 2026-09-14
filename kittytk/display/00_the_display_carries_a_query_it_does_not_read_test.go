@@ -42,7 +42,7 @@ func served(t *testing.T, sock string) *client.Conn {
 	if _, err := conn.ProvideSource("letters", func(f *client.Fill) {
 		f.Ordered()
 		for _, r := range rows {
-			if f.Need > 0 && f.Sent() >= f.Need {
+			if f.Count > 0 && f.Sent() >= f.Count {
 				break
 			}
 			_ = f.Record(r.key, wire.Named("name", r.name))
@@ -96,7 +96,7 @@ func TestTheDisplayCarriesAQueryItDoesNotRead(t *testing.T) {
 	tool := dialSocket(t, sock, "asking tool")
 	defer tool.Close()
 
-	lines, err := relayed(t, tool, `q=new query source="letters" sort={ name natural } have=0 need=2`)
+	lines, err := relayed(t, tool, `q=new query source="letters" sort={ name natural } count=2`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,18 +108,18 @@ func TestTheDisplayCarriesAQueryItDoesNotRead(t *testing.T) {
 		t.Fatalf("the first thing back was not the reply:\n%s", got)
 	}
 	for _, want := range []string{
-		// The order is declared before the records rather than after them.
-		"result 1 ordered",
-		`result 1 record={ key 1; name "alpha" }`,
-		`result 1 record={ key 2; name "beta" }`,
-		"result 1 complete exhausted",
+		// The order is declared before the records rather than after them, so
+		// it rides on the first of them.
+		`result 1 ordered id=1 record={ name "alpha" }`,
+		// And the terminator rides on the last.
+		`result 1 id=2 record={ name "beta" } complete exhausted`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing:\n  %s\nin:\n%s", want, got)
 		}
 	}
 	// It was asked for two and sent two: the scope was honoured.
-	if n := strings.Count(got, "result 1 record="); n != 2 {
+	if n := strings.Count(got, "result 1 "); n != 2 {
 		t.Errorf("%d records came back, want 2:\n%s", n, got)
 	}
 }
@@ -145,7 +145,7 @@ func TestARelayedRefusalComesBack(t *testing.T) {
 			once.Do(func() { close(seen) })
 		}
 	})
-	if err := tool.Host().Ask(`relay to="servingapp" text="q=new query source=\"ledgers\" have=0 need=1"`); err != nil {
+	if err := tool.Host().Ask(`relay to="servingapp" text="q=new query source=\"ledgers\" count=1"`); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -173,7 +173,7 @@ func TestTheRelayIsShutUnlessTheDisplayOpensIt(t *testing.T) {
 	tool := dialSocket(t, sock, "asking tool")
 	defer tool.Close()
 
-	err := tool.Host().Ask(`relay to="servingapp" text="q=new query source=\"letters\" have=0 need=1"`)
+	err := tool.Host().Ask(`relay to="servingapp" text="q=new query source=\"letters\" count=1"`)
 	if err == nil || !strings.Contains(err.Error(), "not open") {
 		t.Errorf("relaying with the relay shut read %v", err)
 	}
@@ -186,7 +186,7 @@ func TestRelayingToNobodyIsRefused(t *testing.T) {
 	tool := dialSocket(t, sock, "asking tool")
 	defer tool.Close()
 
-	err := tool.Host().Ask(`relay to="nobody" text="q=new query source=\"x\" have=0 need=1"`)
+	err := tool.Host().Ask(`relay to="nobody" text="q=new query source=\"x\" count=1"`)
 	if err == nil || !strings.Contains(err.Error(), "nobody") {
 		t.Errorf("relaying to nobody read %v", err)
 	}

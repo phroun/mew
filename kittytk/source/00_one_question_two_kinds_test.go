@@ -98,8 +98,8 @@ func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
 	}
 
 	start := 0
-	if key := f.From.Key(); key != nil {
-		for start < len(rows) && rows[start].key != key.Int {
+	if f.After != nil {
+		for start < len(rows) && rows[start].key != f.After.Int {
 			start++
 		}
 		start++
@@ -107,8 +107,12 @@ func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
 
 	f.Ordered()
 	sent := 0
-	for i := start; i < len(rows) && f.Have+sent < f.Need; i++ {
-		_ = send(rows[i].key,
+	for i := start; i < len(rows) && sent < f.Count; i++ {
+		// `key` and `value` are fields under the Whole reading -- the
+		// document's own key for the record, handy to sort or show -- so an
+		// application serving the same records carries them too. What
+		// identifies the record is the first argument, beside the bag.
+		_ = send(rows[i].key, wire.Named("key", rows[i].key),
 			wire.Named(".name", rows[i].name), wire.Named(".size", rows[i].size))
 		sent++
 	}
@@ -116,32 +120,50 @@ func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
 		_ = f.Exhausted()
 		return
 	}
-	last := rows[start+sent-1]
-	_ = f.Done(wire.Fields{
-		wire.Named(".size", last.size),
-		wire.Named(wire.KeyField, last.key),
-	})
+	_ = f.Filled(rows[start+sent-1].key)
 }
 
 // --- the asking, written once -------------------------------------------
 
-// read opens a sequence and draws one scope of it, naming no kind.
-func read(t *testing.T, src Source, spec, fill string) (*collector, Complete) {
+// A reader is one stated sequence, drawn from more than once -- which is what
+// a display holds.
+//
+// The sequence is stated once and read from until it is let go, however many
+// scopes that takes. Opening a fresh data set per scope would be a different
+// sequence each time, and one that had never handed out the record the next
+// scope means to resume from.
+type reader struct {
+	t   *testing.T
+	set DataSet
+}
+
+func opened(t *testing.T, src Source, spec string) *reader {
 	t.Helper()
 	set, err := src.Open(parseSpec(t, spec))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer set.Close()
+	t.Cleanup(set.Close)
+	return &reader{t: t, set: set}
+}
 
+// scope draws one scope of the sequence.
+func (r *reader) scope(args string) (*collector, Complete) {
+	r.t.Helper()
 	out := &collector{}
-	if err := set.Fill(parseFill(t, fill), out); err != nil {
-		t.Fatal(err)
+	if err := r.set.Read(parseScope(r.t, args), out); err != nil {
+		r.t.Fatal(err)
 	}
 	if !out.ended {
-		t.Fatal("the scope was never ended")
+		r.t.Fatal("the scope was never ended")
 	}
 	return out, out.done
+}
+
+// read is one scope of a sequence nobody reads twice, naming no kind.
+func read(t *testing.T, src Source, spec, scope string) (*collector, Complete) {
+	t.Helper()
+	return opened(t, src, spec).scope(scope)
 }
 
 func TestOneQuestionTwoKinds(t *testing.T) {
@@ -153,30 +175,31 @@ func TestOneQuestionTwoKinds(t *testing.T) {
 		{"records an application has", serving(t)},
 	} {
 		t.Run(kind.what, func(t *testing.T) {
-			out, done := read(t, kind.src, "sort={ .size }", "have=0 need=2")
+			seq := opened(t, kind.src, "sort={ .size }")
+			out, done := seq.scope("count=2")
 			if out.joined() != "2,1" {
 				t.Errorf("by size the first two are %s", out.joined())
 			}
-			if got := out.fields[0].Encode(); got != `{ .name "go.mod"; .size 96 }` {
+			if got := out.fields[0].Encode(); got != `{ key 2; .name "go.mod"; .size 96 }` {
 				t.Errorf("the first record carries %s", got)
 			}
 			if !out.ordered {
 				t.Error("the answer did not say it was in order")
 			}
-			if done.Exhausted {
+			if done.Stop == wire.StopExhausted {
 				t.Error("a scope with records past it claimed to be exhausted")
 			}
-			if got := done.Watermark.Encode(); got != "{ .size 310; key 1 }" {
+			if got := wire.EncodeValue(done.Watermark); got != "1" {
 				t.Errorf("the watermark is %s", got)
 			}
 
 			// And the scope after it, from where that one stopped.
-			next, done := read(t, kind.src, "sort={ .size }",
-				"from="+done.Watermark.Encode()+" have=0 need=9")
+			next, done := seq.scope(
+				"after=" + wire.EncodeValue(done.Watermark) + " count=9")
 			if next.joined() != "0,3" {
 				t.Errorf("the rest is %s", next.joined())
 			}
-			if !done.Exhausted {
+			if done.Stop != wire.StopExhausted {
 				t.Error("the end of the sequence did not say so")
 			}
 		})
@@ -194,7 +217,7 @@ func TestAskingDoesNotWaitForTheAnswer(t *testing.T) {
 	defer set.Close()
 
 	out := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=2"), out); err != nil {
+	if err := set.Read(parseScope(t, "count=2"), out); err != nil {
 		t.Fatal(err)
 	}
 	if len(out.keys) != 2 || !out.ended {
@@ -211,7 +234,7 @@ func TestAConnectionThatWillNotCarryTheQuestionSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=2"), out); err == nil {
+	if err := set.Read(parseScope(t, "count=2"), out); err == nil {
 		t.Fatal("a broken connection was not reported")
 	}
 	if !out.ended || out.done.Error == "" {
@@ -262,7 +285,7 @@ func TestTwoScopesOfOneSequence(t *testing.T) {
 			defer set.Close()
 
 			first := &collector{}
-			if err := set.Fill(parseFill(t, "have=0 need=2"), first); err != nil {
+			if err := set.Read(parseScope(t, "count=2"), first); err != nil {
 				t.Fatal(err)
 			}
 			if first.joined() != "2,1" {
@@ -270,14 +293,14 @@ func TestTwoScopesOfOneSequence(t *testing.T) {
 			}
 
 			second := &collector{}
-			if err := set.Fill(parseFill(t,
-				"from="+first.done.Watermark.Encode()+" have=0 need=9"), second); err != nil {
+			if err := set.Read(parseScope(t,
+				"after="+wire.EncodeValue(first.done.Watermark)+" count=9"), second); err != nil {
 				t.Fatal(err)
 			}
 			if second.joined() != "0,3" {
 				t.Errorf("the second scope is %s", second.joined())
 			}
-			if !second.done.Exhausted {
+			if second.done.Stop != wire.StopExhausted {
 				t.Error("the end of the sequence did not say so")
 			}
 		})
@@ -333,12 +356,12 @@ func TestTwoScopesInFlightKeepTheirOwnAnswers(t *testing.T) {
 	defer set.Close()
 
 	first, second := &collector{}, &collector{}
-	if err := set.Fill(parseFill(t, "have=0 need=2"), first); err != nil {
+	if err := set.Read(parseScope(t, "count=2"), first); err != nil {
 		t.Fatal(err)
 	}
 	// The sequence has no number yet, so this one waits for it rather than
 	// naming a key a later batch cannot resolve.
-	if err := set.Fill(parseFill(t, "from={ .size 310; key 1 } have=0 need=9"), second); err != nil {
+	if err := set.Read(parseScope(t, "after=1 count=9"), second); err != nil {
 		t.Fatal(err)
 	}
 	if first.ended || second.ended {
