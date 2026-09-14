@@ -613,3 +613,272 @@ func TestAnAdditionTheFilterDropsIsNotSlack(t *testing.T) {
 		t.Errorf("the child was asked for %d, want the 2 the scope wanted", s.asked.Count)
 	}
 }
+
+// --- the order the amendments are arranged in ----------------------------
+
+// The arrangement is made once for a sequence and every scope of it is a search
+// into the result, so two scopes of one sequence arrange nothing twice.
+func TestTheAmendmentsAreArrangedOncePerSequence(t *testing.T) {
+	a := amendable(t)
+	a.Add(key(90), fields("added", 5))
+	seq := opened(t, a, "sort={ .size }")
+
+	seq.scope("count=2")
+	built := a.order(parseSpec(t, "sort={ .size }"))
+	seq.scope("count=2")
+	again := a.order(parseSpec(t, "sort={ .size }"))
+
+	if built != again {
+		t.Error("a second scope of one sequence arranged the amendments again")
+	}
+}
+
+// Ordering can be a hint; membership cannot.
+//
+// An amendment made between two scopes is not in an arrangement built before
+// it, and nothing about walking that arrangement would ever find it -- so what
+// is held carries a generation, and a source amended since arranges it again.
+func TestAnAmendmentMadeBetweenScopesIsSeen(t *testing.T) {
+	a := amendable(t)
+	seq := opened(t, a, "sort={ .size }")
+
+	if first, _ := seq.scope("count=9"); first.joined() != "2,1,0,3" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	a.Add(key(90), fields("added", 5))
+
+	next, _ := seq.scope("count=9")
+	if next.joined() != "90,2,1,0,3" {
+		t.Errorf("the scope after the addition is %s", next.joined())
+	}
+}
+
+// An addition taken back between two scopes stops being in it.
+//
+// Nothing but the arrangement knows an addition exists -- no record of the
+// child's will arrive to prompt a second look at it -- so it goes out for as
+// long as the arrangement says it is there. Nothing else in this test amends
+// anything, because an amendment of any other kind would rearrange what is
+// held and hide that.
+func TestAnAdditionForgottenBetweenScopesIsGone(t *testing.T) {
+	a := amendable(t)
+	a.Add(key(90), fields("added", 5))
+	seq := opened(t, a, "sort={ .size }")
+
+	if first, _ := seq.scope("count=9"); first.joined() != "90,2,1,0,3" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	a.Forget(key(90))
+
+	next, _ := seq.scope("count=9")
+	if next.joined() != "2,1,0,3" {
+		t.Errorf("the scope after forgetting it is %s", next.joined())
+	}
+}
+
+// A forgotten deletion comes right whether or not anything is rearranged: a
+// record of the child's is looked up in what is held as it arrives, so the
+// child's own copy stands the moment nothing is held against it.
+func TestADeletionForgottenBetweenScopesIsGone(t *testing.T) {
+	a := amendable(t)
+	a.Delete(key(1), fields("build.sh", 310))
+	seq := opened(t, a, "sort={ .size }")
+
+	if first, _ := seq.scope("count=9"); first.joined() != "2,0,3" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	a.Forget(key(1))
+
+	next, _ := seq.scope("count=9")
+	if next.joined() != "2,1,0,3" {
+		t.Errorf("the scope after forgetting it is %s", next.joined())
+	}
+}
+
+
+// A deletion whose placement was learned stops being counted against every
+// scope and takes its place in the order, which is a change to what is held
+// like any other.
+func TestALearnedPlacementRearrangesWhatIsHeld(t *testing.T) {
+	a := amendable(t)
+	a.Delete(key(0), nil) // README.md, 2048, placement unknown
+	seq := opened(t, a, "sort={ .size }")
+
+	before := a.order(parseSpec(t, "sort={ .size }"))
+	if before.unplaced != 1 {
+		t.Fatalf("a deletion with no placement was counted %d times", before.unplaced)
+	}
+	seq.scope("count=9") // the child sends it, and the round teaches where it sat
+
+	after := a.order(parseSpec(t, "sort={ .size }"))
+	if after.unplaced != 0 {
+		t.Errorf("the placement was learned and it is still counted for every scope")
+	}
+	if len(after.gone) != 1 {
+		t.Errorf("it did not take its place in the order: %d removals", len(after.gone))
+	}
+}
+
+// Two sequences over one source are arranged separately: a different sort puts
+// the same amendments in a different order.
+func TestEachSequenceArrangesTheAmendmentsItsOwnWay(t *testing.T) {
+	a := amendable(t)
+	a.Add(key(90), fields("aaa.go", 99999))
+
+	up, _ := read(t, a, "sort={ .size }", "count=9")
+	if up.joined() != "2,1,0,3,90" {
+		t.Errorf("by size the sequence is %s", up.joined())
+	}
+	// Exact collation, so README.md leads: an uppercase R sorts below a lowercase a.
+	byName, _ := read(t, a, "sort={ .name }", "count=9")
+	if byName.joined() != "0,90,1,2,3" {
+		t.Errorf("by name the sequence is %s", byName.joined())
+	}
+}
+
+// A reversed scope resumes after one of ours without sending it again.
+//
+// The order is arranged the way the sequence runs and read backwards, so the
+// boundary record sits somewhere in it and the walk has to stop just short of
+// it rather than just past it -- the mirror of what a forward walk does, and
+// the one place the two directions cannot share a search.
+func TestAReversedScopeResumesAfterOneOfOurs(t *testing.T) {
+	a := amendable(t)
+	a.Add(key(90), fields("added", 99998))
+	a.Add(key(91), fields("added", 99999))
+	seq := opened(t, a, "sort={ .size }")
+
+	first, done := seq.scope("count=2 reversed")
+	if first.joined() != "91,90" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	if got := wire.EncodeValue(done.Watermark); got != "90" {
+		t.Fatalf("the claim reaches %s", got)
+	}
+
+	next, done := seq.scope("after=90 count=9 reversed")
+	if next.joined() != "3,0,1,2" {
+		t.Errorf("the rest is %s", next.joined())
+	}
+	if done.Stop != wire.StopExhausted {
+		t.Error("the end of the sequence did not say so")
+	}
+}
+
+// A deletion nobody has seen the record of is covered for every scope.
+//
+// Not knowing where it sat is not knowing which scope it falls in, so the child
+// is asked for one more than the scope wants. Getting that wrong is not visibly
+// wrong -- the scope comes up short and the round trip that fixes it hides the
+// cost -- so it is the ask that is checked here, not the answer.
+func TestAnUnplacedDeletionIsCoveredInTheAsk(t *testing.T) {
+	s := &spy{inner: mustPSL(t, twoWays)}
+	a := NewAmendedSource(s)
+	a.Delete(key(0), nil)
+
+	read(t, a, "sort={ .size }", "count=3")
+	if s.asked.Count != 4 {
+		t.Errorf("the child was asked for %d, want the 3 plus the one that may go", s.asked.Count)
+	}
+}
+
+// Only the removals past the boundary are covered, and finding them is a search
+// -- which is a search of a run that has to be in order for it to land.
+func TestOnlyTheRemovalsPastTheBoundaryAreCovered(t *testing.T) {
+	s := &spy{inner: mustPSL(t, twoWays)}
+	a := NewAmendedSource(s)
+	// go.mod at 96 sits before the boundary; README.md at 2048 sits after it.
+	a.Delete(key(2), fields("go.mod", 96))
+	a.Delete(key(0), fields("README.md", 2048))
+	seq := opened(t, a, "sort={ .size }")
+
+	// Walk as far as build.sh (310), then carry on past it.
+	if first, _ := seq.scope("count=1"); first.joined() != "1" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	seq.scope("after=1 count=2")
+	if s.asked.Count != 3 {
+		t.Errorf("the child was asked for %d, want the 2 plus the one removal past "+
+			"the boundary", s.asked.Count)
+	}
+}
+
+// A replacement made between two scopes goes out in the second.
+//
+// This is the one that would lose a record rather than merely misjudge one: the
+// child's copy is dropped the moment anything is held against its key, so a
+// replacement the arrangement has not caught up with takes the child's record
+// out and puts nothing back.
+func TestAReplacementMadeBetweenScopesIsSeen(t *testing.T) {
+	a := amendable(t)
+	seq := opened(t, a, "sort={ .size }")
+
+	if first, _ := seq.scope("count=9"); first.joined() != "2,1,0,3" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	a.Replace(key(2), fields("go.mod", 99999)) // was the smallest; now the largest
+
+	next, _ := seq.scope("count=9")
+	if next.joined() != "1,0,3,2" {
+		t.Errorf("the scope after the replacement is %s", next.joined())
+	}
+}
+
+// A deletion made between two scopes is covered in the ask for the second.
+//
+// It would come right either way -- a record of the child's is looked up in
+// what is held as it arrives, so the child's copy is dropped whether or not
+// anything was rearranged -- but the scope would come up short and cost a round
+// trip to fill. So it is the ask that is checked, not the answer.
+func TestADeletionMadeBetweenScopesIsCoveredInTheAsk(t *testing.T) {
+	s := &spy{inner: mustPSL(t, twoWays)}
+	a := NewAmendedSource(s)
+	seq := opened(t, a, "sort={ .size }")
+
+	if first, _ := seq.scope("count=1"); first.joined() != "2" {
+		t.Fatalf("the first scope is %s", first.joined())
+	}
+	a.Delete(key(0), fields("README.md", 2048)) // past the boundary
+
+	seq.scope("after=2 count=2")
+	if s.asked.Count != 3 {
+		t.Errorf("the child was asked for %d, want the 2 plus the one that goes",
+			s.asked.Count)
+	}
+}
+
+// Both runs of the arrangement are in the sequence's order.
+//
+// A scope finds its place in each by searching, and a search of a run that is
+// not in order lands somewhere arbitrary. What goes out would still come out
+// right -- that run is walked, not searched past -- but the removals are only
+// ever counted by searching, so an unsorted one miscounts the shortfall.
+//
+// Asserted on the arrangement rather than through an answer, because what is
+// held arrives from a map: an unsorted run comes out sorted often enough by
+// chance that an answer would pass half the time.
+func TestBothRunsOfTheArrangementAreInOrder(t *testing.T) {
+	a := amendable(t)
+	for i, size := range []int64{700, 100, 900, 300, 500} {
+		a.Add(key(int64(90+i)), fields("added", size))
+	}
+	for i, size := range []int64{800, 200, 1000, 400, 600} {
+		a.Delete(key(int64(80+i)), fields("gone", size))
+	}
+
+	o := a.order(parseSpec(t, "sort={ .size }"))
+	levels := ordering1(parseSpec(t, "sort={ .size }"))
+	for _, run := range []struct {
+		what string
+		at   [][]*wire.Value
+	}{{"what goes out", o.outAt}, {"what is taken out", o.goneAt}} {
+		if len(run.at) != 5 {
+			t.Fatalf("%s holds %d, want 5", run.what, len(run.at))
+		}
+		for i := 1; i < len(run.at); i++ {
+			if wire.CompareLevels(run.at[i-1], run.at[i], levels) >= 0 {
+				t.Errorf("%s is out of order at %d", run.what, i)
+			}
+		}
+	}
+}

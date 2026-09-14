@@ -40,7 +40,6 @@ package source
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 
 	"github.com/phroun/kittytk/wire"
@@ -54,20 +53,30 @@ const rounds = 4
 
 // An AmendedSource holds replacements and deletions against a child's records.
 type AmendedSource struct {
-	child Source
-	notes *placebook
+	child  Source
+	notes  *placebook
+	orders *orders
 
 	mu    sync.Mutex
 	amend map[string]*amendment
+
+	// gen counts changes to what is held.
+	//
+	// Records do not move, but amendments do: one may be added, forgotten, or
+	// have its placement learned between two scopes of one sequence. So the
+	// order they are arranged in carries the generation it was built at, and a
+	// source amended since arranges them again.
+	gen uint64
 }
 
 // NewAmendedSource amends the records of a child source. The child is any kind
 // -- records here, records an application's, or another amended source.
 func NewAmendedSource(child Source) *AmendedSource {
 	return &AmendedSource{
-		child: child,
-		notes: newPlacebook(),
-		amend: map[string]*amendment{},
+		child:  child,
+		notes:  newPlacebook(),
+		orders: newOrders(),
+		amend:  map[string]*amendment{},
 	}
 }
 
@@ -109,6 +118,7 @@ func (a *AmendedSource) Replace(key *wire.Value, fields wire.Fields) {
 	}
 	a.mu.Lock()
 	a.amend[wire.EncodeValue(key)] = &amendment{key: key, fields: fields}
+	a.gen++
 	a.mu.Unlock()
 }
 
@@ -125,6 +135,7 @@ func (a *AmendedSource) Add(key *wire.Value, fields wire.Fields) {
 	}
 	a.mu.Lock()
 	a.amend[wire.EncodeValue(key)] = &amendment{key: key, fields: fields, added: true}
+	a.gen++
 	a.mu.Unlock()
 }
 
@@ -140,6 +151,7 @@ func (a *AmendedSource) Delete(key *wire.Value, known wire.Fields) {
 	}
 	a.mu.Lock()
 	a.amend[wire.EncodeValue(key)] = &amendment{key: key, deleted: true, seen: known}
+	a.gen++
 	a.mu.Unlock()
 }
 
@@ -150,6 +162,7 @@ func (a *AmendedSource) Forget(key *wire.Value) {
 	}
 	a.mu.Lock()
 	delete(a.amend, wire.EncodeValue(key))
+	a.gen++
 	a.mu.Unlock()
 }
 
@@ -159,7 +172,11 @@ func (a *AmendedSource) Forget(key *wire.Value) {
 func (a *AmendedSource) learn(key *wire.Value, fields wire.Fields) {
 	a.mu.Lock()
 	if am := a.amend[wire.EncodeValue(key)]; am != nil && am.deleted {
+		// Not just a note: a deletion with a placement is one this source can
+		// rule out of a scope, so it moves from being counted for every scope
+		// to standing somewhere in the order.
 		am.seen = fields
+		a.gen++
 	}
 	a.mu.Unlock()
 }
@@ -169,21 +186,11 @@ func (a *AmendedSource) learn(key *wire.Value, fields wire.Fields) {
 // From here on the child's record stands and this one does not go out.
 func (a *AmendedSource) clash(key *wire.Value) {
 	a.mu.Lock()
-	if am := a.amend[wire.EncodeValue(key)]; am != nil && am.added {
+	if am := a.amend[wire.EncodeValue(key)]; am != nil && am.added && !am.clashed {
 		am.clashed = true
+		a.gen++
 	}
 	a.mu.Unlock()
-}
-
-// held is what the source holds, taken at the moment a scope is asked for.
-func (a *AmendedSource) held() []*amendment {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]*amendment, 0, len(a.amend))
-	for _, am := range a.amend {
-		out = append(out, am)
-	}
-	return out
 }
 
 // lookup is the amendment against one key, and nil where there is none.
@@ -269,8 +276,12 @@ func (s *amendedSet) Read(sc *wire.Scope, out Sink) error {
 		}
 	}
 
-	m := &merge{set: s, want: sc, out: out, at: at, levels: s.levels, childAt: from}
+	m := &merge{
+		set: s, want: sc, out: out, at: at,
+		levels: s.levels, childAt: from, step: 1,
+	}
 	if sc.Reversed {
+		m.step = -1
 		// Walking the other way turns every comparison over, this source's
 		// own records included: what "before" means is the only thing that
 		// changes, and it changes for everyone at once.
@@ -281,7 +292,7 @@ func (s *amendedSet) Read(sc *wire.Scope, out Sink) error {
 	// The child is asked for the shortfall: the scope, plus what our deletions
 	// will take out of its answer, less what we will put in ourselves. Asking
 	// for more than that is work nobody reads.
-	want := sc.Count + m.slack - len(m.mine)
+	want := sc.Count + m.slack - m.waiting()
 	if want < 0 {
 		want = 0
 	}
@@ -297,11 +308,17 @@ type merge struct {
 	at     []*wire.Value // where the scope starts, nil at the sequence's end
 	levels []wire.Level  // the walk's own direction
 
-	mine  []*amendment // ours, in the sequence's order, still to go out
-	slack int          // records of the child's this scope will take out
+	// Where this scope stands in what this source holds: the order, arranged
+	// once for the sequence, and a cursor into it. The order is shared with
+	// every other reader of the sequence, so nothing here writes to it.
+	order *amendOrder
+	i     int // the next of ours to go out
+	step  int // +1 forward, -1 walking the sequence from its end
+	slack int // records of the child's this scope will take out
 
 	childAt *wire.Value     // the last identity the child gave
 	gone    map[string]bool // additions of ours that have already crossed
+	dropped map[string]bool // additions whose key turned out to be the child's
 
 	sent        int
 	round       int
@@ -321,47 +338,49 @@ func (m *merge) full() bool { return m.sent >= m.want.Count }
 // prepare works out what this source has to say about the scope before the
 // child is asked anything.
 //
-// Two lists come out of it. What goes out: the replacements that match the
-// query and sit after the boundary, in order. And what is subtracted: the
-// amendments that will take one of the child's records away -- a deletion, and
-// a replacement whose new values no longer match, which loses a record just as
-// surely if the child still holds the old ones.
+// Two things come out of it, and both are a search rather than a walk. Where
+// ours start: the first of them past the boundary, which the order is sorted
+// for. And what is subtracted: how many of the child's records this source
+// takes out of the answer beyond that point, which is a count the order carries
+// -- a deletion, and a replacement whose new values no longer match, losing the
+// child's record just as surely if the child still holds the old ones.
 func (m *merge) prepare() {
-	s := m.set
-	at := m.at
+	o := m.set.src.order(m.set.spec)
+	m.order = o
 
-	for _, am := range s.src.held() {
-		place := am.place()
-		matches := place != nil && wire.Match(am.key, place, s.spec.Filter)
-		after := at == nil || place == nil ||
-			wire.CompareLevels(amendTuple(am, place, s.spec.Sort), at, m.levels) > 0
-
-		if !after {
-			continue
-		}
-		if am.added && am.clashed {
-			// Its key turned out to be the child's. The child's record stands
-			// and this one never goes out again.
-			continue
-		}
-		if am.deleted || !matches {
-			// Nothing of ours goes out for it, and one of the child's will not
-			// either -- as far as we can tell from where we last saw it.
-			if (place != nil || am.deleted) && !am.added {
-				m.slack++
-			}
-			continue
-		}
-		m.mine = append(m.mine, am)
+	// The order is arranged the way the sequence runs, and a scope reading it
+	// backwards walks the same arrangement the other way.
+	up, down := span(o.outAt, m.at, m.set.levels)
+	goneUp, goneDown := span(o.goneAt, m.at, m.set.levels)
+	if m.step > 0 {
+		m.i = up
+		m.slack = len(o.gone) - goneUp
+	} else {
+		m.i = down - 1
+		m.slack = goneDown
 	}
-
-	sort.SliceStable(m.mine, func(i, j int) bool {
-		a, b := m.mine[i], m.mine[j]
-		return wire.CompareLevels(
-			amendTuple(a, a.place(), s.spec.Sort),
-			amendTuple(b, b.place(), s.spec.Sort), m.levels) < 0
-	})
+	// A deletion nobody has seen the record of cannot be ruled out of any
+	// scope, so it is counted for this one whichever way it is read.
+	m.slack += o.unplaced
 }
+
+// waiting is how many of ours are still to go out, which is what the child is
+// asked for fewer of.
+func (m *merge) waiting() int {
+	if m.step > 0 {
+		return len(m.order.out) - m.i
+	}
+	return m.i + 1
+}
+
+// peek is the next of ours and where it stands, and false where there is none.
+func (m *merge) peek() (*amendment, []*wire.Value, bool) {
+	if m.i < 0 || m.i >= len(m.order.out) {
+		return nil, nil, false
+	}
+	return m.order.out[m.i], m.order.outAt[m.i], true
+}
+
 
 // ask puts the scope to the child, with room for what this source will take
 // out of the answer.
@@ -442,14 +461,17 @@ func (m *merge) theirs(key *wire.Value, fields wire.Fields, whole bool) error {
 	return m.emit(key, fields, whole)
 }
 
-// drop takes an amendment out of what is still to go out.
+// drop marks one of ours as not going out after all.
+//
+// Marked rather than removed: the order it sits in is arranged once for the
+// sequence and shared with every other reader of it, so a scope that finds a
+// clash notes it here and leaves the order alone. The clash itself is written
+// down on the source, which is what keeps the next scope from finding it again.
 func (m *merge) drop(am *amendment) {
-	for i, held := range m.mine {
-		if held == am {
-			m.mine = append(m.mine[:i], m.mine[i+1:]...)
-			return
-		}
+	if m.dropped == nil {
+		m.dropped = map[string]bool{}
 	}
+	m.dropped[wire.EncodeValue(am.key)] = true
 }
 
 // Done is the end of one round of the child's answer.
@@ -489,7 +511,7 @@ func (m *merge) Done(c Complete) {
 	case c.Error != "":
 	case m.joined:
 		out.Stop = wire.StopJoined
-	case c.Stop == wire.StopExhausted && len(m.mine) == 0:
+	case c.Stop == wire.StopExhausted && m.waiting() == 0:
 		// Everything of ours from the boundary on has gone out, so where the
 		// child had nothing more, neither has anyone. This outranks a scope
 		// that also happened to fill: there being nothing past the end is the
@@ -516,16 +538,20 @@ func (m *merge) Done(c Complete) {
 // flushBefore sends the records of this source's own that belong before a
 // position, and everything left when there is none.
 func (m *merge) flushBefore(at []*wire.Value) {
-	s := m.set
-	for len(m.mine) > 0 && !m.full() {
-		am := m.mine[0]
-		if at != nil {
-			mine := amendTuple(am, am.place(), s.spec.Sort)
-			if wire.CompareLevels(mine, at, m.levels) > 0 {
-				return
-			}
+	for !m.full() {
+		am, stands, ok := m.peek()
+		if !ok {
+			return
 		}
-		m.mine = m.mine[1:]
+		if at != nil && wire.CompareLevels(stands, at, m.levels) > 0 {
+			return
+		}
+		m.i += m.step
+		if m.dropped[wire.EncodeValue(am.key)] {
+			// Its key turned out to be the child's after all, and the child's
+			// record has already gone out in its place.
+			continue
+		}
 		if am.added {
 			// Noted because the child may yet send a record under this key. If
 			// it does, ours has already crossed and the child's is held back
