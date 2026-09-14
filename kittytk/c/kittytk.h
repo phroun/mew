@@ -221,9 +221,14 @@ typedef struct { const kt_value *v; int n; } kt_bag;
 
 /* The value under a name, or NULL where the bag does not name it. */
 const kt_value *kt_bag_get(const kt_bag *b, const char *name);
-/* The record key: the field every record and every boundary carries. */
-const kt_value *kt_bag_key(const kt_bag *b);
-#define KT_KEY_FIELD "key"
+
+/* KT_ID_ARG carries a record's identity, beside its fields rather than among
+   them.
+
+   An identity is not a field. A record can hold a field called `key` and that
+   field is data like any other -- it sorts, it filters, it is shown in a column
+   -- while what names the record travels here. */
+#define KT_ID_ARG "id"
 
 /* What a result carries, and how much of the record it is.
 
@@ -241,6 +246,13 @@ const kt_value *kt_bag_key(const kt_bag *b);
 
 #define KT_RECORD_ARG "record"
 #define KT_FIELDS_ARG "fields"
+
+/* Why a scope ended, which the asker cannot work out for itself: a scope that
+   filled and one that ran out of records look identical from the far end, and
+   they mean opposite things about whether there is any point asking again. */
+#define KT_STOP_FILLED "filled"        /* the count was reached */
+#define KT_STOP_JOINED "joined"        /* the walk reached `until` */
+#define KT_STOP_EXHAUSTED "exhausted"  /* no more records, so no watermark */
 
 /* One node of a filter tree: a predicate over one field, or an and/or/not over
    other nodes. A block is an AND, so the top of a parsed filter always is --
@@ -275,50 +287,47 @@ typedef struct {
     const kt_sortlevel *sort;
     int nsort;
 
-    /* Walk the stated sequence from its end.
-
-       Every level turns over, the one the sort does not write included: a
-       record key settles what the named levels leave equal, and a sequence
-       read backwards settles it backwards too. That is what makes this the
-       exact mirror -- `sort={ size desc }` reverses one level and leaves ties
-       in the order they were already in, which is a different sequence again.
-
-       It names no field, so it is the one way to turn over a sequence whose
-       records are read in a way that cannot name their key at all. */
-    int reversed;
 } kt_qspec;
 
-/* One scope of the sequence, asked for.
+/* The run of records a query asks for: where to start, which way to walk, how
+ * many, and where the asker's own knowledge picks up again.
  *
- * from and to are boundaries: where the display's own knowledge starts and how
- * far it runs. Both are empty at the beginning of the sequence. have is how
- * much of the scope the display can fill from what it already holds, and need
- * is how many rows the scope is. Emit every record of your own in (from..to],
- * and if that does not make up the shortfall, keep going past to until it does.
+ * It is not a filter and it names no field. The sequence is already decided by
+ * the spec, and a scope only says which part of it to read.
  *
- * Nothing stamps it: the application's results and its replies travel one
- * ordered stream, so a scope's results are the ones between the reply that
- * accepted it and the result that completes it.
+ * after and until are identities, not positions: an identity means something
+ * only to the source that issued it. Start past after, send count records, and
+ * stop early if you reach until -- a record the asker already holds, and
+ * everything beyond it with it.
+ *
+ * reversed walks the sequence from its end rather than its beginning. Every
+ * level turns over, the one the sort does not write included, which is what
+ * makes it the exact mirror -- `sort={ size desc }` turns one level over and
+ * leaves ties facing the way they were, a different sequence again. It names no
+ * field, so it is the one way to turn over a sequence whose records are read in
+ * a way that cannot name their identity at all.
  *
  * It is valid for the length of the callback and freed after it returns. */
 typedef struct {
-    kt_bag from, to;
-    int have, need;
-    kt_bag fields;           /* the fields wanted for this scope; empty means the spec's */
+    const kt_value *after;   /* NULL: the first record in walk order */
+    const kt_value *until;   /* NULL: walk to the count or to the end */
+    int count;
+    int reversed;
     const kt_qspec *spec;    /* the sequence, so a handler need not have kept it */
-} kt_qfill;
+} kt_qscope;
 
 /* Where the answer is written. Unlike the request, it may be kept and used
    after the callback returns, which is what lets an answer be produced over as
    long as it takes.
 
-   Exactly one of kt_fill_done, kt_fill_exhausted and kt_fill_fail ends it, and
+   Exactly one of kt_fill_filled, kt_fill_joined, kt_fill_exhausted and
+   kt_fill_fail ends it, and
    that call RELEASES the sink: nothing may touch it afterwards, and an answer
    that is never ended is a leak. The Go and Python clients refuse a second
    ending instead; C has nothing left to refuse with. */
 typedef struct kt_fill kt_fill;
 
-/* One whole record: its key, and every field it has.
+/* One whole record: its identity, and every field it has.
 
    Whole matters beyond this answer. A record that arrived entire answers any
    question about that record, so whoever asked can keep it and use it for the
@@ -326,17 +335,18 @@ typedef struct kt_fill kt_fill;
    So say kt_fill_record when these are all the fields there are, and
    kt_fill_subset when they are the ones somebody asked for.
 
-   The key is what identifies the record, and it is the same key whatever is
-   being asked. */
-int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n);
+   The identity names the record and travels beside the fields rather than
+   among them: a record is free to carry a field called `key` of its own, and
+   that field is data like any other. */
+int kt_fill_record(kt_fill *f, kt_value id, const kt_value *fields, int n);
 
-/* Some of a record: its key, and the fields this fill asked for, which are
-   fewer than the record has. It crosses as `fields={ ... }`.
+/* Some of a record: its identity, and the fields this query asked for, which
+   are fewer than the record has. It crosses as `fields={ ... }`.
 
    The honest answer to a query that named a short list of fields -- the
    skeleton of a wide scope -- and worth less afterwards than a whole record,
    because it can only answer the question it was asked. */
-int kt_fill_subset(kt_fill *f, kt_value key, const kt_value *fields, int n);
+int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n);
 
 /* Declare that the records are being sent in the query's own order.
    It is the one hint that cannot be left unsaid and assumed, because it
@@ -345,11 +355,19 @@ int kt_fill_subset(kt_fill *f, kt_value key, const kt_value *fields, int n);
    unordered, which is always safe. */
 void kt_fill_ordered(kt_fill *f);
 
-/* Finish with a watermark: there is nothing of mine between where you asked
-   from and this point that you do not now have. A completeness guarantee
+/* Finish with the count reached, and a watermark: there is nothing of mine
+   between where you asked from and this record that you do not now have.
+
+   The watermark is what the next scope is asked from, so it names a record this
+   source sent, or one it is otherwise prepared to place. A completeness
+   guarantee
    rather than a position, and what lets the display shrink the scope, grow it
    back and scroll inside it without asking anything. */
-int kt_fill_done(kt_fill *f, const kt_value *watermark, int n);
+int kt_fill_filled(kt_fill *f, kt_value watermark);
+
+/* Finish at the record the display said it already held. What it holds on this
+   side and what it holds on that are now one run. */
+int kt_fill_joined(kt_fill *f, kt_value watermark);
 
 /* Finish with everything there is: no watermark, because there is nothing past
    the end to be complete up to. What the simplest implementation says -- ignore
@@ -378,7 +396,7 @@ int kt_fill_sent(const kt_fill *f);
    addressed to. */
 typedef struct kt_query kt_query;
 
-typedef void (*kt_fill_cb)(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud);
+typedef void (*kt_fill_cb)(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud);
 typedef void (*kt_hstmt_cb)(kt_query *q, const char *text, void *ud);
 typedef void (*kt_dropped_cb)(kt_query *q, void *ud);
 

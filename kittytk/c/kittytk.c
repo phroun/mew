@@ -809,7 +809,6 @@ const kt_value *kt_bag_get(const kt_bag *b, const char *name) {
     return NULL;
 }
 
-const kt_value *kt_bag_key(const kt_bag *b) { return kt_bag_get(b, KT_KEY_FIELD); }
 
 /* Whether a string can be written as a bare word and read back as the same one.
    Three things stop it: a character a bare token cannot hold, a leading sign --
@@ -977,24 +976,20 @@ static void enc_qspec(kt_buf *b, const kt_qspec *s) {
         if (wrote) buf_put(b, ' ');
         buf_puts(b, "sort="); enc_sort(b, s->sort, s->nsort); wrote = 1;
     }
-    if (s->reversed) {
-        if (wrote) buf_put(b, ' ');
-        buf_puts(b, "reversed");
-    }
 }
 
-static void enc_qfill(kt_buf *b, const kt_qfill *f) {
+static void enc_qscope(kt_buf *b, const kt_qscope *s) {
     char tmp[64];
     int wrote = 0;
-    if (f->from.n) { buf_puts(b, "from="); enc_bag(b, &f->from); wrote = 1; }
-    if (f->to.n) {
+    if (s->after) { buf_puts(b, "after="); enc_value(b, s->after); wrote = 1; }
+    if (s->until) {
         if (wrote) buf_put(b, ' ');
-        buf_puts(b, "to="); enc_bag(b, &f->to);
+        buf_puts(b, "until="); enc_value(b, s->until);
         wrote = 1;
     }
-    snprintf(tmp, sizeof tmp, "%shave=%d need=%d", wrote ? " " : "", f->have, f->need);
+    snprintf(tmp, sizeof tmp, "%scount=%d", wrote ? " " : "", s->count);
     buf_puts(b, tmp);
-    if (f->fields.n) { buf_puts(b, " fields="); enc_bag(b, &f->fields); }
+    if (s->reversed) buf_puts(b, " reversed");
 }
 
 /* --- reading one apart --- */
@@ -1036,11 +1031,10 @@ static void qspec_release(kt_qspec *s) {
     memset(s, 0, sizeof *s);
 }
 
-static void qfill_release(kt_qfill *f) {
-    bag_release(&f->from);
-    bag_release(&f->to);
-    bag_release(&f->fields);
-    memset(f, 0, sizeof *f);
+static void qscope_release(kt_qscope *s) {
+    if (s->after) { value_release((kt_value *)s->after); free((void *)s->after); }
+    if (s->until) { value_release((kt_value *)s->until); free((void *)s->until); }
+    memset(s, 0, sizeof *s);
 }
 
 static char *dupn(const char *s, size_t n) {
@@ -1373,6 +1367,74 @@ static int parse_qspec(const kt_arg *args, int n, kt_qspec *out, char *err) {
             }
             free((void *)out->sort);
             out->sort = lv; out->nsort = ln;
+        }
+    }
+    return 1;
+bad:
+    qspec_release(out);
+    return 0;
+}
+
+/* One identity argument -- `after=1`, `until=(left/7)` -- as a value.
+ *
+ * value_of refuses a named argument, because everywhere it is used the name
+ * would be a second field name in a place that holds one value. Here the name
+ * is the argument's own, so it is read past rather than refused. */
+static int ident_value(const char *what, const kt_arg *a, kt_value *out, char *err) {
+    memset(out, 0, sizeof *out);
+    switch (a->kind) {
+    case 0: out->kind = KT_V_INT; out->ival = a->ival; out->fval = (double)a->ival; break;
+    case 1: out->kind = KT_V_FLOAT; out->fval = a->fval; break;
+    case 2: out->kind = KT_V_STRING; out->sval = dupn(a->sval, a->slen); out->slen = a->slen; break;
+    case 3: out->kind = KT_V_WORD; out->sval = dupn(a->sval, a->slen); out->slen = a->slen; break;
+    default:
+        qfail(err, "%s: an identity is a value, not a block", what);
+        return 0;
+    }
+    return 1;
+}
+
+/* The scope, from the same arguments the spec was read from.
+ *
+ * The two travel together -- `new query` states the sequence and asks for a run
+ * of it in one statement -- and they are read apart because they are different
+ * things: the spec is what the query is, and the scope is what this one
+ * question wanted. */
+static int parse_qscope(const kt_arg *args, int n, kt_qscope *out, char *err) {
+    memset(out, 0, sizeof *out);
+    for (int i = 0; i < n; i++) {
+        const kt_arg *a = &args[i];
+        const char *nm = a->name ? a->name : "";
+        if (!strcmp(nm, "count")) {
+            if (!a->has_value || a->kind != 0) {
+                qfail(err, "count: expected a whole number");
+                goto bad;
+            }
+            if (a->ival < 0) {
+                qfail(err, "count: %lld records is not a number of records",
+                      (long long)a->ival);
+                goto bad;
+            }
+            out->count = (int)a->ival;
+        } else if (!strcmp(nm, "after") || !strcmp(nm, "until")) {
+            kt_value *v;
+            if (!a->has_value) {
+                qfail(err, "%s: expected an identity", nm);
+                goto bad;
+            }
+            if (a->kind == 4) {
+                qfail(err, "%s: an identity is a value, not a block", nm);
+                goto bad;
+            }
+            v = calloc(1, sizeof *v);
+            if (!ident_value(nm, a, v, err)) { free(v); goto bad; }
+            if (!strcmp(nm, "after")) {
+                if (out->after) { value_release((kt_value *)out->after); free((void *)out->after); }
+                out->after = v;
+            } else {
+                if (out->until) { value_release((kt_value *)out->until); free((void *)out->until); }
+                out->until = v;
+            }
         } else if (!strcmp(nm, "reversed")) {
             if (a->has_value) {
                 qfail(err, "reversed: it takes no value");
@@ -1383,34 +1445,7 @@ static int parse_qspec(const kt_arg *args, int n, kt_qspec *out, char *err) {
     }
     return 1;
 bad:
-    qspec_release(out);
-    return 0;
-}
-
-/* A fill request, from the arguments after the question word. */
-static int parse_qfill(const kt_arg *args, int n, kt_qfill *out, char *err) {
-    memset(out, 0, sizeof *out);
-    for (int i = 0; i < n; i++) {
-        const kt_arg *a = &args[i];
-        const char *nm = a->name ? a->name : "";
-        if (!strcmp(nm, "have") || !strcmp(nm, "need")) {
-            if (!a->has_value || a->kind != 0) {
-                qfail(err, "%s: expected a whole number", nm);
-                goto bad;
-            }
-            if (!strcmp(nm, "have")) out->have = (int)a->ival;
-            else out->need = (int)a->ival;
-        } else if (!strcmp(nm, "from") || !strcmp(nm, "to") || !strcmp(nm, "fields")) {
-            kt_bag bag;
-            if (!parse_bag(a, &bag, err)) goto bad;
-            if (!strcmp(nm, "from")) { bag_release(&out->from); out->from = bag; }
-            else if (!strcmp(nm, "to")) { bag_release(&out->to); out->to = bag; }
-            else { bag_release(&out->fields); out->fields = bag; }
-        }
-    }
-    return 1;
-bad:
-    qfill_release(out);
+    qscope_release(out);
     return 0;
 }
 
@@ -1840,6 +1875,7 @@ struct kt_fill {
     int sent;     /* statements written, which is what decides a flush */
     int records;  /* records among them, which is what kt_fill_sent reports */
     int ordered;
+    char *held;   /* the last record, kept so the terminator can ride on it */
 };
 
 static void enqueue_inbound(kt_conn *c, const char *text) {
@@ -1941,37 +1977,57 @@ static void fill_head(kt_fill *f, kt_buf *b) {
     buf_puts(b, tmp);
 }
 
+/* Push one finished statement into the buffer. Called under f->mu. */
+static void fill_push(kt_fill *f, const char *stmt) {
+    if (f->buf.len) buf_put(&f->buf, '\n');
+    buf_puts(&f->buf, stmt);
+    f->sent++;
+}
+
 /* One record onto the answer, under the word that says how much of it came
-   back: `record` for every field it has, `fields` for the ones asked for. */
-static int fill_write(kt_fill *f, const char *what, kt_value key,
+   back: `record` for every field it has, `fields` for the ones asked for.
+
+   It is held back until the next record or the end. Held back because the
+   statement carrying the last record can carry the terminator too, and an
+   answer of one record is then one line rather than three; nothing waits long,
+   since the next record releases it, and so do kt_fill_flush and the end. */
+static int fill_write(kt_fill *f, const char *what, kt_value id,
                       const kt_value *fields, int n) {
     kt_buf b;
     memset(&b, 0, sizeof b);
     fill_head(f, &b);
+
+    kt_mutex_lock(&f->mu);
+    /* The declaration rides on the first record, which is where it is worth
+       anything. */
+    if (f->ordered && f->records == 0) buf_puts(&b, " ordered");
+    kt_mutex_unlock(&f->mu);
+
+    buf_puts(&b, " " KT_ID_ARG "=");
+    enc_value(&b, &id);
     buf_put(&b, ' ');
     buf_puts(&b, what);
-    buf_puts(&b, "={ ");
-    buf_puts(&b, KT_KEY_FIELD);
-    buf_put(&b, ' ');
-    enc_value(&b, &key);
+    buf_puts(&b, "={");
     for (int i = 0; i < n; i++) {
-        buf_puts(&b, "; ");
+        buf_puts(&b, i ? "; " : " ");
         buf_puts(&b, fields[i].name ? fields[i].name : "");
         if (fields[i].kind != KT_V_NONE) {
             buf_put(&b, ' ');
             enc_value(&b, &fields[i]);
         }
     }
-    buf_puts(&b, " }");
+    buf_puts(&b, n ? " }" : "}");
     char *stmt = buf_dup(&b);
     free(b.p);
 
     kt_mutex_lock(&f->mu);
-    if (f->buf.len) buf_put(&f->buf, '\n');
-    buf_puts(&f->buf, stmt);
-    free(stmt);
-    f->sent++;
+    char *held = f->held;
+    f->held = stmt;
     f->records++;
+    if (held) {
+        fill_push(f, held);
+        free(held);
+    }
     if (f->buf.len < KT_FLUSH_BYTES) {
         kt_mutex_unlock(&f->mu);
         return 0;
@@ -1981,12 +2037,12 @@ static int fill_write(kt_fill *f, const char *what, kt_value key,
     return fill_send(f, src);
 }
 
-int kt_fill_record(kt_fill *f, kt_value key, const kt_value *fields, int n) {
-    return fill_write(f, KT_RECORD_ARG, key, fields, n);
+int kt_fill_record(kt_fill *f, kt_value id, const kt_value *fields, int n) {
+    return fill_write(f, KT_RECORD_ARG, id, fields, n);
 }
 
-int kt_fill_subset(kt_fill *f, kt_value key, const kt_value *fields, int n) {
-    return fill_write(f, KT_FIELDS_ARG, key, fields, n);
+int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n) {
+    return fill_write(f, KT_FIELDS_ARG, id, fields, n);
 }
 
 /* The order is declared before the records, which is the only place it is worth
@@ -1995,29 +2051,17 @@ int kt_fill_subset(kt_fill *f, kt_value key, const kt_value *fields, int n) {
    be true of what crossed, so it is dropped rather than sent. */
 void kt_fill_ordered(kt_fill *f) {
     kt_mutex_lock(&f->mu);
-    int late = f->sent > 0 || f->ordered;
-    if (!late) f->ordered = 1;
+    /* Late is measured in records produced, not statements sent: a record held
+       back for the terminator to ride on has still been produced. */
+    if (f->records == 0 && !f->ordered) f->ordered = 1;
     kt_mutex_unlock(&f->mu);
-    if (late) return;
-
-    kt_buf b;
-    memset(&b, 0, sizeof b);
-    fill_head(f, &b);
-    buf_puts(&b, " ordered");
-    char *line = buf_dup(&b);
-    free(b.p);
-    kt_mutex_lock(&f->mu);
-    if (f->buf.len) buf_put(&f->buf, '\n');
-    buf_puts(&f->buf, line);
-    f->sent++;
-    kt_mutex_unlock(&f->mu);
-    free(line);
 }
 
 int kt_fill_sent(const kt_fill *f) { return f->records; }
 
 int kt_fill_flush(kt_fill *f) {
     kt_mutex_lock(&f->mu);
+    if (f->held) { fill_push(f, f->held); free(f->held); f->held = NULL; }
     char *src = fill_take(f);
     kt_mutex_unlock(&f->mu);
     return fill_send(f, src);
@@ -2032,7 +2076,16 @@ static int fill_finish(kt_fill *f, const char *tail) {
     kt_mutex_lock(&f->mu);
     kt_buf b;
     memset(&b, 0, sizeof b);
-    fill_head(f, &b);
+    if (f->held) {
+        /* The terminator rides on the last record rather than costing a line
+           of its own. */
+        buf_puts(&b, f->held);
+        free(f->held);
+        f->held = NULL;
+    } else {
+        fill_head(f, &b);
+        if (f->ordered && f->records == 0) buf_puts(&b, " ordered");
+    }
     buf_puts(&b, " complete");
     if (tail) buf_puts(&b, tail);
     if (f->buf.len) buf_put(&f->buf, '\n');
@@ -2049,13 +2102,14 @@ static int fill_finish(kt_fill *f, const char *tail) {
     return rc;
 }
 
-int kt_fill_done(kt_fill *f, const kt_value *watermark, int n) {
-    if (n <= 0) return fill_finish(f, NULL);
+/* The watermark, and the word that says why the scope ended. */
+static int fill_mark(kt_fill *f, kt_value watermark, const char *stop) {
     kt_buf b;
     memset(&b, 0, sizeof b);
     buf_puts(&b, " watermark=");
-    kt_bag bag = { watermark, n };
-    enc_bag(&b, &bag);
+    enc_value(&b, &watermark);
+    buf_put(&b, ' ');
+    buf_puts(&b, stop);
     char *tail = buf_dup(&b);
     free(b.p);
     int rc = fill_finish(f, tail);
@@ -2063,7 +2117,15 @@ int kt_fill_done(kt_fill *f, const kt_value *watermark, int n) {
     return rc;
 }
 
-int kt_fill_exhausted(kt_fill *f) { return fill_finish(f, " exhausted"); }
+int kt_fill_filled(kt_fill *f, kt_value watermark) {
+    return fill_mark(f, watermark, KT_STOP_FILLED);
+}
+
+int kt_fill_joined(kt_fill *f, kt_value watermark) {
+    return fill_mark(f, watermark, KT_STOP_JOINED);
+}
+
+int kt_fill_exhausted(kt_fill *f) { return fill_finish(f, " " KT_STOP_EXHAUSTED); }
 
 int kt_fill_fail(kt_fill *f, const char *message) {
     kt_buf b;
@@ -2086,7 +2148,7 @@ typedef struct {
     int kind;            /* 0=fill 2=dropped 3=other */
     kt_query *q;
     kt_fill *sink;
-    kt_qfill req;
+    kt_qscope req;
     char *text;
 } kt_deferred;
 
@@ -2129,13 +2191,13 @@ static uint64_t hosted_target(const kt_stmt *st, const kt_batch *b) {
 }
 
 /* Take a request for one scope apart and queue serving it. */
-static int batch_window(kt_conn *c, kt_batch *b, kt_query *q,
-                        const kt_arg *args, int n) {
+static int batch_scope(kt_conn *c, kt_batch *b, kt_query *q,
+                       const kt_arg *args, int n) {
     kt_deferred d;
     memset(&d, 0, sizeof d);
     d.kind = 0;
     d.q = q;
-    if (!parse_qfill(args, n, &d.req, b->err)) return 0;
+    if (!parse_qscope(args, n, &d.req, b->err)) return 0;
     d.sink = fill_new(c, q->id);
     batch_defer(b, d);
     return 1;
@@ -2177,7 +2239,7 @@ static int batch_open(kt_conn *c, kt_batch *b, const kt_stmt *st) {
     c->queries[c->nqueries++] = q;
     kt_mutex_unlock(&c->hmu);
 
-    return batch_window(c, b, q, args, n);
+    return batch_scope(c, b, q, args, n);
 }
 
 /* Route one statement. Anything meant to answer with records is deferred, so
@@ -2189,14 +2251,7 @@ static int batch_one(kt_conn *c, kt_batch *b, const kt_stmt *st, const char *tex
     const kt_arg *rest = st->n > 1 ? &st->args[1] : NULL;
     int nrest = st->n - 1;
 
-    if (!strcmp(st->verb, "query")) {
-        if (!id) { qfail(b->err, "query: expected the query to ask"); return 0; }
-        kt_mutex_lock(&c->hmu);
-        kt_query *q = query_with(c, id);
-        kt_mutex_unlock(&c->hmu);
-        if (!q) { qfail(b->err, "query %llu: no query of mine", (unsigned long long)id); return 0; }
-        return batch_window(c, b, q, rest, nrest);
-    }
+    (void)rest; (void)nrest;
     if (!id) return 1;  /* not addressed to anything this application holds */
 
     kt_mutex_lock(&c->hmu);
@@ -2210,6 +2265,11 @@ static int batch_one(kt_conn *c, kt_batch *b, const kt_stmt *st, const char *tex
     kt_deferred d;
     memset(&d, 0, sizeof d);
     d.q = q;
+    if (!strcmp(st->verb, "query")) {
+        qfail(b->err, "query: a query is asked when it is made and answered "
+                      "once; ask a new one for the next scope");
+        return 0;
+    }
     if (!strcmp(st->verb, "set")) {
         qfail(b->err, "set: a query is the sequence it was opened with and "
                       "does not change; a different sequence is a different query");
@@ -2286,7 +2346,7 @@ static void run_batch(kt_conn *c, kt_stmt *stmts, const char **texts, int n) {
             d->req.spec = &d->q->spec;
             if (ok && fill) fill(d->q, &d->req, d->sink, fill_ud);
             else kt_fill_fail(d->sink, ok ? "this source has nothing to fill it" : b.err);
-            qfill_release(&d->req);
+            qscope_release(&d->req);
             break;
         case 2:
             if (drop) drop(d->q, drop_ud);

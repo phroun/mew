@@ -44,9 +44,9 @@ static int answer(const char *kind, const char *text, char *out, size_t cap) {
         ok = parse_qspec(st->args, st->n, &spec, err);
         if (ok) { enc_qspec(&b, &spec); qspec_release(&spec); }
     } else {
-        kt_qfill fill;
-        ok = parse_qfill(st->args, st->n, &fill, err);
-        if (ok) { enc_qfill(&b, &fill); qfill_release(&fill); }
+        kt_qscope scope;
+        ok = parse_qscope(st->args, st->n, &scope, err);
+        if (ok) { enc_qscope(&b, &scope); qscope_release(&scope); }
     }
     stmt_free(st);
     if (ok) {
@@ -119,7 +119,7 @@ int main(int argc, char **argv) {
         char *rest = strchr(line, ' ');
         if (rest) *rest++ = '\0';
         else rest = line + strlen(line);
-        if (!strcmp(line, "spec") || !strcmp(line, "fill")) {
+        if (!strcmp(line, "spec") || !strcmp(line, "scope")) {
             if (open_line) { printf("line %d: a case with no answer\n", open_line); failures++; }
             snprintf(kind, sizeof kind, "%.15s", line);
             snprintf(text, sizeof text, "%s", rest);

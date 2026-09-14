@@ -107,27 +107,23 @@ static void *display_loop(void *arg) {
 static kt_conn *conn;
 static kt_source *source;
 static uint64_t seen_query;
-static int seen_have, seen_need;
-static char seen_from_name[128], seen_fields[128], seen_source[64];
-static long long seen_from_key, seen_to_key;
+static int seen_count, seen_reversed;
+static char seen_fields[128], seen_source[64];
+static long long seen_after, seen_until;
 static int seen_sort_levels;
 static int ended_once;
 static int served_windows;
 
-static void copy_request(kt_query *q, const kt_qfill *req) {
+static void copy_request(kt_query *q, const kt_qscope *req) {
     seen_query = kt_query_id(q);
-    seen_have = req->have;
-    seen_need = req->need;
-    const kt_value *v = kt_bag_get(&req->from, "name");
-    snprintf(seen_from_name, sizeof seen_from_name, "%s", v && v->sval ? v->sval : "");
-    v = kt_bag_key(&req->from);
-    seen_from_key = v ? v->ival : -1;
-    v = kt_bag_key(&req->to);
-    seen_to_key = v ? v->ival : -1;
+    seen_count = req->count;
+    seen_reversed = req->reversed;
+    seen_after = req->after ? req->after->ival : -1;
+    seen_until = req->until ? req->until->ival : -1;
     seen_fields[0] = '\0';
-    for (int i = 0; i < req->fields.n; i++) {
+    for (int i = 0; req->spec && i < req->spec->fields.n; i++) {
         if (i) strncat(seen_fields, ",", sizeof seen_fields - strlen(seen_fields) - 1);
-        strncat(seen_fields, req->fields.v[i].name,
+        strncat(seen_fields, req->spec->fields.v[i].name,
                 sizeof seen_fields - strlen(seen_fields) - 1);
     }
     snprintf(seen_source, sizeof seen_source, "%s",
@@ -135,7 +131,7 @@ static void copy_request(kt_query *q, const kt_qfill *req) {
     seen_sort_levels = req->spec ? req->spec->nsort : -1;
 }
 
-static void fill_two(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_two(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)ud;
     copy_request(q, req);
     kt_fill_ordered(sink);
@@ -146,11 +142,10 @@ static void fill_two(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) 
     fields[0] = kt_vstr("name", "src/window.go");
     fields[1] = kt_vint("size", 2048);
     kt_fill_record(sink, kt_vint("", 42), fields, 2);
-    kt_value mark[2] = { kt_vstr("name", "src/window.go"), kt_vint("key", 42) };
-    kt_fill_done(sink, mark, 2);
+    kt_fill_filled(sink, kt_vint("", 42));
 }
 
-static void fill_simplest(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_simplest(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     served_windows++;
     kt_fill_record(sink, kt_vstr("", "a"), NULL, 0);
@@ -161,7 +156,7 @@ static void fill_simplest(kt_query *q, const kt_qfill *req, kt_fill *sink, void 
    keep it and answer the next query out of it; a subset answers the one
    question that asked for it. Neither end can work that out from the fields
    alone, so the answer says which it is. */
-static void fill_whole_and_part(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_whole_and_part(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_value fields[2];
     fields[0] = kt_vstr("name", "src/parser.go");
@@ -172,12 +167,12 @@ static void fill_whole_and_part(kt_query *q, const kt_qfill *req, kt_fill *sink,
     kt_fill_exhausted(sink);
 }
 
-static void fill_refuses(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_refuses(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_fail(sink, "no records past \"build.sh\"");
 }
 
-static void fill_ends_once(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_ends_once(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_exhausted(sink);
     /* And that is the end of the sink: it was released by the ending it was
@@ -189,7 +184,7 @@ static void fill_ends_once(kt_query *q, const kt_qfill *req, kt_fill *sink, void
 
 /* The order declared after a record has gone out is too late to be true of
    what crossed, so it is dropped rather than sent. */
-static void fill_late_order(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_late_order(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_value f = kt_vstr("name", "alpha");
     kt_fill_record(sink, kt_vint("", 1), &f, 1);
@@ -197,7 +192,7 @@ static void fill_late_order(kt_query *q, const kt_qfill *req, kt_fill *sink, voi
     kt_fill_exhausted(sink);
 }
 
-static void fill_long(kt_query *q, const kt_qfill *req, kt_fill *sink, void *ud) {
+static void fill_long(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_ordered(sink);
     char name[128];
@@ -316,26 +311,25 @@ int main(void) {
        goes out before any record, because the reply is what names a query the
        display has not heard of yet. */
     int n = sent_count();
-    uint64_t q = serve(fill_two, "from={ name \"README.md\"; key 17 }"
-                       " to={ name \"build.sh\"; key 42 } have=30 need=50"
+    uint64_t q = serve(fill_two, "after=17 until=42 count=50 reversed"
                        " fields={ name; size }");
     expect(q == 1, "the application named the query");
     expect(seen_query == q, "the handler was given the query");
-    expect(seen_have == 30 && seen_need == 50, "have and need came through");
-    expect_str(seen_from_name, "README.md", "the boundary's fields came through");
-    expect(seen_from_key == 17 && seen_to_key == 42, "both boundaries' keys came through");
-    expect_str(seen_fields, "name,size", "this scope's fields came through");
+    expect(seen_count == 50, "the count came through");
+    expect(seen_reversed == 1, "the direction came through");
+    expect(seen_after == 17 && seen_until == 42, "both ends came through");
+    expect_str(seen_fields, "name,size", "the fields came through");
     expect_str(seen_source, "files", "the spec came with the scope");
     expect(seen_sort_levels == 1, "the spec's sort came with the scope");
     char *answer = since(n);
     expect_str(answer,
         "reply q=1\n"
         /* The order is declared before the records rather than after them,
-           which is the only place a far end can act on it. */
-        "result 1 ordered\n"
-        "result 1 record={ key 17; name \"src/parser.go\"; size 1024 }\n"
-        "result 1 record={ key 42; name \"src/window.go\"; size 2048 }\n"
-        "result 1 complete watermark={ name \"src/window.go\"; key 42 }",
+           which is the only place a far end can act on it -- so it rides on the
+           first of them, and the terminator rides on the last. */
+        "result 1 ordered id=17 record={ name \"src/parser.go\"; size 1024 }\n"
+        "result 1 id=42 record={ name \"src/window.go\"; size 2048 }"
+        " complete watermark=42 filled",
         "the reply comes before the records");
     free(answer);
 
@@ -345,7 +339,7 @@ int main(void) {
        destroys what it is replacing, which is what keeps the source in use
        while the reader moves across. */
     n = sent_count();
-    ask("r=new query source=\"files\" sort={ size desc } have=0 need=2\nend", n);
+    ask("r=new query source=\"files\" sort={ size desc } count=2\nend", n);
     expect(seen_sort_levels == 1, "the second query carried its own spec");
     answer = since(n);
     expect(!!strstr(answer, "reply r=2"), "the second query was named in its own right");
@@ -379,51 +373,50 @@ int main(void) {
     }
     expect(dropped_told == 1, "the application was told the query was let go");
     n = sent_count();
-    say("query 1 have=0 need=1\nend");
+    say("destroy 1\nend");
     settle();
     char *after = since(n);
     expect(strstr(after, "error text=") == after && strstr(after, "no query of mine") != NULL,
-           "a query that was let go was served anyway");
+           "a query that was let go was still known");
     free(after);
 
-    /* A display may address a query it opened in the same batch, without
-       waiting for the reply that names it. */
+    /* Two scopes of one sequence are two queries, each naming it again. */
     n = sent_count();
     served_windows = 0;
     kt_mutex_lock(&conn->hmu);
     source->fill = fill_simplest;
     kt_mutex_unlock(&conn->hmu);
-    ask("q=new query source=\"files\" have=0 need=5\nquery q have=5 need=10\nend", n);
+    ask("q=new query source=\"files\" count=5\n"
+        "r=new query source=\"files\" after=4 count=10\nend", n);
     settle();
-    expect(served_windows == 2, "a query is addressable in the batch that made it");
+    expect(served_windows == 2, "each scope is a query of its own");
 
     /* The least an implementation can do: ignore every hint, send everything,
        say so. It says nothing about order, which leaves the display to sort. */
     n = sent_count();
-    q = serve(fill_simplest, "have=0 need=10");
+    q = serve(fill_simplest, "count=10");
     answer = since(n + 1);
     char tmp[256];
     snprintf(tmp, sizeof tmp,
-             "result %llu record={ key \"a\" }\nresult %llu complete exhausted",
-             (unsigned long long)q, (unsigned long long)q);
+             "result %llu id=\"a\" record={} complete exhausted",
+             (unsigned long long)q);
     expect_str(answer, tmp, "the simplest answer is everything and exhausted");
     free(answer);
 
     /* A whole record and a subset of one cross under two different words. */
     n = sent_count();
-    q = serve(fill_whole_and_part, "have=0 need=10 fields={ name }");
+    q = serve(fill_whole_and_part, "count=10 fields={ name }");
     answer = since(n + 1);
     snprintf(tmp, sizeof tmp,
-             "result %llu record={ key 17; name \"src/parser.go\"; size 1024 }\n"
-             "result %llu fields={ key 42; name \"src/window.go\" }\n"
-             "result %llu complete exhausted",
-             (unsigned long long)q, (unsigned long long)q, (unsigned long long)q);
+             "result %llu id=17 record={ name \"src/parser.go\"; size 1024 }\n"
+             "result %llu id=42 fields={ name \"src/window.go\" } complete exhausted",
+             (unsigned long long)q, (unsigned long long)q);
     expect_str(answer, tmp, "a whole record and a subset say which they are");
     free(answer);
 
     /* A refusal is an answer. */
     n = sent_count();
-    q = serve(fill_refuses, "have=0 need=10");
+    q = serve(fill_refuses, "count=10");
     answer = since(n + 1);
     snprintf(tmp, sizeof tmp,
              "result %llu complete error=\"no records past \\\"build.sh\\\"\"",
@@ -433,7 +426,7 @@ int main(void) {
 
     /* An answer ends once: one ending, one message, and the sink is gone. */
     n = sent_count();
-    q = serve(fill_ends_once, "have=0 need=1");
+    q = serve(fill_ends_once, "count=1");
     settle();
     expect(ended_once == 1, "the handler ran");
     char *once = since(n + 1);
@@ -445,32 +438,32 @@ int main(void) {
        scope larger than one message is neither held in memory nor one
        uninterruptible piece of work. */
     n = sent_count();
-    serve(fill_late_order, "have=0 need=2");
+    serve(fill_late_order, "count=2");
     answer = since(n + 1);
     expect(strstr(answer, "ordered") == NULL, "a late declaration of order is not sent");
     free(answer);
 
     n = sent_count();
-    q = serve(fill_long, "have=0 need=400");
+    q = serve(fill_long, "count=400");
     int batches = sent_count() - n - 1;
     expect(batches > 1, "a long answer goes out in batches");
     answer = since(n + 1);
     int lines = *answer ? 1 : 0;
     for (char *p = answer; *p; p++) if (*p == '\n') lines++;
-    expect(lines == LONG_RECORDS + 2,
-           "every record arrives, once, with a declaration and a terminator");
-    expect(strstr(answer, "key 0;") != NULL && strstr(answer, "key 399;") != NULL,
+    expect(lines == LONG_RECORDS,
+           "every record arrives once, carrying the declaration and the "
+           "terminator between them");
+    expect(strstr(answer, "id=0 ") != NULL && strstr(answer, "id=399 ") != NULL,
            "the first and last records are both there");
-    snprintf(tmp, sizeof tmp, "\nresult %llu complete", (unsigned long long)q);
-    expect(strstr(answer, tmp) != NULL, "the terminator is last");
-    snprintf(tmp, sizeof tmp, "result %llu ordered\n", (unsigned long long)q);
+    expect(strstr(answer, "complete exhausted") != NULL, "the terminator rides on the last");
+    snprintf(tmp, sizeof tmp, "result %llu ordered id=0 ", (unsigned long long)q);
     expect(strncmp(answer, tmp, strlen(tmp)) == 0, "the declaration of order leads");
     free(answer);
 
     /* A source this application does not serve is refused, and the refusal is
        what the batch is answered with. */
     n = sent_count();
-    say("q=new query source=\"ledgers\" have=0 need=1\nend");
+    say("q=new query source=\"ledgers\" count=1\nend");
     settle();
     char *refusal = since(n);
     expect(strstr(refusal, "error text=") == refusal && strstr(refusal, "ledgers") != NULL,
