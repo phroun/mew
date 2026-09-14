@@ -152,7 +152,7 @@ func (a *AmendedSource) Open(spec *wire.Spec) (ResultSet, error) {
 		src:    a,
 		spec:   spec,
 		child:  child,
-		levels: append(wire.Levels(spec.Sort), wire.Level{}),
+		levels: ordering1(spec),
 	}, nil
 }
 

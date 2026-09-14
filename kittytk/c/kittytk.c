@@ -971,7 +971,11 @@ static void enc_qspec(kt_buf *b, const kt_qspec *s) {
     }
     if (s->nsort) {
         if (wrote) buf_put(b, ' ');
-        buf_puts(b, "sort="); enc_sort(b, s->sort, s->nsort);
+        buf_puts(b, "sort="); enc_sort(b, s->sort, s->nsort); wrote = 1;
+    }
+    if (s->reversed) {
+        if (wrote) buf_put(b, ' ');
+        buf_puts(b, "reversed");
     }
 }
 
@@ -1323,6 +1327,12 @@ static int parse_qspec(const kt_arg *args, int n, kt_qspec *out, char *err) {
             }
             free((void *)out->sort);
             out->sort = lv; out->nsort = ln;
+        } else if (!strcmp(nm, "reversed")) {
+            if (a->has_value) {
+                qfail(err, "reversed: it takes no value");
+                goto bad;
+            }
+            out->reversed = (a->flag == KT_FLAG_TRUE);
         }
     }
     return 1;

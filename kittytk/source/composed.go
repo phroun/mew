@@ -91,7 +91,7 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 	if spec == nil {
 		spec = &wire.Spec{}
 	}
-	steps, levels := plan(spec.Sort)
+	steps, levels := plan(spec)
 	set := &composedSet{
 		src: c, spec: spec, steps: steps, levels: levels,
 		keyed: names(spec.Filter, wire.KeyField),
@@ -103,6 +103,7 @@ func (c *ComposedSource) Open(spec *wire.Spec) (ResultSet, error) {
 		}
 		sub := *spec
 		sub.Filter = asked
+		sub.Sort, sub.Reversed = childSort(spec)
 		child, err := in.Source.Open(&sub)
 		if err != nil {
 			set.Close()
@@ -343,6 +344,43 @@ func every(children []*wire.Filter, key *wire.Value) verdict {
 	return out
 }
 
+// childSort is the sequence to ask an include for: this one, with the composed
+// key taken out of it.
+//
+// An include already orders its own records by its own key once the named
+// levels are spent, so the level this source writes as `key` is one it has
+// anyway -- and asking for it BY NAME would put the question to a reading that
+// may not be able to answer it at all. Which way round that last level goes is
+// said with `reversed` instead, which names no field and every reading can
+// therefore answer.
+//
+// Everything at or after the key level is dropped. A key names exactly one
+// record, so nothing written after it could separate two.
+func childSort(spec *wire.Spec) ([]wire.SortLevel, bool) {
+	rev := spec.Reversed
+	down := make([]wire.SortLevel, 0, len(spec.Sort))
+	keyDown := rev // with no level of its own, the key takes the reversal
+	for _, l := range spec.Sort {
+		if l.Field == wire.KeyField {
+			keyDown = l.Descending != rev
+			break
+		}
+		e := l
+		e.Descending = l.Descending != rev
+		down = append(down, e)
+	}
+	if !keyDown {
+		return down, false
+	}
+	// Reversed turns over every level, the include's own key included -- so
+	// what is asked for is the mirror of what is wanted, and reversing it
+	// lands on the sequence this source is after.
+	for i := range down {
+		down[i].Descending = !down[i].Descending
+	}
+	return down, true
+}
+
 // A step is one place in a position tuple: the value of a field, or -- where
 // the field is blank -- the two parts of the composed key.
 type step struct{ field string }
@@ -360,7 +398,8 @@ type step struct{ field string }
 // Where the sort does not name the key at all, the two levels go on the end
 // ascending: they are what makes a position name exactly one record, and
 // ascending is the sequence's own order.
-func plan(sort []wire.SortLevel) ([]step, []wire.Level) {
+func plan(spec *wire.Spec) ([]step, []wire.Level) {
+	sort := spec.Sort
 	steps := make([]step, 0, len(sort)+1)
 	levels := make([]wire.Level, 0, len(sort)+2)
 	keyed := false
@@ -377,6 +416,9 @@ func plan(sort []wire.SortLevel) ([]step, []wire.Level) {
 	if !keyed {
 		steps = append(steps, step{})
 		levels = append(levels, wire.Level{}, wire.Level{})
+	}
+	if spec.Reversed {
+		return steps, wire.Reverse(levels)
 	}
 	return steps, levels
 }

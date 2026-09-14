@@ -266,6 +266,18 @@ typedef struct {
     const kt_filter *filter; /* NULL where there is none */
     const kt_sortlevel *sort;
     int nsort;
+
+    /* Walk the stated sequence from its end.
+
+       Every level turns over, the one the sort does not write included: a
+       record key settles what the named levels leave equal, and a sequence
+       read backwards settles it backwards too. That is what makes this the
+       exact mirror -- `sort={ size desc }` reverses one level and leaves ties
+       in the order they were already in, which is a different sequence again.
+
+       It names no field, so it is the one way to turn over a sequence whose
+       records are read in a way that cannot name their key at all. */
+    int reversed;
 } kt_qspec;
 
 /* One scope of the sequence, asked for.

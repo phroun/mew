@@ -116,14 +116,14 @@ func serveWindow(f *client.Fill) {
 			rows = append(rows, e)
 		}
 	}
-	order(rows, f.Spec.Sort)
+	order(rows, f.Spec)
 
 	// Where to start: the boundary is exclusive, so skip everything at or
 	// before it. A boundary carries the sort fields and the key, which is what
 	// makes it name exactly one position even when two records tie.
 	start := 0
 	if len(f.From) > 0 {
-		for start < len(rows) && compare(rows[start], f.From, f.Spec.Sort) <= 0 {
+		for start < len(rows) && compare(rows[start], f.From, f.Spec) <= 0 {
 			start++
 		}
 	}
@@ -176,23 +176,38 @@ func (e entry) Field(name string) *wire.Value {
 // order sorts by the query's levels, with the record key as the implicit final
 // one -- without it two records could tie, and "the record after this point"
 // would name more than one place.
-func order(rows []entry, levels []wire.SortLevel) {
-	cmp := append(wire.Levels(levels), wire.Level{})
+func order(rows []entry, spec *wire.Spec) {
+	cmp := levels(spec)
 	sort.SliceStable(rows, func(i, j int) bool {
-		return wire.CompareLevels(tuple(rows[i], levels), tuple(rows[j], levels), cmp) < 0
+		return wire.CompareLevels(
+			tuple(rows[i], spec.Sort), tuple(rows[j], spec.Sort), cmp) < 0
 	})
 }
 
+// levels is what this sequence compares positions by.
+//
+// Reversed turns every one of them over, the implicit final one included --
+// which is why it has to be honoured rather than ignored. Every other hint an
+// application drops can only make the answer bigger; dropping this one makes
+// it wrong, and `Ordered` would then be a lie.
+func levels(spec *wire.Spec) []wire.Level {
+	out := append(wire.Levels(spec.Sort), wire.Level{})
+	if spec.Reversed {
+		return wire.Reverse(out)
+	}
+	return out
+}
+
 // compare places one record against a boundary, under the same levels.
-func compare(e entry, at wire.Fields, levels []wire.SortLevel) int {
+func compare(e entry, at wire.Fields, spec *wire.Spec) int {
 	var mine, theirs []*wire.Value
-	for _, l := range levels {
+	for _, l := range spec.Sort {
 		mine = append(mine, e.Field(l.Field))
 		theirs = append(theirs, at.Get(l.Field))
 	}
 	mine = append(mine, wire.NewInt(e.key))
 	theirs = append(theirs, at.Key())
-	return wire.CompareLevels(mine, theirs, append(wire.Levels(levels), wire.Level{}))
+	return wire.CompareLevels(mine, theirs, levels(spec))
 }
 
 func tuple(e entry, levels []wire.SortLevel) []*wire.Value {

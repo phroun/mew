@@ -138,7 +138,8 @@ func supported(levels []wire.SortLevel, reading Reading) error {
 			// sequence would come out in the source's own order while saying
 			// it was in the one that was asked for.
 			return fmt.Errorf("sort %s: this source is read for its members, "+
-				"and a record's key is not one of them", wire.KeyField)
+				"and a record's key is not one of them; `reversed` turns the "+
+				"sequence over without naming a field", wire.KeyField)
 		}
 	}
 	return nil
@@ -346,7 +347,7 @@ func (p *PSLSource) order(spec *wire.Spec) *ordering {
 
 	// The filter runs first, so a record that is not in the sequence is never
 	// sorted and never has its sort fields read.
-	o := &ordering{levels: append(wire.Levels(spec.Sort), wire.Level{})}
+	o := &ordering{levels: ordering1(spec)}
 	for i := range p.recs {
 		if !wire.Match(p.recs[i], spec.Filter) {
 			continue
@@ -367,10 +368,25 @@ func (p *PSLSource) order(spec *wire.Spec) *ordering {
 	return o
 }
 
+// ordering1 is what the sequence compares positions by: a level per sort
+// level, and then the record key, which settles what the sort leaves equal.
+// Reversed turns the lot over, that last one included.
+func ordering1(spec *wire.Spec) []wire.Level {
+	levels := append(wire.Levels(spec.Sort), wire.Level{})
+	if spec.Reversed {
+		return wire.Reverse(levels)
+	}
+	return levels
+}
+
 // orderKey names a sequence by what decides it. The fields a query asks for do
 // not: they change what a scope carries, not which records are in it or where.
 func orderKey(spec *wire.Spec) string {
-	return wire.EncodeSort(spec.Sort) + "\x00" + spec.Filter.Encode()
+	mirror := ""
+	if spec.Reversed {
+		mirror = "reversed"
+	}
+	return wire.EncodeSort(spec.Sort) + "\x00" + spec.Filter.Encode() + "\x00" + mirror
 }
 
 // tupleOf is a record's position: the value at each sort level, and then its

@@ -196,6 +196,18 @@ class Spec:
     filter: Optional[Filter] = None
     sort: List[SortLevel] = dataclasses.field(default_factory=list)
 
+    # Walk the stated sequence from its end.
+    #
+    # Every level turns over, the one the sort does not write included: a
+    # record key settles what the named levels leave equal, and a sequence read
+    # backwards settles it backwards too. That is what makes this the exact
+    # mirror -- `sort={ size desc }` reverses one level and leaves ties in the
+    # order they were already in, which is a different sequence again.
+    #
+    # It names no field, so it is the one way to turn over a sequence whose
+    # records are read in a way that cannot name their key at all.
+    reversed: bool = False
+
     def encode(self) -> str:
         """The spec as the arguments of the statement that carries it."""
         parts = []
@@ -209,6 +221,8 @@ class Spec:
             parts.append("filter=" + self.filter.encode())
         if self.sort:
             parts.append("sort=" + encode_sort(self.sort))
+        if self.reversed:
+            parts.append("reversed")
         return " ".join(parts)
 
 
@@ -309,6 +323,10 @@ def parse_spec(args: List[Arg]) -> Spec:
                 s.sort = parse_sort(a.value)
             except QueryError as e:
                 raise QueryError("sort: %s" % e)
+        elif a.name == "reversed":
+            if a.value is not None:
+                raise QueryError("reversed: it takes no value")
+            s.reversed = a.flag == FlagState.TRUE
     return s
 
 

@@ -609,24 +609,66 @@ func TestAFilterOnTheKeyAndAFieldKeepsBoth(t *testing.T) {
 	}
 }
 
-// An include that cannot produce the sequence says so when it is opened, and
-// the composed source passes the refusal on rather than answering nearly.
+// An include is never asked for the composed key by name.
 //
-// A PSL source read for its members cannot name a record's key at all, so a
-// sort on the key would tie for every record and leave the sequence in the
-// source's own order while claiming it was in the one asked for.
-func TestAnIncludeThatCannotSortByKeyRefuses(t *testing.T) {
+// It orders its own records by its own key once the named levels are spent, so
+// that level is one it has anyway -- and asking for it by NAME would put the
+// question to a reading that may not be able to answer it. A PSL source read
+// for its members cannot name a record's key at all, and answers this
+// perfectly well, because which way round that last level goes is said with
+// `reversed` instead.
+func TestAnIncludeIsNeverAskedForTheKeyByName(t *testing.T) {
 	members, err := ParsePSLSource(leftDoc, Members)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := composed(t, Include{Name: "members", Source: members})
+	m := &spy{inner: members}
+	c := composed(t, Include{Name: "m", Source: m})
 
-	if _, err := c.Open(parseSpec(t, "sort={ key desc }")); err == nil {
-		t.Error("a members reading accepted a sort on the key")
+	out, _ := read(t, c, "sort={ key desc }", "have=0 need=10")
+	if out.joined() != "(m/note),(m/1),(m/0)" {
+		t.Errorf("reversed, the sequence is %s", out.joined())
 	}
-	if _, err := c.Open(parseSpec(t, "sort={ size }")); err != nil {
-		t.Errorf("a sort it can answer was refused: %v", err)
+	if len(m.spec.Sort) != 0 || !m.spec.Reversed {
+		t.Errorf("the include was asked sort=%s reversed=%v",
+			wire.EncodeSort(m.spec.Sort), m.spec.Reversed)
+	}
+}
+
+// The same translation under a level of its own: what is asked for is the
+// mirror of what is wanted, and reversing it lands on the sequence.
+func TestTheKeyLevelBecomesReversedUnderAnotherLevel(t *testing.T) {
+	members, err := ParsePSLSource(leftDoc, Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &spy{inner: members}
+	c := composed(t, Include{Name: "m", Source: m})
+
+	// By size ascending, and the key descending inside that -- which for these
+	// records is every one of them tied nowhere, so it is size order.
+	out, _ := read(t, c, "sort={ size; key desc }", "have=0 need=10")
+	if out.joined() != "(m/note),(m/0),(m/1)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if got := wire.EncodeSort(m.spec.Sort); got != "{ size desc }" || !m.spec.Reversed {
+		t.Errorf("the include was asked sort=%s reversed=%v", got, m.spec.Reversed)
+	}
+}
+
+// An ascending key needs no reversal, and the level goes away rather than
+// going down -- a key names one record, so nothing written after it could
+// separate two.
+func TestAnAscendingKeyLevelIsSimplyDropped(t *testing.T) {
+	left := &spy{inner: mustPSL(t, leftDoc)}
+	c := composed(t, Include{Name: "left", Source: left})
+
+	out, _ := read(t, c, "sort={ .size desc; key; .name }", "have=0 need=10")
+	if out.joined() != "(left/1),(left/0),(left/note)" {
+		t.Errorf("the sequence is %s", out.joined())
+	}
+	if got := wire.EncodeSort(left.spec.Sort); got != "{ .size desc }" || left.spec.Reversed {
+		t.Errorf("the include was asked sort=%s reversed=%v", got, left.spec.Reversed)
 	}
 }
 
@@ -935,6 +977,67 @@ func TestWhichIncludesAreWorthAsking(t *testing.T) {
 		if got[0] != c.open[0] || got[1] != c.open[1] {
 			t.Errorf("%s opened left=%v right=%v, want %v",
 				c.filter, got[0], got[1], c.open)
+		}
+	}
+}
+
+// Reversed turns a composed sequence over entire: the includes back to front,
+// and the records inside each of them too.
+//
+// It names no field, so what goes down to every include is `reversed` as well,
+// and no include is ever asked about a key by name.
+func TestAComposedSourceReverses(t *testing.T) {
+	forward, _ := read(t, twoIncludes(t), "", "have=0 need=10")
+	if forward.joined() != "(left/0),(left/1),(left/note),(right/0),(right/1)" {
+		t.Fatalf("forward, the sequence is %s", forward.joined())
+	}
+	mirror, _ := read(t, twoIncludes(t), "reversed", "have=0 need=10")
+	if mirror.joined() != "(right/1),(right/0),(left/note),(left/1),(left/0)" {
+		t.Errorf("reversed, the sequence is %s", mirror.joined())
+	}
+	if !mirror.ordered {
+		t.Error("a reversed sequence did not say it was in order")
+	}
+}
+
+// Naming the key descending and reversing an ascending one are the same
+// sequence, said two ways.
+func TestReversedAndAKeyLevelAgree(t *testing.T) {
+	for _, spec := range []string{"sort={ key desc }", "reversed", "sort={ key } reversed"} {
+		out, _ := read(t, twoIncludes(t), spec, "have=0 need=10")
+		if out.joined() != "(right/1),(right/0),(left/note),(left/1),(left/0)" {
+			t.Errorf("%q gave %s", spec, out.joined())
+		}
+	}
+	// And reversing a descending key level is the sequence as it stands.
+	out, _ := read(t, twoIncludes(t), "sort={ key desc } reversed", "have=0 need=10")
+	if out.joined() != "(left/0),(left/1),(left/note),(right/0),(right/1)" {
+		t.Errorf("reversed twice gave %s", out.joined())
+	}
+}
+
+// Under a sort of its own, the mirror is the whole sequence read backwards --
+// every level turned over, the one that settles ties included.
+func TestAComposedSourceReversesUnderASort(t *testing.T) {
+	forward, _ := read(t, twoIncludes(t), "sort={ .size }", "have=0 need=10")
+	if forward.joined() != "(left/note),(left/0),(right/0),(left/1),(right/1)" {
+		t.Fatalf("forward, the sequence is %s", forward.joined())
+	}
+
+	left, right := &spy{inner: mustPSL(t, leftDoc)}, &spy{inner: mustPSL(t, rightDoc)}
+	c := composed(t,
+		Include{Name: "left", Source: left},
+		Include{Name: "right", Source: right})
+
+	mirror, _ := read(t, c, "sort={ .size } reversed", "have=0 need=10")
+	if mirror.joined() != "(right/1),(left/1),(right/0),(left/0),(left/note)" {
+		t.Errorf("reversed, the sequence is %s", mirror.joined())
+	}
+	// What is asked of an include is the mirror of what is wanted, and
+	// reversing it lands on the sequence this source is after.
+	for _, s := range []*spy{left, right} {
+		if got := wire.EncodeSort(s.spec.Sort); got != "{ .size }" || !s.spec.Reversed {
+			t.Errorf("an include was asked sort=%s reversed=%v", got, s.spec.Reversed)
 		}
 	}
 }

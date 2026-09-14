@@ -542,3 +542,72 @@ func TestTheWordUndefinedCrossesAsUndefined(t *testing.T) {
 		t.Errorf("undefined found %s", out.joined())
 	}
 }
+
+// Reversed walks the stated sequence from its end.
+//
+// Every level turns over, the one the sort does not write included -- which is
+// what makes it the exact mirror. `desc` on a named level turns that one over
+// and leaves the records it ties facing the way they were, which is a third
+// sequence again.
+func TestReversedIsTheMirrorOfTheSequence(t *testing.T) {
+	// Two records tied on size, so the level that settles ties shows.
+	const tied = `( (n: "a", size: 10), (n: "b", size: 10), (n: "c", size: 99) )`
+
+	for _, c := range []struct{ spec, want string }{
+		{"sort={ .size }", "0,1,2"},
+		{"sort={ .size } reversed", "2,1,0"},
+		{"sort={ .size desc }", "2,0,1"},
+		{"", `0,1,2`},
+		{"reversed", `2,1,0`},
+	} {
+		v := open(t, tied, c.spec)
+		out, _ := fill(t, v, "have=0 need=10")
+		if out.joined() != c.want {
+			t.Errorf("%q gave %s, want %s", c.spec, out.joined(), c.want)
+		}
+	}
+}
+
+// It names no field, so a reading that cannot name a record's key answers it
+// perfectly well -- where a sort on the key itself is refused, because the
+// level would tie for every record and leave the sequence in the source's own
+// order while saying it was in the one that was asked for.
+func TestReversedNeedsNoNameForTheKey(t *testing.T) {
+	src, err := ParsePSLSource(doc, Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Open(parseSpec(t, "sort={ key desc }")); err == nil {
+		t.Error("a members reading accepted a sort on the key")
+	}
+	set, err := src.Open(parseSpec(t, "reversed"))
+	if err != nil {
+		t.Fatalf("a members reading refused to be reversed: %v", err)
+	}
+	out, _ := fill(t, set, "have=0 need=10")
+	if out.joined() != `"plain","extra",3,2,1,0` {
+		t.Errorf("reversed, the sequence is %s", out.joined())
+	}
+}
+
+// Two sequences that differ only in which way they are read are two
+// sequences, so the ordering held for one is not handed to the other.
+func TestAReversedSequenceIsNotTheOneItMirrors(t *testing.T) {
+	src, err := ParsePSLSource(doc, Whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := src.Open(parseSpec(t, "sort={ .size }"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	down, err := src.Open(parseSpec(t, "sort={ .size } reversed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := fill(t, up, "have=0 need=99")
+	second, _ := fill(t, down, "have=0 need=99")
+	if first.joined() == second.joined() {
+		t.Errorf("both read as %s", first.joined())
+	}
+}

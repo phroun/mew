@@ -205,6 +205,13 @@ APP → DISPLAY   result 9 ordered
                 result 9 complete exhausted
 ```
 
+| on the query | |
+|---|---|
+| `source` | the name the application serves these records under |
+| `filter` `sort` | the sequence: which records are in it, and in what order |
+| `fields` `exclude` | which of a record's fields the display wants |
+| `reversed` | that sequence, walked from its end |
+
 | on a scope request | |
 |---|---|
 | `from` `to` | boundaries. Absent or empty is the start of the sequence |
@@ -226,6 +233,33 @@ is one that uses a looser comparison than the core's, or sends the whole source
 every time. The display rejects what it did not ask for, so extra records cost
 bandwidth and nothing else — and it may keep them, because a record it has is a
 record it need not ask for later.
+
+## Reversed
+
+`reversed` walks the stated sequence from its end:
+
+```
+DISPLAY → APP   q=new query source="files" sort={ size } reversed have=0 need=30
+```
+
+**Every level turns over with it, the one the sort does not write included.**
+A record key settles what the named levels leave equal, and a sequence read
+backwards settles it backwards too — which is what makes this the exact mirror.
+`sort={ size desc }` is a third sequence again: it turns one level over and
+leaves the records it ties facing the way they already were.
+
+It names no field, and that is the point of it. A record's key is not always
+something a query can name — an application that exposes a record's fields and
+not its identity has no way to write `sort={ key desc }` at all — so the one
+way to turn a sequence over that every implementation can answer is the one
+that asks for no field by name.
+
+**It is the one hint that cannot be quietly dropped**, along with the sort
+itself. Every other — the boundaries, the field list, the exclusions, the count
+— can only make an answer bigger when it is ignored, never wrong. Ignoring this
+one produces the sequence backwards, and `ordered` would then be a lie. An
+application that will not reverse simply does not say `ordered`, and the
+display sorts what arrives.
 
 **What is claimed must be true.** The watermark says *there is nothing of mine
 between where you asked from and this point that you do not now have*, and

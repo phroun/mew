@@ -334,3 +334,25 @@ func (d *dribble) Fill(f *wire.Fill, out Sink) error {
 	out.Done(Complete{Watermark: wire.Fields{wire.Named(wire.KeyField, int64(d.rounds))}})
 	return nil
 }
+
+// Reversed reaches the amendments too: this source's own records are placed by
+// the same levels the child's are, so the merge holds whichever way the
+// sequence is read.
+func TestAnAmendedSourceReverses(t *testing.T) {
+	forward := amendable(t)
+	forward.Replace(key(2), fields("go.mod", 96))
+	up, _ := read(t, forward, "sort={ .size }", "have=0 need=4")
+	if up.joined() != "2,1,0,3" {
+		t.Fatalf("forward, the sequence is %s", up.joined())
+	}
+
+	mirror := amendable(t)
+	mirror.Replace(key(2), fields("go.mod", 96))
+	down, _ := read(t, mirror, "sort={ .size } reversed", "have=0 need=4")
+	if down.joined() != "3,0,1,2" {
+		t.Errorf("reversed, the sequence is %s", down.joined())
+	}
+	if !down.ordered {
+		t.Error("a reversed sequence did not say it was in order")
+	}
+}

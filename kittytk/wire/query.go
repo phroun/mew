@@ -203,6 +203,19 @@ type SortLevel struct {
 	Level
 }
 
+// Reverse turns every level over, which is what walking a sequence from its
+// end amounts to: the same records, in the opposite order, with the level that
+// settles ties turned over as well so that nothing is left facing the way it
+// was.
+func Reverse(levels []Level) []Level {
+	out := make([]Level, len(levels))
+	for i, l := range levels {
+		out[i] = l
+		out[i].Descending = !l.Descending
+	}
+	return out
+}
+
 // Levels drops the field names, leaving what CompareLevels compares tuples by.
 func Levels(levels []SortLevel) []Level {
 	out := make([]Level, 0, len(levels))
@@ -221,6 +234,18 @@ type Spec struct {
 	Exclude Fields // the fields not wanted, valued the same way
 	Filter  *Filter
 	Sort    []SortLevel
+
+	// Reversed walks the stated sequence from its end.
+	//
+	// Every level turns over, the one the sort does not write included: a
+	// record key settles what the named levels leave equal, and a sequence
+	// read backwards settles it backwards too. That is what makes this the
+	// exact mirror -- `sort={ size desc }` reverses one level and leaves ties
+	// in the order they were already in, which is a different sequence again.
+	//
+	// It names no field, so it is the one way to turn over a sequence whose
+	// records are read in a way that cannot name their key at all.
+	Reversed bool
 }
 
 // A Fill is one scope of the sequence, asked for.
@@ -282,6 +307,11 @@ func ParseSpec(args []*Arg) (*Spec, error) {
 				return nil, fmt.Errorf("sort: %w", err)
 			}
 			s.Sort = levels
+		case "reversed":
+			if a.Value != nil {
+				return nil, fmt.Errorf("reversed: it takes no value")
+			}
+			s.Reversed = a.Flag == FlagTrue
 		}
 	}
 	return s, nil
@@ -304,6 +334,9 @@ func (s *Spec) Encode() string {
 	}
 	if len(s.Sort) > 0 {
 		parts = append(parts, "sort="+EncodeSort(s.Sort))
+	}
+	if s.Reversed {
+		parts = append(parts, "reversed")
 	}
 	return strings.Join(parts, " ")
 }

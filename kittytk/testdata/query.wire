@@ -77,6 +77,29 @@ bad
 spec source=f sort=name
 bad
 
+# --- reversed: the stated sequence, walked from its end ---
+
+# It names no field, which is what lets it turn over a sequence whose records
+# are read in a way that cannot name their key at all.
+spec source=f reversed
+want source="f" reversed
+
+# Every level turns over with it, the one the sort does not write included -- so
+# this is the mirror of `sort={ size }`, where `sort={ size desc }` is a third
+# sequence again, with ties left facing the way they were.
+spec source=f sort={ size } reversed
+want source="f" sort={ size } reversed
+
+spec source=f sort={ size desc } reversed
+want source="f" sort={ size desc } reversed
+
+# Asserted false is the sequence as stated, said out loud.
+spec source=f !reversed
+want source="f"
+
+spec source=f reversed=1
+bad
+
 # --- the filter: a block is an AND, so the top of a parsed tree always is ---
 
 spec source=f filter={ eq kind folder }

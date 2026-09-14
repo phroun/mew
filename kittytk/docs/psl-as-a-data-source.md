@@ -116,6 +116,24 @@ Anything less would leave each include delivering in one order while the merge
 expected another, and the merge only ever sees a queue's head: it would hand
 records on backwards and call them ordered.
 
+**No include is ever asked for that key by name.** It orders its own records by
+its own key once the named levels are spent, so the level written as `key` is
+one it has anyway — and asking for it by name would put the question to a
+reading that may not be able to answer it at all. Which way round that last
+level goes is said with `reversed` instead, which names no field:
+
+| the query | what each include is asked |
+|---|---|
+| `sort={ key }` | `sort={}` |
+| `sort={ key desc }` | `sort={} reversed` |
+| `sort={ size; key desc }` | `sort={ size desc } reversed` |
+| `sort={ size desc; key }` | `sort={ size desc }` |
+
+What is asked for is the mirror of what is wanted, and reversing it lands on
+the sequence — because `reversed` turns the include's own key over along with
+everything else. Anything written after the key level is dropped: a key names
+exactly one record, so nothing after it could separate two.
+
 **A filter on the key is read here and put to each include in its own terms.**
 Every key an include hands out begins with its own name and a slash, which
 settles most predicates for all of that include's records at once — and an
