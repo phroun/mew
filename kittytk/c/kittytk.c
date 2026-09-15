@@ -882,6 +882,27 @@ static void enc_value(kt_buf *b, const kt_value *v) {
     }
 }
 
+/* A field's name, written so the parser reads back the name that went out:
+ * bare where the grammar can read it as itself, a protected symbol where it
+ * cannot -- an index among them, since a bare `0` in argument position is a
+ * number -- and a quoted string for the names a symbol has no spelling for. */
+static void enc_field_name(kt_buf *b, const char *name) {
+    const char *s = name ? name : "";
+    if (!*s || strpbrk(s, ")\n")) {
+        char *t = kt_quote(s);
+        buf_puts(b, t);
+        free(t);
+        return;
+    }
+    if (kt_is_word(s)) {
+        buf_puts(b, s);
+        return;
+    }
+    buf_put(b, '(');
+    buf_puts(b, s);
+    buf_put(b, ')');
+}
+
 static void enc_bag(kt_buf *b, const kt_bag *bag) {
     if (!bag || bag->n == 0) { buf_puts(b, "{}"); return; }
     buf_puts(b, "{ ");
@@ -924,7 +945,7 @@ static void enc_filter_stmt(kt_buf *b, const kt_filter *f) {
         /* Every other operator names the field it tests. This one tests an
            identity, which is not a field and has no name to write. */
         buf_put(b, ' ');
-        buf_puts(b, f->field);
+        enc_field_name(b, f->field);
     }
     for (int i = 0; i < f->nvalues; i++) {
         buf_put(b, ' ');
@@ -1084,6 +1105,50 @@ static int value_of(const char *what, const kt_arg *a, kt_value *out, char *err)
     return 1;
 }
 
+/* A predicate's first operand, as the name of the field it tests.
+ *
+ * A field name is a NAME, whatever form it was written in. A bare word is the
+ * ordinary spelling and is what nearly every filter uses; a protected symbol
+ * carries a name the grammar has no bare spelling for, `(007)` among them; a
+ * number is a positional member's index, taken as the decimal it spells; and a
+ * quoted string is a name written as text, which is the only spelling left for
+ * a name holding a `)` or a newline.
+ *
+ * Reading the first operand rather than the first bare word is what lets an
+ * index reach a filter. A head may begin with a digit and so a sort level and a
+ * record field can already be called `0`, but a bare `0` in ARGUMENT position
+ * is the number zero -- so a filter has to say that a name is what it wanted,
+ * and it says it by position.
+ *
+ * A float and a block name nothing: a float has more than one spelling for one
+ * value, and a block is a set. */
+static char *field_of(const char *what, const kt_arg *a, char *err) {
+    if (!a->has_value) {
+        if (a->flag != KT_FLAG_TRUE) {
+            qfail(err, "%s: \"%s\" is asserted, and a field is named",
+                  what, a->name ? a->name : "");
+            return NULL;
+        }
+        return strdup(a->name ? a->name : "");
+    }
+    if (a->name && *a->name) {
+        qfail(err, "%s: names its field first, not %s=", what, a->name);
+        return NULL;
+    }
+    char tmp[32];
+    switch (a->kind) {
+    case 0:
+        snprintf(tmp, sizeof tmp, "%lld", (long long)a->ival);
+        return strdup(tmp);
+    case 2:
+    case 3:
+        return dupn(a->sval, a->slen);
+    default:
+        qfail(err, "%s: that is not a field name", what);
+        return NULL;
+    }
+}
+
 static void bag_push(kt_bag *b, kt_value v) {
     b->v = realloc((void *)b->v, (b->n + 1) * sizeof(kt_value));
     ((kt_value *)b->v)[b->n++] = v;
@@ -1235,23 +1300,29 @@ static int parse_predicate(const kt_stmt *st, kt_filter *out, char *err) {
     out->op = strdup(st->verb);
     out->field = strdup("");
     out->collate = strdup("");
+    int named = 0;
     for (int i = 0; i < st->n; i++) {
         const kt_arg *a = &st->args[i];
         if (a->name && strcmp(a->name, "collate") == 0 && a->has_value) {
+            /* `collate=` is the one name a predicate reserves, and it reserves
+             * it WITH ITS VALUE. A bare `collate` is a word like any other bare
+             * word here, so a field can be called that and a dangling one is
+             * caught by the operand count rather than by its spelling. */
             if (a->kind != 3) { qfail(err, "%s: collate= expects a word", st->verb); goto bad; }
             free((void *)out->collate);
             out->collate = dupn(a->sval, a->slen);
             continue;
         }
-        if (i == 0) {
-            /* The field, written bare, which is how a filter reads as a filter
-             * rather than naming an argument for every operand. */
-            if (a->has_value || a->flag != KT_FLAG_TRUE) {
-                qfail(err, "%s: names no field", st->verb);
-                goto bad;
-            }
+        if (!named) {
+            /* The first operand is the field, in whatever form it was written.
+             * Naming it by position is what lets a filter read as a filter
+             * rather than naming an argument for every operand -- and what lets
+             * a name that is not a bare word be one. */
+            char *name = field_of(st->verb, a, err);
+            if (!name) goto bad;
             free((void *)out->field);
-            out->field = strdup(a->name);
+            out->field = name;
+            named = 1;
             continue;
         }
         if (a->has_value && a->kind == 4 && strcmp(out->op, "in") != 0) {

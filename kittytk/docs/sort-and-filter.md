@@ -65,9 +65,8 @@ so this is the one place a statement's head is not a word — and the digits sta
 as they are written, `007` and `7` being two different names.
 
 A filter names its field in ARGUMENT position rather than in the head, where a
-bare `0` is the number zero. So an index reaches a sort and does not yet reach a
-filter; changing that means changing how a predicate decides which of its
-operands is the field.
+bare `0` is the number zero and not a name. So it takes its **first operand**
+as the field, whatever form that operand arrived in — see below.
 
 ## A field list
 
@@ -119,10 +118,35 @@ filter={
 }
 ```
 
-A predicate is `<op> <field> <value>`: the operator is the verb, the field is a
-bare word, and the value is an operand. Values written with no name are read in
-the order they were written, which is what lets a filter read as a filter
-instead of inventing an argument name for every operand.
+A predicate is `<op> <field> <value>`: the operator is the verb, and the rest
+are operands read in the order they were written, which is what lets a filter
+read as a filter instead of inventing an argument name for every one of them.
+
+**The first operand is the field**, in whatever form it was written. A bare
+word is the ordinary spelling and covers nearly every filter ever written. The
+others are for the names a bare word cannot spell:
+
+| written | field named |
+|---|---|
+| `eq name "a"` | `name` — a bare word, the ordinary case |
+| `eq .size 1024` | `.size`, a member of the record |
+| `eq 0 "a"` | `0`, a positional member, named by the number it spells |
+| `eq (007) "a"` | `007` — a symbol is a name as written, zeros and all |
+| `eq (two words) "a"` | `two words` |
+| `eq "a)b" "x"` | `a)b`, which a symbol has no room for |
+
+Position rather than form, because form cannot decide it: a name and a value
+are written the same way, and `eq 0 1` has to mean the field called `0` against
+the number `1` rather than the other way round. A float and a block name
+nothing — a float has more than one spelling for one value, and a block is a
+set.
+
+A number names the field the decimal it **is**, not the digits it was written
+with: `eq 007 "a"` asks about the field called `7`, because the token was read
+as a number before anything looked at it. A name that wants its zeros says it
+is a name. Written back, a field comes out bare where the grammar reads it back
+as itself, as a symbol where it does not — an index included — and as a quoted
+string for the two characters a symbol has no room for.
 
 | | |
 |---|---|

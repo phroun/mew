@@ -86,10 +86,68 @@ spec source=f sort={ 0 natural; 1 desc }
 want source="f" sort={ 0 natural; 1 desc }
 
 # A filter names its field in ARGUMENT position, where a bare 0 is the number
-# zero and not a name -- so an index does not reach a filter yet. That is a
-# separate change to how a predicate decides which operand is its field.
+# zero. So a predicate takes its FIRST OPERAND as the field, in whatever form
+# it was written, and an index reaches a filter as the number it spells. It
+# comes back as a protected symbol, because that is the spelling that says
+# name.
 
 spec source=f filter={ eq 0 "a" }
+want source="f" filter={ eq (0) "a" }
+
+spec source=f filter={ eq (0) "a" }
+want source="f" filter={ eq (0) "a" }
+
+spec source=f filter={ has 7; lacks .name }
+want source="f" filter={ has (7); lacks .name }
+
+# A number names the field the decimal it IS, not the digits it was written
+# with: in head position `007` and `7` are two different names, but here `007`
+# has already been read as the number seven and the zeros are gone. A name
+# that wants its zeros says it is a name.
+
+spec source=f filter={ eq 007 "a" }
+want source="f" filter={ eq (7) "a" }
+
+spec source=f filter={ eq (007) "a" }
+want source="f" filter={ eq (007) "a" }
+
+# Which is also how a name with no bare spelling at all reaches one. A symbol
+# carries every name but the two it has no room for, and a quoted string is a
+# name written as text, which carries those.
+
+spec source=f filter={ eq (two words) "a" }
+want source="f" filter={ eq (two words) "a" }
+
+spec source=f filter={ eq "two words" "a" }
+want source="f" filter={ eq (two words) "a" }
+
+spec source=f filter={ eq "a)b" "x" }
+want source="f" filter={ eq "a)b" "x" }
+
+# A bare word is still the ordinary spelling, and still comes back bare.
+
+spec source=f filter={ eq name "a" }
+want source="f" filter={ eq name "a" }
+
+# A float and a block name nothing: a float has more than one spelling for one
+# value, and a block is a set.
+
+spec source=f filter={ eq 1.5 "a" }
+bad
+
+spec source=f filter={ eq { name } "a" }
+bad
+
+# And a field is named rather than asserted or argued: `!` and `?` say
+# something a name cannot, and a named argument is not an operand at all.
+
+spec source=f filter={ eq !name "a" }
+bad
+
+spec source=f filter={ eq ?name "a" }
+bad
+
+spec source=f filter={ eq at=name "a" }
 bad
 
 # --- the sort ---
@@ -224,6 +282,17 @@ want source="f" filter={ in name "a" "b" 3 }
 
 spec source=f filter={ contains title "report" collate=fold }
 want source="f" filter={ contains title "report" collate=fold }
+
+# `collate=` is the one name a predicate reserves, and it reserves it WITH ITS
+# VALUE. A bare `collate` is a word like any other bare word here, so a field
+# can be called that -- and a collation written with its value left off is
+# caught by the operand count rather than by its spelling.
+
+spec source=f filter={ eq collate "x" }
+want source="f" filter={ eq collate "x" }
+
+spec source=f filter={ contains title "report" collate }
+bad
 
 spec source=f filter={ starts name "READ"; ends name ".md" }
 want source="f" filter={ starts name "READ"; ends name ".md" }

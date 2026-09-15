@@ -192,7 +192,7 @@ class Filter:
             # Every other operator names the field it tests. This one tests an
             # identity, which is not a field and has no name to write.
             return self.op + ''.join(" " + encode_value(v) for v in self.values)
-        out = [self.op, " ", self.field]
+        out = [self.op, " ", encode_field_name(self.field)]
         for v in self.values:
             out.append(" " + encode_value(v))
         if self.collate:
@@ -398,6 +398,52 @@ def _operand_value(what: str, a: Arg) -> Value:
     return new_word(a.name)
 
 
+def _operand_field(what: str, a: Arg) -> str:
+    """A predicate's first operand, as the name of the field it tests.
+
+    A field name is a NAME, whatever form it was written in. A bare word is the
+    ordinary spelling and is what nearly every filter uses; a protected symbol
+    carries a name the grammar has no bare spelling for, `(007)` among them; a
+    number is a positional member's index, taken as the decimal it spells; and
+    a quoted string is a name written as text, which is the only spelling left
+    for a name holding a `)` or a newline.
+
+    Reading the first operand rather than the first bare word is what lets an
+    index reach a filter. A head may begin with a digit and so a sort level and
+    a record field can already be called `0`, but a bare `0` in ARGUMENT
+    position is the number zero -- so a filter has to say that a name is what
+    it wanted, and it says it by position.
+
+    A float and a block name nothing: a float has more than one spelling for
+    one value, and a block is a set. Neither does a blob, which no parse
+    produces -- a caller building an Arg for itself can, and bytes are not a
+    name."""
+    if a.value is None:
+        if a.flag != FlagState.TRUE:
+            raise QueryError("%s: %r is asserted, and a field is named" % (what, a.name))
+        return a.name
+    if a.name:
+        raise QueryError("%s: names its field first, not %s=" % (what, a.name))
+    v = a.value
+    if v.kind == ValueKind.WORD:
+        return v.word
+    if v.kind == ValueKind.NUMBER and v.is_int:
+        return str(int(v.number))
+    if v.kind == ValueKind.STRING and not v.blob:
+        return v.str
+    raise QueryError("%s: %s is not a field name" % (what, encode_value(v)))
+
+
+def encode_field_name(name: str) -> str:
+    """A field's name, written so the parser reads back the name that went out:
+    bare where the grammar can read it as itself, a protected symbol where it
+    cannot -- an index among them, since a bare `0` in argument position is a
+    number -- and a quoted string for the names a symbol has no spelling for."""
+    if not name or ')' in name or '\n' in name:
+        return quote(name)
+    return encode_value(new_word(name))
+
+
 def parse_spec(args: List[Arg]) -> Spec:
     """A query spec, from the arguments of the statement carrying it."""
     s = Spec()
@@ -550,17 +596,23 @@ def _parse_predicate(st: Statement) -> Filter:
         raise QueryError("no filter operator called %r" % st.verb)
 
     f = Filter(op=st.verb, children=[])
-    for i, a in enumerate(st.args):
-        if a.name == "collate":
-            if a.value is None or a.value.kind != ValueKind.WORD:
+    named = False
+    for a in st.args:
+        if a.name == "collate" and a.value is not None:
+            # `collate=` is the one name a predicate reserves, and it reserves
+            # it WITH ITS VALUE. A bare `collate` is a word like any other bare
+            # word here, so a field can be called that and a dangling one is
+            # caught by the operand count rather than by its spelling.
+            if a.value.kind != ValueKind.WORD:
                 raise QueryError("%s: collate= expects a word" % st.verb)
             f.collate = a.value.word
-        elif i == 0:
-            # The field, written bare, which is how a filter reads as a filter
-            # rather than naming an argument for every operand.
-            if a.value is not None or a.flag != FlagState.TRUE:
-                raise QueryError("%s: names no field" % st.verb)
-            f.field = a.name
+        elif not named:
+            # The first operand is the field, in whatever form it was written.
+            # Naming it by position is what lets a filter read as a filter
+            # rather than naming an argument for every operand -- and what lets
+            # a name that is not a bare word be one.
+            f.field = _operand_field(st.verb, a)
+            named = True
         elif a.value is not None and a.value.kind == ValueKind.BLOCK and f.op != OP_IN:
             # A comparison takes a simple value. A block is a set, and a set is
             # only something `in` can be asked about.

@@ -15,6 +15,7 @@ package wire
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/phroun/serval"
@@ -151,6 +152,62 @@ func operandValue(what string, a *Arg) (*Value, error) {
 		return nil, fmt.Errorf("%s: %q is asserted, not valued", what, a.Name)
 	}
 	return NewWord(a.Name), nil
+}
+
+// operandField reads a predicate's first operand as the name of the field it
+// tests.
+//
+// A field name is a NAME, whatever form it was written in. A bare word is the
+// ordinary spelling and is what nearly every filter uses; a protected symbol
+// carries a name the grammar has no bare spelling for, `(007)` among them; a
+// number is a positional member's index, taken as the decimal it spells; and a
+// quoted string is a name written as text, which is the only spelling left for
+// a name holding a `)` or a newline.
+//
+// Reading the first operand rather than the first bare word is what lets an
+// index reach a filter. A head may begin with a digit and so a sort level and
+// a record field can already be called `0`, but a bare `0` in ARGUMENT
+// position is the number zero -- so a filter has to say that a name is what it
+// wanted, and it says it by position.
+//
+// A float and a block name nothing: a float has more than one spelling for one
+// value, and a block is a set. Neither does a blob, which no parse produces --
+// a caller building an Arg for itself can, and bytes are not a name.
+func operandField(what string, a *Arg) (string, error) {
+	if a.Value == nil {
+		if a.Flag != FlagTrue {
+			return "", fmt.Errorf("%s: %q is asserted, and a field is named", what, a.Name)
+		}
+		return a.Name, nil
+	}
+	if a.Name != "" {
+		return "", fmt.Errorf("%s: names its field first, not %s=", what, a.Name)
+	}
+	switch v := a.Value; v.Kind {
+	case WordValue:
+		return v.Word, nil
+	case NumberValue:
+		if v.IsInt {
+			return strconv.FormatInt(v.Int, 10), nil
+		}
+	case StringValue:
+		if !v.Blob {
+			return v.Str, nil
+		}
+	}
+	return "", fmt.Errorf("%s: %s is not a field name", what, EncodeValue(a.Value))
+}
+
+// encodeFieldName writes a field's name so that the parser reads back the name
+// that went out: bare where the grammar can read it as itself, a protected
+// symbol where it cannot -- an index among them, since a bare `0` in argument
+// position is a number -- and a quoted string for the names a symbol has no
+// spelling for.
+func encodeFieldName(name string) string {
+	if name == "" || strings.ContainsAny(name, ")\n") {
+		return quoteString(name)
+	}
+	return EncodeValue(NewWord(name))
 }
 
 // ParseSpec reads a query spec from the arguments of the statement carrying
@@ -440,20 +497,28 @@ func parsePredicate(st *Statement) (*serval.Filter, error) {
 	}
 
 	f := &serval.Filter{Op: st.Verb}
-	for i, a := range st.Args {
+	named := false
+	for _, a := range st.Args {
 		switch {
-		case a.Name == "collate":
-			if a.Value == nil || a.Value.Kind != WordValue {
+		case a.Name == "collate" && a.Value != nil:
+			// `collate=` is the one name a predicate reserves, and it reserves
+			// it WITH ITS VALUE. A bare `collate` is a word like any other
+			// bare word here, so a field can be called that and a dangling
+			// one is caught by the operand count rather than by its spelling.
+			if a.Value.Kind != WordValue {
 				return nil, fmt.Errorf("%s: collate= expects a word", st.Verb)
 			}
 			f.Collate = a.Value.Word
-		case i == 0:
-			// The field, written bare, which is how a filter reads as a
-			// filter rather than naming an argument for every operand.
-			if a.Value != nil || a.Flag != FlagTrue {
-				return nil, fmt.Errorf("%s: names no field", st.Verb)
+		case !named:
+			// The first operand is the field, in whatever form it was
+			// written. Naming it by position is what lets a filter read as a
+			// filter rather than naming an argument for every operand -- and
+			// what lets a name that is not a bare word be one.
+			name, err := operandField(st.Verb, a)
+			if err != nil {
+				return nil, err
 			}
-			f.Field = a.Name
+			f.Field, named = name, true
 		case a.Value != nil && a.Value.Kind == BlockValue && f.Op != serval.OpIn:
 			// A comparison takes a simple value. A block is a set, and a set is
 			// only something `in` can be asked about.
@@ -527,7 +592,7 @@ func encodeFilterStatement(f *serval.Filter) string {
 		// Every other operator names the field it tests. This one tests an
 		// identity, which is not a field and has no name to write.
 		sb.WriteByte(' ')
-		sb.WriteString(f.Field)
+		sb.WriteString(encodeFieldName(f.Field))
 	}
 	for _, v := range f.Values {
 		sb.WriteByte(' ')
