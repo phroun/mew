@@ -233,7 +233,7 @@ func TestTheSimplestAnswerIsEverythingAndExhausted(t *testing.T) {
 func TestAWholeRecordAndASubsetCrossUnderDifferentWords(t *testing.T) {
 	c, r, _ := serveOne(t, func(f *Fill) {
 		_ = f.Record(17, serval.Named("name", "src/parser.go"), serval.Named("size", 1024))
-		_ = f.Subset(42, serval.Named("name", "src/window.go"))
+		_ = f.Subset(42, serval.Totals{Named: 3}, serval.Named("name", "src/window.go"))
 		_ = f.Exhausted()
 	})
 	n := r.count()
@@ -241,7 +241,7 @@ func TestAWholeRecordAndASubsetCrossUnderDifferentWords(t *testing.T) {
 
 	got := strings.Join(r.since(n+1), "\n")
 	want := `result 1 id=17 record={ name "src/parser.go"; size 1024 }` + "\n" +
-		`result 1 id=42 fields={ name "src/window.go" } complete exhausted`
+		`result 1 id=42 fields={ name "src/window.go" } map=3 complete exhausted`
 	if got != want {
 		t.Errorf("the answer was\n%s\nwant\n%s", got, want)
 	}
@@ -252,7 +252,7 @@ func TestASubsetCountsTowardsWhatWasSent(t *testing.T) {
 	var sent int
 	c, _, _ := serveOne(t, func(f *Fill) {
 		_ = f.Record(1, serval.Named("name", "a"))
-		_ = f.Subset(2, serval.Named("name", "b"))
+		_ = f.Subset(2, serval.Totals{Named: 3}, serval.Named("name", "b"))
 		sent = f.Sent()
 		_ = f.Exhausted()
 	})

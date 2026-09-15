@@ -163,7 +163,7 @@ static void fill_whole_and_part(kt_query *q, const kt_qscope *req, kt_fill *sink
     fields[1] = kt_vint("size", 1024);
     kt_fill_record(sink, kt_vint("", 17), fields, 2);
     fields[0] = kt_vstr("name", "src/window.go");
-    kt_fill_subset(sink, kt_vint("", 42), fields, 1);
+    kt_fill_subset(sink, kt_vint("", 42), fields, 1, 3, 0);
     kt_fill_exhausted(sink);
 }
 
@@ -409,7 +409,7 @@ int main(void) {
     answer = since(n + 1);
     snprintf(tmp, sizeof tmp,
              "result %llu id=17 record={ name \"src/parser.go\"; size 1024 }\n"
-             "result %llu id=42 fields={ name \"src/window.go\" } complete exhausted",
+             "result %llu id=42 fields={ name \"src/window.go\" } map=3 complete exhausted",
              (unsigned long long)q, (unsigned long long)q);
     expect_str(answer, tmp, "a whole record and a subset say which they are");
     free(answer);

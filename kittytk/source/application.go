@@ -251,11 +251,13 @@ func (q *appScope) take(args []*wire.Arg) {
 		// The application said which it sent, and that is passed on as it
 		// stands: this source claims nothing about the records it relays
 		// beyond what the far end claimed about them.
-		send := q.out.Subset
 		if r.Whole {
-			send = q.out.Record
+			_ = q.out.Record(wire.AsData(r.ID), r.Fields)
+		} else {
+			// How many members the record has is part of what the application
+			// claimed, and travels with the subset that needs it.
+			_ = q.out.Subset(wire.AsData(r.ID), r.Fields, r.Has)
 		}
-		_ = send(wire.AsData(r.ID), r.Fields)
 	}
 	if r.Complete != nil {
 		q.finish(*r.Complete)

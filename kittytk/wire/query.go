@@ -52,6 +52,16 @@ const (
 	RecordArg = "record"
 	FieldsArg = "fields"
 
+	// MapArg and LenArg are how many members the record HAS -- by name and by
+	// position -- whether or not they were all sent. They ride beside `fields=`
+	// and never beside `record=`, a whole record being its own totals.
+	//
+	// `map` and `len` because those are already the two halves of a PSL node,
+	// which is what a record is read out of: `Len()` is its items and `Map()`
+	// its keyed members. A count of nothing is not written.
+	MapArg = "map"
+	LenArg = "len"
+
 	// ResultComplete ends a scope: everything for it has been sent.
 	//
 	// It can ride on the statement carrying the last record, and `ordered` can
@@ -347,14 +357,28 @@ type Result struct {
 	Fields  serval.Record
 	Whole   bool // `record=` rather than `fields=`
 
+	// Has is how many members the record has altogether, which a subset states
+	// and a whole record does not need to: what a whole record carries IS all
+	// of them.
+	Has serval.Totals
+
 	Complete *serval.Complete
+}
+
+// countArg reads one of the two totals: a whole number of members, and never a
+// negative one -- there is no such thing as fewer than none.
+func countArg(a *Arg) (int, error) {
+	if a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt || a.Value.Int < 0 {
+		return 0, fmt.Errorf("%s: expected a count of members", a.Name)
+	}
+	return int(a.Value.Int), nil
 }
 
 // ParseResult reads a result from the arguments after the query id.
 func ParseResult(args []*Arg) (*Result, error) {
 	r := &Result{}
 	var done serval.Complete
-	ended := false
+	ended, counted := false, false
 	for _, a := range args {
 		switch a.Name {
 		case OrderedArg:
@@ -371,6 +395,17 @@ func ParseResult(args []*Arg) (*Result, error) {
 			}
 			r.Fields = bag
 			r.Whole = a.Name == RecordArg
+		case MapArg, LenArg:
+			n, err := countArg(a)
+			if err != nil {
+				return nil, err
+			}
+			if a.Name == MapArg {
+				r.Has.Named = n
+			} else {
+				r.Has.Ordered = n
+			}
+			counted = true
 		case ResultComplete:
 			ended = true
 		case WatermarkArg:
@@ -393,6 +428,12 @@ func ParseResult(args []*Arg) (*Result, error) {
 	if r.Fields != nil && r.ID == nil {
 		return nil, fmt.Errorf("a record carries an identity; this one has none")
 	}
+	if counted && r.Whole {
+		// A whole record is everything the record has, so a count beside it is
+		// either saying that again or contradicting it, and there is no reading
+		// where it adds anything.
+		return nil, fmt.Errorf("record=: a whole record is its own totals")
+	}
 	if ended {
 		r.Complete = &done
 	}
@@ -412,6 +453,16 @@ func (r *Result) Args() []*Arg {
 			what = RecordArg
 		}
 		out = append(out, &Arg{Name: what, Value: &Value{Kind: BlockValue, Block: asScript(r.Fields)}})
+		if !r.Whole {
+			// A count of nothing is not written: most records have no members
+			// standing by position, and saying so every time would be noise.
+			if r.Has.Named != 0 {
+				out = append(out, &Arg{Name: MapArg, Value: NewInt(int64(r.Has.Named))})
+			}
+			if r.Has.Ordered != 0 {
+				out = append(out, &Arg{Name: LenArg, Value: NewInt(int64(r.Has.Ordered))})
+			}
+		}
 	}
 	if c := r.Complete; c != nil {
 		out = append(out, &Arg{Name: ResultComplete, Flag: FlagTrue})

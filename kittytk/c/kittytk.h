@@ -247,6 +247,16 @@ const kt_value *kt_bag_get(const kt_bag *b, const char *name);
 #define KT_RECORD_ARG "record"
 #define KT_FIELDS_ARG "fields"
 
+/* How many members the record HAS -- by name and by position -- whether or not
+   they were all sent. They ride beside `fields=` and never beside `record=`, a
+   whole record being its own totals.
+
+   `map` and `len` because those are already the two halves of a PSL node, which
+   is what a record is read out of: its items and its keyed members. A count of
+   nothing is not written. */
+#define KT_MAP_ARG "map"
+#define KT_LEN_ARG "len"
+
 /* Why a scope ended, which the asker cannot work out for itself: a scope that
    filled and one that ran out of records look identical from the far end, and
    they mean opposite things about whether there is any point asking again. */
@@ -340,13 +350,23 @@ typedef struct kt_fill kt_fill;
    that field is data like any other. */
 int kt_fill_record(kt_fill *f, kt_value id, const kt_value *fields, int n);
 
-/* Some of a record: its identity, and the fields this query asked for, which
-   are fewer than the record has. It crosses as `fields={ ... }`.
+/* Some of a record: its identity, HOW MANY MEMBERS THE RECORD HAS, and the
+   fields this query asked for. It crosses as `fields={ ... } map=5 len=3`.
 
-   The honest answer to a query that named a short list of fields -- the
-   skeleton of a wide scope -- and worth less afterwards than a whole record,
-   because it can only answer the question it was asked. */
-int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n);
+   The totals are what keep a subset worth more than the one question it
+   answered. Say a record has five named members and send two, and whoever asked
+   knows three are missing; send the other three later and they know they hold
+   the lot. Say a record has three members standing by POSITION and they know
+   `0`, `1` and `2` are all there is, so `3` is answered without anyone being
+   asked -- an ordered member being named by where it stands.
+
+   Count members only. A name sent as undefined is a guarantee that the record
+   has NOT got it, which is worth sending rather than leaving out, and it is not
+   counted: counting it would say the record had a member it has not.
+
+   Either count may be zero, and a zero is not written. */
+int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n,
+                   int named, int ordered);
 
 /* Declare that the records are being sent in the query's own order.
    It is the one hint that cannot be left unsaid and assumed, because it

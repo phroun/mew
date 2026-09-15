@@ -380,17 +380,31 @@ type Fill struct {
 // rather than among them: a record is free to carry a field called `key` of
 // its own, and that field is data like any other.
 func (f *Fill) Record(id any, fields ...*serval.Field) error {
-	return f.record(wire.RecordArg, id, fields)
+	return f.record(wire.RecordArg, id, serval.Totals{}, fields)
 }
 
-// Subset adds some of a record: its key, and the fields this scope asked
-// for, which are fewer than the record has. It crosses as `fields={ ... }`.
+// Subset adds some of a record: its key, HOW MANY MEMBERS THE RECORD HAS, and
+// the fields this scope asked for. It crosses as `fields={ ... } map=5 len=3`.
 //
-// It is the honest answer to a query that named a short list of fields -- the
-// skeleton of a wide scope -- and it is worth less afterwards than a whole
-// record, because it can only answer the question it was asked.
-func (f *Fill) Subset(id any, fields ...*serval.Field) error {
-	return f.record(wire.FieldsArg, id, fields)
+//	f.Subset(17, serval.Totals{Named: 5}, serval.Named(".name", "parser.go"))
+//
+// The totals are what keep a subset worth more than the one question it
+// answered. Say a record has five named members and send two, and whoever asked
+// knows three are missing; send the other three later and they know they now
+// hold the lot. Say a record has three members standing by POSITION and they
+// know `0`, `1` and `2` are all there is, so `3` is answered without anyone
+// being asked -- an ordered member being named by where it stands.
+//
+// Count them the way serval.Tally does: members only, and an absence not among
+// them. A count that said a record had no positional members while carrying one
+// called `.0` would have the far end answer "not there" about a member that is,
+// which is worse than saying nothing at all.
+//
+// **A field the record has not got is worth sending as undefined** rather than
+// leaving out. Left out it reads as a field nobody asked about and gets asked
+// for again; sent, it is a guarantee, and it is not counted.
+func (f *Fill) Subset(id any, has serval.Totals, fields ...*serval.Field) error {
+	return f.record(wire.FieldsArg, id, has, fields)
 }
 
 // record queues one record, holding it back until the next one or the end.
@@ -400,11 +414,12 @@ func (f *Fill) Subset(id any, fields ...*serval.Field) error {
 // three. Nothing waits long: the next record releases it, so does Flush, and so
 // does the end. Which form went out is not something the far end reads
 // differently.
-func (f *Fill) record(what string, id any, fields []*serval.Field) error {
+func (f *Fill) record(what string, id any, has serval.Totals, fields []*serval.Field) error {
 	rec := &wire.Result{
 		ID:     wire.AsWire(serval.Val(id)),
 		Fields: append(serval.Record(nil), fields...),
 		Whole:  what == wire.RecordArg,
+		Has:    has,
 	}
 	f.mu.Lock()
 	if f.closed {

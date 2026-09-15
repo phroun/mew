@@ -80,7 +80,12 @@ func serveRecords(f *client.Fill) { serve(f, f.Record) }
 
 // serveSubsets is the same application saying of every record that it is only
 // the fields somebody asked for.
-func serveSubsets(f *client.Fill) { serve(f, f.Subset) }
+func serveSubsets(f *client.Fill) {
+	// One member more than is sent, so that a subset stays a subset.
+	serve(f, func(key any, fields ...*serval.Field) error {
+		return f.Subset(key, serval.Totals{Named: len(fields) + 1}, fields...)
+	})
+}
 
 func serve(f *client.Fill, send func(key any, fields ...*serval.Field) error) {
 	rows := append([]struct {
@@ -389,6 +394,7 @@ type collector struct {
 	keys    []string
 	fields  []serval.Record
 	whole   []bool
+	has     []serval.Totals
 	done    serval.Complete
 	ended   bool
 	ordered bool
@@ -407,7 +413,12 @@ func (c *collector) Record(key *serval.Value, fields serval.Record) error {
 	return c.took(key, fields, true)
 }
 
-func (c *collector) Subset(key *serval.Value, fields serval.Record) error {
+func (c *collector) Subset(key *serval.Value, fields serval.Record, has serval.Totals) error {
+	c.has = append(c.has, has)
+	return c.subset(key, fields)
+}
+
+func (c *collector) subset(key *serval.Value, fields serval.Record) error {
 	return c.took(key, fields, false)
 }
 

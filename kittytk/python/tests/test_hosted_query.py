@@ -133,14 +133,14 @@ class ServingAQueryTest(unittest.TestCase):
         # out from the fields alone, so the answer says which it is.
         def fill(f):
             f.record(17, name="src/parser.go", size=1024)
-            f.subset(42, name="src/window.go")
+            f.subset(42, named=3, name="src/window.go")
             f.exhausted()
 
         c, _ = serve_one(fill)
         send(c, 'q=new query source="files" count=10 fields={ name }')
         self.assertEqual("\n".join(c.since(1)),
                          'result 1 id=17 record={ name "src/parser.go"; size 1024 }\n'
-                         'result 1 id=42 fields={ name "src/window.go" }'
+                         'result 1 id=42 fields={ name "src/window.go" } map=3'
                          ' complete exhausted')
 
     def test_a_subset_counts_towards_what_was_sent(self):
@@ -148,7 +148,7 @@ class ServingAQueryTest(unittest.TestCase):
 
         def fill(f):
             f.record(1, name="a")
-            f.subset(2, name="b")
+            f.subset(2, named=3, name="b")
             sent.append(f.sent())
             f.exhausted()
 

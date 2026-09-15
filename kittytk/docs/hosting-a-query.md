@@ -146,9 +146,10 @@ Registering a source says nothing on the wire: **a source is a name, not an
 object**. The application tells whatever trinket is to show it `data="files"`,
 and the display opens queries against that name.
 
-`Record` says these are all the fields there are. `Subset` — `f.Subset(id, …)`,
-`f.subset(id, …)`, `kt_fill_subset` — says they are the ones this query asked
-for, and crosses as `fields={…}`.
+`Record` says these are all the fields there are. `Subset` — `f.Subset(id, has,
+…)`, `f.subset(id, named=…, …)`, `kt_fill_subset` — says they are the ones this
+query asked for, and says how many the record has altogether. It crosses as
+`fields={…} map=5`; see [How much was left out](#how-much-was-left-out).
 
 **The identity is the first argument, not a field.** A record is free to carry a
 field called `key` of its own, and that field is data like any other: it sorts,
@@ -305,7 +306,8 @@ record is there:
 
 ```
 result 9 id=17 record={ name "src/parser.go"; size 1024 }
-result 9 id=17 fields={ name "src/parser.go" }
+result 9 id=17 fields={ name "src/parser.go" } map=5
+result 9 id=17 fields={ .0 "a"; .name "x" } map=5 len=3
 ```
 
 | | |
@@ -313,6 +315,8 @@ result 9 id=17 fields={ name "src/parser.go" }
 | `id=` | what names the record, beside its fields rather than among them |
 | `record={…}` | every field the record has |
 | `fields={…}` | some of them — the ones this query asked for |
+| `map=` | how many members the record has **by name**, sent or not |
+| `len=` | how many it has **by position** |
 
 A whole record answers **any** question about that record, so whoever asked can
 keep it and answer the next query out of it instead of asking again. A subset
@@ -325,6 +329,35 @@ it is. Say `record` when these are all the fields there are, and `fields` when
 they are the ones somebody asked for. `fields` is the weaker claim and is
 therefore always safe; `record` is the one worth making, and worth making only
 when it is true.
+
+### How much was left out
+
+The two counts are what keep a subset worth more than the one question it
+answered. `map=5` with two fields sent says three are missing; send the other
+three later and whoever asked knows they now hold the lot, **without anyone
+deciding that** — it is what the counts say. `len=3` says the members standing
+by position are `0`, `1` and `2` and nothing else, so `3` is answered without
+anyone being asked, an ordered member being named by where it stands.
+
+`map` and `len` because those are already the two halves of a PSL node, which is
+what a record is read out of: its items and its keyed members.
+
+**Count members only, the way `serval.Tally` does.** A count that said a record
+had no positional members while carrying one called `.0` would have the far end
+answer *not there* about a member that is, which is worse than saying nothing.
+
+**Either count may be zero, and a zero is not written.** Most records have no
+members standing by position, so most subsets carry `map=` alone.
+
+**A whole record states neither**, and a `record=` carrying one is refused:
+what a whole record carries *is* all of them, so a count beside it either says
+that again or contradicts it.
+
+**A field the record has not got is worth sending** as a name with nothing under
+it — `fields={ .name "a"; .thumbnail }` — rather than leaving out. Left out it
+reads as a field nobody asked about, and the next query naming it asks all over
+again; sent, it is a guarantee that the record has not got it. It is not
+counted, being knowledge about the record rather than a member of it.
 
 One `complete` ends the scope, and three things can ride on it:
 

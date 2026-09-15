@@ -30,6 +30,7 @@ from .protocol import (
     ValueKind,
     encode_statement,
     encode_value,
+    new_int,
     new_string,
     new_word,
     quote,
@@ -60,6 +61,16 @@ ID_ARG = "id"
 # what lets an answer be kept and reused rather than asked for again.
 RECORD_ARG = "record"
 FIELDS_ARG = "fields"
+
+# MAP_ARG and LEN_ARG are how many members the record HAS -- by name and by
+# position -- whether or not they were all sent. They ride beside `fields=` and
+# never beside `record=`, a whole record being its own totals.
+#
+# `map` and `len` because those are already the two halves of a PSL node, which
+# is what a record is read out of: `Len()` is its items and `Map()` its keyed
+# members. A count of nothing is not written.
+MAP_ARG = "map"
+LEN_ARG = "len"
 
 # RESULT_COMPLETE ends a scope: everything for it has been sent.
 #
@@ -308,6 +319,12 @@ class Result:
     id: Optional[Value] = None   # nil where no record rides here
     fields: Fields = dataclasses.field(default_factory=Fields)
     whole: bool = False          # `record=` rather than `fields=`
+
+    # How many members the record has altogether, which a subset states and a
+    # whole record does not need to: what a whole record carries IS all of them.
+    named: int = 0
+    ordered_members: int = 0
+
     complete: Optional[Complete] = None
 
     def args(self) -> List[Arg]:
@@ -319,6 +336,14 @@ class Result:
             out.append(Arg(name=ID_ARG, value=self.id))
             what = RECORD_ARG if self.whole else FIELDS_ARG
             out.append(Arg(name=what, value=self.fields.block()))
+            if not self.whole:
+                # A count of nothing is not written: most records have no
+                # members standing by position, and saying so every time would
+                # be noise.
+                if self.named:
+                    out.append(Arg(name=MAP_ARG, value=new_int(self.named)))
+                if self.ordered_members:
+                    out.append(Arg(name=LEN_ARG, value=new_int(self.ordered_members)))
         c = self.complete
         if c is not None:
             out.append(Arg(name=RESULT_COMPLETE, flag=FlagState.TRUE))
@@ -505,11 +530,20 @@ def parse_scope(args: List[Arg]) -> Scope:
     return s
 
 
+def _count_arg(a: Arg) -> int:
+    """One of the two totals: a whole number of members, and never a negative
+    one -- there is no such thing as fewer than none."""
+    v = a.value
+    if v is None or v.kind != ValueKind.NUMBER or not v.is_int or v.number < 0:
+        raise QueryError("%s: expected a count of members" % a.name)
+    return int(v.number)
+
+
 def parse_result(args: List[Arg]) -> Result:
     """A result, from the arguments after the query id."""
     r = Result()
     done = Complete()
-    ended = False
+    ended = counted = False
     for a in args:
         if a.name == ORDERED_ARG:
             r.ordered = True
@@ -523,6 +557,13 @@ def parse_result(args: List[Arg]) -> Result:
             except QueryError as e:
                 raise QueryError("%s: %s" % (a.name, e))
             r.whole = a.name == RECORD_ARG
+        elif a.name in (MAP_ARG, LEN_ARG):
+            n = _count_arg(a)
+            if a.name == MAP_ARG:
+                r.named = n
+            else:
+                r.ordered_members = n
+            counted = True
         elif a.name == RESULT_COMPLETE:
             ended = True
         elif a.name == WATERMARK_ARG:
@@ -540,6 +581,11 @@ def parse_result(args: List[Arg]) -> Result:
             ended = True
     if r.fields and r.id is None:
         raise QueryError("a record carries an identity; this one has none")
+    if counted and r.whole:
+        # A whole record is everything the record has, so a count beside it is
+        # either saying that again or contradicting it, and there is no reading
+        # where it adds anything.
+        raise QueryError("record=: a whole record is its own totals")
     if ended:
         r.complete = done
     return r

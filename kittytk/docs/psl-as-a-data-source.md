@@ -22,8 +22,8 @@ type DataSet interface {
 
 type Sink interface {
     Ordered()
-    Record(id *wire.Value, fields wire.Fields) error
-    Subset(id *wire.Value, fields wire.Fields) error
+    Record(id *serval.Value, fields serval.Record) error
+    Subset(id *serval.Value, fields serval.Record, has serval.Totals) error
     Done(c Complete)
 }
 ```
@@ -34,6 +34,12 @@ here says whichever is true of what it sent: `PSLSource` says `Record` where
 nothing narrowed the record and `Subset` where a field list or an exclusion
 did, and `ApplicationSource` passes on whatever the application claimed, making
 none of its own.
+
+A subset also says how many members the record HAS — `serval.Totals`, counted
+by name and by position — which is what lets a later question about a field it
+left out be answered without asking again. `PSLSource` counts what it holds;
+`ApplicationSource` relays the `map=` and `len=` the application sent. See
+`hosting-a-query.md`.
 
 **Nothing waits.** `Fill` asks for a scope and returns; the records reach the
 sink as they are produced — at once for `PSLSource`, whose records are here,
@@ -243,7 +249,7 @@ filter={ eq .key "figaro" }
 | `true`, `false`, `nil` | the words |
 | a bare word | a symbol, bare or bracketed |
 | a nested list | a block of its own members, which is the unordered rank |
-| absent | nothing is sent, and an absent field reads as `undefined` |
+| absent | sent as a name with nothing under it, which is a guarantee that the record has not got it rather than a silence — and not counted in the totals |
 
 A nested list's contents are written the `Whole` way whatever the reading,
 because a position inside one has no other spelling.

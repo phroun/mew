@@ -1022,17 +1022,30 @@ class Fill:
         own, and that field is data like any other."""
         self._write(True, id, fields)
 
-    def subset(self, id, **fields):
-        """Some of a record: its identity, and the fields this query asked for,
-        which are fewer than the record has. It crosses as `fields={ ... }`.
+    def subset(self, id, named=0, ordered=0, **fields):
+        """Some of a record: its identity, HOW MANY MEMBERS THE RECORD HAS, and
+        the fields this query asked for. It crosses as
+        `fields={ ... } map=5 len=3`.
 
-        It is the honest answer to a query that named a short list of fields --
-        the skeleton of a wide scope -- and it is worth less afterwards than
-        a whole record, because it can only answer the question it was
-        asked."""
-        self._write(False, id, fields)
+            f.subset(17, named=5, name="parser.go")
 
-    def _write(self, whole, id, fields):
+        The totals are what keep a subset worth more than the one question it
+        answered. Say a record has five named members and send two, and whoever
+        asked knows three are missing; send the other three later and they know
+        they now hold the lot. Say a record has three members standing by
+        POSITION and they know `0`, `1` and `2` are all there is, so `3` is
+        answered without anyone being asked -- an ordered member being named by
+        where it stands.
+
+        Count members only. A name sent as undefined is a guarantee that the
+        record has NOT got it, which is worth sending rather than leaving out,
+        and it is not counted: counting it would say the record had a member it
+        has not.
+
+        Either count may be zero, and a zero is not written."""
+        self._write(False, id, fields, named, ordered)
+
+    def _write(self, whole, id, fields, named=0, ordered=0):
         """Queue one record, holding it back until the next one or the end.
 
         Held back because the statement that carries the last record can carry
@@ -1042,7 +1055,8 @@ class Fill:
         bag = _query.Fields()
         for name, v in fields.items():
             bag.append(protocol.named(name, v))
-        rec = _query.Result(id=protocol.val(id), fields=bag, whole=whole)
+        rec = _query.Result(id=protocol.val(id), fields=bag, whole=whole,
+                            named=named, ordered_members=ordered)
         with self._lock:
             if self._closed:
                 raise RuntimeError("this scope has already been answered")

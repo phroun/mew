@@ -2110,7 +2110,7 @@ static void fill_push(kt_fill *f, const char *stmt) {
    answer of one record is then one line rather than three; nothing waits long,
    since the next record releases it, and so do kt_fill_flush and the end. */
 static int fill_write(kt_fill *f, const char *what, kt_value id,
-                      const kt_value *fields, int n) {
+                      const kt_value *fields, int n, int named, int ordered) {
     kt_buf b;
     memset(&b, 0, sizeof b);
     fill_head(f, &b);
@@ -2135,6 +2135,19 @@ static int fill_write(kt_fill *f, const char *what, kt_value id,
         }
     }
     buf_puts(&b, n ? " }" : "}");
+    /* A count of nothing is not written: most records have no members standing
+       by position, and saying so every time would be noise. */
+    if (what == KT_FIELDS_ARG) {
+        char tmp[32];
+        if (named) {
+            snprintf(tmp, sizeof tmp, " " KT_MAP_ARG "=%d", named);
+            buf_puts(&b, tmp);
+        }
+        if (ordered) {
+            snprintf(tmp, sizeof tmp, " " KT_LEN_ARG "=%d", ordered);
+            buf_puts(&b, tmp);
+        }
+    }
     char *stmt = buf_dup(&b);
     free(b.p);
 
@@ -2156,11 +2169,12 @@ static int fill_write(kt_fill *f, const char *what, kt_value id,
 }
 
 int kt_fill_record(kt_fill *f, kt_value id, const kt_value *fields, int n) {
-    return fill_write(f, KT_RECORD_ARG, id, fields, n);
+    return fill_write(f, KT_RECORD_ARG, id, fields, n, 0, 0);
 }
 
-int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n) {
-    return fill_write(f, KT_FIELDS_ARG, id, fields, n);
+int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n,
+                   int named, int ordered) {
+    return fill_write(f, KT_FIELDS_ARG, id, fields, n, named, ordered);
 }
 
 /* The order is declared before the records, which is the only place it is worth

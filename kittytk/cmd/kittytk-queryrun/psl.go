@@ -134,15 +134,15 @@ func (r *results) Done(done serval.Complete) { r.out.take(terminator(done)) }
 // came back: `record` for every field it has, `fields` for the ones this
 // scope asked for.
 func (r *results) Record(id *serval.Value, fields serval.Record) error {
-	return r.write(true, id, fields)
+	return r.write(true, id, fields, serval.Totals{})
 }
 
-func (r *results) Subset(id *serval.Value, fields serval.Record) error {
-	return r.write(false, id, fields)
+func (r *results) Subset(id *serval.Value, fields serval.Record, has serval.Totals) error {
+	return r.write(false, id, fields, has)
 }
 
-func (r *results) write(whole bool, id *serval.Value, fields serval.Record) error {
-	rec := &wire.Result{ID: wire.AsWire(id), Fields: fields, Whole: whole}
+func (r *results) write(whole bool, id *serval.Value, fields serval.Record, has serval.Totals) error {
+	rec := &wire.Result{ID: wire.AsWire(id), Fields: fields, Whole: whole, Has: has}
 	r.out.take(result(rec.Args()...))
 	return nil
 }
