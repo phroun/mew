@@ -286,8 +286,9 @@ scroll history.
   taken from the runs themselves, both ends inclusive and by identity
 - the **fields**, grouped by the part each plays — built: `Spec.Roles()` returns
   sort, filter and detail, and `Whole` for a query that asked for whole records
-- the **count**, a standing concern with no extent at all — not built; serval has
-  no count at all yet
+- the **count**, a standing concern with no extent at all — built:
+  `RecordCount` is a figure, a floor, or nothing, and it is keyed by the filter
+  rather than the sequence, so a re-sort keeps it
 - a short list of **individually pinned keys** — a selection, an anchor, a row
   being edited — not built
 
@@ -571,13 +572,17 @@ either end chooses to speak is its own.
   nothing it costs the order nothing and the values one field per record. An
   application that can say *something about size changed and I cannot say where*
   is better off saying that than invalidating everything.
+- **Counts as deltas or absolutes.** Neither, and there was nothing to invent:
+  the NOTICES are the deltas. A source reporting an append has already said
+  *+1* by saying `added`, and one reporting a deletion has said *-1*, so there
+  is no second channel and nothing to resynchronise — the figure only ever moves
+  on a statement that was being sent anyway. What needed deciding instead was
+  what a *doubtful* notice costs, and the answer is that it lowers a floor
+  rather than discarding the figure. Which is why a count is exact-or-at-least
+  rather than exact-or-unknown.
 
 ## Open questions
 
-- **Counts as deltas or absolutes.** `COUNT(*)` on a large table is not free, so
-  a live log wants *+1* rather than a recount per append — with an occasional
-  absolute to resynchronise against drift. serval has no count at all yet, so
-  this is still entirely open.
 - **The jump into an uncovered middle**, when the user drags the thumb to
   nowhere in particular and there is no watermark to stand on. The library half
   is settled — a scope starting at a record no run places is simply a miss, and
