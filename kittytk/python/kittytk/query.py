@@ -46,6 +46,17 @@ from .protocol import (
 QUERY_VERB = "query"      # `new query source="files" sort={ name } count=30`
 RESULT_VERB = "result"    # `result 9 id=42 record={ ... }`
 
+# PLACE_VERB carries a PLACE: a record's identity, in its position in the
+# sequence, and whatever is known of it so far with no claim about how much.
+#
+# A verb of its own, and that is the whole mechanism. Places are ADDITIONAL --
+# every record still arrives as a result, and the scope's own `complete` still
+# ends the answer -- so a reader that does not know this verb skips these
+# statements and is left with exactly the answer it gets otherwise. There is
+# nothing to negotiate and nothing it can be misled about, because it never saw
+# them.
+PLACE_VERB = "place"      # `place 9 id=42 fields={ name "x" }`
+
 # ID_ARG carries a record's identity, beside its fields rather than among them.
 #
 # An identity is not a field. A record can hold a field called `key` and that
@@ -81,6 +92,21 @@ RESULT_COMPLETE = "complete"
 WATERMARK_ARG = "watermark"
 ORDERED_ARG = "ordered"
 ERROR_ARG = "error"
+
+# TOTAL_ARG is how many records the whole SEQUENCE has, and EXACT_ARG says that
+# figure is the whole story rather than a floor.
+#
+# Weak by default and strengthened out loud, the same way round as `fields`
+# against `record`: `total=20` alone says there are at LEAST twenty, which is
+# what a reader that has seen part of a sequence can say; `total=20 exact` says
+# twenty is all there are.
+#
+# It rides a completion, being a fact about the order rather than about any
+# record. A figure of nothing is not written, `total=0` alone saying only what
+# is true of every sequence there is; `total=0 exact` is a sequence counted and
+# found empty, and is written.
+TOTAL_ARG = "total"
+EXACT_ARG = "exact"
 
 # Why a scope ended, which the asker cannot work out for itself: a scope that
 # filled and one that ran out of records look identical from the far end.
@@ -303,6 +329,12 @@ class Complete:
     stop: str = ""
     error: str = ""
 
+    # How many records the whole sequence has, where the source volunteered it,
+    # and whether that figure is the whole story rather than a floor. Zero and
+    # not exact is nothing said.
+    total: int = 0
+    exact: bool = False
+
 
 @dataclass
 class Result:
@@ -324,6 +356,15 @@ class Result:
     # whole record does not need to: what a whole record carries IS all of them.
     named: int = 0
     ordered_members: int = 0
+
+    # Whether this came under `place` rather than `result`: a position, and
+    # whatever is known, with no claim about how much. Its fields are true and
+    # its silence is not, so it carries no totals and never `record=`.
+    #
+    # A completion riding a place ends the ORDER rather than the scope: every
+    # record has now been named, under either verb, and no further one will turn
+    # up between two already sent.
+    place: bool = False
 
     complete: Optional[Complete] = None
 
@@ -351,6 +392,10 @@ class Result:
                 out.append(Arg(name=WATERMARK_ARG, value=c.watermark))
             if c.stop:
                 out.append(Arg(name=c.stop, flag=FlagState.TRUE))
+            if c.total or c.exact:
+                out.append(Arg(name=TOTAL_ARG, value=new_int(c.total)))
+                if c.exact:
+                    out.append(Arg(name=EXACT_ARG, flag=FlagState.TRUE))
             if c.error:
                 out.append(Arg(name=ERROR_ARG, value=new_string(c.error)))
         return out
@@ -541,9 +586,22 @@ def _count_arg(a: Arg) -> int:
 
 def parse_result(args: List[Arg]) -> Result:
     """A result, from the arguments after the query id."""
-    r = Result()
+    return _parse_result(args, False)
+
+
+def parse_place(args: List[Arg]) -> Result:
+    """A place, from the arguments after the query id.
+
+    The same statement under the other verb, which changes what may be in it: a
+    place makes no claim about how much of the record there is, so it carries no
+    totals and never `record=`."""
+    return _parse_result(args, True)
+
+
+def _parse_result(args: List[Arg], place: bool) -> Result:
+    r = Result(place=place)
     done = Complete()
-    ended = counted = False
+    ended = counted = exact = totalled = False
     for a in args:
         if a.name == ORDERED_ARG:
             r.ordered = True
@@ -571,6 +629,13 @@ def parse_result(args: List[Arg]) -> Result:
                 raise QueryError("watermark: expected an identity")
             done.watermark = a.value
             ended = True
+        elif a.name == TOTAL_ARG:
+            done.total = _count_arg(a)
+            ended = totalled = True
+        elif a.name == EXACT_ARG:
+            # It strengthens a figure rather than stating one, so it ends
+            # nothing on its own.
+            exact = True
         elif a.name == ERROR_ARG:
             if a.value is None or a.value.kind != ValueKind.STRING:
                 raise QueryError("error: expected a message")
@@ -586,6 +651,16 @@ def parse_result(args: List[Arg]) -> Result:
         # either saying that again or contradicting it, and there is no reading
         # where it adds anything.
         raise QueryError("record=: a whole record is its own totals")
+    if r.place and (counted or r.whole):
+        # Not making that claim is the entire difference between a place and a
+        # result. A place that said how much of the record there is would be a
+        # subset under the wrong verb, and one that said `record=` would be a
+        # whole record under it.
+        raise QueryError(
+            "place: a place says nothing about how much of the record there is")
+    if exact and not totalled:
+        raise QueryError("exact: nothing here states a total")
+    done.exact = exact
     if ended:
         r.complete = done
     return r

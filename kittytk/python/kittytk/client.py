@@ -1004,6 +1004,7 @@ class Fill:
         self._records = 0    # records among them, which is what sent() reports
         self._ordered = False
         self._waiting = None  # the last record, held so the end can ride on it
+        self._total = (0, False)  # how many the sequence has, and whether exact
         self._closed = False
 
     def record(self, id, **fields):
@@ -1044,6 +1045,91 @@ class Fill:
 
         Either count may be zero, and a zero is not written."""
         self._write(False, id, fields, named, ordered)
+
+    def place(self, id, **fields):
+        """Add a PLACE: a record's position in the sequence, and whatever is
+        known of it so far.
+
+            f.place(17, name="src/parser.go")
+
+        **Its fields are true and its silence is not.** What is sent can be
+        believed; what is missing is not a claim that the record has not got it.
+        Which is the whole difference between this and subset, and why a place
+        carries no totals.
+
+        Use it for a row whose position is known sooner than its contents, so
+        that whoever asked can lay out its rows and stay reactive while the
+        values arrive behind them. A record you can send outright is worth
+        sending outright: a result with no place before it settles where the row
+        stands and what it holds at once.
+
+        **Places are additional, never substitutional.** Every record still
+        arrives as a result before the answer ends, so a reader that does not
+        know this verb skips these statements and is left with exactly the
+        answer it would have got."""
+        bag = _query.Fields()
+        for name, v in fields.items():
+            bag.append(protocol.named(name, v))
+        self._placing(_query.Result(place=True, id=protocol.val(id), fields=bag))
+
+    def placed(self, stop, watermark=None):
+        """Say the ORDER is settled: every record of this scope has now been
+        named, under place or as a result, and no further one will turn up
+        between two already sent.
+
+            f.placed(kittytk.STOP_FILLED, 42)
+            f.placed(kittytk.STOP_EXHAUSTED)
+
+        It carries the same claim the terminator will -- how the walk ended, and
+        the watermark where there is one -- and is worth sending only where the
+        order settles SOONER than the answer does. A reader cannot lay out a
+        sequence, not even one of placeholders, until it knows it has all the
+        rows; where the two moments are the same there is nothing to send,
+        because the terminator settles the order too."""
+        done = _query.Complete(stop=stop)
+        if watermark is not None:
+            done.watermark = protocol.val(watermark)
+        self._placing(_query.Result(place=True, complete=done))
+
+    def total(self, n: int, exact: bool = False):
+        """Say how many records the whole SEQUENCE has, which rides out on
+        whatever ends this answer.
+
+            f.total(20, exact=True)   # twenty, counted
+            f.total(20)               # twenty so far, and there may be more
+
+        Optional, and about the sequence rather than this scope of it: how many
+        came back is something whoever asked can count. Say it where you know it
+        cheaply and say nothing where you do not."""
+        with self._lock:
+            if not self._closed:
+                self._total = (n, exact)
+
+    def _placing(self, place):
+        """Send one place statement at once, flushing whatever record was held
+        back for a terminator to ride on.
+
+        Not held itself: a place is a statement under another verb, so nothing
+        can ride with it and there is nothing to wait for."""
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("this scope has already been answered")
+            held = self._waiting
+            self._waiting = None
+            if place.id is not None:
+                place.ordered = self._ordered and self._records == 0
+                self._records += 1
+        if held is not None:
+            self._emit(self._result(*held.args()))
+        self._emit(self._place(*place.args()))
+
+    def _place(self, *extra) -> str:
+        """One place statement, addressed to the query the same way a result is.
+        The verb is the whole of what tells them apart."""
+        args = [protocol.Arg(value=protocol.new_int(self.query.id()))]
+        args.extend(extra)
+        return protocol.encode_statement(
+            protocol.Statement(verb=_query.PLACE_VERB, args=args))
 
     def _write(self, whole, id, fields, named=0, ordered=0):
         """Queue one record, holding it back until the next one or the end.
@@ -1171,6 +1257,7 @@ class Fill:
             self._waiting = None
             if end is None:
                 end = _query.Result(ordered=self._ordered and self._records == 0)
+            done.total, done.exact = self._total
             end.complete = done
             self._buf.append(self._result(*end.args()))
             self._closed = True

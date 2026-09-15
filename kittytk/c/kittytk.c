@@ -1994,6 +1994,8 @@ struct kt_fill {
     int records;  /* records among them, which is what kt_fill_sent reports */
     int ordered;
     char *held;   /* the last record, kept so the terminator can ride on it */
+    int total;    /* how many the sequence has, where the source said */
+    int exact;    /* and whether that figure is the whole story */
 };
 
 static void enqueue_inbound(kt_conn *c, const char *text) {
@@ -2095,6 +2097,14 @@ static void fill_head(kt_fill *f, kt_buf *b) {
     buf_puts(b, tmp);
 }
 
+/* The same, under the other verb. The verb is the whole of what tells a place
+   and a result apart. */
+static void place_head(kt_fill *f, kt_buf *b) {
+    char tmp[64];
+    snprintf(tmp, sizeof tmp, KT_PLACE_VERB " %llu", (unsigned long long)f->query);
+    buf_puts(b, tmp);
+}
+
 /* Push one finished statement into the buffer. Called under f->mu. */
 static void fill_push(kt_fill *f, const char *stmt) {
     if (f->buf.len) buf_put(&f->buf, '\n');
@@ -2172,6 +2182,82 @@ int kt_fill_record(kt_fill *f, kt_value id, const kt_value *fields, int n) {
     return fill_write(f, KT_RECORD_ARG, id, fields, n, 0, 0);
 }
 
+/* One place onto the answer, sent at once.
+ *
+ * Not held back: a place is a statement under another verb, so nothing can ride
+ * with it and there is nothing to wait for. Whatever record WAS held goes out
+ * ahead of it, since it was produced first. */
+static int place_write(kt_fill *f, const kt_value *id, const kt_value *fields,
+                       int n, const char *tail) {
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    place_head(f, &b);
+
+    kt_mutex_lock(&f->mu);
+    if (id && f->ordered && f->records == 0) buf_puts(&b, " ordered");
+    kt_mutex_unlock(&f->mu);
+
+    if (id) {
+        buf_puts(&b, " " KT_ID_ARG "=");
+        enc_value(&b, id);
+        buf_puts(&b, " " KT_FIELDS_ARG "={");
+        for (int i = 0; i < n; i++) {
+            buf_puts(&b, i ? "; " : " ");
+            buf_puts(&b, fields[i].name ? fields[i].name : "");
+            if (fields[i].kind != KT_V_NONE) {
+                buf_put(&b, ' ');
+                enc_value(&b, &fields[i]);
+            }
+        }
+        buf_puts(&b, n ? " }" : "}");
+    }
+    if (tail) buf_puts(&b, tail);
+    char *stmt = buf_dup(&b);
+    free(b.p);
+
+    kt_mutex_lock(&f->mu);
+    char *held = f->held;
+    f->held = NULL;
+    if (held) { fill_push(f, held); free(held); }
+    if (id) f->records++;
+    fill_push(f, stmt);
+    free(stmt);
+    if (f->buf.len < KT_FLUSH_BYTES) {
+        kt_mutex_unlock(&f->mu);
+        return 0;
+    }
+    char *src = fill_take(f);
+    kt_mutex_unlock(&f->mu);
+    return fill_send(f, src);
+}
+
+int kt_fill_place(kt_fill *f, kt_value id, const kt_value *fields, int n) {
+    return place_write(f, &id, fields, n, NULL);
+}
+
+int kt_fill_placed(kt_fill *f, const char *stop, kt_value watermark) {
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    buf_puts(&b, " complete");
+    if (watermark.kind != KT_V_NONE) {
+        buf_puts(&b, " watermark=");
+        enc_value(&b, &watermark);
+    }
+    if (stop) { buf_put(&b, ' '); buf_puts(&b, stop); }
+    char *tail = buf_dup(&b);
+    free(b.p);
+    int rc = place_write(f, NULL, NULL, 0, tail);
+    free(tail);
+    return rc;
+}
+
+void kt_fill_total(kt_fill *f, int n, int exact) {
+    kt_mutex_lock(&f->mu);
+    f->total = n;
+    f->exact = exact;
+    kt_mutex_unlock(&f->mu);
+}
+
 int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n,
                    int named, int ordered) {
     return fill_write(f, KT_FIELDS_ARG, id, fields, n, named, ordered);
@@ -2220,6 +2306,15 @@ static int fill_finish(kt_fill *f, const char *tail) {
     }
     buf_puts(&b, " complete");
     if (tail) buf_puts(&b, tail);
+    /* A figure of nothing is not written: `total=0` alone says only what is
+       true of every sequence there is. `total=0 exact` is one counted and found
+       empty, and does cross. */
+    if (f->total || f->exact) {
+        char tmp[48];
+        snprintf(tmp, sizeof tmp, " " KT_TOTAL_ARG "=%d", f->total);
+        buf_puts(&b, tmp);
+        if (f->exact) buf_puts(&b, " " KT_EXACT_ARG);
+    }
     if (f->buf.len) buf_put(&f->buf, '\n');
     /* buf_dup, not b.p: a kt_buf holds a length and is not NUL-terminated. */
     char *line = buf_dup(&b);

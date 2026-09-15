@@ -143,6 +143,35 @@ class ServingAQueryTest(unittest.TestCase):
                          'result 1 id=42 fields={ name "src/window.go" } map=3'
                          ' complete exhausted')
 
+    def test_places_lead_the_order_settles_and_the_total_ends(self):
+        # A place says where a record stands and whatever is known of it, under
+        # a verb of its own. Places are ADDITIONAL: every record still arrives
+        # as a result, so a reader that does not know the verb skips them and
+        # is left with the same answer.
+        #
+        # The completion riding a place ends the ORDER and not the scope --
+        # every record has now been named, and no further one will turn up
+        # between two already sent -- and the total rides the terminator.
+        def fill(f):
+            f.ordered()
+            f.place(17, name="src/parser.go")
+            f.place(42)
+            f.placed(query.STOP_EXHAUSTED)
+            f.record(17, name="src/parser.go", size=1024)
+            f.record(42, name="src/window.go", size=2048)
+            f.total(2, exact=True)
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" count=10')
+        self.assertEqual("\n".join(c.since(1)),
+                         'place 1 ordered id=17 fields={ name "src/parser.go" }\n'
+                         'place 1 id=42 fields={}\n'
+                         'place 1 complete exhausted\n'
+                         'result 1 id=17 record={ name "src/parser.go"; size 1024 }\n'
+                         'result 1 id=42 record={ name "src/window.go"; size 2048 }'
+                         ' complete exhausted total=2 exact')
+
     def test_a_subset_counts_towards_what_was_sent(self):
         sent = []
 

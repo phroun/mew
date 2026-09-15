@@ -167,6 +167,31 @@ static void fill_whole_and_part(kt_query *q, const kt_qscope *req, kt_fill *sink
     kt_fill_exhausted(sink);
 }
 
+/* A place says where a record stands and whatever is known of it, under a verb
+   of its own. Places are ADDITIONAL: every record still arrives as a result, so
+   a reader that does not know the verb skips them and has the same answer.
+
+   The completion riding a place ends the ORDER and not the scope -- every
+   record has now been named, and no further one will turn up between two
+   already sent -- and the total rides the terminator. */
+static void fill_places(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
+    kt_fill_ordered(sink);
+    kt_value f = kt_vstr("name", "src/parser.go");
+    kt_fill_place(sink, kt_vint("", 17), &f, 1);
+    kt_fill_place(sink, kt_vint("", 42), NULL, 0);
+    kt_value none;
+    memset(&none, 0, sizeof none);   /* KT_V_NONE: exhausted has no watermark */
+    kt_fill_placed(sink, KT_STOP_EXHAUSTED, none);
+    kt_value two[2];
+    two[0] = f;
+    two[1] = kt_vint("size", 1024);
+    kt_fill_record(sink, kt_vint("", 17), two, 2);
+    kt_fill_record(sink, kt_vint("", 42), two, 2);
+    kt_fill_total(sink, 2, 1);
+    kt_fill_exhausted(sink);
+}
+
 static void fill_refuses(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_fail(sink, "no records past \"build.sh\"");
@@ -412,6 +437,23 @@ int main(void) {
              "result %llu id=42 fields={ name \"src/window.go\" } map=3 complete exhausted",
              (unsigned long long)q, (unsigned long long)q);
     expect_str(answer, tmp, "a whole record and a subset say which they are");
+    free(answer);
+
+    /* A place, the order settled before the answer is, and the total on the
+       terminator. */
+    n = sent_count();
+    q = serve(fill_places, "count=10");
+    answer = since(n + 1);
+    snprintf(tmp, sizeof tmp,
+             "place %llu ordered id=17 fields={ name \"src/parser.go\" }\n"
+             "place %llu id=42 fields={}\n"
+             "place %llu complete exhausted\n"
+             "result %llu id=17 record={ name \"src/parser.go\"; size 1024 }\n"
+             "result %llu id=42 record={ name \"src/parser.go\"; size 1024 } "
+             "complete exhausted total=2 exact",
+             (unsigned long long)q, (unsigned long long)q, (unsigned long long)q,
+             (unsigned long long)q, (unsigned long long)q);
+    expect_str(answer, tmp, "places lead, the order settles, the total ends");
     free(answer);
 
     /* A refusal is an answer. */

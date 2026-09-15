@@ -257,6 +257,28 @@ const kt_value *kt_bag_get(const kt_bag *b, const char *name);
 #define KT_MAP_ARG "map"
 #define KT_LEN_ARG "len"
 
+/* KT_PLACE_VERB carries a PLACE: a record's identity, in its position in the
+   sequence, and whatever is known of it so far with no claim about how much.
+
+   A verb of its own, and that is the whole mechanism. Places are ADDITIONAL --
+   every record still arrives as a result, and the scope's own `complete` still
+   ends the answer -- so a reader that does not know this verb skips these
+   statements and is left with exactly the answer it gets otherwise. There is
+   nothing to negotiate and nothing it can be misled about, because it never saw
+   them. */
+#define KT_PLACE_VERB "place"
+
+/* How many records the whole SEQUENCE has, and whether that figure is the whole
+   story rather than a floor.
+
+   Weak by default and strengthened out loud, the same way round as `fields`
+   against `record`: `total=20` alone says there are at LEAST twenty;
+   `total=20 exact` says twenty is all there are. It rides a completion, being a
+   fact about the order rather than about any record. A figure of nothing is not
+   written; `total=0 exact` is a sequence counted and found empty, and is. */
+#define KT_TOTAL_ARG "total"
+#define KT_EXACT_ARG "exact"
+
 /* Why a scope ended, which the asker cannot work out for itself: a scope that
    filled and one that ran out of records look identical from the far end, and
    they mean opposite things about whether there is any point asking again. */
@@ -365,6 +387,53 @@ int kt_fill_record(kt_fill *f, kt_value id, const kt_value *fields, int n);
    counted: counting it would say the record had a member it has not.
 
    Either count may be zero, and a zero is not written. */
+/* Add a PLACE: a record's position in the sequence, and whatever is known of it
+   so far.
+
+       kt_fill_place(f, kt_vint("", 17), fields, 1);
+
+   **Its fields are true and its silence is not.** What is sent can be believed;
+   what is missing is not a claim that the record has not got it. Which is the
+   whole difference between this and kt_fill_subset, and why a place carries no
+   totals.
+
+   Use it for a row whose position is known sooner than its contents, so that
+   whoever asked can lay out its rows and stay reactive while the values arrive
+   behind them. A record you can send outright is worth sending outright.
+
+   **Places are additional, never substitutional.** Every record still arrives
+   as a result before the answer ends, so a reader that does not know this verb
+   skips these and is left with exactly the answer it would have got. */
+int kt_fill_place(kt_fill *f, kt_value id, const kt_value *fields, int n);
+
+/* Say the ORDER is settled: every record of this scope has now been named,
+   under kt_fill_place or as a result, and no further one will turn up between
+   two already sent.
+
+       kt_fill_placed(f, KT_STOP_FILLED, kt_vint("", 42));
+
+   A watermark of kind KT_V_NONE is no watermark, which is what a sequence
+   exhausted has: there is nothing past the end to be complete up to.
+
+   It carries the same claim the terminator will -- how the walk ended, and the
+   watermark where there is one -- and is worth sending only where the order
+   settles SOONER than the answer does. A reader cannot lay out a sequence, not
+   even one of placeholders, until it knows it has all the rows; where the two
+   moments are the same there is nothing to send, because the terminator settles
+   the order too. */
+int kt_fill_placed(kt_fill *f, const char *stop, kt_value watermark);
+
+/* Say how many records the whole SEQUENCE has, which rides out on whatever ends
+   this answer.
+
+       kt_fill_total(f, 20, 1);   -- twenty, counted
+       kt_fill_total(f, 20, 0);   -- twenty so far, and there may be more
+
+   Optional, and about the sequence rather than this scope of it: how many came
+   back is something whoever asked can count. Say it where you know it cheaply
+   and say nothing where you do not. */
+void kt_fill_total(kt_fill *f, int n, int exact);
+
 int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n,
                    int named, int ordered);
 
