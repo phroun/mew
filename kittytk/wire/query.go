@@ -32,6 +32,22 @@ const (
 	QueryVerb  = "query"  // `new query source="files" sort={ name } count=30`
 	ResultVerb = "result" // `result 9 id=42 record={ ... }`
 
+	// PlaceVerb carries a PLACE: a record's identity, in its position in the
+	// sequence, and whatever is known of it so far with no claim about how much.
+	//
+	// A verb of its own, and that is the whole mechanism. Places are ADDITIONAL
+	// -- every record still arrives as a result, and the scope's own `complete`
+	// still ends the answer -- so a reader that does not know this verb skips
+	// these statements and is left with exactly the answer it gets otherwise.
+	// There is nothing to negotiate and nothing it can be misled about, because
+	// it never saw them.
+	//
+	// It is the mirror of how a hint works, pointing the other way. A hint rides
+	// the question and the answerer may drop it, because dropping it can only
+	// produce more data than was asked for. A place rides the ANSWER and the
+	// asker may drop it, because it was never part of what the answer claimed.
+	PlaceVerb = "place" // `place 9 id=42 fields={ name "x" }`
+
 	// IDArg carries a record's identity, beside its fields rather than among
 	// them.
 	//
@@ -72,6 +88,22 @@ const (
 	WatermarkArg   = "watermark"
 	OrderedArg     = "ordered"
 	ErrorArg       = "error"
+
+	// TotalArg is how many records the whole SEQUENCE has, and ExactArg says
+	// that figure is the whole story rather than a floor.
+	//
+	// Weak by default and strengthened out loud, the same way round as `fields`
+	// against `record`: `total=20` alone says there are at LEAST twenty, which
+	// is what a reader that has seen part of a sequence can say and is most of
+	// what a scrollbar wants; `total=20 exact` says twenty is all there are.
+	//
+	// It rides a completion, being a fact about the order rather than about any
+	// record -- and about the sequence rather than the scope, how many came back
+	// being something whoever asked can count. A figure of nothing is not
+	// written, `total=0` alone saying only what is true of every sequence there
+	// is; `total=0 exact` is a sequence counted and found empty, and is written.
+	TotalArg = "total"
+	ExactArg = "exact"
 )
 
 // EncodeRecord renders a record as the block that carries it: one statement per
@@ -362,6 +394,17 @@ type Result struct {
 	// of them.
 	Has serval.Totals
 
+	// Place says this came under `place` rather than `result`: a position, and
+	// whatever is known, with no claim about how much. Its fields are true and
+	// its silence is not, which is the whole difference -- so it carries no
+	// totals, and `record=` on one is refused.
+	//
+	// A completion riding a place ends the ORDER rather than the scope: every
+	// record has now been named, under either verb, and no further one will turn
+	// up between two already sent. Which is what a reader needs before it can
+	// lay a sequence out, even a sequence of placeholders.
+	Place bool
+
 	Complete *serval.Complete
 }
 
@@ -375,10 +418,17 @@ func countArg(a *Arg) (int, error) {
 }
 
 // ParseResult reads a result from the arguments after the query id.
-func ParseResult(args []*Arg) (*Result, error) {
-	r := &Result{}
+//
+// ParsePlace is the same statement under the other verb, which changes what may
+// be in it: a place makes no claim about how much of the record there is, so it
+// carries no totals and never `record=`.
+func ParseResult(args []*Arg) (*Result, error) { return parseResult(args, false) }
+func ParsePlace(args []*Arg) (*Result, error)  { return parseResult(args, true) }
+
+func parseResult(args []*Arg, place bool) (*Result, error) {
+	r := &Result{Place: place}
 	var done serval.Complete
-	ended, counted := false, false
+	ended, counted, exact, totalled := false, false, false, false
 	for _, a := range args {
 		switch a.Name {
 		case OrderedArg:
@@ -414,6 +464,17 @@ func ParseResult(args []*Arg) (*Result, error) {
 			}
 			done.Watermark = asData(a.Value)
 			ended = true
+		case TotalArg:
+			n, err := countArg(a)
+			if err != nil {
+				return nil, err
+			}
+			done.Total.N = n
+			ended, totalled = true, true
+		case ExactArg:
+			// It strengthens a figure rather than stating one, so it ends
+			// nothing on its own.
+			exact = true
 		case ErrorArg:
 			if a.Value == nil || a.Value.Kind != StringValue {
 				return nil, fmt.Errorf("error: expected a message")
@@ -434,6 +495,17 @@ func ParseResult(args []*Arg) (*Result, error) {
 		// where it adds anything.
 		return nil, fmt.Errorf("record=: a whole record is its own totals")
 	}
+	if r.Place && (counted || r.Whole) {
+		// Not making that claim is the entire difference between a place and a
+		// result. A place that said how much of the record there is would be a
+		// subset under the wrong verb, and one that said `record=` would be a
+		// whole record under it.
+		return nil, fmt.Errorf("place: a place says nothing about how much of the record there is")
+	}
+	if exact && !totalled {
+		return nil, fmt.Errorf("exact: nothing here states a total")
+	}
+	done.Total.Exact = exact
 	if ended {
 		r.Complete = &done
 	}
@@ -471,6 +543,15 @@ func (r *Result) Args() []*Arg {
 		}
 		if c.Stop != "" {
 			out = append(out, &Arg{Name: string(c.Stop), Flag: FlagTrue})
+		}
+		if !c.Total.Nothing() {
+			// A figure of nothing is not written: `total=0` alone says only
+			// what is true of every sequence there is. A sequence counted and
+			// found empty is `total=0 exact`, and does cross.
+			out = append(out, &Arg{Name: TotalArg, Value: NewInt(int64(c.Total.N))})
+			if c.Total.Exact {
+				out = append(out, &Arg{Name: ExactArg, Flag: FlagTrue})
+			}
 		}
 		if c.Error != "" {
 			out = append(out, Named(ErrorArg, c.Error))

@@ -179,6 +179,8 @@ func (h *ApplicationSource) Inbound(stmt *wire.Statement) bool {
 		return h.name1(stmt)
 	case wire.ResultVerb:
 		return h.result(stmt)
+	case wire.PlaceVerb:
+		return h.place(stmt)
 	}
 	return false
 }
@@ -214,21 +216,69 @@ func (h *ApplicationSource) name1(stmt *wire.Statement) bool {
 
 // result takes one record, or the statement that ends a scope.
 func (h *ApplicationSource) result(stmt *wire.Statement) bool {
-	if len(stmt.Args) == 0 {
-		return false
-	}
-	a := stmt.Args[0]
-	if a.Value == nil || a.Name != "" || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
-		return false
-	}
-	h.mu.Lock()
-	q := h.byID[uint64(a.Value.Int)]
-	h.mu.Unlock()
+	q := h.addressed(stmt)
 	if q == nil {
 		return false
 	}
 	q.take(stmt.Args[1:])
 	return true
+}
+
+// place takes a place statement to the sequence it belongs to, the same way a
+// result is taken.
+func (h *ApplicationSource) place(stmt *wire.Statement) bool {
+	q := h.addressed(stmt)
+	if q == nil {
+		return false
+	}
+	q.takePlace(stmt.Args[1:])
+	return true
+}
+
+// addressed is the sequence a result or a place is for, and nil for a statement
+// that names none of ours.
+func (h *ApplicationSource) addressed(stmt *wire.Statement) *appScope {
+	if len(stmt.Args) == 0 {
+		return nil
+	}
+	a := stmt.Args[0]
+	if a.Value == nil || a.Name != "" || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.byID[uint64(a.Value.Int)]
+}
+
+// takePlace reads one place statement into the sink waiting for it, where that
+// sink has somewhere to put one.
+//
+// **A sink that has not is not given them**, and loses nothing by it: every
+// record still arrives as a result, and the scope's own terminator still ends
+// the answer. Which is why nothing here negotiates -- a place is dropped on the
+// floor exactly as a reader that did not know the verb would drop it.
+//
+// The completion riding a place ends the ORDER and not the scope, so it never
+// finishes anything: the records are still coming.
+func (q *appScope) takePlace(args []*wire.Arg) {
+	r, err := wire.ParsePlace(args)
+	if err != nil {
+		q.finish(serval.Complete{Error: err.Error()})
+		return
+	}
+	if r.Ordered {
+		q.out.Ordered()
+	}
+	p, ok := q.out.(serval.Placing)
+	if !ok {
+		return
+	}
+	if r.ID != nil {
+		_ = p.Place(wire.AsData(r.ID), r.Fields)
+	}
+	if r.Complete != nil {
+		p.Placed(*r.Complete)
+	}
 }
 
 // take reads one result statement into the sink waiting for it.

@@ -363,6 +363,7 @@ type Fill struct {
 	records int // records among them, which is what Sent reports
 	ordered bool
 	waiting *wire.Result // the last record, held so the end can ride on it
+	total   serval.RecordCount
 	closed  bool
 }
 
@@ -405,6 +406,98 @@ func (f *Fill) Record(id any, fields ...*serval.Field) error {
 // for again; sent, it is a guarantee, and it is not counted.
 func (f *Fill) Subset(id any, has serval.Totals, fields ...*serval.Field) error {
 	return f.record(wire.FieldsArg, id, has, fields)
+}
+
+// Place adds a PLACE: a record's position in the sequence, and whatever is
+// known of it so far.
+//
+//	f.Place(17, serval.Named(".name", "src/parser.go"))
+//
+// **Its fields are true and its silence is not.** What is sent can be believed;
+// what is missing is not a claim that the record has not got it. Which is the
+// whole difference between this and Subset, and why a place carries no totals.
+//
+// Use it for a row whose position is known sooner than its contents, so that
+// whoever asked can lay out its rows and stay reactive while the values arrive
+// behind them. A record you can send outright is worth sending outright: a
+// result with no place before it settles where the row stands and what it holds
+// at once.
+//
+// **Places are additional, never substitutional.** Every record still arrives
+// as a result before the answer ends, so a reader that does not know this verb
+// skips these statements and is left with exactly the answer it would have got.
+// There is nothing to negotiate.
+func (f *Fill) Place(id any, fields ...*serval.Field) error {
+	return f.placing(&wire.Result{
+		Place:  true,
+		ID:     wire.AsWire(serval.Val(id)),
+		Fields: append(serval.Record(nil), fields...),
+	})
+}
+
+// Placed says the ORDER is settled: every record of this scope has now been
+// named, under Place or as a result, and no further one will turn up between
+// two already sent.
+//
+// It carries the same claim the terminator will -- how the walk ended, and the
+// watermark where there is one -- and it is worth sending only where the order
+// settles SOONER than the answer does. A reader cannot lay out a sequence, not
+// even one of placeholders, until it knows it has all the rows; and where the
+// two moments are the same there is nothing to send, because the terminator
+// settles the order too.
+//
+//	f.Placed(serval.StopFilled, 42)
+//	f.Placed(serval.StopExhausted, nil)
+func (f *Fill) Placed(stop serval.Stop, watermark any) error {
+	done := &serval.Complete{Stop: stop}
+	if watermark != nil {
+		done.Watermark = serval.Val(watermark)
+	}
+	return f.placing(&wire.Result{Place: true, Complete: done})
+}
+
+// Total says how many records the whole SEQUENCE has, which rides out on
+// whatever ends this answer.
+//
+//	f.Total(serval.Exactly(20))   // twenty, counted
+//	f.Total(serval.AtLeast(20))   // twenty so far, and there may be more
+//
+// Optional, and about the sequence rather than this scope of it: how many came
+// back is something whoever asked can count. Say it where you know it cheaply
+// and say nothing where you do not -- an unknown figure crosses as no figure.
+func (f *Fill) Total(n serval.RecordCount) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.closed {
+		f.total = n
+	}
+}
+
+// placing sends one place statement at once, flushing whatever record was held
+// back for a terminator to ride on.
+//
+// Not held itself: a place is a statement under another verb, so nothing can
+// ride with it and there is nothing to wait for.
+func (f *Fill) placing(place *wire.Result) error {
+	f.mu.Lock()
+	if f.closed {
+		f.mu.Unlock()
+		return fmt.Errorf("this scope has already been answered")
+	}
+	held := f.waiting
+	f.waiting = nil
+	if place.ID != nil {
+		place.Ordered = f.ordered && f.records == 0
+		f.records++
+	}
+	f.mu.Unlock()
+
+	if held != nil {
+		if err := f.emit(f.result(held.Args()...)); err != nil {
+			return err
+		}
+	}
+	return f.emit(f.place(place.Args()...))
 }
 
 // record queues one record, holding it back until the next one or the end.
@@ -535,6 +628,16 @@ func (f *Fill) result(extra ...*wire.Arg) string {
 	})
 }
 
+// place builds one place statement, addressed to the query the same way a
+// result is. The verb is the whole of what tells them apart.
+func (f *Fill) place(extra ...*wire.Arg) string {
+	args := []*wire.Arg{{Value: wire.NewInt(int64(f.Query.id))}}
+	return wire.EncodeStatement(&wire.Statement{
+		Verb: wire.PlaceVerb,
+		Args: append(args, extra...),
+	})
+}
+
 // emit adds one statement to the answer, sending what has accumulated once it
 // is worth a message of its own.
 func (f *Fill) emit(stmt string) error {
@@ -571,6 +674,7 @@ func (f *Fill) finish(done *serval.Complete) error {
 	if end == nil {
 		end = &wire.Result{Ordered: f.ordered && f.records == 0}
 	}
+	done.Total = f.total
 	end.Complete = done
 	stmt := f.result(end.Args()...)
 	if f.buf.Len() > 0 {
