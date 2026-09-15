@@ -4,7 +4,7 @@
 > below are what the three client libraries speak today, and
 > `testdata/query.wire` is the corpus all three answer. The display side that
 > asks these questions is still to come; `live-data-negotiation.md` is the plan
-> it will be built to, and `sort-and-filter.md` the comparison both ends stand
+> it will be built to, and serval's `docs/ordering.md` the comparison both ends stand
 > on.
 
 A **query** is a sequence of an application's own records that a display is
@@ -407,7 +407,8 @@ A field's value may be any kind the wire has — a word, a string, a number, and
 
 ## The filter and the sort
 
-Both are as `sort-and-filter.md` defines them, and both arrive as a structure
+Both are spelled as `sort-and-filter.md` defines and mean what serval's
+`docs/ordering.md` says, and both arrive as a structure
 rather than as text. A filter block is an AND, so the top of a parsed filter
 tree always is — one shape to walk, whether it held one predicate or twenty.
 

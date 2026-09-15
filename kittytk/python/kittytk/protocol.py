@@ -940,7 +940,7 @@ def parse_event(src: str) -> Event:
 
 # --- ordering two values the same way at both ends ---------------------------
 #
-# docs/sort-and-filter.md is the spec, testdata/compare.wire the corpus every
+# serval's docs/ordering.md is the spec, testdata/compare.wire the corpus every
 # implementation of it answers. See wire/compare.go for the Go side; the two
 # must agree case for case.
 

@@ -8,7 +8,8 @@ here, and what reaches an application is an object.
 
 docs/hosting-a-query.md is the spelling this implements, and
 testdata/query.wire is the corpus every implementation of it answers.
-docs/sort-and-filter.md defines the comparison the sort and filter stand on.
+serval's docs/ordering.md defines the comparison the sort and filter stand on;
+docs/sort-and-filter.md is how the two are written down here.
 """
 
 from __future__ import annotations

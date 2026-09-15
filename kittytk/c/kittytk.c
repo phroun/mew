@@ -299,7 +299,7 @@ struct kt_script { kt_stmt *stmts; int n; };
  * what it holds before the results are folded together -- so both ends must
  * compute the SAME order from the same spec without conferring.
  *
- * docs/sort-and-filter.md is the spec, ../testdata/compare.wire the corpus
+ * serval's docs/ordering.md is the spec, ../testdata/compare.wire the corpus
  * every implementation of it answers. wire/compare.go is the Go side and
  * python/kittytk/protocol.py the Python one; all three answer case for case.
  */

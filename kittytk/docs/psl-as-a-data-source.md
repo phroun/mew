@@ -4,7 +4,7 @@
 > out of it. The reading follows no include, resolves no hash and merges no
 > layer — layering and shadowing are the next thing and are built on this rather
 > than into it. `data-sources-and-bundles.md` is the conversation those belong
-> to, `hosting-a-query.md` is the wire spelling, and `sort-and-filter.md` is the
+> to, `hosting-a-query.md` is the wire spelling, and serval's `docs/ordering.md` is the
 > comparison both ends stand on.
 
 A display sometimes holds the records itself, and then there is nobody to ask.

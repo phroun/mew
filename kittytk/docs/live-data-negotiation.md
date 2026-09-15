@@ -1,7 +1,7 @@
 # Live data negotiation
 
 > **Status: a plan, with its first piece built.** The comparison core it stands
-> on is settled (`sort-and-filter.md`), the reverse direction it needs is
+> on is settled (serval's `docs/ordering.md`), the reverse direction it needs is
 > decided (`app-hosted-objects.md`), and the filling half — the query a display
 > opens against an application, and the scopes it serves — is implemented in
 > all three client libraries (`hosting-a-query.md`). Coverage and invalidation
@@ -53,7 +53,7 @@ Four properties matter:
   level, so no two records tie and "the record after this point" means one
   place. Without that, two fills of a scope can overlap or skip.
 - **Both ends compute that sequence independently**, from the rules in
-  `sort-and-filter.md`. Neither confers with the other about order.
+  serval's `docs/ordering.md`. Neither confers with the other about order.
 - **It cannot be changed.** A different sort or a different filter is a
   different query, so **the id IS the generation** — results still in flight for
   the old sequence are told apart from the new ones by the number they are
