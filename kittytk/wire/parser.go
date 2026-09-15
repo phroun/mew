@@ -243,6 +243,29 @@ func (p *parser) atStatementEnd(inBlock bool) bool {
 	return false
 }
 
+// parseHead reads a statement's head, which is a run of word runes and may
+// begin with any of them -- a digit included.
+//
+// A block is not always a list of commands. A record is written as one, and a
+// record's field names belong to the data rather than to this grammar: a
+// positional member's name is its index, so `{ 0 "a"; 1 "b" }` is a record of
+// two of them. EncodeStatement has always written that, and until now nothing
+// could read it back.
+//
+// The digits are taken as they stand rather than read as a number. `007` and
+// `7` are different names, and a name that went out one way has to come back
+// the same way.
+func (p *parser) parseHead() (string, error) {
+	if p.eof() || !isWordRune(p.peek()) {
+		return "", p.errf("expected a name")
+	}
+	var sb strings.Builder
+	for !p.eof() && isWordRune(p.peek()) {
+		sb.WriteRune(p.advance())
+	}
+	return sb.String(), nil
+}
+
 func (p *parser) parseWord() (string, error) {
 	if p.eof() || !isWordStart(p.peek()) {
 		return "", p.errf("expected a name")
@@ -537,7 +560,7 @@ func (p *parser) parseArgs(inBlock bool) ([]*Arg, error) {
 }
 
 func (p *parser) parseStatement(inBlock bool) (*Statement, error) {
-	first, err := p.parseWord()
+	first, err := p.parseHead()
 	if err != nil {
 		return nil, err
 	}
@@ -607,7 +630,7 @@ func (p *parser) parseScript(topLevel bool) (*Script, error) {
 			}
 			return script, nil
 		}
-		if !isWordStart(p.peek()) {
+		if !isWordRune(p.peek()) {
 			return nil, p.errf("expected a statement, found %q", p.peek())
 		}
 		stmt, err := p.parseStatement(!topLevel)

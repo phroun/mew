@@ -468,6 +468,25 @@ class _Parser:
             return in_block
         return False
 
+    def parse_head(self) -> str:
+        """A statement's head, which is a run of word runes and may begin with
+        any of them -- a digit included.
+
+        A block is not always a list of commands. A record is written as one,
+        and a record's field names belong to the data rather than to this
+        grammar: a positional member's name is its index, so `{ 0 "a"; 1 "b" }`
+        is a record of two of them.
+
+        The digits are taken as they stand rather than read as a number: `007`
+        and `7` are different names, and a name that went out one way has to
+        come back the same way."""
+        if self.eof() or not _is_word_rune(self.peek()):
+            raise self._errf("expected a name")
+        out = []
+        while not self.eof() and _is_word_rune(self.peek()):
+            out.append(self.advance())
+        return ''.join(out)
+
     def parse_word(self) -> str:
         if self.eof() or not _is_word_start(self.peek()):
             raise self._errf("expected a name")
@@ -628,7 +647,7 @@ class _Parser:
         return args
 
     def parse_statement(self, in_block: bool) -> Statement:
-        first = self.parse_word()
+        first = self.parse_head()
         self.skip_inline()
         if not self.eof() and self.peek() == '=':
             self.advance()  # '='
@@ -655,7 +674,7 @@ class _Parser:
                 if top_level:
                     raise self._errf("unexpected '}'")
                 return script
-            if not _is_word_start(self.peek()):
+            if not _is_word_rune(self.peek()):
                 raise self._errf("expected a statement, found %r" % self.peek())
             script.statements.append(self.parse_statement(not top_level))
 

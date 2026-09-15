@@ -40,6 +40,58 @@ want source="f" fields={ name; size; modified }
 spec source=f fields={} exclude={ thumbnail }
 want source="f" exclude={ thumbnail }
 
+# A field list holds names and never values, so it has a shorter spelling:
+# the names separated by commas. It reads into the same bag the block does,
+# and the block is what comes back out.
+
+spec source=f fields=".name, .size"
+want source="f" fields={ .name; .size }
+
+spec source=f fields="  .name ,.size  " exclude="blob"
+want source="f" fields={ .name; .size } exclude={ blob }
+
+spec source=f fields=""
+want source="f"
+
+# A stray comma leaves a name with nothing in it, which is a typo rather than
+# a field. Dropping it quietly would narrow the query by one and say nothing.
+
+spec source=f fields=".name, , .size"
+bad
+
+spec source=f fields=","
+bad
+
+# --- a field named by its index ---
+#
+# A record's field names belong to the data, and a positional member's name is
+# its index. A block is a list of statements, so this is the one place where a
+# statement's head is not a word.
+
+spec source=f fields={ 0; 1; .name }
+want source="f" fields={ 0; 1; .name }
+
+spec source=f fields="0, 1"
+want source="f" fields={ 0; 1 }
+
+# The digits stand as they are written: a name that went out one way comes
+# back the same way, so these are two different names.
+
+spec source=f fields={ 7; 007 }
+want source="f" fields={ 7; 007 }
+
+# A sort level names its field in the head, so an index reaches it.
+
+spec source=f sort={ 0 natural; 1 desc }
+want source="f" sort={ 0 natural; 1 desc }
+
+# A filter names its field in ARGUMENT position, where a bare 0 is the number
+# zero and not a name -- so an index does not reach a filter yet. That is a
+# separate change to how a predicate decides which operand is its field.
+
+spec source=f filter={ eq 0 "a" }
+bad
+
 # --- the sort ---
 
 spec source=f sort={ name }

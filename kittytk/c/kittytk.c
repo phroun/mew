@@ -686,7 +686,12 @@ static void p_value(kt_p *p, kt_arg *a) {
  * inside a block -- at the closing brace. */
 static int p_statement(kt_p *p, kt_stmt *st, int in_block) {
     p_skip_inline(p);
-    if (p_eof(p) || !is_word_start(p_peek(p))) return 0;
+    /* A block is not always a list of commands. A record is written as one, and
+     * a record's field names belong to the data rather than to this grammar: a
+     * positional member's name is its index, so `{ 0 "a"; 1 "b" }` is a record
+     * of two of them. The digits stand as written -- `007` and `7` are
+     * different names. */
+    if (p_eof(p) || !is_word_rune(p_peek(p))) return 0;
     memset(st, 0, sizeof *st);
     st->verb = p_word(p);
     /* `key=verb args...`: a name for whatever the statement makes, answered in
@@ -1084,11 +1089,53 @@ static void bag_push(kt_bag *b, kt_value v) {
     ((kt_value *)b->v)[b->n++] = v;
 }
 
-/* A field bag, from a block value. */
+/* The string form of a field list: names separated by commas, each trimmed of
+ * the space around it.
+ *
+ * A field list holds names and never values, so it has a shorter spelling than
+ * a block. Comma because that is what a list is separated by -- `;` is where a
+ * statement ends, one level up, and would be doing a second job here.
+ *
+ * An empty list is a list of nothing, which is what `fields=""` says. An empty
+ * NAME is refused rather than skipped: a stray comma is a typo, and quietly
+ * dropping it would narrow a query by one field without saying so. */
+static int parse_field_list(const char *text, size_t len, kt_bag *out, char *err) {
+    size_t s = 0, e = len;
+    while (s < e && isspace((unsigned char)text[s])) s++;
+    while (e > s && isspace((unsigned char)text[e - 1])) e--;
+    if (s == e) return 1;
+
+    size_t i = 0;
+    for (size_t j = 0; j <= len; j++) {
+        if (j < len && text[j] != ',') continue;
+        size_t a = i, b = j;
+        while (a < b && isspace((unsigned char)text[a])) a++;
+        while (b > a && isspace((unsigned char)text[b - 1])) b--;
+        if (b == a) {
+            qfail(err, "a field list holds names, and one of these is empty");
+            bag_release(out);
+            return 0;
+        }
+        kt_value v;
+        memset(&v, 0, sizeof v);
+        v.kind = KT_V_NONE;
+        char *nm = (char *)malloc(b - a + 1);
+        memcpy(nm, text + a, b - a);
+        nm[b - a] = '\0';
+        v.name = nm;
+        bag_push(out, v);
+        i = j + 1;
+    }
+    return 1;
+}
+
+/* A field bag, in either of the two forms it is written in: a block of names
+ * and values, or a string of names alone. */
 static int parse_bag(const kt_arg *a, kt_bag *out, char *err) {
     memset(out, 0, sizeof *out);
+    if (a->has_value && a->kind == 2) return parse_field_list(a->sval, a->slen, out, err);
     if (!a->has_value || a->kind != 4 || !a->block) {
-        qfail(err, "expected a block of fields");
+        qfail(err, "expected a block of fields or a list of names");
         return 0;
     }
     for (int i = 0; i < a->block->n; i++) {

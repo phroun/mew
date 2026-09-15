@@ -69,10 +69,25 @@ func EncodeRecord(r serval.Record) string {
 	return EncodeValue(&Value{Kind: BlockValue, Block: asScript(r)})
 }
 
-// ParseFields reads a field bag from a block value.
+// ParseFields reads a field bag, in either of the two forms it is written in.
+//
+// A block carries names and values together, which is what a record is:
+// `{ name "src/parser.go"; size 1024 }`.
+//
+// A string carries names alone, separated by commas, which is what a query
+// asking for a narrower record is: `fields=".name, .size"`. It is the shorter
+// spelling of a list that never has values in it, and comma because that is
+// what a list is separated by -- `;` is where a statement ends, one level up,
+// and would be doing a second job here.
+//
+// A name holding a comma has no spelling in the string form. The block form
+// carries it, which is why both are read.
 func ParseFields(v *Value) (serval.Record, error) {
+	if v != nil && v.Kind == StringValue {
+		return parseFieldList(v.Str)
+	}
 	if v == nil || v.Kind != BlockValue {
-		return nil, fmt.Errorf("expected a block of fields")
+		return nil, fmt.Errorf("expected a block of fields or a list of names")
 	}
 	var out serval.Record
 	for _, st := range v.Block.Statements {
@@ -93,6 +108,27 @@ func ParseFields(v *Value) (serval.Record, error) {
 		default:
 			return nil, fmt.Errorf("%s: a field carries one value, not %d", st.Verb, len(st.Args))
 		}
+	}
+	return out, nil
+}
+
+// parseFieldList reads the string form: names separated by commas, each
+// trimmed of the space around it.
+//
+// An empty list is a list of nothing, which is what `fields=""` says. An empty
+// NAME is refused rather than skipped: a stray comma is a typo, and quietly
+// dropping it would narrow a query by one field without saying so.
+func parseFieldList(text string) (serval.Record, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+	var out serval.Record
+	for _, piece := range strings.Split(text, ",") {
+		name := strings.TrimSpace(piece)
+		if name == "" {
+			return nil, fmt.Errorf("%q: a field list holds names, and one of these is empty", text)
+		}
+		out = append(out, &serval.Field{Name: name})
 	}
 	return out, nil
 }

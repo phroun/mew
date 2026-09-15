@@ -332,9 +332,23 @@ class Result:
 
 
 def parse_fields(v: Optional[Value]) -> Fields:
-    """A field bag, from a block value."""
+    """A field bag, in either of the two forms it is written in.
+
+    A block carries names and values together, which is what a record is:
+    `{ name "src/parser.go"; size 1024 }`.
+
+    A string carries names alone, separated by commas, which is what a query
+    asking for a narrower record is: `fields=".name, .size"`. It is the shorter
+    spelling of a list that never has values in it, and comma because that is
+    what a list is separated by -- `;` is where a statement ends, one level up,
+    and would be doing a second job here.
+
+    A name holding a comma has no spelling in the string form. The block form
+    carries it, which is why both are read."""
+    if v is not None and v.kind == ValueKind.STRING:
+        return _parse_field_list(v.str)
     if v is None or v.kind != ValueKind.BLOCK:
-        raise QueryError("expected a block of fields")
+        raise QueryError("expected a block of fields or a list of names")
     out = Fields()
     for st in v.block.statements:
         if not st.verb:
@@ -345,6 +359,25 @@ def parse_fields(v: Optional[Value]) -> Fields:
             out.append(Arg(name=st.verb, value=_operand_value(st.verb, st.args[0])))
         else:
             raise QueryError("%s: a field carries one value, not %d" % (st.verb, len(st.args)))
+    return out
+
+
+def _parse_field_list(text: str) -> Fields:
+    """The string form: names separated by commas, each trimmed of the space
+    around it.
+
+    An empty list is a list of nothing, which is what `fields=""` says. An
+    empty NAME is refused rather than skipped: a stray comma is a typo, and
+    quietly dropping it would narrow a query by one field without saying so."""
+    out = Fields()
+    if not text.strip():
+        return out
+    for piece in text.split(','):
+        name = piece.strip()
+        if not name:
+            raise QueryError(
+                "%r: a field list holds names, and one of these is empty" % text)
+        out.append(Arg(name=name, flag=FlagState.TRUE))
     return out
 
 

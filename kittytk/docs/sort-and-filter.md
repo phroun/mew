@@ -58,6 +58,42 @@ after this point" names more than one place, two fills of a scope can overlap
 or skip, and a fold of two ordered runs is not reproducible. The key level is
 what makes a position mean exactly one record.
 
+**A field name may be an index.** A record's field names belong to the data, and
+a positional member's name is its position: `sort={ 0 natural }` orders by the
+first member. A block is a list of statements everywhere else in this language,
+so this is the one place a statement's head is not a word — and the digits stand
+as they are written, `007` and `7` being two different names.
+
+A filter names its field in ARGUMENT position rather than in the head, where a
+bare `0` is the number zero. So an index reaches a sort and does not yet reach a
+filter; changing that means changing how a predicate decides which of its
+operands is the field.
+
+## A field list
+
+The names a query asks for, and the ones it does not want, are written two ways.
+
+A **block** carries names and values together, which is what a record is:
+
+```
+record={ name "src/parser.go"; size 1024 }
+```
+
+A **string** carries names alone, separated by commas, which is what a query
+narrowing a record is:
+
+```
+fields=".name, .size"   exclude="blob"   fields="0, 1"
+```
+
+Comma because that is what a list is separated by. `;` is where a statement
+ends, one level up, and would be doing a second job inside the quotes.
+
+Both are read and the block is what is written back, so a name holding a comma —
+which the string form cannot spell — still crosses. An empty list is a list of
+nothing; an empty *name* is refused, because a stray comma is a typo and
+dropping it would narrow a query by one field and say nothing.
+
 ## A filter
 
 A block of statements. No infix, no precedence, and nothing to parse that the
