@@ -457,8 +457,13 @@ it no longer needed to know, and places would buy nothing at all.
 
 The ordering rule is the whole of it: **the order's completion comes after the
 last place and before the scope's.** Places and results interleave however the
-application likes either side of it. The one thing not worth doing is placing a
-record you have already completed.
+application likes either side of it.
+
+**A result with no place before it is both.** It settles where that row stands
+and what it holds at once, so an application with a whole record in hand simply
+sends it — there is no obligation to place every row, and nothing whatever to be
+gained by placing one you are about to complete. What the order's completion
+closes over is the rows sent under *either* verb.
 
 **Both completions carry the same watermark and the same ending word**, and they
 agree. The order is what `filled`, `joined` and `exhausted` are about — they say
@@ -512,6 +517,11 @@ DISPLAY → APP   q=new query source="files" sort={ name natural } extend count=
 It is the display's declaration and not the application's choice: under extend a
 reader that dropped the places would silently lose fields, so only the reader
 can say it is safe.
+
+**Extend obliges nobody to place anything.** A result with no place before it
+has nothing to lean on, so it carries the lot — which is the same rule, not an
+exception to it. An application under extend still sends a whole record outright
+whenever it has one.
 
 ### Forwarding
 
