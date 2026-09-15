@@ -443,10 +443,10 @@ have completed just costs a second statement.
 
 ### When the order is settled
 
-An answer with places completes **two different things**, and they finish at
-different times: the order is settled when the last place has gone out, and the
-scope is done when the last result has. So `complete` says which of the two it
-is ending by the verb it rides.
+An answer completes **two different things**, and they need not finish at the
+same time: the order is settled once every row has been named, and the scope is
+done once every one of them has been filled in. So `complete` says which of the
+two it is ending by the verb it rides.
 
 This is not decoration. A reader cannot present a sequence — not even a sequence
 of placeholders — until it knows it has all the rows, because another may still
@@ -455,20 +455,30 @@ knowing the shape of the block is not. If the only completion arrived at the end
 of the answer, the reader would learn the row set was final at exactly the moment
 it no longer needed to know, and places would buy nothing at all.
 
-The ordering rule is the whole of it: **the order's completion comes after the
-last place and before the scope's.** Places and results interleave however the
-application likes either side of it.
-
 **A result with no place before it is both.** It settles where that row stands
 and what it holds at once, so an application with a whole record in hand simply
 sends it — there is no obligation to place every row, and nothing whatever to be
 gained by placing one you are about to complete. What the order's completion
 closes over is the rows sent under *either* verb.
 
-**Both completions carry the same watermark and the same ending word**, and they
-agree. The order is what `filled`, `joined` and `exhausted` are about — they say
-where the walk stopped — so they belong to the first, and the second repeats them
-for a reader that skipped the places and is seeing exactly today's answer.
+**And the scope's own `complete` completes the order too**, if nothing has
+already. So the order's completion is worth sending only when the order settles
+*earlier* than the answer; where the two moments are the same there is nothing
+to send, and an answer that never mentions places is today's answer exactly —
+one completion, settling everything at the end.
+
+Which leaves one rule about where it falls, and only if it is sent at all:
+**after the last place, and before the scope's.** Places and results interleave
+however the application likes either side of it.
+
+Both of these are the same principle. Nothing here has to be said twice: the
+stronger statement carries the weaker one wherever the weaker was never made.
+
+**Where both are sent they carry the same watermark and the same ending word**,
+and they agree. `filled`, `joined` and `exhausted` say where the walk stopped,
+which is a fact about the order, so they belong to the first — and the second
+says them again for a reader that skipped the places and is seeing exactly
+today's answer.
 
 ### Why a verb of its own
 
