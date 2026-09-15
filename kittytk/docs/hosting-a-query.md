@@ -392,8 +392,11 @@ between the reply that accepted it and the result that completes it.
 
 ## Places
 
-> **Status: designed, not built.** Nothing below is on the wire or in the
-> clients yet. It is written down because the reasoning is worth keeping.
+> **Status: built below the wire, not on it.** serval implements this half —
+> `Placing` is a sink with somewhere to put a place, and `CachedSource` answers
+> a stretch whose order it holds and whose values it does not by placing the
+> rest. None of the spelling below is in the KittyTK Wire Language or the three
+> clients yet, and `extend` is designed and not built anywhere.
 
 An answer can be worth starting on before it is finished, and what a reader
 needs first is almost never the values — it is **where the rows are**. A view
