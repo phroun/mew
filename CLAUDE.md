@@ -31,13 +31,22 @@ code says and what we say.
 - **The KittyTK Wire Language** is the language; `kittytk/wire/` is the package
   that reads and writes it. Name which you mean when both are in play.
 
-## Invalidation is not being built yet
+## Invalidation is told, never decided
 
-Every held record is treated as an answer about an **unchanging** body of data.
-Nothing decides that a held value is stale, and nothing should start to: the
-cache carries a `gen` per record for it, and that is all the groundwork there
-is. Reasoning that reaches for "but what if the data changed" is out of scope
-until invalidation is a thing we are doing on purpose.
+Nothing here works out on its own that a held record has gone stale — there is
+no poll, no expiry and no generation compared. A **source says so**, through
+`CachedSource.Stale`, and serval's `invalidate.go` is what saying so costs. A
+cache nobody tells holds what it holds.
+
+So "but what if the data changed" is answered by asking what notice the source
+would send and what that notice costs, and not by adding a check anywhere. The
+reasons are `Added`, `Removed`, `Replaced` and `Altered`; `Removed` and
+`Replaced` are deliberately different prices, and `docs/live-data-negotiation.md`
+in `kittytk/` is the long version.
+
+The wire half — handles, coverage statements travelling between a display and an
+application — is still a plan. And we are not at the display at all yet: this is
+a data engine.
 
 ## Testing
 

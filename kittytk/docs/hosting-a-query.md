@@ -482,6 +482,10 @@ Coverage and invalidation — the rest of `live-data-negotiation.md` — travel
 this way, and neither is implemented in the thin libraries. A fuller one adds
 them without the thin one having to grow, which is the point of the seam.
 
+Both are built *below* the wire already: serval's `CachedSource` states what it
+depends on and is told what has stopped being true. What has not been settled is
+how either is spelled between two processes.
+
 ## Two things about numbers
 
 **An integer keeps its digits.** The wire reads a whole number as an integer

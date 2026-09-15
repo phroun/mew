@@ -1,11 +1,48 @@
 # Live data negotiation
 
-> **Status: a plan, with its first piece built.** The comparison core it stands
+> **Status: a plan, with its server half built.** The comparison core it stands
 > on is settled (serval's `docs/ordering.md`), the reverse direction it needs is
 > decided (`app-hosted-objects.md`), and the filling half — the query a display
-> opens against an application, and the scopes it serves — is implemented in
-> all three client libraries (`hosting-a-query.md`). Coverage and invalidation
-> are not built, and the open questions at the end are open.
+> opens against an application, and the scopes it serves — is implemented in all
+> three client libraries (`hosting-a-query.md`).
+>
+> **Coverage and invalidation are now built as a library rather than as a
+> protocol.** serval's `CachedSource` holds what has been read, states what it
+> depends on (`Covers`), and is told what has stopped being true (`Stale`), with
+> tests for each. None of it is on the wire: the handles, the chunking and the
+> evidence-free reporting below are still a plan.
+>
+> **This is a data engine. There is no view here yet**, so everything about a
+> viewport, a thumb or a trinket is describing what will ask, not what does.
+
+## Two questions that look like one
+
+An earlier draft of this document ran two things together under *coverage*, and
+they are not one question. Different owners, different rates, and — the part
+that matters — **different failure modes**.
+
+**What is held** is a correctness question. Whatever has been read and kept can
+be handed back without asking anybody, so anything that stops being true about
+it has to be forgotten. State it too narrowly and a stale value is served as
+though it were fresh: silently, and for as long as it is held. It is not a
+preference. It is derivable, it is exactly what is in the cache, and the holder
+is the only one who can state it.
+
+**What is wanted live** is a latency question. A visible trinket says *I am
+looking at this, tell me when it moves* — an assertion about attention rather
+than about memory. It comes from the view, it changes as fast as a viewport
+does, and stating it too narrowly costs a round trip when something changes off
+the edge of what was asked for. Nothing goes wrong. It is also the only one of
+the two that has a **level** — how hot, how soon, how finely — because it is the
+one somebody is choosing.
+
+The first is built and is serval's. The second is not built and is not serval's:
+a hot range is asserted by the view against the same data sets the queries are
+answered from, and travels back down the source graph to whatever leaf actually
+holds the data. A composed source already keeps the per-include cursor vector
+that translating a range downwards will need.
+
+Each section below says which of the two it belongs to.
 
 ## The pieces, and where each one lives
 
@@ -22,6 +59,11 @@ it and nothing else does, so two queries naming the same three are reading one
 data set, and whatever was worked out for either holds for both. It holds no
 position of its own, so readers at different places share one. It is
 `source.DataSet`, and it is built (`psl-as-a-data-source.md`).
+
+**A cache** is server-side, shared by every data set over one source, and is a
+wrapper rather than a policy — a source that should not be cached simply is not
+wrapped. There are two of them, holding the two different things a held answer
+is made of; see *Eviction*, below. `serval.CachedSource`, built.
 
 **A query** is the application's side of that correspondence: an equivalent
 sequence, the same filter and the same sort, with far less management. It
@@ -168,7 +210,17 @@ That is what turns some records into a correct merged prefix, and what makes
 the next several questions unnecessary — shrink the scope, grow it back,
 scroll within it, and nothing is asked at all.
 
+**Backwards is the same scope with its ends swapped**, and it is built: in the
+wire's `reversed`, in all four source implementations, and in the cache. There
+is no low watermark as a separate idea — a held run names the record it is
+guaranteed FROM and the one it is guaranteed TO, and a backwards answer fills
+those in the other order. Which is why a run carries two ends rather than a
+direction: a stretch read backwards and the stretch below it read forwards meet
+and become one run, and neither remembers which way it was walked.
+
 ## What goes stale, and how independently
+
+*(This is the "what is held" question.)*
 
 Four things can go stale on their own, and most changes touch exactly one:
 
@@ -180,8 +232,9 @@ Four things can go stale on their own, and most changes touch exactly one:
 | **content** | the cached values of records already held | a change to any field, anywhere in what is cached |
 
 A record appended to a log past the watermark touches **count and nothing
-else**: the thumb shrinks, no row repaints, no fill is issued, and the watermark
-stays true because it never claimed that far.
+else**: the thumb shrinks, no row repaints, and no fill is issued. In the cache
+it costs no places at all — a run that had read to the end of the sequence
+gives up the claim that the sequence ends there, and keeps every record of it.
 
 A record inserted *above* the anchor touches count and positions but not
 membership, order or content. The server adds one to the anchor's index and
@@ -199,7 +252,11 @@ transfer for the records held **whole**. One held as a subset answers only the
 question that asked for it, which is why a result carries `record={…}` or
 `fields={…}` and says which (`hosting-a-query.md`).
 
-## Coverage: what the server says it depends on
+That last paragraph is now a property of the code rather than a hope: the values
+are held per SOURCE and the order per SEQUENCE, so opening a second sort over a
+source finds every value it needs already here. See *Eviction*.
+
+## Coverage: what is held
 
 The application cannot decide what matters without knowing what is being
 watched, and telling it the filter and sort would not be enough — it would still
@@ -213,109 +270,162 @@ server says what it currently depends on and revises it as things move, so the
 application's bookkeeping is bounded by the number of live queries rather than by
 scroll history.
 
-**A statement is a small set of concerns, each with a handle**:
+**A statement is a small set of concerns**:
 
-- the **row extents** currently depended on, with the fields they cover
-- the **count**, a standing concern with no extent at all
+- the **row extents** currently depended on — built: `Covers(spec)` returns them,
+  taken from the runs themselves, both ends inclusive and by identity
+- the **fields**, grouped by the part each plays — built: `Spec.Roles()` returns
+  sort, filter and detail, and `Whole` for a query that asked for whole records
+- the **count**, a standing concern with no extent at all — not built; serval has
+  no count at all yet
 - a short list of **individually pinned keys** — a selection, an anchor, a row
-  being edited
+  being edited — not built
 
-Separate handles are what let the application say *the count is stale* without
+Separate concerns are what let the application say *the count is stale* without
 saying *the rows are stale*, which is the whole of the log case.
 
-**The handle survives a revision: stable id, changing extent.** A fresh handle
-per scroll would throw away the application's evidence every time and rebuild it
-from nothing, which is the opposite of the point. The application keeps what
-still applies to the overlap and computes only for what is newly covered.
+**Roles and extents move at completely different rates**, which is why they are
+two things and not one. Which fields decide a sequence is settled when the
+sequence is opened and does not change while it is read; the extents move every
+scroll. Kept separable, a scroll costs a pair of boundaries rather than a field
+list.
 
 **Coverage is the union of everything sharing that query.** One reader's extent
 falling inside another's collapses to one by construction, and their drifting
 apart grows a second extent again — no special rule, and the application never
-hears that there were two readers. Extents coalesce when the gap between two is small
-relative to their size.
+hears that there were two readers. In the cache this is not a rule either: there
+is one run per stretch of a sequence, two answered back to back join where their
+ends meet, and `Covers` reports what is there.
 
 **Coverage follows the cache, not the viewport.** If the server keeps rows
 1–5000 because the user keeps sweeping over them, it depends on 1–5000, so it
 states 1–5000 and the application watches all of it. That is the honest price of
 not evicting, and often the right trade: server memory and application
-watch-effort against reload traffic.
-
-**One region is stated as several extents, split by how much each matters.**
-A server holding 5000 rows with 10 of them on screen does not state one extent
-from 1 to 5000. It states the visible ten as an extent of their own and the rest
-as bulk, because a single extent forces the application to answer at the
-resolution of the whole thing: sixteen scattered updates, one near the top and
-one near the bottom, coarsen to *everything between them is stale* — which is
-almost the entire region, and most of it did not change.
-
-**A chunk boundary is a "do not merge across" mark.** Coarsening is always safe,
-but what it costs depends on where it lands. Inside the bulk chunk the server
-just forgets a scope nobody is looking at. Across the visible chunk it drops
-what is on screen and refills it. So the application may coarsen freely *within*
-a chunk and should avoid spanning two, and splitting the chunks is how the server
-tells it where that line is.
-
-**The split is most of the signal.** Stating a small extent separately already
-says *this one matters*; nothing further has to be spelled. A word naming a
-chunk's hotness may be worth adding later, but it is decoration on top of the
-shape, and an application is free to ignore it.
+watch-effort against reload traffic. Which way to lean is eviction policy — see
+*What stays policy* — and coverage simply reports where it landed.
 
 **Widen eagerly, shrink lazily.** Widening must happen *before* the server
 depends on the new region or it has a silent hole. Shrinking has no correctness
 deadline, so it can ride a heartbeat or piggyback on the next message out; the
 only cost of shrinking late is that the application watches things nobody needs.
 
-**The rule that has to hold: the stated coverage is a superset of what the
-server actually depends on.** Stating more is safe — the application reports
-staleness for something already dropped and the server ignores it. Stating less
-is a missed invalidation: silent, and permanent.
+**The rule that has to hold: the stated coverage is a superset of what is
+actually depended on.** Stating more is safe — the application reports
+staleness for something already dropped and it is ignored. Stating less is a
+missed invalidation: silent, and permanent. `Covers` satisfies it with nothing
+to spare, because it is read off what is held rather than tracked beside it.
 
 **Revision replaces release.** There is no separate "I have dropped that region"
 message; the next statement simply does not cover it.
 
-**Fields are grouped by the role they play** — sort, filter, detail — and they
-move rarely, where extents move constantly. Keep them separable in the message
-so a scroll costs a boundary pair rather than a field list.
+**The handle is the wire's half and is not built.** A handle is a stable id for
+one concern across revisions, so that the application keeps whatever evidence
+still applies to the overlap and computes only for what is newly covered — a
+fresh handle per scroll would throw that away every time. Within one process
+there is nothing to peg: `Covers` is asked and answers.
+
+## Subscription: what is wanted live
+
+*(Not built, and not serval's. This section is a plan.)*
+
+A hot range is a view saying **I am watching this, and at this level**. It is
+asserted against the same data sets the queries are answered from, and passed
+back down the source graph to whatever leaf is really providing the data.
+
+**One region is stated as several ranges, split by how much each matters.**
+A reader holding 5000 rows with 10 of them on screen does not assert one range
+from 1 to 5000. It asserts the visible ten as a range of their own and the rest
+as bulk, because a single range forces the application to answer at the
+resolution of the whole thing: sixteen scattered updates, one near the top and
+one near the bottom, coarsen to *everything between them is stale* — which is
+almost the entire region, and most of it did not change.
+
+**A chunk boundary is a "do not merge across" mark.** Coarsening is always safe,
+but what it costs depends on where it lands. Inside the bulk chunk the server
+just forgets a stretch nobody is looking at. Across the visible chunk it drops
+what is on screen and refills it. So the application may coarsen freely *within*
+a chunk and should avoid spanning two, and splitting the chunks is how the
+asker tells it where that line is.
+
+**The split is most of the signal.** Stating a small range separately already
+says *this one matters*; nothing further has to be spelled. A word naming a
+chunk's hotness may be worth adding later, but it is decoration on top of the
+shape, and an application is free to ignore it.
+
+**Volunteering values.** If a changed record is inside a hot range that covers
+the changed field, sending the new values along with the notice saves the round
+trip and keeps the watermark whole. If it is outside, the application says stale
+and sends nothing. The hot range is exactly what makes that a judgement rather
+than a guess — and the rule that goes with it is: **never volunteer values for
+fields nobody asserted an interest in.** That is the door unwanted traffic comes
+through.
+
+This is why it is not the same statement as coverage. A cache holding 5000 rows
+*depends* on all 5000 and must be told when any of them stops being true; it
+does not want the new values for 4990 of them pushed at it. Coverage says what
+must be forgotten; a hot range says what is worth sending unasked.
 
 ## Invalidation
 
-The application reports **a handle, an extent, and a type**.
+*(Built, in serval's `invalidate.go`, as everything below the wire. The handle
+and the evidence are the wire's half and are not.)*
 
-**The extent is what preserves the watermark.** *Handle 3 is stale* costs the
-whole region; *handle 3, between these two boundaries* costs only that slice,
-and the completeness claim survives on both sides of it. Same over-and-under
-rule as everywhere: too wide is safe, too narrow is silent corruption.
+**A notice says where and why**, and the why is what decides what it costs. A
+bare "forget this" throws away the one thing that settles whether the order
+moved or only the values did, and those are two caches with two prices.
 
-**The type is a field-name lookup, not an understanding.** Because the coverage
-statement groups its fields by role, the application classifies a change by
-asking which group the changed field is in:
+**The extent is what preserves the watermark.** *This sequence is stale* costs
+the whole of it; *this sequence, between these two records* costs only that
+slice, and the completeness claim survives on both sides of it. Too wide is
+safe, too narrow is silent corruption — the same rule as everywhere here.
 
-| what changed | what it costs |
-|---|---|
-| a **detail** field | content, for those records; nothing structural moves |
-| a **filter** field | membership, so count and positions are in doubt for that extent |
-| a **sort** field | order, so the same |
-| a record **added or removed** | count, at a point in the order |
+**The reason is a field-name lookup, not an understanding.** Because the
+coverage statement groups its fields by role, a change is classified by asking
+which group the changed field is in — `Roles.Decides` is that question. Four
+reasons, and what each costs:
 
-An add or a remove is the log case with no special handling: the extent is a
-single point, and the server decides from where it falls — beyond the coverage,
-just the count; above the anchor, count and a position shift; inside the visible
-range, a refill.
+| notice | the values | the order |
+|---|---|---|
+| **added** | nothing is known of it | the claim across that place is cut, or an open one pulled back |
+| **removed** | forgotten | unlinked, **and the claim survives** |
+| **replaced** | forgotten | the run goes: it may have moved |
+| **altered**, naming fields | those fields forgotten | the run goes where a named field decides the sequence, and nothing where none does |
 
-The application has done nothing but look up a field name. It never evaluates
-the filter, never compares boundaries semantically, never learns what a
-collation is.
+**A deletion is cheaper than a move**, and it is what most repays telling the
+two apart. A record taken out of the *middle* of a run normally breaks the claim
+across it — which is why eviction only ever takes from an end: the record is
+still in the sequence, so a run that had dropped it from the middle would be
+claiming across a gap. A record that has *left* the sequence is different:
+everything still in the sequence between the run's ends is still here, so the
+claim is as true as it was and the run stays whole. The same operation on the
+links, told apart by the reason.
 
-**The evidence never crosses the wire.** A handle is a peg the application hangs
-whatever it has on: a hash of a directory's entries, an mtime, a row version, an
-ETag, a generation counter. It re-hashes on suspicion, compares, and reports the
-handle. The protocol only ever sees *handle 17 is stale*, which is what lets
-this work over backends that have nothing in common.
+**Everything else is conservative.** A record that may have moved takes its run
+with it rather than the run being cut around it: a cut would leave a boundary
+anchored to a record that is no longer where it says, and a boundary that lies
+is worse than a run that is gone.
 
-**Over-invalidating is always safe; under-invalidating never is.** So an
-application may coarsen freely — mark ten handles together, or all of them, if
-tracking them separately is more bookkeeping than it wants. That makes the blunt
-implementation a legal one rather than a failure.
+**One notice, one sequence.** A stretch is a stretch *of an order* — "between
+these two records" means nothing without one, and a stretch of the by-name
+sequence is not a stretch of the by-size sequence over the same records. What it
+*costs*, though, is not per sequence: `.size` changing moves a record in the
+by-size order and repaints it in the by-name one, so the same notice is a lost
+run here and nothing at all there. The values are forgotten once, for the
+source; the order is forgotten per sequence, or not at all.
+
+**A stretch the holder cannot walk is answered bluntly.** What falls between two
+identities is the sequence's own answer, and a run is that answer written down;
+a stretch whose first record is not placed, or whose run stops before the last,
+names records that cannot be named. Answering for the ones that can be would
+leave the rest held and wrong, so instead the sequence's order goes and every
+record held of that source with it. It is a real price, and it is the source's
+to avoid by naming stretches the reader is actually holding — which is what
+coverage is for.
+
+**Over-invalidating is always safe; under-invalidating never is.** So a source
+may coarsen freely — name a stretch, or name no extent at all, which is the
+whole sequence — and the blunt implementation is a legal one rather than a
+failure.
 
 **Points coalesce into a range by the same rule extents do**: merge when the gap
 between them is small relative to the span they cover. Dense scatter becomes one
@@ -324,19 +434,23 @@ however many pieces their spacing actually warrants. Both ends applying the same
 heuristic is the point of writing it down — neither is then surprised by the
 other's granularity.
 
-**Invalidation costs nothing until someone looks.** The application says stale,
-the server drops that region and pulls its watermark back — and issues no fill.
-Whether a replacement is ever requested is the server's decision: a scope
-scrolled out of view an hour ago may never be read again, while something on
-screen refreshes at once. Invalidation causes *forgetting*, not traffic.
+**Invalidation costs nothing until someone looks.** What has stopped being true
+is let go of, the guarantee is pulled back to what is still true, and no fill is
+issued. Whether a replacement is ever requested is somebody else's decision: a
+stretch scrolled out of view an hour ago may never be read again, while
+something on screen refreshes at once. Invalidation causes *forgetting*, not
+traffic.
 
-**Volunteering values.** If the changed record is inside covered **detail**,
-sending the new values along with the invalidation saves the round trip and
-keeps the watermark whole. If it is outside, the application says stale and
-sends nothing. Coverage is exactly what makes that a judgement the application
-can make rather than a guess — and the rule that goes with it is: **never
-volunteer values for fields outside the stated coverage.** That is the door
-unwanted traffic comes through.
+A consequence worth naming, because it removed code: **a held value is never
+replaced, only forgotten.** Two answers about one record of one source do not
+contradict each other, so filing an answer only ever adds to what is known —
+and a volunteered value is a forget followed by a file, not an overwrite.
+
+**The evidence never crosses the wire.** A handle is a peg the application hangs
+whatever it has on: a hash of a directory's entries, an mtime, a row version, an
+ETag, a generation counter. It re-hashes on suspicion, compares, and reports the
+handle. The protocol only ever sees *handle 17 is stale*, which is what lets
+this work over backends that have nothing in common.
 
 **Notices and fills share one ordered stream**, so a notice arriving after a
 fill describes the world after that fill. Free, since the connection is already
@@ -376,30 +490,55 @@ The same applies to shrinking, which already has no correctness deadline, and to
 the visible chunk, whose boundaries are worth restating once the scrolling has
 settled rather than while it is in motion.
 
-## Eviction: flesh before skeleton
+## Eviction: the order and the values
 
-The sort and filter fields are the **skeleton**; everything else is **flesh**.
+This document used to say the **skeleton** was the sort and filter fields and
+the **flesh** everything else, which is a split of one record's field list. What
+got built is a different cut, and the names survived it.
 
-Positions, counts, membership, order and the watermark are all built out of the
-skeleton. Lose it for a region and the server cannot place anything there — it
-must re-read the whole scope and re-establish its completeness claim. Lose the
-flesh and nothing structural moves: the count is fine, the positions are fine,
-the thumb does not twitch, and re-acquiring it is a projection-only fill for the
-rows actually on screen.
+**The skeleton is the ORDER**: runs of places, each one a record's identity and
+what stands either side of it, with no field values in them at all. **The flesh
+is what records hold**, kept once per SOURCE and read by every sequence over it.
 
-So flesh is cheap to lose and cheap to regain, and skeleton is neither. **Evict
-flesh first.**
+The improvement is that the order does not need the values that decided it. Once
+a stretch has been read, which record comes after which is a fact; the `.name`
+it was sorted by is only how that fact was arrived at. So a place costs an
+identity and two links rather than however many fields, and a quarter of the
+cache's room buys a great deal of sequence — which is the right share, because a
+long sequence is what a reader scrolling has and what re-asking for is most
+expensive.
 
-It narrows what the application has to watch, too, which may matter more:
-skeleton fields are the ones a backend can usually watch cheaply — the indexed
-columns, the mtime, the thing a trigger fires on. Flesh is the blob you would
-have to read in order to know it had changed.
+The old section's conclusions survive it, and so does the reasoning:
 
-**Which makes the steady state two concerns**: skeleton over a wide extent —
+- **The flesh outlives the order.** Close one sort and open another and every
+  value the new order needs is still here, keyed by identity. That is the
+  re-sort case: no data transfer for anything held whole.
+- **The order outlives the flesh.** A run whose records have been evicted still
+  knows what comes after what, so the fields can be asked for again for exactly
+  those records rather than the stretch being walked from the start. That is the
+  projection-only fill this document predicted.
+- So neither pins the other. Two caches, two limits, two sets of books, two
+  evictions — and a place holds an identity rather than a pointer, or the values
+  would stay on the heap after the cache had let go of them, which is the one
+  thing a cost coming off the books is supposed to mean.
+
+**Evict flesh first** still holds, for the reason it always did: losing the
+order means a stretch has to be re-read and its completeness claim
+re-established, and losing the values means a projection-only fill for the rows
+somebody is actually looking at.
+
+Where the old wording still applies exactly is to **watching**. The fields that
+DECIDE a sequence are the ones a backend can usually watch cheaply — the indexed
+columns, the mtime, the thing a trigger fires on — and the rest is the blob you
+would have to read in order to know it had changed. That is a statement about
+which fields, and it is `Roles.Decides`; it is not a statement about which cache
+holds what.
+
+**Which makes the steady state two concerns**: the order over a wide extent —
 everything cached — and all requested fields over a narrow one, what is on
-screen. Two handles, two extents, two field sets. Small enough that even a
-careful application has almost nothing to track, and it lines up with what a
-real backend can actually watch.
+screen. Two extents, two field sets. Small enough that even a careful
+application has almost nothing to track, and it lines up with what a real
+backend can actually watch.
 
 ## What stays policy
 
@@ -412,18 +551,32 @@ falls when points coalesce. What the protocol fixes is that coarsening is safe
 and that a chunk boundary is the one place not to coarsen across; how coarsely
 either end chooses to speak is its own.
 
+## Answered since this was written
+
+- **Scrolling backwards.** Built, and it needed no low watermark of its own — see
+  *The scope itself*.
+- **Whether a handle can cover fields with no extent** — "any change to `size`,
+  anywhere". Yes, and it is the cheap case rather than the weak one: a notice
+  with no extent is the whole sequence, and where the named field decides
+  nothing it costs the order nothing and the values one field per record. An
+  application that can say *something about size changed and I cannot say where*
+  is better off saying that than invalidating everything.
+
 ## Open questions
 
-- **Whether a handle can cover fields with no extent** — "any change to `size`,
-  anywhere". Strictly weaker, but it may be the difference between an
-  application reporting precisely and falling back to invalidating everything.
 - **Counts as deltas or absolutes.** `COUNT(*)` on a large table is not free, so
   a live log wants *+1* rather than a recount per append — with an occasional
-  absolute to resynchronise against drift.
-- **Scrolling backwards**, which is symmetric but inverts `from` and `to` and
-  wants a low watermark.
+  absolute to resynchronise against drift. serval has no count at all yet, so
+  this is still entirely open.
 - **The jump into an uncovered middle**, when the user drags the thumb to
-  nowhere in particular and there is no watermark to stand on.
+  nowhere in particular and there is no watermark to stand on. The library half
+  is settled — a scope starting at a record no run places is simply a miss, and
+  the source is asked — but what the display does while it waits is not.
+- **How a hot range translates down a composed source.** A range is asserted
+  against a data set and has to reach the leaf that really holds the records.
+  Identities can be back-traced up a composite graph, and a composed source
+  already keeps the per-include cursor vector, so the machinery is there; how it
+  is spelled is not.
 - **A name for what a reader holds.** Position, the sequence being read, the
   watermark and the coverage are per-reader, and the thing that carries them is
   not the result set and not the query — several readers share one of each. It
