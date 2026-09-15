@@ -27,6 +27,22 @@ This is what lets fixes be merged into the single standard mew and lets mew move
 to a more permissive license (MIT- or FSF-style) later without having to track
 down every contributor for permission.
 
+## Vocabulary
+
+Some words are house words across PawScript, mew, KittyTK and serval, and code
+that reaches for the ordinary synonym puts a little more distance between what
+the code says and what we say.
+
+- **Prior and Next**, never *Previous* or `prev`. The one exception is a
+  genuinely temporal sense — *the previous frame*, *the orderings clicked
+  before this one* — where *previous* is the right word and *prior* would be
+  the wrong one.
+- **PSL is not PawScript.** PSL is PawScript Serialized Lists, a data format,
+  and it is no more PawScript than JSON is JavaScript. Say which you mean.
+- **The KittyTK Wire Language** is the language; `kittytk/wire/` is the package
+  that reads and writes it. "The wire" alone is ambiguous between them, so name
+  the one you mean where both are in play.
+
 ## Naming test files
 
 Test files are named for the source file they test, so that `ls 0_buffer*`
