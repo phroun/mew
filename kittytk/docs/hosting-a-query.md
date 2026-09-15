@@ -402,16 +402,24 @@ scrub while the contents arrive behind it. A merging source with the order can
 begin placing records against another source's. Both of those are blocked today
 by an answer that arrives all at once or not at all.
 
-So an application may send **places** ahead of its results, in the same answer:
+So an application may send a **place** for any row whose position it knows
+before its contents, alongside the results, in the one answer:
 
 ```
 APP → DISPLAY   result 9 ordered
                 place 9 id=17 fields={ name "src/parser.go" }
-                place 9 id=42 fields={ name "src/window.go" }
                 result 9 id=17 record={ name "src/parser.go"; size 1024 }
+                place 9 id=42 fields={ name "src/window.go" }
+                place 9 id=55 fields={ name "src/wire.go" }
+                place 9 complete watermark=55 filled
                 result 9 id=42 record={ name "src/window.go"; size 2048 }
-                  complete watermark=42 filled
+                result 9 id=55 record={ name "src/wire.go"; size 640 }
+                  complete watermark=55 filled
 ```
+
+**Everything goes out the moment it is known.** A row whose values were to hand
+completes immediately; the places carry on behind it. There is no phase here and
+nothing is queued to keep the two kinds apart.
 
 A place says: **a record stands here, this is what I have of it so far, and I
 am claiming nothing about how much that is.** It is the third degree of
@@ -433,15 +441,40 @@ the question does not arise, because a place was never asked.
 position you know sooner than its contents; sending one for a record you could
 have completed just costs a second statement.
 
+### When the order is settled
+
+An answer with places completes **two different things**, and they finish at
+different times: the order is settled when the last place has gone out, and the
+scope is done when the last result has. So `complete` says which of the two it
+is ending by the verb it rides.
+
+This is not decoration. A reader cannot present a sequence — not even a sequence
+of placeholders — until it knows it has all the rows, because another may still
+turn up between two it already holds. Painting the first row early is fine;
+knowing the shape of the block is not. If the only completion arrived at the end
+of the answer, the reader would learn the row set was final at exactly the moment
+it no longer needed to know, and places would buy nothing at all.
+
+The ordering rule is the whole of it: **the order's completion comes after the
+last place and before the scope's.** Places and results interleave however the
+application likes either side of it. The one thing not worth doing is placing a
+record you have already completed.
+
+**Both completions carry the same watermark and the same ending word**, and they
+agree. The order is what `filled`, `joined` and `exhausted` are about — they say
+where the walk stopped — so they belong to the first, and the second repeats them
+for a reader that skipped the places and is seeing exactly today's answer.
+
 ### Why a verb of its own
 
 Because that is what makes ignoring it safe, with nothing to negotiate.
 
-An answer's place statements are **additional**, not substitutional: the
-results still come, all of them, before `complete`. So a reader that does not
-know the verb, or knows it and does not want it, skips those statements and is
-left with exactly the answer it gets today — every record, in order, watermark
-true. It cannot be misled about completeness, because it never saw them.
+An answer's place statements are **additional**, not substitutional: every
+record still arrives as a result, and the scope's own `complete` still ends the
+answer. So a reader that does not know the verb, or knows it and does not want
+it, skips both the places and the completion that rides one, and is left with
+exactly the answer it gets today — every record, in order, watermark true. It
+cannot be misled about completeness, because it never saw them.
 
 It is the mirror of how a hint works, pointing the other way. A hint travels
 with the **question** and the answerer may drop it, safely, because dropping it
