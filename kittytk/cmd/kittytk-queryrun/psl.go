@@ -11,14 +11,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/phroun/kittytk/source"
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 // readings names the two ways a PSL record's contents can be addressed.
-var readings = map[string]source.Reading{
-	"whole":   source.Whole,
-	"members": source.Members,
+var readings = map[string]serval.Reading{
+	"whole":   serval.Whole,
+	"members": serval.Members,
 }
 
 // fromPSL runs a query file against a PSL file and prints what comes back.
@@ -31,7 +31,7 @@ func fromPSL(path, reading, query string, raw bool) {
 	if err != nil {
 		fail("%v", err)
 	}
-	src, err := source.ParsePSLSource(string(text), which)
+	src, err := serval.ParsePSLSource(string(text), which)
 	if err != nil {
 		fail("%s: %v", path, err)
 	}
@@ -50,8 +50,8 @@ func fromPSL(path, reading, query string, raw bool) {
 
 // run drives the source through the statements the file holds, which are the
 // ones a display would have sent.
-func run(src source.Source, script *wire.Script, out *printer) error {
-	var set source.DataSet
+func run(src serval.Source, script *wire.Script, out *printer) error {
+	var set serval.DataSet
 	defer func() {
 		if set != nil {
 			set.Close()
@@ -111,7 +111,7 @@ func run(src source.Source, script *wire.Script, out *printer) error {
 
 // scope draws one and writes it out as the statements it would have crossed
 // as, so what is printed comes off the wire language either way.
-func scope(set source.DataSet, args []*wire.Arg, out *printer) error {
+func scope(set serval.DataSet, args []*wire.Arg, out *printer) error {
 	sc, err := wire.ParseScope(args)
 	if err != nil {
 		return err
@@ -128,27 +128,27 @@ func (r *results) Ordered() {
 	r.out.take(result((&wire.Result{Ordered: true}).Args()...))
 }
 
-func (r *results) Done(done source.Complete) { r.out.take(terminator(done)) }
+func (r *results) Done(done serval.Complete) { r.out.take(terminator(done)) }
 
 // Record and Subset write a record out under the word that says how much of it
 // came back: `record` for every field it has, `fields` for the ones this
 // scope asked for.
-func (r *results) Record(id *wire.Value, fields wire.Fields) error {
+func (r *results) Record(id *serval.Value, fields serval.Record) error {
 	return r.write(true, id, fields)
 }
 
-func (r *results) Subset(id *wire.Value, fields wire.Fields) error {
+func (r *results) Subset(id *serval.Value, fields serval.Record) error {
 	return r.write(false, id, fields)
 }
 
-func (r *results) write(whole bool, id *wire.Value, fields wire.Fields) error {
-	rec := &wire.Result{ID: id, Fields: fields, Whole: whole}
+func (r *results) write(whole bool, id *serval.Value, fields serval.Record) error {
+	rec := &wire.Result{ID: wire.AsWire(id), Fields: fields, Whole: whole}
 	r.out.take(result(rec.Args()...))
 	return nil
 }
 
 // terminator is what ends the scope, in the spelling the wire ends one with.
-func terminator(done source.Complete) string {
+func terminator(done serval.Complete) string {
 	return result((&wire.Result{Complete: &done}).Args()...)
 }
 

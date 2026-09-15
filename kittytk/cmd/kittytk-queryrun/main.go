@@ -33,6 +33,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 func main() {
@@ -140,7 +141,7 @@ func (p *printer) take(line string) bool {
 		return false
 	}
 
-	var bag wire.Fields
+	var bag serval.Record
 	complete := false
 	for _, a := range stmt.Args {
 		switch {
@@ -165,7 +166,7 @@ func (p *printer) take(line string) bool {
 // add folds one record into the table, widening it for a field no earlier
 // record had. Records need not carry the same fields: a scope may ask for
 // fewer than the query does, and a field a record has not got is not an error.
-func (p *printer) add(bag wire.Fields) {
+func (p *printer) add(bag serval.Record) {
 	for _, a := range bag {
 		if !contains(p.columns, a.Name) {
 			p.columns = append(p.columns, a.Name)
@@ -177,7 +178,7 @@ func (p *printer) add(bag wire.Fields) {
 	row := make([]string, len(p.columns))
 	for i, name := range p.columns {
 		if v := bag.Get(name); v != nil {
-			row[i] = wire.EncodeValue(v)
+			row[i] = wire.EncodeValue(wire.AsWire(v))
 		}
 	}
 	p.rows = append(p.rows, row)

@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 // An ApplicationSource names a body of records an application serves, and the
@@ -45,9 +46,9 @@ func (h *ApplicationSource) Name() string { return h.name }
 // Open states a sequence. Nothing is said on the wire yet: a query is opened
 // with the first scope of it, because there is no reason to name a sequence
 // nobody is reading.
-func (h *ApplicationSource) Open(spec *wire.Spec) (DataSet, error) {
+func (h *ApplicationSource) Open(spec *serval.Spec) (serval.DataSet, error) {
 	if spec == nil {
-		spec = &wire.Spec{}
+		spec = &serval.Spec{}
 	}
 	if h.send == nil {
 		return nil, fmt.Errorf("this source has no connection to ask")
@@ -65,7 +66,7 @@ func (h *ApplicationSource) Open(spec *wire.Spec) (DataSet, error) {
 // *of*.
 type appSet struct {
 	src  *ApplicationSource
-	spec *wire.Spec
+	spec *serval.Spec
 
 	mu     sync.Mutex
 	closed bool
@@ -81,7 +82,7 @@ type appSet struct {
 // except the results that will quote it back.
 type appScope struct {
 	set *appSet
-	out Sink
+	out serval.Sink
 
 	mu   sync.Mutex
 	id   uint64
@@ -90,12 +91,12 @@ type appScope struct {
 
 // Read asks the application for one scope and returns. The records reach the
 // sink when the application sends them.
-func (s *appSet) Read(sc *wire.Scope, out Sink) error {
+func (s *appSet) Read(sc *serval.Scope, out serval.Sink) error {
 	if out == nil {
 		return fmt.Errorf("a scope needs somewhere to put the answer")
 	}
 	if sc == nil {
-		sc = &wire.Scope{}
+		sc = &serval.Scope{}
 	}
 	s.mu.Lock()
 	if s.closed {
@@ -111,9 +112,9 @@ func (s *appSet) Read(sc *wire.Scope, out Sink) error {
 	// opposite order is how two threads stop dead.
 	s.src.asked(q)
 
-	stmt := "q=new query " + s.spec.Encode() + " " + sc.Encode()
+	stmt := "q=new query " + wire.EncodeSpec(s.spec) + " " + wire.EncodeScope(sc)
 	if err := s.src.send(stmt + "\nend\n"); err != nil {
-		q.finish(Complete{Error: err.Error()})
+		q.finish(serval.Complete{Error: err.Error()})
 		return err
 	}
 	return nil
@@ -132,7 +133,7 @@ func (s *appSet) Close() {
 	s.mu.Unlock()
 
 	for _, q := range live {
-		q.finish(Complete{Error: "this data set has been closed"})
+		q.finish(serval.Complete{Error: "this data set has been closed"})
 	}
 }
 
@@ -238,7 +239,7 @@ func (h *ApplicationSource) result(stmt *wire.Statement) bool {
 func (q *appScope) take(args []*wire.Arg) {
 	r, err := wire.ParseResult(args)
 	if err != nil {
-		q.finish(Complete{Error: err.Error()})
+		q.finish(serval.Complete{Error: err.Error()})
 		return
 	}
 	if r.Ordered {
@@ -254,7 +255,7 @@ func (q *appScope) take(args []*wire.Arg) {
 		if r.Whole {
 			send = q.out.Record
 		}
-		_ = send(r.ID, r.Fields)
+		_ = send(wire.AsData(r.ID), r.Fields)
 	}
 	if r.Complete != nil {
 		q.finish(*r.Complete)
@@ -267,7 +268,7 @@ func (q *appScope) take(args []*wire.Arg) {
 // application knowing that these records are still being held -- which is what
 // invalidation will need and nothing yet does, so for now the honest thing is
 // to say at once that they may be let go.
-func (q *appScope) finish(done Complete) {
+func (q *appScope) finish(done serval.Complete) {
 	q.mu.Lock()
 	if q.done {
 		q.mu.Unlock()

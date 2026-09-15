@@ -15,6 +15,8 @@ package wire
 import (
 	"fmt"
 	"strings"
+
+	"github.com/phroun/serval"
 )
 
 // The verb a display opens and refills a query with, and the verb the
@@ -60,133 +62,33 @@ const (
 	ErrorArg       = "error"
 )
 
-// A Stop is why a scope ended, which the asker cannot work out for itself.
-//
-// A scope that filled and one that ran out of records look identical from the
-// far end -- both are a run of records that stopped -- and they mean opposite
-// things about whether there is any point asking again.
-type Stop string
-
-const (
-	// StopFilled: the count was reached. There is more past the watermark.
-	StopFilled Stop = "filled"
-
-	// StopJoined: the walk reached `until`, so what the asker holds on this
-	// side and what it holds on the other are now one run.
-	StopJoined Stop = "joined"
-
-	// StopExhausted: there are no more records this way. Nothing past the end
-	// to be complete up to, so there is no watermark either.
-	StopExhausted Stop = "exhausted"
-)
-
-// The operators a filter is built from.
-const (
-	OpAnd      = "and"
-	OpOr       = "or"
-	OpNot      = "not"
-	OpEq       = "eq"
-	OpNe       = "ne"
-	OpLt       = "lt"
-	OpLe       = "le"
-	OpGt       = "gt"
-	OpGe       = "ge"
-	OpIn       = "in"
-	OpContains = "contains"
-	OpStarts   = "starts"
-	OpEnds     = "ends"
-
-	// OpHas and OpLacks ask whether a record carries a field at all, and take
-	// no value. Every other operator compares one, and a field holding
-	// something with no order of its own -- a nested list -- cannot be
-	// compared, so presence needs an operator that does not try.
-	OpHas   = "has"
-	OpLacks = "lacks"
-
-	// OpID matches a record's identity against a set of them, the way `in`
-	// matches a field against a set of values. It names no field, because an
-	// identity is not one: it travels beside a record's fields rather than
-	// among them, and a field called `key` is a field like any other.
-	//
-	//	filter={ id (left/1) (left/note) }
-	OpID = "id"
-)
-
-// Fields is a bag of named values, and one shape serves three jobs: the fields
-// a record carries, the position a boundary stands at, and -- with the values
-// left out -- the bare list of fields a query asks for.
-//
-// It is written as a block of one statement per field, the field name first
-// and its value, if it has one, after: `{ name "src/parser.go"; size 1024 }`.
-type Fields []*Arg
-
-// Get is the value under a name, or nil where the bag does not name it. A
-// field present with no value reads as nil too: a bare name is a name, not a
-// value of its own.
-func (f Fields) Get(name string) *Value {
-	for _, a := range f {
-		if a.Name == name {
-			return a.Value
-		}
-	}
-	return nil
+// EncodeRecord renders a record as the block that carries it: one statement per
+// field, the name first and its value, if it has one, after.
+func EncodeRecord(r serval.Record) string {
+	return EncodeValue(&Value{Kind: BlockValue, Block: asScript(r)})
 }
-
-// Has reports whether the bag names a field at all, valued or not.
-func (f Fields) Has(name string) bool {
-	for _, a := range f {
-		if a.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// Names lists the fields in the order they were written.
-func (f Fields) Names() []string {
-	out := make([]string, 0, len(f))
-	for _, a := range f {
-		out = append(out, a.Name)
-	}
-	return out
-}
-
-// Block renders the bag as a block value, for a statement to carry: one
-// statement per field, the name first and its value, if it has one, after.
-func (f Fields) Block() *Value {
-	script := &Script{}
-	for _, a := range f {
-		st := &Statement{Verb: a.Name}
-		if a.Value != nil {
-			st.Args = []*Arg{{Value: a.Value}}
-		}
-		script.Statements = append(script.Statements, st)
-	}
-	return &Value{Kind: BlockValue, Block: script}
-}
-
-// Encode renders the bag as the text of that block.
-func (f Fields) Encode() string { return EncodeValue(f.Block()) }
 
 // ParseFields reads a field bag from a block value.
-func ParseFields(v *Value) (Fields, error) {
+func ParseFields(v *Value) (serval.Record, error) {
 	if v == nil || v.Kind != BlockValue {
 		return nil, fmt.Errorf("expected a block of fields")
 	}
-	var out Fields
+	var out serval.Record
 	for _, st := range v.Block.Statements {
 		if st.Verb == "" {
 			return nil, fmt.Errorf("a field is a name, and %q is not one", EncodeStatement(st))
 		}
 		switch len(st.Args) {
 		case 0:
-			out = append(out, &Arg{Name: st.Verb, Flag: FlagTrue})
+			// A name with nothing under it: a field a query ASKED for, which
+			// is the one place a bag carries names and no values.
+			out = append(out, &serval.Field{Name: st.Verb})
 		case 1:
 			v, err := operandValue(st.Verb, st.Args[0])
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, &Arg{Name: st.Verb, Value: v})
+			out = append(out, &serval.Field{Name: st.Verb, Value: asData(v)})
 		default:
 			return nil, fmt.Errorf("%s: a field carries one value, not %d", st.Verb, len(st.Args))
 		}
@@ -214,116 +116,11 @@ func operandValue(what string, a *Arg) (*Value, error) {
 	return NewWord(a.Name), nil
 }
 
-// A Filter is one node of the tree a filter block parses to: a predicate over
-// one field, or an and/or/not over other nodes.
-//
-// A block is an AND, so the top of a parsed filter is always an OpAnd -- one
-// shape to walk, whether the filter held one predicate or twenty.
-type Filter struct {
-	Op       string
-	Field    string    // predicates: the field being tested
-	Values   []*Value  // what it is tested against; more than one only for `in`
-	Collate  string    // text predicates: the collation, "" for the default
-	Children []*Filter // and, or, not
-}
-
-// Value is the single operand of a comparison, and nil where there is none.
-func (f *Filter) Value() *Value {
-	if f == nil || len(f.Values) == 0 {
-		return nil
-	}
-	return f.Values[0]
-}
-
-// A SortLevel is one level of a sort: which field, which way, and -- for
-// strings -- under which collation.
-type SortLevel struct {
-	Field string
-	Level
-}
-
-// Reverse turns every level over, which is what walking a sequence from its
-// end amounts to: the same records, in the opposite order, with the level that
-// settles ties turned over as well so that nothing is left facing the way it
-// was.
-func Reverse(levels []Level) []Level {
-	out := make([]Level, len(levels))
-	for i, l := range levels {
-		out[i] = l
-		out[i].Descending = !l.Descending
-	}
-	return out
-}
-
-// Levels drops the field names, leaving what CompareLevels compares tuples by.
-func Levels(levels []SortLevel) []Level {
-	out := make([]Level, 0, len(levels))
-	for _, l := range levels {
-		out = append(out, l.Level)
-	}
-	return out
-}
-
-// A Spec says what sequence a query names: which records, in which order.
-//
-// It is stated once, when the query is made, and never again. A query is the
-// sequence it was opened with and nothing restates it -- a different filter or
-// a different sort is a different sequence, which is a different query, opened
-// alongside this one and taking its place.
-type Spec struct {
-	Source  string
-	Fields  Fields // the fields asked for; empty means whatever the record has
-	Exclude Fields // the fields not wanted, valued the same way
-	Filter  *Filter
-	Sort    []SortLevel
-}
-
-// A Scope is the run of records a query asks for: where to start, which way to
-// walk, how many, and where the asker's own knowledge picks up again.
-//
-// It is not a filter and it names no field. The sequence is already decided by
-// the spec, and a scope only says which part of it to read -- so a source
-// prepares one ordering and serves every scope of it cheaply, rather than
-// preparing a new one because the reader scrolled.
-//
-// After and Until are identities, not positions. An identity means something
-// only to the source that issued it, which is why a source made of several
-// others never passes one down: it hands each of them that one's own.
-type Scope struct {
-	// After is the record to start past: the asker holds it already. Nil
-	// starts at the first record in walk order.
-	After *Value
-
-	// Until is the record to stop before: the asker holds that one too, and
-	// everything beyond it, so a walk that reaches it has joined two runs the
-	// asker held separately. Nil walks until the count is reached or the
-	// records run out.
-	Until *Value
-
-	// Count is how many records are wanted.
-	Count int
-
-	// Reversed walks the sequence from its end rather than its beginning.
-	//
-	// Every level turns over, the one the sort does not write included: an
-	// identity settles what the named levels leave equal, and a sequence read
-	// backwards settles it backwards too. That is what makes this the exact
-	// mirror -- `sort={ size desc }` turns one level over and leaves ties
-	// facing the way they were, which is a different sequence again.
-	//
-	// It belongs to the scope rather than the sequence because it costs
-	// nothing: one prepared ordering is read either way, where a reversed
-	// *sequence* would be a second ordering of the same records. And it names
-	// no field, so it is the one way to turn over a sequence whose records are
-	// read in a way that cannot name their identity at all.
-	Reversed bool
-}
-
 // ParseSpec reads a query spec from the arguments of the statement carrying
 // it: `new query source=... filter={...} sort={...}`, or the `set` that
 // restates it.
-func ParseSpec(args []*Arg) (*Spec, error) {
-	s := &Spec{}
+func ParseSpec(args []*Arg) (*serval.Spec, error) {
+	s := &serval.Spec{}
 	for _, a := range args {
 		switch a.Name {
 		case "source":
@@ -365,19 +162,19 @@ func ParseSpec(args []*Arg) (*Spec, error) {
 }
 
 // Encode renders the spec as the arguments of the statement that carries it.
-func (s *Spec) Encode() string {
+func EncodeSpec(s *serval.Spec) string {
 	var parts []string
 	if s.Source != "" {
 		parts = append(parts, "source="+quoteString(s.Source))
 	}
 	if len(s.Fields) > 0 {
-		parts = append(parts, "fields="+s.Fields.Encode())
+		parts = append(parts, "fields="+EncodeRecord(s.Fields))
 	}
 	if len(s.Exclude) > 0 {
-		parts = append(parts, "exclude="+s.Exclude.Encode())
+		parts = append(parts, "exclude="+EncodeRecord(s.Exclude))
 	}
 	if s.Filter != nil {
-		parts = append(parts, "filter="+s.Filter.Encode())
+		parts = append(parts, "filter="+EncodeFilter(s.Filter))
 	}
 	if len(s.Sort) > 0 {
 		parts = append(parts, "sort="+EncodeSort(s.Sort))
@@ -392,8 +189,8 @@ func (s *Spec) Encode() string {
 // records of it -- and they are read apart because they are different things
 // with different lifetimes: the spec is what the query is, and the scope is
 // what this one question wanted.
-func ParseScope(args []*Arg) (*Scope, error) {
-	s := &Scope{}
+func ParseScope(args []*Arg) (*serval.Scope, error) {
+	s := &serval.Scope{}
 	for _, a := range args {
 		switch a.Name {
 		case "count":
@@ -412,9 +209,9 @@ func ParseScope(args []*Arg) (*Scope, error) {
 				return nil, fmt.Errorf("%s: an identity is a value, not a block", a.Name)
 			}
 			if a.Name == "after" {
-				s.After = a.Value
+				s.After = asData(a.Value)
 			} else {
-				s.Until = a.Value
+				s.Until = asData(a.Value)
 			}
 		case "reversed":
 			if a.Value != nil {
@@ -427,35 +224,19 @@ func ParseScope(args []*Arg) (*Scope, error) {
 }
 
 // Encode renders the scope as the arguments that carry it.
-func (s *Scope) Encode() string {
+func EncodeScope(s *serval.Scope) string {
 	var parts []string
 	if s.After != nil {
-		parts = append(parts, "after="+EncodeValue(s.After))
+		parts = append(parts, "after="+EncodeValue(asWire(s.After)))
 	}
 	if s.Until != nil {
-		parts = append(parts, "until="+EncodeValue(s.Until))
+		parts = append(parts, "until="+EncodeValue(asWire(s.Until)))
 	}
 	parts = append(parts, fmt.Sprintf("count=%d", s.Count))
 	if s.Reversed {
 		parts = append(parts, "reversed")
 	}
 	return strings.Join(parts, " ")
-}
-
-// A Complete ends a scope: which of the three ways it ended, and how far the
-// answer is complete.
-//
-// Watermark says there is nothing between where the scope was asked from and
-// that record that the asker does not now have. StopExhausted carries none,
-// because there is no point past the end to be complete up to.
-type Complete struct {
-	Watermark *Value
-	Stop      Stop
-
-	// Error is a refusal, which is an answer: this scope cannot be produced,
-	// the records are gone, the connection carrying the question broke.
-	// Whoever asked carries on with what it has.
-	Error string
 }
 
 // A Result is one `result` statement taken apart: the order declaration, a
@@ -467,17 +248,18 @@ type Complete struct {
 // is not something either end has to care about: a reader takes them in that
 // order -- order, then record, then end -- whichever statement they arrived on.
 type Result struct {
-	Ordered  bool
-	ID       *Value // the record's identity; nil where no record rides here
-	Fields   Fields
-	Whole    bool // `record=` rather than `fields=`
-	Complete *Complete
+	Ordered bool
+	ID      *Value // the record's identity; nil where no record rides here
+	Fields  serval.Record
+	Whole   bool // `record=` rather than `fields=`
+
+	Complete *serval.Complete
 }
 
 // ParseResult reads a result from the arguments after the query id.
 func ParseResult(args []*Arg) (*Result, error) {
 	r := &Result{}
-	var done Complete
+	var done serval.Complete
 	ended := false
 	for _, a := range args {
 		switch a.Name {
@@ -501,7 +283,7 @@ func ParseResult(args []*Arg) (*Result, error) {
 			if a.Value == nil || a.Value.Kind == BlockValue {
 				return nil, fmt.Errorf("watermark: expected an identity")
 			}
-			done.Watermark = a.Value
+			done.Watermark = asData(a.Value)
 			ended = true
 		case ErrorArg:
 			if a.Value == nil || a.Value.Kind != StringValue {
@@ -509,8 +291,8 @@ func ParseResult(args []*Arg) (*Result, error) {
 			}
 			done.Error = a.Value.Str
 			ended = true
-		case string(StopFilled), string(StopJoined), string(StopExhausted):
-			done.Stop = Stop(a.Name)
+		case string(serval.StopFilled), string(serval.StopJoined), string(serval.StopExhausted):
+			done.Stop = serval.Stop(a.Name)
 			ended = true
 		}
 	}
@@ -535,12 +317,12 @@ func (r *Result) Args() []*Arg {
 		if r.Whole {
 			what = RecordArg
 		}
-		out = append(out, &Arg{Name: what, Value: r.Fields.Block()})
+		out = append(out, &Arg{Name: what, Value: &Value{Kind: BlockValue, Block: asScript(r.Fields)}})
 	}
 	if c := r.Complete; c != nil {
 		out = append(out, &Arg{Name: ResultComplete, Flag: FlagTrue})
 		if c.Watermark != nil {
-			out = append(out, &Arg{Name: WatermarkArg, Value: c.Watermark})
+			out = append(out, &Arg{Name: WatermarkArg, Value: asWire(c.Watermark)})
 		}
 		if c.Stop != "" {
 			out = append(out, &Arg{Name: string(c.Stop), Flag: FlagTrue})
@@ -553,15 +335,15 @@ func (r *Result) Args() []*Arg {
 }
 
 // ParseFilter reads a filter tree from a block value. A block is an AND.
-func ParseFilter(v *Value) (*Filter, error) {
+func ParseFilter(v *Value) (*serval.Filter, error) {
 	if v == nil || v.Kind != BlockValue {
 		return nil, fmt.Errorf("expected a block")
 	}
-	return parseFilterBlock(v.Block, OpAnd)
+	return parseFilterBlock(v.Block, serval.OpAnd)
 }
 
-func parseFilterBlock(script *Script, op string) (*Filter, error) {
-	node := &Filter{Op: op}
+func parseFilterBlock(script *Script, op string) (*serval.Filter, error) {
+	node := &serval.Filter{Op: op}
 	for _, st := range script.Statements {
 		child, err := parsePredicate(st)
 		if err != nil {
@@ -578,8 +360,8 @@ func parseFilterBlock(script *Script, op string) (*Filter, error) {
 // not a field, so there is nothing to name. That is also what keeps it apart
 // from `in key ...`, which is a question about a field that happens to be
 // called key.
-func parseID(st *Statement) (*Filter, error) {
-	f := &Filter{Op: OpID}
+func parseID(st *Statement) (*serval.Filter, error) {
+	f := &serval.Filter{Op: serval.OpID}
 	for _, a := range st.Args {
 		if a.Value == nil {
 			return nil, fmt.Errorf("id: %q names no identity; write the identities as values", a.Name)
@@ -590,7 +372,7 @@ func parseID(st *Statement) (*Filter, error) {
 		if a.Value.Kind == BlockValue {
 			return nil, fmt.Errorf("id: an identity is a value, not a block")
 		}
-		f.Values = append(f.Values, a.Value)
+		f.Values = append(f.Values, asData(a.Value))
 	}
 	if len(f.Values) == 0 {
 		return nil, fmt.Errorf("id: takes at least one identity")
@@ -598,9 +380,9 @@ func parseID(st *Statement) (*Filter, error) {
 	return f, nil
 }
 
-func parsePredicate(st *Statement) (*Filter, error) {
+func parsePredicate(st *Statement) (*serval.Filter, error) {
 	switch st.Verb {
-	case OpAnd, OpOr, OpNot:
+	case serval.OpAnd, serval.OpOr, serval.OpNot:
 		if len(st.Args) != 1 || st.Args[0].Value == nil || st.Args[0].Value.Kind != BlockValue {
 			return nil, fmt.Errorf("%s: takes one block", st.Verb)
 		}
@@ -608,19 +390,19 @@ func parsePredicate(st *Statement) (*Filter, error) {
 		if err != nil {
 			return nil, err
 		}
-		if st.Verb == OpNot && len(inner.Children) == 0 {
+		if st.Verb == serval.OpNot && len(inner.Children) == 0 {
 			return nil, fmt.Errorf("not: takes something to negate")
 		}
 		return inner, nil
-	case OpID:
+	case serval.OpID:
 		return parseID(st)
-	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpIn, OpContains, OpStarts, OpEnds,
-		OpHas, OpLacks:
+	case serval.OpEq, serval.OpNe, serval.OpLt, serval.OpLe, serval.OpGt, serval.OpGe, serval.OpIn, serval.OpContains, serval.OpStarts, serval.OpEnds,
+		serval.OpHas, serval.OpLacks:
 	default:
 		return nil, fmt.Errorf("no filter operator called %q", st.Verb)
 	}
 
-	f := &Filter{Op: st.Verb}
+	f := &serval.Filter{Op: st.Verb}
 	for i, a := range st.Args {
 		switch {
 		case a.Name == "collate":
@@ -635,32 +417,32 @@ func parsePredicate(st *Statement) (*Filter, error) {
 				return nil, fmt.Errorf("%s: names no field", st.Verb)
 			}
 			f.Field = a.Name
-		case a.Value != nil && a.Value.Kind == BlockValue && f.Op != OpIn:
+		case a.Value != nil && a.Value.Kind == BlockValue && f.Op != serval.OpIn:
 			// A comparison takes a simple value. A block is a set, and a set is
 			// only something `in` can be asked about.
 			return nil, fmt.Errorf("%s %s: compares against a value, not a block",
 				st.Verb, f.Field)
-		case a.Value != nil && a.Value.Kind == BlockValue && f.Op == OpIn:
+		case a.Value != nil && a.Value.Kind == BlockValue && f.Op == serval.OpIn:
 			// A set of words, which is what a block can hold: every statement
 			// in it is one bare name.
 			for _, item := range a.Value.Block.Statements {
 				if item.Verb == "" || len(item.Args) != 0 {
 					return nil, fmt.Errorf("in: a set holds bare names; write other values after the field")
 				}
-				f.Values = append(f.Values, NewWord(item.Verb))
+				f.Values = append(f.Values, serval.NewSymbol(item.Verb))
 			}
 		default:
 			v, err := operandValue(st.Verb, a)
 			if err != nil {
 				return nil, err
 			}
-			f.Values = append(f.Values, v)
+			f.Values = append(f.Values, asData(v))
 		}
 	}
 	if f.Field == "" {
 		return nil, fmt.Errorf("%s: names no field", st.Verb)
 	}
-	if f.Op == OpHas || f.Op == OpLacks {
+	if f.Op == serval.OpHas || f.Op == serval.OpLacks {
 		if len(f.Values) > 0 {
 			return nil, fmt.Errorf("%s %s: asks whether the field is there, and takes no value",
 				f.Op, f.Field)
@@ -670,7 +452,7 @@ func parsePredicate(st *Statement) (*Filter, error) {
 	if len(f.Values) == 0 {
 		return nil, fmt.Errorf("%s %s: nothing to compare against", st.Verb, f.Field)
 	}
-	if f.Op != OpIn && len(f.Values) > 1 {
+	if f.Op != serval.OpIn && len(f.Values) > 1 {
 		return nil, fmt.Errorf("%s %s: compares against one value, not %d", st.Verb, f.Field, len(f.Values))
 	}
 	return f, nil
@@ -678,33 +460,33 @@ func parsePredicate(st *Statement) (*Filter, error) {
 
 // Encode renders a filter node as wire text: a block for the top of a tree, a
 // statement for anything inside one.
-func (f *Filter) Encode() string {
+func EncodeFilter(f *serval.Filter) string {
 	if f == nil {
 		return "{}"
 	}
 	switch f.Op {
-	case OpAnd, OpOr, OpNot:
+	case serval.OpAnd, serval.OpOr, serval.OpNot:
 		parts := make([]string, 0, len(f.Children))
 		for _, c := range f.Children {
-			parts = append(parts, c.encodeStatement())
+			parts = append(parts, encodeFilterStatement(c))
 		}
 		if len(parts) == 0 {
 			return "{}"
 		}
 		return "{ " + strings.Join(parts, "; ") + " }"
 	}
-	return "{ " + f.encodeStatement() + " }"
+	return "{ " + encodeFilterStatement(f) + " }"
 }
 
 // encodeStatement renders one node as a statement inside a block.
-func (f *Filter) encodeStatement() string {
+func encodeFilterStatement(f *serval.Filter) string {
 	switch f.Op {
-	case OpAnd, OpOr, OpNot:
-		return f.Op + " " + f.encodeBlock()
+	case serval.OpAnd, serval.OpOr, serval.OpNot:
+		return f.Op + " " + encodeFilterBlock(f)
 	}
 	var sb strings.Builder
 	sb.WriteString(f.Op)
-	if f.Op != OpID {
+	if f.Op != serval.OpID {
 		// Every other operator names the field it tests. This one tests an
 		// identity, which is not a field and has no name to write.
 		sb.WriteByte(' ')
@@ -712,7 +494,7 @@ func (f *Filter) encodeStatement() string {
 	}
 	for _, v := range f.Values {
 		sb.WriteByte(' ')
-		sb.WriteString(EncodeValue(v))
+		sb.WriteString(EncodeValue(asWire(v)))
 	}
 	if f.Collate != "" {
 		sb.WriteString(" collate=")
@@ -721,10 +503,10 @@ func (f *Filter) encodeStatement() string {
 	return sb.String()
 }
 
-func (f *Filter) encodeBlock() string {
+func encodeFilterBlock(f *serval.Filter) string {
 	parts := make([]string, 0, len(f.Children))
 	for _, c := range f.Children {
-		parts = append(parts, c.encodeStatement())
+		parts = append(parts, encodeFilterStatement(c))
 	}
 	if len(parts) == 0 {
 		return "{}"
@@ -734,16 +516,16 @@ func (f *Filter) encodeBlock() string {
 
 // ParseSort reads sort levels from a block value: one statement per level,
 // naming a field and saying which way and under which collation.
-func ParseSort(v *Value) ([]SortLevel, error) {
+func ParseSort(v *Value) ([]serval.SortLevel, error) {
 	if v == nil || v.Kind != BlockValue {
 		return nil, fmt.Errorf("expected a block")
 	}
-	var out []SortLevel
+	var out []serval.SortLevel
 	for _, st := range v.Block.Statements {
 		if st.Verb == "" {
 			return nil, fmt.Errorf("a level names a field")
 		}
-		level := SortLevel{Field: st.Verb}
+		level := serval.SortLevel{Field: st.Verb}
 		for _, a := range st.Args {
 			switch {
 			case a.Name == "collate" && a.Value != nil && a.Value.Kind == WordValue:
@@ -754,7 +536,7 @@ func ParseSort(v *Value) ([]SortLevel, error) {
 				level.Descending = a.Flag == FlagTrue
 			case a.Name == "asc":
 				level.Descending = a.Flag != FlagTrue
-			case a.Name == CollateExact || a.Name == CollateFold || a.Name == CollateNatural:
+			case a.Name == serval.CollateExact || a.Name == serval.CollateFold || a.Name == serval.CollateNatural:
 				level.Collation = a.Name
 			default:
 				return nil, fmt.Errorf("%s: %q says nothing about a sort level", st.Verb, a.Name)
@@ -766,7 +548,7 @@ func ParseSort(v *Value) ([]SortLevel, error) {
 }
 
 // EncodeSort renders sort levels as a block.
-func EncodeSort(levels []SortLevel) string {
+func EncodeSort(levels []serval.SortLevel) string {
 	parts := make([]string, 0, len(levels))
 	for _, l := range levels {
 		s := l.Field

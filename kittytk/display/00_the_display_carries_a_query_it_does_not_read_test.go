@@ -19,6 +19,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 // servedRelay runs a headless desktop with the debug relay open, and returns
@@ -45,7 +46,7 @@ func served(t *testing.T, sock string) *client.Conn {
 			if f.Count > 0 && f.Sent() >= f.Count {
 				break
 			}
-			_ = f.Record(r.key, wire.Named("name", r.name))
+			_ = f.Record(r.key, serval.Named("name", r.name))
 		}
 		_ = f.Exhausted()
 	}); err != nil {

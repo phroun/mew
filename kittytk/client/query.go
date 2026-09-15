@@ -28,6 +28,7 @@ import (
 	"sync"
 
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 // flushBytes is how much answer accumulates before it goes out on its own. It
@@ -130,7 +131,7 @@ type Query struct {
 	c      *Conn
 	source *Source
 	id     uint64
-	spec   *wire.Spec
+	spec   *serval.Spec
 }
 
 // ID is what this application calls the query, and what the display addresses
@@ -141,7 +142,7 @@ func (q *Query) ID() uint64 { return q.id }
 func (q *Query) Source() *Source { return q.source }
 
 // Spec is the sequence this query names, which is what it was opened with.
-func (q *Query) Spec() *wire.Spec { return q.spec }
+func (q *Query) Spec() *serval.Spec { return q.spec }
 
 // Queries lists what this connection is currently serving.
 func (c *Conn) Queries() []*Query {
@@ -352,9 +353,9 @@ func hostedTarget(stmt *wire.Statement, keys map[string]uint64) (uint64, []*wire
 // accumulate, so the answer may be produced over as long as it takes and
 // interleaved with other work; nothing has to be held until the end.
 type Fill struct {
-	*wire.Scope
+	*serval.Scope
 	Query *Query
-	Spec  *wire.Spec
+	Spec  *serval.Spec
 
 	mu      sync.Mutex
 	buf     strings.Builder
@@ -378,7 +379,7 @@ type Fill struct {
 // The identity is what names the record, and it travels beside the fields
 // rather than among them: a record is free to carry a field called `key` of
 // its own, and that field is data like any other.
-func (f *Fill) Record(id any, fields ...*wire.Arg) error {
+func (f *Fill) Record(id any, fields ...*serval.Field) error {
 	return f.record(wire.RecordArg, id, fields)
 }
 
@@ -388,7 +389,7 @@ func (f *Fill) Record(id any, fields ...*wire.Arg) error {
 // It is the honest answer to a query that named a short list of fields -- the
 // skeleton of a wide scope -- and it is worth less afterwards than a whole
 // record, because it can only answer the question it was asked.
-func (f *Fill) Subset(id any, fields ...*wire.Arg) error {
+func (f *Fill) Subset(id any, fields ...*serval.Field) error {
 	return f.record(wire.FieldsArg, id, fields)
 }
 
@@ -399,10 +400,10 @@ func (f *Fill) Subset(id any, fields ...*wire.Arg) error {
 // three. Nothing waits long: the next record releases it, so does Flush, and so
 // does the end. Which form went out is not something the far end reads
 // differently.
-func (f *Fill) record(what string, id any, fields []*wire.Arg) error {
+func (f *Fill) record(what string, id any, fields []*serval.Field) error {
 	rec := &wire.Result{
-		ID:     wire.Val(id),
-		Fields: append(wire.Fields(nil), fields...),
+		ID:     wire.AsWire(serval.Val(id)),
+		Fields: append(serval.Record(nil), fields...),
 		Whole:  what == wire.RecordArg,
 	}
 	f.mu.Lock()
@@ -455,14 +456,14 @@ func (f *Fill) Ordered() {
 // one it is otherwise prepared to place: the display quotes it straight back as
 // `after`.
 func (f *Fill) Filled(watermark any) error {
-	return f.finish(&wire.Complete{Stop: wire.StopFilled, Watermark: wire.Val(watermark)})
+	return f.finish(&serval.Complete{Stop: serval.StopFilled, Watermark: serval.Val(watermark)})
 }
 
 // Joined finishes the answer at the record the display said it already held.
 // What it holds on this side and what it holds on that are now one run, and it
 // need not ask over this ground again.
 func (f *Fill) Joined(watermark any) error {
-	return f.finish(&wire.Complete{Stop: wire.StopJoined, Watermark: wire.Val(watermark)})
+	return f.finish(&serval.Complete{Stop: serval.StopJoined, Watermark: serval.Val(watermark)})
 }
 
 // Exhausted finishes the answer with everything there is: no watermark,
@@ -472,14 +473,14 @@ func (f *Fill) Joined(watermark any) error {
 // send all your records, say this -- and it is not a toy: the display then
 // holds the whole layer and asks nothing again until something invalidates it.
 func (f *Fill) Exhausted() error {
-	return f.finish(&wire.Complete{Stop: wire.StopExhausted})
+	return f.finish(&serval.Complete{Stop: serval.StopExhausted})
 }
 
 // Fail finishes the answer with a refusal: this query cannot be honoured, this
 // scope cannot be produced, the records are gone. A refusal is an answer --
 // the display carries on with what it has.
 func (f *Fill) Fail(format string, args ...any) error {
-	return f.finish(&wire.Complete{Error: fmt.Sprintf(format, args...)})
+	return f.finish(&serval.Complete{Error: fmt.Sprintf(format, args...)})
 }
 
 // Sent is how many records have gone into the answer so far.
@@ -544,7 +545,7 @@ func (f *Fill) emit(stmt string) error {
 
 // finish ends the answer, on the last record's own statement where there is
 // one, closes it and sends the rest.
-func (f *Fill) finish(done *wire.Complete) error {
+func (f *Fill) finish(done *serval.Complete) error {
 	f.mu.Lock()
 	if f.closed {
 		f.mu.Unlock()

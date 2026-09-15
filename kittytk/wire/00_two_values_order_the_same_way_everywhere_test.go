@@ -2,16 +2,18 @@ package wire
 
 // The comparison core, against the corpus every implementation of it answers.
 //
-// The corpus is read with the wire parser itself, so a case is written the way
-// a value is written anywhere else, and the Go, C and Python implementations
-// are all answering the same questions from the same file.
+// The comparison itself is serval's -- ordering records is a data question, not
+// a protocol one -- but the corpus lives here, because what it is FOR is the
+// Go, C and Python implementations all answering the same questions from the
+// same file. So the cases are written the way a value is written anywhere else
+// on the wire, read with the wire parser, and handed across as data.
 
 import (
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
+
+	"github.com/phroun/serval"
 )
 
 func TestTheCorpusAnswersTheSameWayHere(t *testing.T) {
@@ -43,12 +45,12 @@ func TestTheCorpusAnswersTheSameWayHere(t *testing.T) {
 		}
 		collation := corpusWord(stmt, "collate")
 
-		if got := Compare(a, b, collation); got != want {
+		if got := serval.Compare(a, b, collation); got != want {
 			t.Errorf("case %d: compare(%s, %s, %q) = %d, want %d",
 				i+1, show(a), show(b), collation, got, want)
 		}
 		// Every case is its own mirror: swapping the two swaps the answer.
-		if got := Compare(b, a, collation); got != -want {
+		if got := serval.Compare(b, a, collation); got != -want {
 			t.Errorf("case %d reversed: compare(%s, %s, %q) = %d, want %d",
 				i+1, show(b), show(a), collation, got, -want)
 		}
@@ -75,10 +77,10 @@ case a={ inner thing }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, collation := range []string{CollateExact, CollateFold, CollateNatural, ""} {
+	for _, collation := range []string{serval.CollateExact, serval.CollateFold, serval.CollateNatural, ""} {
 		for i, stmt := range script.Statements {
 			v := corpusValue(t, stmt, "a")
-			if got := Compare(v, v, collation); got != 0 {
+			if got := serval.Compare(v, v, collation); got != 0 {
 				t.Errorf("case %d under %q: a value is not equal to itself: %d",
 					i+1, collation, got)
 			}
@@ -90,18 +92,18 @@ case a={ inner thing }`)
 // even when they hold the same characters -- which the wire cannot say on
 // receipt, so nothing but a locally built value reaches this.
 func TestBytesAreNotAString(t *testing.T) {
-	text := &Value{Kind: StringValue, Str: "ab"}
-	blob := &Value{Kind: StringValue, Str: "ab", Blob: true}
-	if got := Compare(text, blob, CollateExact); got != -1 {
+	text := serval.NewText("ab")
+	blob := serval.NewBytes([]byte("ab"))
+	if got := serval.Compare(text, blob, serval.CollateExact); got != -1 {
 		t.Errorf("a string against the same bytes = %d, want -1", got)
 	}
-	if got := Compare(blob, blob, CollateExact); got != 0 {
+	if got := serval.Compare(blob, blob, serval.CollateExact); got != 0 {
 		t.Errorf("bytes against themselves = %d, want 0", got)
 	}
 	// Bytes compare unsigned, so a high byte is the larger.
-	high := &Value{Kind: StringValue, Str: "\xff", Blob: true}
-	low := &Value{Kind: StringValue, Str: "\x01", Blob: true}
-	if got := Compare(low, high, CollateExact); got != -1 {
+	high := serval.NewBytes([]byte("\xff"))
+	low := serval.NewBytes([]byte("\x01"))
+	if got := serval.Compare(low, high, serval.CollateExact); got != -1 {
 		t.Errorf("\\x01 against \\xff = %d, want -1", got)
 	}
 }
@@ -115,10 +117,10 @@ func TestTwoBlocksHaveNoOrderBetweenThem(t *testing.T) {
 	}
 	stmt := script.Statements[0]
 	a, b := corpusValue(t, stmt, "a"), corpusValue(t, stmt, "b")
-	if Rank(a) != RankUnordered {
-		t.Fatalf("a block ranks %d, want the unordered rank", Rank(a))
+	if serval.Rank(a) != serval.RankUnordered {
+		t.Fatalf("a block ranks %d, want the unordered rank", serval.Rank(a))
 	}
-	if got := Compare(a, b, CollateExact); got != 0 {
+	if got := serval.Compare(a, b, serval.CollateExact); got != 0 {
 		t.Errorf("two blocks compare %d, want 0", got)
 	}
 }
@@ -131,40 +133,43 @@ case a=sales b=120000`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := []*Value{
+	first := []*serval.Value{
 		corpusValue(t, script.Statements[0], "a"),
 		corpusValue(t, script.Statements[0], "b"),
 	}
-	second := []*Value{
+	second := []*serval.Value{
 		corpusValue(t, script.Statements[1], "a"),
 		corpusValue(t, script.Statements[1], "b"),
 	}
 
-	ascending := []Level{{}, {}}
-	if got := CompareLevels(first, second, ascending); got != -1 {
+	ascending := []serval.Level{{}, {}}
+	if got := serval.CompareLevels(first, second, ascending); got != -1 {
 		t.Errorf("equal on the first level, smaller on the second = %d, want -1", got)
 	}
 
-	descendingSecond := []Level{{}, {Descending: true}}
-	if got := CompareLevels(first, second, descendingSecond); got != 1 {
+	descendingSecond := []serval.Level{{}, {Descending: true}}
+	if got := serval.CompareLevels(first, second, descendingSecond); got != 1 {
 		t.Errorf("the second level turned over = %d, want 1", got)
 	}
 
 	// Different on the first level: the second never runs.
-	other := []*Value{
-		&Value{Kind: WordValue, Word: "engineering"},
+	other := []*serval.Value{
+		serval.NewSymbol("engineering"),
 		corpusValue(t, script.Statements[1], "b"),
 	}
-	if got := CompareLevels(other, first, descendingSecond); got != -1 {
+	if got := serval.CompareLevels(other, first, descendingSecond); got != -1 {
 		t.Errorf("decided on the first level = %d, want -1", got)
 	}
 }
 
-func corpusValue(t *testing.T, stmt *Statement, name string) *Value {
+// corpusValue reads one side of a case as the data value it stands for. The
+// corpus is written in the wire's own grammar; what is compared is what the
+// grammar meant.
+func corpusValue(t *testing.T, stmt *Statement, name string) *serval.Value {
 	t.Helper()
 	for _, a := range stmt.Args {
 		if a.Name == name {
-			return a.Value
+			return AsData(a.Value)
 		}
 	}
 	return nil
@@ -189,18 +194,4 @@ func corpusWord(stmt *Statement, name string) string {
 }
 
 // show renders a value for a failure message.
-func show(v *Value) string {
-	switch {
-	case v == nil:
-		return "<missing>"
-	case v.Kind == WordValue:
-		return v.Word
-	case v.Kind == StringValue:
-		return `"` + strings.ReplaceAll(v.Str, `"`, `\"`) + `"`
-	case v.Kind == NumberValue && v.IsInt:
-		return strconv.FormatInt(v.Int, 10)
-	case v.Kind == NumberValue:
-		return strconv.FormatFloat(v.Number, 'g', -1, 64)
-	}
-	return "{block}"
-}
+func show(v *serval.Value) string { return v.String() }

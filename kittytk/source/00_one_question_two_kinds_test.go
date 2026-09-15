@@ -13,6 +13,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 // The same records, said two ways: a PSL document, and the slice an
@@ -81,7 +82,7 @@ func serveRecords(f *client.Fill) { serve(f, f.Record) }
 // the fields somebody asked for.
 func serveSubsets(f *client.Fill) { serve(f, f.Subset) }
 
-func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
+func serve(f *client.Fill, send func(key any, fields ...*serval.Field) error) {
 	rows := append([]struct {
 		key  int64
 		name string
@@ -108,12 +109,12 @@ func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
 	f.Ordered()
 	sent := 0
 	for i := start; i < len(rows) && sent < f.Count; i++ {
-		// `key` and `value` are fields under the Whole reading -- the
+		// `key` and `value` are fields under the serval.Whole reading -- the
 		// document's own key for the record, handy to sort or show -- so an
 		// application serving the same records carries them too. What
 		// identifies the record is the first argument, beside the bag.
-		_ = send(rows[i].key, wire.Named("key", rows[i].key),
-			wire.Named(".name", rows[i].name), wire.Named(".size", rows[i].size))
+		_ = send(rows[i].key, serval.Named("key", rows[i].key),
+			serval.Named(".name", rows[i].name), serval.Named(".size", rows[i].size))
 		sent++
 	}
 	if start+sent >= len(rows) {
@@ -134,10 +135,10 @@ func serve(f *client.Fill, send func(key any, fields ...*wire.Arg) error) {
 // scope means to resume from.
 type reader struct {
 	t   *testing.T
-	set DataSet
+	set serval.DataSet
 }
 
-func opened(t *testing.T, src Source, spec string) *reader {
+func opened(t *testing.T, src serval.Source, spec string) *reader {
 	t.Helper()
 	set, err := src.Open(parseSpec(t, spec))
 	if err != nil {
@@ -148,7 +149,7 @@ func opened(t *testing.T, src Source, spec string) *reader {
 }
 
 // scope draws one scope of the sequence.
-func (r *reader) scope(args string) (*collector, Complete) {
+func (r *reader) scope(args string) (*collector, serval.Complete) {
 	r.t.Helper()
 	out := &collector{}
 	if err := r.set.Read(parseScope(r.t, args), out); err != nil {
@@ -161,7 +162,7 @@ func (r *reader) scope(args string) (*collector, Complete) {
 }
 
 // read is one scope of a sequence nobody reads twice, naming no kind.
-func read(t *testing.T, src Source, spec, scope string) (*collector, Complete) {
+func read(t *testing.T, src serval.Source, spec, scope string) (*collector, serval.Complete) {
 	t.Helper()
 	return opened(t, src, spec).scope(scope)
 }
@@ -169,7 +170,7 @@ func read(t *testing.T, src Source, spec, scope string) (*collector, Complete) {
 func TestOneQuestionTwoKinds(t *testing.T) {
 	for _, kind := range []struct {
 		what string
-		src  Source
+		src  serval.Source
 	}{
 		{"records that are here", mustPSL(t, twoWays)},
 		{"records an application has", serving(t)},
@@ -180,26 +181,26 @@ func TestOneQuestionTwoKinds(t *testing.T) {
 			if out.joined() != "2,1" {
 				t.Errorf("by size the first two are %s", out.joined())
 			}
-			if got := out.fields[0].Encode(); got != `{ key 2; .name "go.mod"; .size 96 }` {
+			if got := wire.EncodeRecord(out.fields[0]); got != `{ key 2; .name "go.mod"; .size 96 }` {
 				t.Errorf("the first record carries %s", got)
 			}
 			if !out.ordered {
 				t.Error("the answer did not say it was in order")
 			}
-			if done.Stop == wire.StopExhausted {
+			if done.Stop == serval.StopExhausted {
 				t.Error("a scope with records past it claimed to be exhausted")
 			}
-			if got := wire.EncodeValue(done.Watermark); got != "1" {
+			if got := done.Watermark.String(); got != "1" {
 				t.Errorf("the watermark is %s", got)
 			}
 
 			// And the scope after it, from where that one stopped.
 			next, done := seq.scope(
-				"after=" + wire.EncodeValue(done.Watermark) + " count=9")
+				"after=" + done.Watermark.String() + " count=9")
 			if next.joined() != "0,3" {
 				t.Errorf("the rest is %s", next.joined())
 			}
-			if done.Stop != wire.StopExhausted {
+			if done.Stop != serval.StopExhausted {
 				t.Error("the end of the sequence did not say so")
 			}
 		})
@@ -251,14 +252,14 @@ func (errBroken) Error() string { return "the connection is broken" }
 
 // A source with nothing to ask cannot open a sequence at all.
 func TestASourceWithNoConnectionRefusesToOpen(t *testing.T) {
-	if _, err := NewApplicationSource("files", nil).Open(&wire.Spec{}); err == nil {
+	if _, err := NewApplicationSource("files", nil).Open(&serval.Spec{}); err == nil {
 		t.Error("a source with no connection opened a sequence")
 	}
 }
 
-func mustPSL(t *testing.T, text string) *PSLSource {
+func mustPSL(t *testing.T, text string) *serval.PSLSource {
 	t.Helper()
-	src, err := ParsePSLSource(text, Whole)
+	src, err := serval.ParsePSLSource(text, serval.Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +273,7 @@ func mustPSL(t *testing.T, text string) *PSLSource {
 func TestTwoScopesOfOneSequence(t *testing.T) {
 	for _, kind := range []struct {
 		what string
-		src  Source
+		src  serval.Source
 	}{
 		{"records that are here", mustPSL(t, twoWays)},
 		{"records an application has", serving(t)},
@@ -294,13 +295,13 @@ func TestTwoScopesOfOneSequence(t *testing.T) {
 
 			second := &collector{}
 			if err := set.Read(parseScope(t,
-				"after="+wire.EncodeValue(first.done.Watermark)+" count=9"), second); err != nil {
+				"after="+first.done.Watermark.String()+" count=9"), second); err != nil {
 				t.Fatal(err)
 			}
 			if second.joined() != "0,3" {
 				t.Errorf("the second scope is %s", second.joined())
 			}
-			if second.done.Stop != wire.StopExhausted {
+			if second.done.Stop != serval.StopExhausted {
 				t.Error("the end of the sequence did not say so")
 			}
 		})
@@ -378,4 +379,85 @@ func TestTwoScopesInFlightKeepTheirOwnAnswers(t *testing.T) {
 	if !first.ended || !second.ended {
 		t.Error("a scope was never ended")
 	}
+}
+
+// --- what an answer arrived as ----------------------------------------
+
+// collector is a Sink that keeps what it was given, and how much of each
+// record it was told had come back.
+type collector struct {
+	keys    []string
+	fields  []serval.Record
+	whole   []bool
+	done    serval.Complete
+	ended   bool
+	ordered bool
+}
+
+// Ordered arrives before the records, so a sink that is told late is a sink
+// that was told wrong.
+func (c *collector) Ordered() {
+	if len(c.keys) > 0 || c.ended {
+		panic("the order was declared after the records it describes")
+	}
+	c.ordered = true
+}
+
+func (c *collector) Record(key *serval.Value, fields serval.Record) error {
+	return c.took(key, fields, true)
+}
+
+func (c *collector) Subset(key *serval.Value, fields serval.Record) error {
+	return c.took(key, fields, false)
+}
+
+func (c *collector) took(key *serval.Value, fields serval.Record, whole bool) error {
+	c.keys = append(c.keys, key.String())
+	c.fields = append(c.fields, fields)
+	c.whole = append(c.whole, whole)
+	return nil
+}
+
+func (c *collector) Done(done serval.Complete) { c.done, c.ended = done, true }
+
+func (c *collector) joined() string { return strings.Join(c.keys, ",") }
+
+// --- stating a sequence, the way one arrives --------------------------
+//
+// These read the wire's own grammar, which is what this side of the boundary
+// is for: a spec reaches an application source as text and is taken apart
+// before anything sees it. serval's own tests build their specs instead,
+// having no grammar to lean on.
+
+func parseSpec(t *testing.T, args string) *serval.Spec {
+	t.Helper()
+	spec, err := wire.ParseSpec(statement(t, "new query "+args).Args[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec
+}
+
+func parseScope(t *testing.T, args string) *serval.Scope {
+	t.Helper()
+	sc, err := wire.ParseScope(statement(t, "new query "+args).Args[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sc
+}
+
+func statement(t *testing.T, text string) *wire.Statement {
+	t.Helper()
+	script, err := wire.Parse(text)
+	if err != nil {
+		t.Fatalf("%s: %v", text, err)
+	}
+	return script.Statements[0]
+}
+
+func key(i int64) *serval.Value { return serval.NewInt(i) }
+
+func fields(name string, size int64) serval.Record {
+	return serval.Record{serval.Named(".name", name), serval.Named(".size", size)}
 }

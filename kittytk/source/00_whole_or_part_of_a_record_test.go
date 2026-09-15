@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 // Nothing narrowed it, so what went out is the record, and that is what is
@@ -29,7 +31,7 @@ func TestAQueryThatNamesFieldsIsAnsweredWithSubsets(t *testing.T) {
 			t.Errorf("record %s claimed to be whole", out.keys[i])
 		}
 	}
-	if got := out.fields[0].Encode(); got != `{ .name "go.mod" }` {
+	if got := wire.EncodeRecord(out.fields[0]); got != `{ .name "go.mod" }` {
 		t.Errorf("the first record carries %s", got)
 	}
 }
@@ -41,7 +43,7 @@ func TestAnExclusionThatDroppedAFieldLeavesASubset(t *testing.T) {
 	if out.whole[0] {
 		t.Error("a record with a field taken out claimed to be whole")
 	}
-	if got := out.fields[0].Encode(); got != `{ key 2; .name "go.mod" }` {
+	if got := wire.EncodeRecord(out.fields[0]); got != `{ key 2; .name "go.mod" }` {
 		t.Errorf("the record carries %s", got)
 	}
 }
@@ -97,7 +99,7 @@ func TestAnAmendedSourceStatesItsOwnAndRelaysTheChildsClaim(t *testing.T) {
 		{"a child sending subsets", serveSubsets, false},
 	} {
 		t.Run(kind.what, func(t *testing.T) {
-			a := NewAmendedSource(hosting(t, kind.serve))
+			a := serval.NewAmendedSource(hosting(t, kind.serve))
 			a.Replace(key(2), fields("go.mod", 96))
 
 			out, _ := read(t, a, "sort={ .size }", "count=2")

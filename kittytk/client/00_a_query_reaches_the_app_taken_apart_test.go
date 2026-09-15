@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 // recorder is a transport that keeps everything written through it, both the
@@ -119,8 +120,8 @@ func TestTheApplicationNamesTheQuery(t *testing.T) {
 func TestTheReplyComesBeforeTheRecords(t *testing.T) {
 	c, r, _ := serveOne(t, func(f *Fill) {
 		f.Ordered()
-		_ = f.Record(17, wire.Named("name", "src/parser.go"), wire.Named("size", 1024))
-		_ = f.Record(42, wire.Named("name", "src/window.go"), wire.Named("size", 2048))
+		_ = f.Record(17, serval.Named("name", "src/parser.go"), serval.Named("size", 1024))
+		_ = f.Record(42, serval.Named("name", "src/window.go"), serval.Named("size", 2048))
 		_ = f.Filled(42)
 	})
 	send(t, c, `q=new query source="files" sort={ name natural } count=30`)
@@ -231,8 +232,8 @@ func TestTheSimplestAnswerIsEverythingAndExhausted(t *testing.T) {
 // fields of a record of nine look the same -- so the answer says which it is.
 func TestAWholeRecordAndASubsetCrossUnderDifferentWords(t *testing.T) {
 	c, r, _ := serveOne(t, func(f *Fill) {
-		_ = f.Record(17, wire.Named("name", "src/parser.go"), wire.Named("size", 1024))
-		_ = f.Subset(42, wire.Named("name", "src/window.go"))
+		_ = f.Record(17, serval.Named("name", "src/parser.go"), serval.Named("size", 1024))
+		_ = f.Subset(42, serval.Named("name", "src/window.go"))
 		_ = f.Exhausted()
 	})
 	n := r.count()
@@ -250,8 +251,8 @@ func TestAWholeRecordAndASubsetCrossUnderDifferentWords(t *testing.T) {
 func TestASubsetCountsTowardsWhatWasSent(t *testing.T) {
 	var sent int
 	c, _, _ := serveOne(t, func(f *Fill) {
-		_ = f.Record(1, wire.Named("name", "a"))
-		_ = f.Subset(2, wire.Named("name", "b"))
+		_ = f.Record(1, serval.Named("name", "a"))
+		_ = f.Subset(2, serval.Named("name", "b"))
 		sent = f.Sent()
 		_ = f.Exhausted()
 	})
@@ -299,7 +300,7 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 	c, r, _ := serveOne(t, func(f *Fill) {
 		f.Ordered()
 		for i := 0; i < records; i++ {
-			_ = f.Record(i, wire.Named("name", fmt.Sprintf("file-%03d-%s", i, strings.Repeat("x", 80))))
+			_ = f.Record(i, serval.Named("name", fmt.Sprintf("file-%03d-%s", i, strings.Repeat("x", 80))))
 		}
 		_ = f.Exhausted()
 	})
@@ -339,7 +340,7 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 // destroys what it is replacing, which is what keeps the source in use while
 // the reader moves across.
 func TestADifferentSequenceIsADifferentQuery(t *testing.T) {
-	var specs []*wire.Spec
+	var specs []*serval.Spec
 	c, r, _ := serveOne(t, func(f *Fill) {
 		specs = append(specs, f.Spec)
 		_ = f.Exhausted()
@@ -447,7 +448,7 @@ func TestAnUnknownSourceIsRefused(t *testing.T) {
 // it is dropped rather than sent.
 func TestOrderDeclaredLateIsNotSent(t *testing.T) {
 	c, r, _ := serveOne(t, func(f *Fill) {
-		_ = f.Record(1, wire.Named("name", "a"))
+		_ = f.Record(1, serval.Named("name", "a"))
 		f.Ordered() // too late
 		_ = f.Exhausted()
 	})

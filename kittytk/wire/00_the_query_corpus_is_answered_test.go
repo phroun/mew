@@ -81,13 +81,13 @@ func answerQueryCase(c queryCase) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return spec.Encode(), nil
+		return EncodeSpec(spec), nil
 	}
 	scope, err := ParseScope(args)
 	if err != nil {
 		return "", err
 	}
-	return scope.Encode(), nil
+	return EncodeScope(scope), nil
 }
 
 func TestTheQueryCorpusIsAnswered(t *testing.T) {

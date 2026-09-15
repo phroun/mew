@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/kittytk/source"
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 const objects = `(
@@ -26,9 +26,9 @@ const objects = `(
 )`
 
 // drive runs a query file against a PSL source and gives back what was printed.
-func drive(t *testing.T, reading source.Reading, query string) *printer {
+func drive(t *testing.T, reading serval.Reading, query string) *printer {
 	t.Helper()
-	src, err := source.ParsePSLSource(objects, reading)
+	src, err := serval.ParsePSLSource(objects, reading)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func drive(t *testing.T, reading source.Reading, query string) *printer {
 }
 
 func TestAQueryFileIsAnsweredOutOfAPSLFile(t *testing.T) {
-	p := drive(t, source.Whole,
+	p := drive(t, serval.Whole,
 		`q=new query source="objects" filter={ ge .size 1000 } sort={ .size desc } count=2`)
 
 	if strings.Join(p.columns, ",") != "key,.0,.size" {
@@ -68,7 +68,7 @@ func TestAQueryFileIsAnsweredOutOfAPSLFile(t *testing.T) {
 // saying which record to carry on past -- and letting the first one go is a
 // statement of its own.
 func TestAFileOpensRefillsAndLetsGo(t *testing.T) {
-	p := drive(t, source.Whole, strings.Join([]string{
+	p := drive(t, serval.Whole, strings.Join([]string{
 		`q=new query source="objects" sort={ .size } count=2`,
 		`n=new query source="objects" sort={ .size } after=1 count=1`,
 		`r=new query source="objects" sort={ .size desc } count=1`,
@@ -90,7 +90,7 @@ func TestAFileOpensRefillsAndLetsGo(t *testing.T) {
 // A query cannot be restated, so a file that tries is refused rather than
 // quietly answering the wrong sequence.
 func TestAFileCannotRestateAQuery(t *testing.T) {
-	src, err := source.ParsePSLSource(objects, source.Whole)
+	src, err := serval.ParsePSLSource(objects, serval.Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestAFileCannotRestateAQuery(t *testing.T) {
 // asked -- but it carries nothing, so there is no cell of it to show. Its key
 // is not a column: what identifies a record is not one of its fields.
 func TestTheMembersReadingNamesTheMembersAlone(t *testing.T) {
-	p := drive(t, source.Members,
+	p := drive(t, serval.Members,
 		`q=new query source="objects" filter={ lt size 1000 } sort={ size } count=3`)
 
 	if strings.Join(p.columns, ",") != "size" {
@@ -131,7 +131,7 @@ func TestTheMembersReadingNamesTheMembersAlone(t *testing.T) {
 // A file that says something a query file cannot say is refused rather than
 // half-run.
 func TestAFileThatIsNotAQueryIsRefused(t *testing.T) {
-	src, err := source.ParsePSLSource(objects, source.Whole)
+	src, err := serval.ParsePSLSource(objects, serval.Whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func rawDrive(t *testing.T, query string) string {
 	os.Stdout = w
 	func() {
 		defer func() { os.Stdout = saved; w.Close() }()
-		src, err := source.ParsePSLSource(objects, source.Whole)
+		src, err := serval.ParsePSLSource(objects, serval.Whole)
 		if err != nil {
 			t.Fatal(err)
 		}

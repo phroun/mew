@@ -28,6 +28,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
 )
 
 func main() {
@@ -76,7 +77,7 @@ var colours = []string{"amber", "cerulean", "chartreuse", "ochre", "vermilion"}
 // a message stream and I accept that all of them cross -- not about effort.
 func serveEverything(f *client.Fill) {
 	for i, name := range colours {
-		if err := f.Record(i, wire.Named("name", name)); err != nil {
+		if err := f.Record(i, serval.Named("name", name)); err != nil {
 			return
 		}
 	}
@@ -111,7 +112,7 @@ var entries = []entry{
 func serveWindow(f *client.Fill) {
 	rows := make([]entry, 0, len(entries))
 	for _, e := range entries {
-		if wire.Match(wire.NewInt(e.key), e, f.Spec.Filter) {
+		if serval.Match(serval.NewInt(e.key), e, f.Spec.Filter) {
 			rows = append(rows, e)
 		}
 	}
@@ -129,7 +130,7 @@ func serveWindow(f *client.Fill) {
 		if start == len(rows) {
 			// Not one of mine, and nothing here can place it. Guessing would
 			// answer a question the display did not ask.
-			_ = f.Fail("after %s: no record of mine", wire.EncodeValue(f.After))
+			_ = f.Fail("after %s: no record of mine", wire.EncodeValue(wire.AsWire(f.After)))
 			return
 		}
 		start++
@@ -149,7 +150,7 @@ func serveWindow(f *client.Fill) {
 			_ = f.Filled(mark(rows, last, start))
 			return
 		}
-		if err := f.Record(e.key, wire.Named("name", e.name), wire.Named("size", e.size)); err != nil {
+		if err := f.Record(e.key, serval.Named("name", e.name), serval.Named("size", e.size)); err != nil {
 			return
 		}
 		sent, last = sent+1, i
@@ -174,30 +175,30 @@ func mark(rows []entry, last, start int) any {
 }
 
 // sameKey reports whether a record is the one an identity names.
-func sameKey(e entry, id *wire.Value) bool {
-	return wire.Compare(wire.NewInt(e.key), id, "") == 0
+func sameKey(e entry, id *serval.Value) bool {
+	return serval.Compare(serval.NewInt(e.key), id, "") == 0
 }
 
 // Field is one of a record's values by name, and undefined for a name this
 // record does not have -- which is a value with a rank of its own, not an
 // error. Answering it is the whole of what a record owes the filter.
-func (e entry) Field(name string) *wire.Value {
+func (e entry) Field(name string) *serval.Value {
 	switch name {
 	case "name":
-		return wire.NewString(e.name)
+		return serval.NewText(e.name)
 	case "size":
-		return wire.NewInt(e.size)
+		return serval.NewInt(e.size)
 	}
-	return wire.NewWord(wire.WordUndefined)
+	return nil // undefined: a field this record has not got
 }
 
 // order sorts by the query's levels, with the record's identity as the
 // implicit final one -- without it two records could tie, and "the record
 // after this one" would name more than one place.
-func order(rows []entry, spec *wire.Spec, sc *wire.Scope) {
+func order(rows []entry, spec *serval.Spec, sc *serval.Scope) {
 	cmp := levels(spec, sc)
 	sort.SliceStable(rows, func(i, j int) bool {
-		return wire.CompareLevels(
+		return serval.CompareLevels(
 			tuple(rows[i], spec.Sort), tuple(rows[j], spec.Sort), cmp) < 0
 	})
 }
@@ -208,18 +209,18 @@ func order(rows []entry, spec *wire.Spec, sc *wire.Scope) {
 // which is why it has to be honoured rather than ignored. Every other hint an
 // application drops can only make the answer bigger; dropping this one makes
 // it wrong, and `Ordered` would then be a lie.
-func levels(spec *wire.Spec, sc *wire.Scope) []wire.Level {
-	out := append(wire.Levels(spec.Sort), wire.Level{})
+func levels(spec *serval.Spec, sc *serval.Scope) []serval.Level {
+	out := append(serval.Levels(spec.Sort), serval.Level{})
 	if sc != nil && sc.Reversed {
-		return wire.Reverse(out)
+		return serval.Reverse(out)
 	}
 	return out
 }
 
-func tuple(e entry, levels []wire.SortLevel) []*wire.Value {
-	out := make([]*wire.Value, 0, len(levels)+1)
+func tuple(e entry, levels []serval.SortLevel) []*serval.Value {
+	out := make([]*serval.Value, 0, len(levels)+1)
 	for _, l := range levels {
 		out = append(out, e.Field(l.Field))
 	}
-	return append(out, wire.NewInt(e.key))
+	return append(out, serval.NewInt(e.key))
 }
