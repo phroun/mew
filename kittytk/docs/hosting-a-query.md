@@ -299,6 +299,8 @@ the loss a lie.
 Which is why an application never has to reproduce the comparison core exactly.
 Exactness buys a smaller answer, not a correct one.
 
+## What a result carries
+
 **A result carries a record, or ends the scope.**
 
 A record crosses under one of two words, and the difference is how much of the
@@ -387,6 +389,140 @@ drop it rather than send it.
 **Nothing is stamped**, because nothing needs to be. The application's replies
 and its results travel one ordered stream, so a scope's results are the ones
 between the reply that accepted it and the result that completes it.
+
+## Places
+
+> **Status: designed, not built.** Nothing below is on the wire or in the
+> clients yet. It is written down because the reasoning is worth keeping.
+
+An answer can be worth starting on before it is finished, and what a reader
+needs first is almost never the values — it is **where the rows are**. A view
+with the order can lay out its rows, size its bar and stay reactive under a
+scrub while the contents arrive behind it. A merging source with the order can
+begin placing records against another source's. Both of those are blocked today
+by an answer that arrives all at once or not at all.
+
+So an application may send **places** ahead of its results, in the same answer:
+
+```
+APP → DISPLAY   result 9 ordered
+                place 9 id=17 fields={ name "src/parser.go" }
+                place 9 id=42 fields={ name "src/window.go" }
+                result 9 id=17 record={ name "src/parser.go"; size 1024 }
+                result 9 id=42 record={ name "src/window.go"; size 2048 }
+                  complete watermark=42 filled
+```
+
+A place says: **a record stands here, this is what I have of it so far, and I
+am claiming nothing about how much that is.** It is the third degree of
+knowledge, and the set closes up:
+
+| | |
+|---|---|
+| `record={…}` | every field the record has |
+| `fields={…}` with `map=`/`len=` | some of them, **and how many there are** |
+| `place` with `fields={…}` | some of them, **and no claim about how many** |
+
+**A place carries no `map=` or `len=`, and `record=` on one is refused.** Both
+are claims about how much of the record there is, and not making that claim is
+the entire difference between a place and a result. Which also means a place
+never needs a spelling for *I do not know how many members this record has* —
+the question does not arise, because a place was never asked.
+
+**If you can send the whole record, send a result.** A place is for a row whose
+position you know sooner than its contents; sending one for a record you could
+have completed just costs a second statement.
+
+### Why a verb of its own
+
+Because that is what makes ignoring it safe, with nothing to negotiate.
+
+An answer's place statements are **additional**, not substitutional: the
+results still come, all of them, before `complete`. So a reader that does not
+know the verb, or knows it and does not want it, skips those statements and is
+left with exactly the answer it gets today — every record, in order, watermark
+true. It cannot be misled about completeness, because it never saw them.
+
+It is the mirror of how a hint works, pointing the other way. A hint travels
+with the **question** and the answerer may drop it, safely, because dropping it
+can only produce more data than was asked for. A place travels with the
+**answer** and the asker may drop it, safely, because it was never part of what
+the answer claimed.
+
+That is the test for whether anything in this protocol needs opting into:
+**does dropping the statement still leave the answer true?**
+
+### Extend and replace
+
+There is one thing that fails that test, and it is worth having anyway.
+
+If a place already carried what the row needs, the result for it repeats every
+field. Under **extend**, it need not: the result carries only what the place did
+not, and in the limit carries no fields at all — just the counts, which is the
+claim only a result can make. Whoever asked holds two fields and is now told
+there are two, so it holds the lot, *without anyone deciding that*. The counts
+already work this way; nothing new is needed to say it.
+
+Which means extend-mode results are subset-shaped — they state counts, so they
+cannot state `record=`. And since a zero count is not written, a record with no
+members at all confirms as a bare `result 9 id=17`: no fields, no counts, and
+nothing left for either to say.
+
+**Replace is the default**, and extend is asked for by the display when it opens
+the query, because the display is the end that has to hold the places for it to
+lean on:
+
+```
+DISPLAY → APP   q=new query source="files" sort={ name natural } extend count=30
+```
+
+It is the display's declaration and not the application's choice: under extend a
+reader that dropped the places would silently lose fields, so only the reader
+can say it is safe.
+
+### Forwarding
+
+Anything in the middle — a cache, an overlay, a client library re-emitting —
+may pass places straight through and follow with its own result when it has
+one. The mode relays; it does not have to be unwound.
+
+The rule is: **forward a place as long as you can honestly put it where you are
+putting it.**
+
+- A **pass-through** keeps a place's position by construction, so it forwards
+  freely. An overlay that deletes that record simply does not forward it.
+- A **merging** source cannot, in general. Interleaving records from several
+  includes needs their sort values, and a place carrying none cannot be put
+  anywhere in the merged order.
+
+Which is why the natural cut for what a place carries is the fields that
+**decide** the sequence — its sort and filter fields. That is not a convenience
+for the renderer, it is what makes a place survive a merge. A place carrying its
+sort values travels; a place carrying nothing dies at the first merge.
+
+And there is no failure mode in it, only a missed optimisation: whoever cannot
+use a place drops it, and that record arrives as an ordinary result later.
+
+### What this is worth to an application
+
+`SELECT id ORDER BY name WHERE …` is cheap and `SELECT id, thumbnail …` is not,
+and an application in that position currently has to either pay for the
+expensive columns or claim nothing at all. With places it can say exactly what
+it knows cheaply, when it knows it.
+
+It is not a new capability to take over — it sits beside the ladder in
+`live-data-negotiation.md` rather than on it, as a way to answer *scope* and
+*project* in the order they get cheap.
+
+### One hazard for an implementer
+
+**A place's fields are true, and its silence is not.** The values on a place can
+be believed, rendered and kept — correctness is not what is being withheld,
+completeness is. But a holder that files them as though they were a record's
+whole contents will read that record as complete, which is the strongest claim
+in the system arriving from the weakest statement. Whatever holds records needs
+to be able to say *some fields, count unknown*, even though the wire never has
+to.
 
 ## A query does not change
 

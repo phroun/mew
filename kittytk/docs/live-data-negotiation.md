@@ -161,6 +161,16 @@ scope without ordering. The rest are independent. A query backed by SQL takes
 all five, because they are a `WHERE`, an `ORDER BY`, a `LIMIT`, a `SELECT` list
 and a `COUNT(*)`.
 
+**Beside the ladder rather than on it: answering in two passes.** An
+application may know where the rows are long before it knows what is in them —
+`SELECT id ORDER BY name WHERE …` is cheap and `SELECT id, thumbnail …` is not
+— and today it must either pay for the expensive columns or claim nothing. It
+can instead send **places** first and results behind them, in the same answer,
+so that a reader can lay out rows and a merging source can begin placing them
+while the values arrive. It is not a sixth thing to take over; it is a way to
+answer 3 and 4 in the order they get cheap. Designed and not built — see
+`hosting-a-query.md`.
+
 Two rules make ignoring hints safe:
 
 - **The server must accept more than it asked for.**
