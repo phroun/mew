@@ -229,6 +229,11 @@ The whole of what the application does with that: start past `after`, send
 | `joined` | `until` was reached, so the display's two runs are now one |
 | `exhausted` | there is nothing more this way, and so no watermark |
 | `error` | a refusal, which is an answer |
+| `total` | how many records the whole SEQUENCE has — at least this many |
+| `exact` | and that figure is all there are, rather than a floor |
+
+The same completion under the `place` verb ends the **order** instead — see
+[Places](#places).
 
 ## What may be sent, and what may be claimed
 
@@ -392,11 +397,14 @@ between the reply that accepted it and the result that completes it.
 
 ## Places
 
-> **Status: built below the wire, not on it.** serval implements this half —
-> `Placing` is a sink with somewhere to put a place, and `CachedSource` answers
-> a stretch whose order it holds and whose values it does not by placing the
-> rest. None of the spelling below is in the KittyTK Wire Language or the three
-> clients yet, and `extend` is designed and not built anywhere.
+> **Status: built, except `extend`.** The `place` verb, the order's completion
+> and `total=` are in the KittyTK Wire Language and in all three clients, and
+> both conformance harnesses answer them. Below the wire, serval's `Placing` is
+> a sink with somewhere to put a place, and `CachedSource` answers a stretch
+> whose order it holds and whose values it does not by placing the rest.
+>
+> **`extend` is designed and not built anywhere.** Results always carry
+> everything today, which is the default and the safe half.
 
 An answer can be worth starting on before it is finished, and what a reader
 needs first is almost never the values — it is **where the rows are**. A view
