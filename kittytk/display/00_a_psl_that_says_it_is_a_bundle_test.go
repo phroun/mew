@@ -13,7 +13,6 @@ import (
 // records in the ordered one.
 const figaro = `(
   _bundle: ( key: "figaro", author: "Jeffrey R. Day", version: "0.1.0" ),
-  _hash: "deadbeef",
   ("ordered_record1", a: "one"),
   ("ordered_record2", a: "two")
 )`
@@ -49,12 +48,14 @@ func TestABundleIsFoundByWhatItCallsItself(t *testing.T) {
 	if e.storeKey != "libraryV1" {
 		t.Errorf("figaro 0.1.0 is held by %q", e.storeKey)
 	}
-	if e.hash != "deadbeef" {
-		t.Errorf("its hash read as %q", e.hash)
+	// The hash is COMPUTED over the bytes, not something the document claimed
+	// about itself -- so it is the hash of exactly what was stored.
+	if want := hashOf([]byte(figaro)); e.hash != want {
+		t.Errorf("its hash is %q, and the bytes hash to %q", e.hash, want)
 	}
 
-	// And by the hash, which names the content rather than the name.
-	if h := only(t, s.bundlesHashed("deadbeef")); h.storeKey != "libraryV1" {
+	// And it is found by that hash, which names the content rather than the name.
+	if h := only(t, s.bundlesHashed(hashOf([]byte(figaro)))); h.storeKey != "libraryV1" {
 		t.Errorf("the hash found %q", h.storeKey)
 	}
 
@@ -267,5 +268,27 @@ func TestABareNameAndAQuotedOneAreTheSameBundle(t *testing.T) {
 	}
 	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "bare" {
 		t.Errorf("a bare key came back as %q", e.storeKey)
+	}
+}
+
+// The hash covers the file ENTIRE, `_bundle` and all -- so correcting a date
+// or an author is a different bundle, and whatever pinned the old hash still
+// names the old one. That is what a version is for.
+func TestTheHashCoversTheMetadataToo(t *testing.T) {
+	const a = `( _bundle: ( key: "figaro", version: "0.1.0", author: "Day" ), ("r") )`
+	const b = `( _bundle: ( key: "figaro", version: "0.1.0", author: "Dey" ), ("r") )`
+
+	first, ok := bundleOf("one", []byte(a))
+	if !ok {
+		t.Fatal("it is not a bundle")
+	}
+	second, _ := bundleOf("two", []byte(b))
+	if first.hash == second.hash {
+		t.Error("a change inside _bundle left the hash where it was")
+	}
+	// And the same bytes twice are the same bundle, whatever they are filed as.
+	again, _ := bundleOf("somewhere else", []byte(a))
+	if again.hash != first.hash {
+		t.Error("the same bytes hashed two ways")
 	}
 }

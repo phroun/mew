@@ -9,9 +9,10 @@
 > bundle. What is still discussion is everything that makes a bundle a *bundle*
 > rather than a source: the hash, the Merkle DAG, the blob store, name
 > resolution, versions, and the loader that would assemble a source from what a
-> bundle declares. Nothing reads `_bundle`, `_hash` or `_amendments` yet.
-> Several points at the end are open questions, and where this states a
-> decision, that is a decision reached in conversation and nothing more.
+> bundle declares. Nothing reads `_bundle` or `_amendments` yet, and nothing
+> computes a hash. Several points at the end are open questions, and where this
+> states a decision, that is a decision reached in conversation and nothing
+> more.
 
 A **data source** is a named collection an Application draws records from: an
 object library, a message catalogue, a set of user-provided plug-in objects.
@@ -53,14 +54,16 @@ a bundle adds to what it included.
 
 ## Bundles refer to bundles
 
-A bundle names the bundles it includes rather than copying them in. That makes
-the graph a Merkle DAG, and the integrity property composes for free: a
-parent's hash covers its children's hashes, so verifying a root verifies
-everything beneath it. Two bundles including the same one store it once.
+A bundle names the bundles it includes rather than copying them in, so two
+bundles including the same one store it once. Where an include names a literal
+hash the graph is a Merkle DAG and the integrity property composes: a parent's
+bytes hold its children's hashes, so verifying a root verifies everything
+beneath it. See "Where the hash lives" for what happens where an include names
+a range instead.
 
 ## A key *and* a hash
 
-Every bundle carries both a **key** (a name) and a **hash**. Not the hash
+Every bundle is named by both a **key** (a name) and a **hash**. Not the hash
 alone.
 
 The name is not a convenience. An Application can decide it is only concerned
@@ -71,6 +74,30 @@ nothing about what the bytes *claim to be*. What gets signed is a statement —
 this key, at this version, is this content, attested by this party — which is
 why package systems sign name and version and hash together. Signing is not
 part of this design, but the name is what would make it possible later.
+
+## Where the hash lives
+
+**Not in the bundle.** A bundle does not carry its own hash: the hash of a
+bundle is what you get when you hash its bytes, and a document asserting one
+about itself is a claim rather than a fact. It is computed by whoever holds the
+bytes and recorded in the store's bundle index, beside the key and the version
+it was found under.
+
+That settles the obvious problem — a hash inside the document would have to
+cover itself — without a canonical form to write down and get wrong. There is
+nothing to exclude and nothing to normalise, because what is hashed is the file.
+
+It covers the file ENTIRE, `_bundle` and all. So an author who corrects a date
+or a name has a different bundle, and anything pinning the old hash still names
+the old one. That is what a version is for.
+
+Two things follow. An include may name a literal hash, and where every include
+in a graph does, a parent's bytes hold its children's hashes and hashing the
+parent covers the lot — the Merkle property, earned rather than asserted.
+Where an include names a version RANGE instead, it does not: what the range
+resolves to is not in the parent's bytes and may resolve differently later. So
+the graph is verifiable exactly as far as it is pinned, which is a property to
+state rather than a gap to apologise for.
 
 ## Keeping the filesystem off the wire
 
@@ -133,7 +160,6 @@ one.
       another: ">= 1.0"
     )
   ),
-  _hash: "deadbeef",
   _amendments: (
     subBundle/1: ("replacement_for_record_1"),
     subBundle/2: nil            # a deleted record
@@ -149,8 +175,6 @@ one.
   bundles and can be held at once — which is why the key alone cannot be what
   an item is stored under. An include is an alias bound either to a literal
   hash or to a version expression.
-- `_hash` covers the bundle's contents, its includes, its amendments and its
-  records.
 - `_amendments` replaces or deletes records inherited from an include, which
   is how a source built on someone else's bundle can differ from it without
   copying it.
@@ -183,8 +207,8 @@ key**, and its behaviour settles the semantics:
 | `~mixed.a` | `apple` | dot is the key accessor |
 | `~numkey 0` | `first-item` | with a key literally named `0` present: a numeric key does **not** shadow index 0 |
 
-This matters for the bundle format because `_bundle`, `_hash` and
-`_amendments` live in the keyed space. Adding or removing metadata therefore
+This matters for the bundle format because `_bundle` and `_amendments` live in
+the keyed space. Adding or removing metadata therefore
 **cannot shift a record's index**: a bundle's ordered records are numbered by
 the records alone.
 

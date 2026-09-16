@@ -7,8 +7,9 @@ package display
 // names by key and version rather than by where it happens to sit. So the store
 // watches for one on the way past and writes down what it saw.
 //
-// It still knows nothing about what a bundle MEANS. It resolves no include,
-// verifies no hash and constructs nothing. It answers one question -- which item
+// It still knows nothing about what a bundle MEANS. It resolves no include and
+// constructs nothing, and the hash it keeps is one it computed rather than one
+// anybody vouched for. It answers one question -- which item
 // holds the bundle called X at version Y, or the one hashing to H -- and the
 // loader does everything after that.
 //
@@ -25,6 +26,8 @@ package display
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,19 +45,16 @@ const bundleIndexName = "bundles"
 // document must hold somewhere in its bytes to be worth parsing at all.
 const bundleMark = "_bundle"
 
-// hashMark is the member covering a bundle's contents, where it carries one.
-const hashMark = "_hash"
-
 // bundleEntry is one bundle, and where it is.
 //
-// Version and hash are each "" where the bundle states none. Neither is
-// required: a bundle with no version is a bundle, and a hash is something a
-// bundle may carry rather than something it must.
+// The version is "" where the bundle states none, which is a bundle like any
+// other. The hash is not the bundle's to state: it is COMPUTED here, over the
+// bytes as they stand.
 type bundleEntry struct {
 	storeKey string // the item in this directory holding it
 	key      string // _bundle.key, the name an include uses
 	version  string // _bundle.version
-	hash     string // _hash
+	hash     string // of the bytes, computed
 }
 
 // bundleOf reads a stored document and says which bundle it is, if any.
@@ -88,12 +88,25 @@ func bundleOf(storeKey string, data []byte) (bundleEntry, bool) {
 		storeKey: storeKey,
 		key:      pslText(block, "key"),
 		version:  pslText(block, "version"),
-		hash:     pslText(n, hashMark),
+		hash:     hashOf(data),
 	}
 	if e.key == "" {
 		return bundleEntry{}, false
 	}
 	return e, true
+}
+
+// hashOf is a bundle's hash: what you get when you hash its bytes.
+//
+// A document does not state its own -- one that did would be asserting a claim
+// about itself, and a claim is not what an include pinning a hash is relying
+// on. It covers the file ENTIRE, `_bundle` and all, so correcting a date is a
+// different bundle and whatever pinned the old hash still names the old one.
+//
+// Nothing has to be excluded or normalised, because what is hashed is the file.
+func hashOf(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // pslText is a member read as text, whether it was written as a string or as a

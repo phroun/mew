@@ -412,8 +412,7 @@ crossed rather than as a table.
 
 ## What is not here
 
-Layers, shadowing, the merge, nested bundles, `_hash`, includes and version
-expressions.
+Nested bundles, hashes, name resolution and version expressions.
 
 The delta half of that is built. `source.AmendedSource` combines a large static
 source with a small run-time set of replacements and deletions: it asks the
