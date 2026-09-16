@@ -23,24 +23,28 @@ what lets a bundle be the thing an include names and the loader fetches.
 
 ## Layering
 
-A source is a stack: an ordered list of immutable bundles, with one writable
-layer above them. The union-mount shape — fixed lower layers, one changing
-upper layer.
+A bundle declares includes and amendments, and the loader assembles them: a
+composition of the includes, with one amendment layer over the whole of it.
 
 ```
 objectLibrary
-  dynamic          records provided at run time; the only layer that changes
-  userObjects      a bundle: objects the user dropped in
-  appObjects       a bundle: the Application's own static objects
+  amendments       what this bundle states it changes, and what run time adds
+  userObjects      an include: objects the user dropped in
+  appObjects       an include: the Application's own static objects
 ```
 
-The records in the lower layers behave as though they are in the source,
-because they are. Records added at run time coexist with them in the dynamic
-layer.
+Fixed below, changing above, which is what a stack is for. But it is not a
+union mount, because **nothing shadows by position**. Every included record
+keeps a name of its own — the include's alias, then its own key — so
+`objectLibrary/userObjects/x` and `objectLibrary/appObjects/x` are two records
+and neither hides the other. There is no precedence to state because there is
+nothing for it to decide.
 
-Precedence is **ordered**, not a set: two bundles may hold a record under the
-same key, and which one wins has to be a stated position in the stack rather
-than an accident of enumeration.
+What shadows is an amendment, and it shadows one named record rather than a
+whole layer: `userObjects/x` replaced, `userObjects/y` deleted. A record the
+source holds of its own is simply a record under a key of its choosing —
+including a key written as an address into an include's namespace, which is how
+a bundle adds to what it included.
 
 ## Bundles refer to bundles
 
