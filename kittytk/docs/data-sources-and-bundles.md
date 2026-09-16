@@ -15,25 +15,11 @@ come from different places, some of them fixed and some of them changing, in a
 way that lets the fixed parts be checked, cached and shared without the
 Application having to know where any of it physically lives.
 
-## A bundle is a frozen data source
+## What a bundle is
 
-The central move is that there are not two kinds of object:
-
-> **A bundle is a frozen data source. A source is a bundle that is still
-> allowed to change.**
-
-Freezing yields a hash, because a hash can only mean something about content
-that has stopped moving. Hashing something mutable is theatre: the value
-changes constantly and tells you nothing.
-
-That gives the two identity rules different jobs rather than putting them in
-tension. A **source** is identified by its name, because its content moves. A
-**bundle** is identified by its hash, because its content cannot.
-
-One object type, one naming scheme, one set of operations. "Bundles containing
-bundles" and "a source referencing bundles" stop being two mechanisms and
-become one, because they are the same kind of thing referring to the same kind
-of thing.
+An authored document, loaded to construct a data source. To be written, and to
+take in the point struck from "A key *and* a hash" below: that having a name is
+what lets a bundle be the thing an include names and the loader fetches.
 
 ## Layering
 
@@ -56,12 +42,6 @@ Precedence is **ordered**, not a set: two bundles may hold a record under the
 same key, and which one wins has to be a stated position in the stack rather
 than an accident of enumeration.
 
-One property falls out that is worth having on purpose: the resolved view of a
-set of immutable bundles is *itself* immutable. The merged index can be
-computed once and keyed on the combination of bundle hashes, so only the
-dynamic layer ever invalidates it. Merging on every enumeration is the obvious
-cost of an overlay, and this shape does not pay it.
-
 ## Bundles refer to bundles
 
 A bundle names the bundles it includes rather than copying them in. That makes
@@ -82,10 +62,6 @@ nothing about what the bytes *claim to be*. What gets signed is a statement —
 this key, at this version, is this content, attested by this party — which is
 why package systems sign name and version and hash together. Signing is not
 part of this design, but the name is what would make it possible later.
-
-Because a bundle has a name, a bundle can be loaded directly as a data source
-and read from. That is the same statement as the collapse above, arrived at
-from the other end.
 
 ## Keeping the filesystem off the wire
 
