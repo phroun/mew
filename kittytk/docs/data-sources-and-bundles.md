@@ -18,8 +18,8 @@ Application having to know where any of it physically lives.
 ## What a bundle is
 
 An authored document, loaded to construct a data source. To be written, and to
-take in the point struck from "A key *and* a hash" below: that having a name is
-what lets a bundle be the thing an include names and the loader fetches.
+say what "A key *and* a hash" below leaves unsaid: that having a name is what
+lets a bundle be the thing an include names and the loader fetches.
 
 ## Layering
 
@@ -51,7 +51,7 @@ a bundle adds to what it included.
 A bundle names the bundles it includes rather than copying them in. That makes
 the graph a Merkle DAG, and the integrity property composes for free: a
 parent's hash covers its children's hashes, so verifying a root verifies
-everything beneath it. Two sources naming the same bundle store it once.
+everything beneath it. Two bundles including the same one store it once.
 
 ## A key *and* a hash
 
@@ -120,6 +120,7 @@ one.
 (
   _bundle: (
     key: "figaro",
+    version: "0.1.0",
     author: "Jeffrey R. Day",
     date: "2026-09-08",
     includes: (
@@ -138,8 +139,11 @@ one.
 )
 ```
 
-- `_bundle` carries the identity and the includes. An include is an alias
-  bound either to a literal hash or to a version expression.
+- `_bundle` carries the identity and the includes. The **key and the version
+  together** are what an include names, so two versions of one bundle are two
+  bundles and can be held at once — which is why the key alone cannot be what
+  an item is stored under. An include is an alias bound either to a literal
+  hash or to a version expression.
 - `_hash` covers the bundle's contents, its includes, its amendments and its
   records.
 - `_amendments` replaces or deletes records inherited from an include, which

@@ -1,11 +1,14 @@
 # A PSL list as a data source
 
-> **Status: built, and flat.** One PSL list, read as records, with scopes drawn
-> out of it. The reading follows no include, resolves no hash and merges no
-> layer — layering and shadowing are the next thing and are built on this rather
-> than into it. `data-sources-and-bundles.md` is the conversation those belong
-> to, `hosting-a-query.md` is the wire spelling, and serval's `docs/ordering.md` is the
-> comparison both ends stand on.
+> **Status: built.** Records read out of a document, composed, amended, and
+> scoped. The PSL READING itself is flat — it takes a `_bundle` member for a
+> record like any other and resolves no hash — but composition and amendment sit
+> above it and are built, and shadowing is what an amendment does. What is not
+> built is the bundle layer proper: hashes, name resolution, versions, and the
+> loader that would turn a bundle document into the sources below.
+> `data-sources-and-bundles.md` is the conversation those belong to,
+> `hosting-a-query.md` is the wire spelling, and serval's `docs/ordering.md` is
+> the comparison both ends stand on.
 
 A display sometimes holds the records itself, and then there is nobody to ask.
 It is the same question either way — this filter, this sort, this scope — so
@@ -30,19 +33,19 @@ type Sink interface {
 
 `Record` is the record entire and `Subset` is the fields that were asked for,
 the same two claims the wire makes with `record={…}` and `fields={…}`. A source
-here says whichever is true of what it sent: `PSLSource` says `Record` where
+here says whichever is true of what it sent: a `ListSource` says `Record` where
 nothing narrowed the record and `Subset` where a field list or an exclusion
 did, and `ApplicationSource` passes on whatever the application claimed, making
 none of its own.
 
 A subset also says how many members the record HAS — `serval.Totals`, counted
 by name and by position — which is what lets a later question about a field it
-left out be answered without asking again. `PSLSource` counts what it holds;
+left out be answered without asking again. A `ListSource` counts what it holds;
 `ApplicationSource` relays the `map=` and `len=` the application sent. See
 `hosting-a-query.md`.
 
 **Nothing waits.** `Fill` asks for a scope and returns; the records reach the
-sink as they are produced — at once for `PSLSource`, whose records are here,
+sink as they are produced — at once for a `ListSource`, whose records are here,
 and as they arrive for `ApplicationSource`, whose records are an application's.
 The error is for a request that could not be started, never for one that has
 not finished.
@@ -52,16 +55,39 @@ fifth implementation of it:
 
 | | |
 |---|---|
-| `source.PSLSource` | records here, in a parsed PSL list |
+| `serval.ListSource` | records here, already in memory |
 | `source.ApplicationSource` | records an application's, asked for with `query` and answered with `result` |
-| `source.AmendedSource` | any other kind, with replacements and deletions held over it |
-| `source.ComposedSource` | several other kinds at once, their records under names of their own |
+| `serval.AmendedSource` | any other kind, with replacements and deletions held over it |
+| `serval.ComposedSource` | several other kinds at once, their records under names of their own |
 
 The first two hold records. The other two wrap, and answer the scope
 themselves out of what their children send: an amended source asks its one
 child the same question and merges what it holds of its own into the answer, and
 a composed source asks all of its children and interleaves theirs. Either can
 stand in front of any kind, including each other.
+
+**A format is a LOADER, not a source.** `ListSource` is the engine every body of
+records in memory runs on — the filter, the ordering built once per spec, the
+scope walked out of it, the exact count — and what a format does is turn its own
+text into rows for it. So the formats differ in what they read and in nothing
+after that:
+
+| | |
+|---|---|
+| `serval.ParsePSLSource` | a PSL list, under one of the two readings below |
+| `serval.ParseDelimited` | CSV, TSV, or whatever a `Delimited` says |
+
+A row owes the engine three things and no more: what identifies it, what one of
+its fields holds, and what it holds altogether. `serval.NewRow` is a key and a
+bag, which is all a flat format needs; the PSL reading has a row of its own
+because it computes its fields only when asked, reaching into a nested list at
+the moment somebody names a position inside it.
+
+`ParseDelimited` also hands back a report. A cell that contradicts its column,
+or a second row claiming an identity the first already has, is a complaint and
+not a refusal: the cell is left undefined or the row is dropped, the load
+finishes, and the caller reads the report or ignores it. Nothing about one bad
+row costs the rest of the file.
 
 The shapes are the wire's own. A `Spec` and a `Fill` arrive exactly as
 `wire/query.go` takes them off a statement, and `Complete` is the three things
@@ -83,11 +109,16 @@ include's name, a slash, and the child's key:
 left/0   left/1   left/note   right/0   right/1
 ```
 
-**Nothing shadows anything.** Two includes keyed the same way both keep every
-record, because the name in front of the key is what tells them apart. That is
-what separates this from the layering still ahead: layering replaces an inner
-record with an outer one of the *same* key, and here no two records can share a
-key at all.
+**Nothing shadows anything here.** Two includes keyed the same way both keep
+every record, because the name in front of the key is what tells them apart. No
+two records of a composition can share a key at all.
+
+Shadowing is what an AMENDMENT does, and it is a separate mechanism on purpose.
+An amendment names one record of one child and states what stands in its place;
+a composition names a whole source and keeps everything in it. So a layer stack
+is a composition with an amendment over it, and the two nest either way round —
+one include may be an `AmendedSource`, or an `AmendedSource` may wrap the whole
+composition.
 
 **The order is the include's name, then the child's key as the child itself
 orders it** — so `many/10` follows `many/9` rather than sitting between

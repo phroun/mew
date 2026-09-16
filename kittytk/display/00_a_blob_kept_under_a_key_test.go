@@ -201,10 +201,8 @@ func TestAnItemWithNoKeyIsRefused(t *testing.T) {
 }
 
 // A key is a name, and the shelf is a flat set of them -- nearer to cookies
-// than to directories. A slash is what separates the levels of an ADDRESS, so
-// one inside a key could not be told from two levels; and it is what would
-// have an app treat this as the filesystem, which it is not and which is
-// coming separately.
+// than to directories. A path in one would have an app treat this as the
+// filesystem it is not, and a real filesystem is coming separately.
 func TestAKeyIsANameAndNotAPath(t *testing.T) {
 	s := shelf(t)
 	for _, key := range []string{
@@ -226,10 +224,9 @@ func TestAKeyIsANameAndNotAPath(t *testing.T) {
 	}
 }
 
-// A key of nothing but digits is a name like any other. It was once refused,
-// on the grounds that an address reads all-digits as a record's position -- but
-// a store key never appears in an address, so `7` is simply what an app calls
-// a save slot, a channel or a year.
+// A key of nothing but digits is a name like any other. A store key never
+// appears in an address, so nothing reads `7` as a record's position: it is
+// what an app calls a save slot, a channel or a year.
 func TestAKeyOfOnlyDigitsIsAName(t *testing.T) {
 	s := shelf(t)
 	for _, key := range []string{"7", "01", "1234567", "v7", "7a", "7-of-9", "1.0"} {
