@@ -347,7 +347,6 @@ func TestARefusedStatementIsAnswered(t *testing.T) {
 	for _, bad := range []struct{ key, typ string }{
 		{"script", "sh"},          // not a type the desktop stores
 		{"objects/figaro", "txt"}, /* a path, not a name */
-		{"7", "txt"},              // a name that could be a record index
 	} {
 		if err := conn.Store().Write(bad.key, bad.typ, []byte("x")); err != nil {
 			t.Fatal(err)

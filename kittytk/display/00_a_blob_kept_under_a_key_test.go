@@ -226,17 +226,13 @@ func TestAKeyIsANameAndNotAPath(t *testing.T) {
 	}
 }
 
-// A key of nothing but digits is how an address names a record by its
-// position, so one would be a bundle that could not be told from an index.
-func TestAKeyOfOnlyDigitsIsRefused(t *testing.T) {
+// A key of nothing but digits is a name like any other. It was once refused,
+// on the grounds that an address reads all-digits as a record's position -- but
+// a store key never appears in an address, so `7` is simply what an app calls
+// a save slot, a channel or a year.
+func TestAKeyOfOnlyDigitsIsAName(t *testing.T) {
 	s := shelf(t)
-	for _, key := range []string{"7", "01", "1234567"} {
-		if _, err := s.put(key, "txt", []byte("x")); err == nil {
-			t.Errorf("%q was stored, and could not be told from a record index", key)
-		}
-	}
-	// Digits are only a problem when they are the whole of it.
-	for _, key := range []string{"v7", "7a", "7-of-9", "1.0"} {
+	for _, key := range []string{"7", "01", "1234567", "v7", "7a", "7-of-9", "1.0"} {
 		if _, err := s.put(key, "txt", []byte("x")); err != nil {
 			t.Errorf("%q was refused: %v", key, err)
 		}
@@ -560,11 +556,11 @@ func TestTheCacheMarkOnlyLeadsAKey(t *testing.T) {
 }
 
 // Every rule about a key is about its NAME, so the mark does not smuggle one
-// past them: `#7` is still a name that could be a record index.
+// past them: `#a/b` is still a path and `#two\nlines` still breaks the index.
 func TestTheRulesApplyBehindTheMark(t *testing.T) {
 	tempConfig(t)
 	s := newAppStore("laptop", "demo")
-	for _, key := range []string{cacheMark + "7", cacheMark + "a/b", cacheMark + "two\nlines"} {
+	for _, key := range []string{cacheMark + "a/b", cacheMark + "two\nlines"} {
 		if _, err := s.put(key, "txt", []byte("x")); err == nil {
 			t.Errorf("%q was stored", key)
 		}

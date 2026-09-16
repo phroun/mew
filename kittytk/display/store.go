@@ -7,10 +7,12 @@ package display
 // storage. There are no directories, nothing nests, and a key with a path in it
 // would say otherwise.
 //
-// A key is a NAME. It is the app's own word for the item, and it is the same
-// name the item carries when it becomes a bundle, so the two are one namespace
-// rather than two that have to be kept in step. That is what the rules on it
-// come from: see storeKeyRules.
+// A key is a NAME: the app's own word for the item, and nothing else's. It is
+// NOT the name a bundle carries -- a bundle states its own key and version
+// inside itself, and the two versions of one bundle cannot share a store key
+// because a store holds one thing per key. Nothing parses a store key, so the
+// rules on it are the store's own and are not about addressing: see
+// storeKeyRules.
 //
 // ONE namespace, and the key says how long the item lives: a key beginning with
 // the cache mark names something the desktop may throw away at any moment,
@@ -24,8 +26,12 @@ package display
 // knows; the filename is what the filesystem will take; neither has to be the
 // other.
 //
-// Bundles are what this is being built for, and it knows nothing about them.
-// It stores blobs.
+// Bundles are what this is being built for, and it knows ONE thing about them:
+// which item holds which. A psl carrying a `_bundle` member is noted on the way
+// past so that a later question -- which item holds the bundle called X at
+// version Y -- has an answer that does not mean reading the whole store. See
+// bundleindex.go. Everything else about a bundle is somebody else's: this
+// stores blobs.
 
 import (
 	"bufio"
@@ -79,17 +85,14 @@ func cached(key string) bool { return strings.HasPrefix(key, cacheMark) }
 // storeKeyRules says whether a key is one this store will take, and why not
 // where it will not.
 //
-// A key is the same name the item carries as a bundle, and a bundle is
-// addressed `<source>/<bundle>/<record>` -- so what an address needs to stay
-// unambiguous is what a key may not hold:
+// Both rules are the STORE's, and neither is about addressing -- a store key
+// never appears in an address, because an include names a bundle by key and
+// version and the bundle index is what turns that into an item:
 //
-//   - No slash. It is the separator between the levels of an address, and a
-//     key holding one could not be told from two levels. It is also the thing
-//     that would make a store look like a filesystem, and a store is not one:
-//     it is a flat set of names, nearer to cookies than to directories.
-//   - No name of nothing but digits. All-digits is how an address says it means
-//     the record at that INDEX, so `objectLibrary/7` could name a bundle or a
-//     record and there is no way to say which.
+//   - No slash. A store is not a filesystem: it is a flat set of names, nearer
+//     to cookies or a browser's local storage than to directories. A path in a
+//     key would invite an app to treat it as the filesystem it is not, which is
+//     why this is refused rather than merely discouraged.
 //   - Nothing unprintable. The index beside the files is a line per item, so a
 //     key with a newline in it writes a line that reads back as a different
 //     item, silently.
@@ -113,19 +116,11 @@ func storeKeyRules(key string) error {
 		return fmt.Errorf("a key is a name, not a path: %q holds a slash, which"+
 			" separates the levels of an address", key)
 	}
-	digits := true
 	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
 			return fmt.Errorf("a key is written down as it stands: %q holds a"+
 				" character that cannot be", key)
 		}
-		if r < '0' || r > '9' {
-			digits = false
-		}
-	}
-	if digits {
-		return fmt.Errorf("a name of nothing but digits is how an address names"+
-			" a record by its position, so %q could not be told from one", key)
 	}
 	return nil
 }
@@ -277,6 +272,9 @@ func (s *storeDir) write(key, typ string, data []byte, extend bool) (storeItem, 
 	if err := s.writeLocked(items); err != nil {
 		return storeItem{}, err
 	}
+	if err := s.noteBundleLocked(it); err != nil {
+		return storeItem{}, err
+	}
 	return s.sized(it), nil
 }
 
@@ -304,7 +302,10 @@ func (s *storeDir) drop(key string) error {
 		return err
 	}
 	delete(items, key)
-	return s.writeLocked(items)
+	if err := s.writeLocked(items); err != nil {
+		return err
+	}
+	return s.forgetBundleLocked(key)
 }
 
 // read hands back one slice of an item, and says whether it is the last. An
@@ -362,7 +363,7 @@ func (s *storeDir) sized(it storeItem) storeItem {
 // freeNameLocked is what a new key is filed under: the cleaned key, numbered if
 // another item or another file already answers to it.
 func (s *storeDir) freeNameLocked(items map[string]storeItem, key string) string {
-	taken := map[string]bool{storeIndexName: true}
+	taken := map[string]bool{storeIndexName: true, bundleIndexName: true}
 	for _, it := range items {
 		taken[it.safe] = true
 	}
