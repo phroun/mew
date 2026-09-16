@@ -1,12 +1,17 @@
 # Data sources and bundles
 
-> **Status: conversation, with one piece of it built.** This is a design
-> discussion written down so it is not lost, not a contract. The flat reading of
-> a single PSL list — its records, a filter, a sort and a scope — is built, and
-> `psl-as-a-data-source.md` is what it does. Everything below that touches
-> layering, shadowing, includes, amendments or hashes is still discussion, and
-> several points at the end are open questions. Where it states a decision, that
-> is a decision reached in conversation and nothing more.
+> **Status: conversation, with the reading half built.** This is a design
+> discussion written down so it is not lost, not a contract. Reading records out
+> of a document, composing several sources under names of their own, amending
+> one with replacements and deletions, caching the result and invalidating it on
+> notice are all built, and `psl-as-a-data-source.md` is what they do. The store
+> also notices a `_bundle` on the way past and can say which item holds which
+> bundle. What is still discussion is everything that makes a bundle a *bundle*
+> rather than a source: the hash, the Merkle DAG, the blob store, name
+> resolution, versions, and the loader that would assemble a source from what a
+> bundle declares. Nothing reads `_bundle`, `_hash` or `_amendments` yet.
+> Several points at the end are open questions, and where this states a
+> decision, that is a decision reached in conversation and nothing more.
 
 A **data source** is a named collection an Application draws records from: an
 object library, a message catalogue, a set of user-provided plug-in objects.
