@@ -313,45 +313,45 @@ func Shared() *Engine {
 	return sharedEngine
 }
 
-// shapeCache is a two-generation cache: inserts land in cur; when cur
-// fills, it becomes prev and a fresh cur starts. Anything untouched
+// shapeCache is a two-generation cache: inserts land in current; when current
+// fills, it becomes previous and a fresh current starts. Anything untouched
 // for two generations is dropped - no per-entry bookkeeping, bounded
 // memory, and the hot working set (the strings on screen) stays warm.
 type shapeCache struct {
-	cur, prev map[string]*ShapedParagraph
-	max       int
+	current, previous map[string]*ShapedParagraph
+	max               int
 }
 
 func newShapeCache(max int) shapeCache {
 	return shapeCache{
-		cur:  make(map[string]*ShapedParagraph),
-		prev: make(map[string]*ShapedParagraph),
-		max:  max,
+		current:  make(map[string]*ShapedParagraph),
+		previous: make(map[string]*ShapedParagraph),
+		max:      max,
 	}
 }
 
 func (c *shapeCache) get(k string) (*ShapedParagraph, bool) {
-	if v, ok := c.cur[k]; ok {
+	if v, ok := c.current[k]; ok {
 		return v, true
 	}
-	if v, ok := c.prev[k]; ok {
-		c.cur[k] = v // promote so it survives the next rotation
+	if v, ok := c.previous[k]; ok {
+		c.current[k] = v // promote so it survives the next rotation
 		return v, true
 	}
 	return nil, false
 }
 
 func (c *shapeCache) put(k string, v *ShapedParagraph) {
-	if len(c.cur) >= c.max {
-		c.prev = c.cur
-		c.cur = make(map[string]*ShapedParagraph)
+	if len(c.current) >= c.max {
+		c.previous = c.current
+		c.current = make(map[string]*ShapedParagraph)
 	}
-	c.cur[k] = v
+	c.current[k] = v
 }
 
 func (c *shapeCache) clear() {
-	c.cur = make(map[string]*ShapedParagraph)
-	c.prev = make(map[string]*ShapedParagraph)
+	c.current = make(map[string]*ShapedParagraph)
+	c.previous = make(map[string]*ShapedParagraph)
 }
 
 // shapeKey identifies a shaping request: font identity (colors are

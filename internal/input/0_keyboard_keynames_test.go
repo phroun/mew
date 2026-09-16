@@ -131,9 +131,9 @@ func TestOnlyTheEnterKeysShareAName(t *testing.T) {
 		if !ok {
 			continue
 		}
-		prev, dup := seen[name]
+		first, dup := seen[name]
 		if dup && !(name == "return") {
-			t.Errorf("%v and %v are both named %q", prev, k, name)
+			t.Errorf("%v and %v are both named %q", first, k, name)
 		}
 		seen[name] = k
 	}

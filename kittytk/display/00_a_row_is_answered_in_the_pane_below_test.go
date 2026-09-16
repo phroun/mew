@@ -361,10 +361,10 @@ func TestTheStandingsFitTheRowTheyAreShownIn(t *testing.T) {
 					"the room it was given", c.Text(), b.Width, want)
 			}
 			if i > 0 {
-				prev := v.choices[i-1].Bounds()
-				if b.X < prev.X+prev.Width {
+				prior := v.choices[i-1].Bounds()
+				if b.X < prior.X+prior.Width {
 					t.Errorf("%q starts at %d, inside %q which runs to %d",
-						c.Text(), b.X, v.choices[i-1].Text(), prev.X+prev.Width)
+						c.Text(), b.X, v.choices[i-1].Text(), prior.X+prior.Width)
 				}
 			}
 		}

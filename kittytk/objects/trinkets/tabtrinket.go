@@ -3356,7 +3356,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 		switch cmd {
 		case core.CmdTrinketItemLeft:
 			if !isVertical {
-				t.prevTabAndEnsureVisible()
+				t.priorTabAndEnsureVisible()
 				return true
 			}
 		case core.CmdTrinketItemRight:
@@ -3366,7 +3366,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 		case core.CmdTrinketItemUp:
 			if isVertical {
-				t.prevTabAndEnsureVisible()
+				t.priorTabAndEnsureVisible()
 				return true
 			}
 		case core.CmdTrinketItemDown:
@@ -3375,7 +3375,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 				return true
 			}
 		case core.CmdTrinketItemPrior:
-			t.prevTabAndEnsureVisible()
+			t.priorTabAndEnsureVisible()
 			return true
 		case core.CmdTrinketItemNext:
 			t.nextTabAndEnsureVisible()
@@ -3403,7 +3403,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdWindowMDIPrior:
-		t.prevTab()
+		t.priorTab()
 		return true
 	}
 
@@ -3424,7 +3424,7 @@ func (t *TabTrinket) nextTab() {
 	}
 }
 
-func (t *TabTrinket) prevTab() {
+func (t *TabTrinket) priorTab() {
 	if len(t.tabs) == 0 {
 		return
 	}
@@ -3459,8 +3459,8 @@ func (t *TabTrinket) nextTabAndEnsureVisible() {
 	}
 }
 
-// prevTabAndEnsureVisible moves to previous tab and ensures it's fully visible.
-func (t *TabTrinket) prevTabAndEnsureVisible() {
+// priorTabAndEnsureVisible moves to prior tab and ensures it's fully visible.
+func (t *TabTrinket) priorTabAndEnsureVisible() {
 	if len(t.tabs) == 0 {
 		return
 	}

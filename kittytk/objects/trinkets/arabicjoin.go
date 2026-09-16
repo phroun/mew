@@ -12,7 +12,8 @@ package trinkets
 // joins nothing.
 
 // arabicRightJoining is the Unicode Joining_Type=R set (Arabic + common
-// Persian/Urdu): these letters connect to the previous letter but not the next.
+// Persian/Urdu): these letters connect to the preceding letter but not the
+// following one.
 var arabicRightJoining = map[rune]bool{
 	0x0622: true, 0x0623: true, 0x0624: true, 0x0625: true, 0x0627: true, // alef family, waw-hamza
 	0x0629: true,               // teh marbuta
@@ -48,37 +49,39 @@ func isArabicLetter(r rune) bool {
 	return false
 }
 
-// arabicJoinsNext reports whether r can join to the FOLLOWING letter (only
+// arabicJoinsFollowing reports whether r can join to the FOLLOWING letter (only
 // dual-joining letters do).
-func arabicJoinsNext(r rune) bool {
+func arabicJoinsFollowing(r rune) bool {
 	return isArabicLetter(r) && !arabicRightJoining[r] && !arabicNonJoining[r]
 }
 
-// arabicJoinsPrev reports whether r can join to the PRECEDING letter (dual- and
-// right-joining letters — everything but hamza and non-letters).
-func arabicJoinsPrev(r rune) bool {
+// arabicJoinsPreceding reports whether r can join to the PRECEDING letter
+// (dual- and right-joining letters — everything but hamza and non-letters).
+func arabicJoinsPreceding(r rune) bool {
 	return isArabicLetter(r) && !arabicNonJoining[r]
 }
 
 // arabicCellShape describes what one Arabic cell shapes and which slice of the
 // shaped run belongs on screen. The renderer shapes S — a five-piece window of
-// LOGICAL text, prev + tatweel + letter + tatweel + next (pieces present only
-// on sides that join) — as ONE run, so the shaper produces the true joined
-// forms with real connecting strokes, then cuts the neighbour letters off the
-// ends by cluster position and keeps the letter plus its tatweel connectors.
+// LOGICAL text, preceding + tatweel + letter + tatweel + following (pieces
+// present only on sides that join) — as ONE run, so the shaper produces the
+// true joined forms with real connecting strokes, then cuts the neighbour
+// letters off the ends by cluster position and keeps the letter plus its
+// tatweel connectors.
 // Rune ranges are half-open indices into S's runes; -1 marks an absent piece.
 type arabicCellShape struct {
 	s          string // logical window text (bidi/shaping handled by the engine)
 	seg0, seg1 int    // the cell's own letter (or lam-alef ligature pair)
-	rt0, rt1   int    // tatweel toward the logically-PREV letter (visual right)
-	lt0, lt1   int    // tatweel toward the logically-NEXT letter (visual left)
+	rt0, rt1   int    // tatweel toward the PRECEDING letter (visual right)
+	lt0, lt1   int    // tatweel toward the FOLLOWING letter (visual left)
 }
 
 // arabicRenderContext builds the five-piece shaping window for one cell.
 // leftBase/rightBase are the VISUAL neighbours (cells are visual order, RTL
-// reversed), so the logical previous letter is rightBase and the logical next
-// is leftBase. kashL/kashR come from arabicKashida and are true only when both
-// letters actually join across that edge, so a non-joining side contributes
+// reversed), so the logically-preceding letter is rightBase and the
+// logically-following is leftBase. kashL/kashR come from arabicKashida and are
+// true only when both letters actually join across that edge, so a non-joining
+// side contributes
 // neither a neighbour nor a tatweel and the letter takes its correct
 // final/initial/isolated form. form is ShapeArabicCellVisual's result, used
 // only to detect lam-alef ligatures (rebuilt as the base pair so the font's
@@ -111,7 +114,7 @@ func arabicRenderContext(base, form rune, leftBase, rightBase rune, kashL, kashR
 	// never running out of stroke before the boundary.
 	ctx := &arabicCellShape{rt0: -1, rt1: -1, lt0: -1, lt1: -1}
 	var rs []rune
-	if kashR { // logical prev = visual right neighbour
+	if kashR { // logically preceding = visual right neighbour
 		rs = append(rs, rightBase, 'ـ', 'ـ')
 		ctx.rt0, ctx.rt1 = 1, 3
 	}
@@ -129,16 +132,16 @@ func arabicRenderContext(base, form rune, leftBase, rightBase rune, kashL, kashR
 // arabicKashida returns whether a cell holding base (with visual neighbours
 // leftBase to its left and rightBase to its right — cells are in visual order,
 // so the left neighbour is the logically-NEXT letter and the right neighbour
-// the logically-PREVIOUS) should draw a kashida on its left and/or right edge.
+// the logically-PRECEDING) should draw a kashida on its left and/or right edge.
 // A kashida fills toward a neighbour only when both letters can join there.
 func arabicKashida(base, leftBase, rightBase rune) (left, right bool) {
 	if !isArabicLetter(base) {
 		return false, false
 	}
-	// Right edge faces the logically-previous letter (rightBase).
-	right = arabicJoinsPrev(base) && arabicJoinsNext(rightBase)
+	// Right edge faces the logically-preceding letter (rightBase).
+	right = arabicJoinsPreceding(base) && arabicJoinsFollowing(rightBase)
 	// Left edge faces the logically-next letter (leftBase).
-	left = arabicJoinsNext(base) && arabicJoinsPrev(leftBase)
+	left = arabicJoinsFollowing(base) && arabicJoinsPreceding(leftBase)
 	return left, right
 }
 
@@ -149,7 +152,7 @@ func arabicKashida(base, leftBase, rightBase rune) (left, right bool) {
 // shaping window must be computed from the BASE letters or no cell ever
 // joins. Data is the standard Unicode Arabic Presentation Forms-A/B
 // decomposition; the lam-alef ligature forms map to alef (the ligature joins
-// toward the previous letter only, exactly like an alef).
+// toward the preceding letter only, exactly like an alef).
 var arabicPresentationBase = map[rune]rune{
 	0xFB56: 0x067E,
 	0xFB57: 0x067E,

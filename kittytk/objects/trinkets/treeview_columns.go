@@ -616,9 +616,9 @@ func (t *TreeView) headerStopLabel(idx int) string {
 //	bar:    Enter/Space drill in - Tab -> content - S-Tab releases
 //	        backward - Down -> content - Escape -> content
 //	items:  Tab/Right next stop (past the chooser -> content) -
-//	        S-Tab previous (before the first -> WRAP to the last
+//	        S-Tab prior (before the first -> WRAP to the last
 //	        stop, so the machine keeps the focus and a Tab from
-//	        there exits down into the rows) - Left previous (before
+//	        there exits down into the rows) - Left prior (before
 //	        the first -> bar) - Enter/Space activates (sort cycle,
 //	        or opens the chooser) - Escape -> bar
 func (t *TreeView) handleHeaderFocusKey(cmd string) bool {

@@ -1310,12 +1310,12 @@ func (m *WindowManager) DeactivateActiveWindow() {
 // This is used when the menu bar is dismissed via Escape.
 func (m *WindowManager) RestorePreviousActiveWindow() {
 	m.mu.Lock()
-	prev := m.previousActiveWindow
+	previous := m.previousActiveWindow
 	m.previousActiveWindow = nil
 	m.mu.Unlock()
 
-	if prev != nil {
-		m.ActivateWindow(prev)
+	if previous != nil {
+		m.ActivateWindow(previous)
 	}
 }
 

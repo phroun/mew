@@ -58,8 +58,8 @@ const (
 	ActionConfirm  = "confirm"  // Enter
 
 	// Focus
-	ActionFocusNext = "focus-next"
-	ActionFocusPrev = "focus-prev"
+	ActionFocusNext  = "focus-next"
+	ActionFocusPrior = "focus-prior"
 
 	// Tree/List
 	ActionExpand      = "expand"
@@ -75,7 +75,7 @@ const (
 	// Window
 	ActionWindowClose = "window-close"
 	ActionWindowNext  = "window-next"
-	ActionWindowPrev  = "window-prev"
+	ActionWindowPrior = "window-prior"
 
 	// Application
 	ActionQuit          = "quit"
@@ -145,7 +145,7 @@ func (kb *KeyBindings) SetDefaults() {
 
 	// Focus
 	kb.bindings[ActionFocusNext] = []string{"Tab"}
-	kb.bindings[ActionFocusPrev] = []string{"S-Tab"}
+	kb.bindings[ActionFocusPrior] = []string{"S-Tab"}
 
 	// Tree/List
 	kb.bindings[ActionExpand] = []string{"Right", "+"}
@@ -161,7 +161,7 @@ func (kb *KeyBindings) SetDefaults() {
 	// Window
 	kb.bindings[ActionWindowClose] = []string{"M-F4", "^W"}
 	kb.bindings[ActionWindowNext] = []string{"M-Tab", "^Tab"}
-	kb.bindings[ActionWindowPrev] = []string{"M-S-Tab", "^S-Tab"}
+	kb.bindings[ActionWindowPrior] = []string{"M-S-Tab", "^S-Tab"}
 
 	// Application
 	kb.bindings[ActionQuit] = []string{"^Q"}

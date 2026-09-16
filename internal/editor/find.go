@@ -677,17 +677,17 @@ func (e *Editor) currentFindState() viewport.FindState {
 // The find prompt starts empty and shows the previous term in parentheses;
 // accepting it blank repeats that previous search.
 func (e *Editor) startFind(term, options, replacement string, haveTerm, haveOptions, haveReplacement bool) {
-	prev := e.currentFindState()
+	previous := e.currentFindState()
 
 	if !haveTerm || term == "" {
 		label := "Find: "
-		if prev.Term != "" {
-			label = "Find (" + truncateHint(prev.Term, 24) + "): "
+		if previous.Term != "" {
+			label = "Find (" + truncateHint(previous.Term, 24) + "): "
 		}
 		e.PromptMgr.PromptForInput(label, "", func(accepted bool, _, text string) {
 			if accepted {
 				if text == "" {
-					text = prev.Term
+					text = previous.Term
 				}
 				if text != "" {
 					if haveOptions {

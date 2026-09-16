@@ -397,14 +397,14 @@ int main(int argc, char **argv) {
     kt_on_command(a.conn, "demo.basic.apply", on_status_msg, &m_apply);
 
     /* MDI */
-    static VerbCtx mdi_tile = {0}, mdi_cascade = {0}, mdi_next = {0}, mdi_prev = {0};
-    mdi_tile.a = mdi_cascade.a = mdi_next.a = mdi_prev.a = &a;
-    mdi_tile.verb = "tile"; mdi_cascade.verb = "cascade"; mdi_next.verb = "next"; mdi_prev.verb = "prior";
+    static VerbCtx mdi_tile = {0}, mdi_cascade = {0}, mdi_next = {0}, mdi_prior = {0};
+    mdi_tile.a = mdi_cascade.a = mdi_next.a = mdi_prior.a = &a;
+    mdi_tile.verb = "tile"; mdi_cascade.verb = "cascade"; mdi_next.verb = "next"; mdi_prior.verb = "prior";
     kt_on_command(a.conn, "demo.mdi.spawn", on_mdi_spawn, &actx);
     kt_on_command(a.conn, "demo.mdi.tile", on_mdi_do, &mdi_tile);
     kt_on_command(a.conn, "demo.mdi.cascade", on_mdi_do, &mdi_cascade);
     kt_on_command(a.conn, "demo.mdi.next", on_mdi_do, &mdi_next);
-    kt_on_command(a.conn, "demo.mdi.prev", on_mdi_do, &mdi_prev);
+    kt_on_command(a.conn, "demo.mdi.prior", on_mdi_do, &mdi_prior);
     kt_on(a.conn, a.mdi, "active", on_mdi_active, &a);
     kt_on(a.conn, a.mdi, "minimize", on_mdi_minimize, &a);
     kt_on(a.conn, a.mdi, "restore", on_mdi_drop_ev, &a);

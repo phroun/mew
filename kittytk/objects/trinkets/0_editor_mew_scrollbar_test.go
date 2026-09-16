@@ -117,16 +117,16 @@ func TestThumbPositionAlwaysYieldsAWholeLine(t *testing.T) {
 	}
 	// Monotonic, and always a whole line (the type guarantees whole; this
 	// guarantees it never goes backwards as the pointer descends).
-	prev := 0
+	prior := 0
 	for px := 0.0; px <= span; px += 0.5 {
 		got := topLineForThumb(px, track, r, 1)
-		if got < prev {
-			t.Fatalf("thumb at %vpx yields line %d after %d — scrolling ran backwards", px, got, prev)
+		if got < prior {
+			t.Fatalf("thumb at %vpx yields line %d after %d — scrolling ran backwards", px, got, prior)
 		}
 		if got < 0 || got > maxTop {
 			t.Fatalf("thumb at %vpx yields out-of-range line %d", px, got)
 		}
-		prev = got
+		prior = got
 	}
 }
 

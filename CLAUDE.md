@@ -24,8 +24,13 @@ A `go.work` ties the co-located modules together, so most `go` commands inside
 House words. Reaching for the ordinary synonym puts distance between what the
 code says and what we say.
 
-- **Prior and Next**, never *Previous* or `prev`. The exception is a genuinely
-  temporal sense — *the previous frame* — where *previous* is right.
+- **Prior and Next**, never `prev`. *Prior* is a position in an ordering (the
+  line above, the tab to the left) — two things that exist at once. *Previous*
+  is the same thing at an earlier moment (the previous frame's cache, the
+  window active before the menu bar) and is right there. *Preceding* and
+  *Following* are Unicode's words for text — cluster bases, joining runs, a
+  mark riding the cell in front — and stay Unicode's. The test: could both be
+  pointed at simultaneously? Then prior. Is one of them gone? Then previous.
 - **PSL is not PawScript.** PSL is PawScript Serialized Lists, a data format,
   and is no more PawScript than JSON is JavaScript.
 - **The KittyTK Wire Language** is the language; `kittytk/wire/` is the package

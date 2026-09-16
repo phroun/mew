@@ -273,8 +273,8 @@ func (fm *FocusManager) FocusNext() bool {
 	return false
 }
 
-// FocusPrevious moves focus to the previous trinket in the focus chain.
-func (fm *FocusManager) FocusPrevious() bool {
+// FocusPrior moves focus to the prior trinket in the focus chain.
+func (fm *FocusManager) FocusPrior() bool {
 	fm.mu.RLock()
 	root := fm.root
 	current := fm.focusedTrinket
@@ -295,19 +295,19 @@ func (fm *FocusManager) FocusPrevious() bool {
 		}
 	}
 
-	// Find previous focusable trinket
+	// Find prior focusable trinket
 	for i := 1; i <= len(chain); i++ {
-		prevIdx := currentIdx - i
-		if prevIdx < 0 {
+		priorIdx := currentIdx - i
+		if priorIdx < 0 {
 			if wrap {
-				prevIdx = len(chain) + prevIdx
+				priorIdx = len(chain) + priorIdx
 			} else {
 				break
 			}
 		}
 
-		if fm.canFocus(chain[prevIdx]) {
-			return fm.SetFocusedTrinket(chain[prevIdx])
+		if fm.canFocus(chain[priorIdx]) {
+			return fm.SetFocusedTrinket(chain[priorIdx])
 		}
 	}
 
@@ -523,7 +523,7 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 	case CmdFocusNext:
 		return fm.FocusNext()
 	case CmdFocusPrior:
-		return fm.FocusPrevious()
+		return fm.FocusPrior()
 	}
 
 	return false

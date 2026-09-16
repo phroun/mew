@@ -111,7 +111,7 @@ func TestARadioGroupWalksTheWayItsFormReads(t *testing.T) {
 		buttons[1].SetChecked(true)
 		key(tc.back)
 		if !buttons[0].IsChecked() {
-			t.Errorf("%v: %s did not move back to the previous button", tc.dir, tc.back)
+			t.Errorf("%v: %s did not move back to the prior button", tc.dir, tc.back)
 		}
 	}
 }

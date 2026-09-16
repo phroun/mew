@@ -162,13 +162,13 @@ type purfecTermGfx struct {
 	schemeSet bool
 
 	// Caches + engine for scaled glyph imagery.
-	engine     *text.Engine
-	fontEpoch  uint64 // engine font-set epoch the text cache was built against
-	textCur    map[coverMaskKey]*image.RGBA
-	textPrev   map[coverMaskKey]*image.RGBA
-	glyphCur   map[purfecterm.GlyphCacheKey]*image.RGBA
-	glyphPrev  map[purfecterm.GlyphCacheKey]*image.RGBA
-	overlayCur map[string]*image.RGBA
+	engine        *text.Engine
+	fontEpoch     uint64 // engine font-set epoch the text cache was built against
+	textCurrent   map[coverMaskKey]*image.RGBA
+	textPrevious  map[coverMaskKey]*image.RGBA
+	glyphCurrent  map[purfecterm.GlyphCacheKey]*image.RGBA
+	glyphPrevious map[purfecterm.GlyphCacheKey]*image.RGBA
+	overlayCur    map[string]*image.RGBA
 
 	// Scratch for image blits that cannot be handed to the painter where they
 	// lie (a crop, a scale, or straight alpha that has to be premultiplied).
@@ -387,9 +387,9 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	if ds := p.DisplayDensity(); ds > 1 {
 		t.gfx.oversample = ds
 	}
-	prevCW, prevCH := t.gfx.advCW, t.gfx.advCH
+	previousCW, previousCH := t.gfx.advCW, t.gfx.advCH
 	t.pushCellPixelSizeGfx() // real cell size (CSI 16 t) + the ?1016 pointer unit
-	cellMoved := t.gfx.advCW != prevCW || t.gfx.advCH != prevCH
+	cellMoved := t.gfx.advCW != previousCW || t.gfx.advCH != previousCH
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
@@ -828,17 +828,17 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	if eng := t.gfxEngine(); eng != nil {
 		if ep := eng.Epoch(); ep != t.gfx.fontEpoch {
 			t.gfx.fontEpoch = ep
-			t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
-			t.gfx.textPrev = map[coverMaskKey]*image.RGBA{}
+			t.gfx.textCurrent = map[coverMaskKey]*image.RGBA{}
+			t.gfx.textPrevious = map[coverMaskKey]*image.RGBA{}
 		}
 	}
 
 	key := coverMaskKey{str: str, family: family, bold: bold, italic: italic, wPx: boxWPx, hPx: boxHPx, wide: wideCell, kashL: kashL, kashR: kashR}
-	if img, ok := t.gfx.textCur[key]; ok {
+	if img, ok := t.gfx.textCurrent[key]; ok {
 		return img
 	}
-	if img, ok := t.gfx.textPrev[key]; ok {
-		t.gfx.textCur[key] = img
+	if img, ok := t.gfx.textPrevious[key]; ok {
+		t.gfx.textCurrent[key] = img
 		return img
 	}
 	// Choose the point size whose line budget fills the box height. The box
@@ -897,7 +897,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
 	if actx != nil {
-		// Arabic: str is the shaping window (prev + tatweels + letter + tatweels
+		// Arabic: str is the shaping window (preceding + tatweels + letter + tatweels
 		// + next, joining sides only), shaped above as ONE run so the font's own
 		// GSUB produced the true joined forms with real connecting strokes. The
 		// cell keeps the slice between the neighbour letters — the letter WITH
@@ -910,7 +910,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 		// surplus tatweel fall outside the cell and are clipped.
 		keep0, keep1 := actx.seg0, actx.seg1
 		if actx.rt0 >= 0 {
-			keep0 = actx.rt0 // include the right-side tatweels; drop prev
+			keep0 = actx.rt0 // include the right-side tatweels; drop the preceding letter
 		}
 		if actx.lt0 >= 0 {
 			keep1 = actx.lt1 // include the left-side tatweels; drop next
@@ -1008,11 +1008,11 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 		compositeInto(out, placed, xOff, yShift)
 	}
 
-	if len(t.gfx.textCur) >= gfxCacheMax {
-		t.gfx.textPrev = t.gfx.textCur
-		t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
+	if len(t.gfx.textCurrent) >= gfxCacheMax {
+		t.gfx.textPrevious = t.gfx.textCurrent
+		t.gfx.textCurrent = map[coverMaskKey]*image.RGBA{}
 	}
-	t.gfx.textCur[key] = out
+	t.gfx.textCurrent[key] = out
 	return out
 }
 
@@ -1521,19 +1521,19 @@ func (t *PurfecTerm) renderCustomGlyphCell(p *core.Painter, buf *purfecterm.Buff
 		key.BgR, key.BgG, key.BgB = bgc.R, bgc.G, bgc.B
 	}
 
-	img, ok := t.gfx.glyphCur[key]
+	img, ok := t.gfx.glyphCurrent[key]
 	if !ok {
-		if img, ok = t.gfx.glyphPrev[key]; ok {
-			t.gfx.glyphCur[key] = img
+		if img, ok = t.gfx.glyphPrevious[key]; ok {
+			t.gfx.glyphCurrent[key] = img
 		}
 	}
 	if !ok {
 		img = t.buildCustomGlyphImage(buf, cell, glyph, wPx, hPx)
-		if len(t.gfx.glyphCur) >= gfxCacheMax {
-			t.gfx.glyphPrev = t.gfx.glyphCur
-			t.gfx.glyphCur = map[purfecterm.GlyphCacheKey]*image.RGBA{}
+		if len(t.gfx.glyphCurrent) >= gfxCacheMax {
+			t.gfx.glyphPrevious = t.gfx.glyphCurrent
+			t.gfx.glyphCurrent = map[purfecterm.GlyphCacheKey]*image.RGBA{}
 		}
-		t.gfx.glyphCur[key] = img
+		t.gfx.glyphCurrent[key] = img
 	}
 
 	xPx := int(math.Round(cellX * ppu))
@@ -2186,11 +2186,11 @@ func (t *PurfecTerm) stopGfxTimers() {
 }
 
 func (t *PurfecTerm) rotateGfxCaches() {
-	if t.gfx.textCur == nil {
-		t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
-		t.gfx.textPrev = map[coverMaskKey]*image.RGBA{}
-		t.gfx.glyphCur = map[purfecterm.GlyphCacheKey]*image.RGBA{}
-		t.gfx.glyphPrev = map[purfecterm.GlyphCacheKey]*image.RGBA{}
+	if t.gfx.textCurrent == nil {
+		t.gfx.textCurrent = map[coverMaskKey]*image.RGBA{}
+		t.gfx.textPrevious = map[coverMaskKey]*image.RGBA{}
+		t.gfx.glyphCurrent = map[purfecterm.GlyphCacheKey]*image.RGBA{}
+		t.gfx.glyphPrevious = map[purfecterm.GlyphCacheKey]*image.RGBA{}
 		t.gfx.overlayCur = map[string]*image.RGBA{}
 	}
 }

@@ -2701,7 +2701,7 @@ messages="\e[0;97;41m"                # bright white on red
 
 # Inside the incremental-search prompt only (the search command's "I-search:"
 # prompt, viewport class "isearch"): the direction keys. ^R steps to the
-# previous occurrence and turns the search around; ^F steps forward. The
+# prior occurrence and turns the search around; ^F steps forward. The
 # direction is the same "b" option the find state stores, so find_next keeps
 # rotating the same way afterwards. Everywhere else ^R/^F keep their normal
 # meanings.

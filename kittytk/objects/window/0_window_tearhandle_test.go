@@ -18,7 +18,7 @@ func TestTearHandleFocusOrder(t *testing.T) {
 	if got := win.nextTitleFocus(TitleFocusTear); got != TitleFocusTitle {
 		t.Errorf("after tear = %v, want Title", got)
 	}
-	if got := win.prevTitleFocus(TitleFocusTitle); got != TitleFocusTear {
+	if got := win.priorTitleFocus(TitleFocusTitle); got != TitleFocusTear {
 		t.Errorf("before title = %v, want Tear", got)
 	}
 

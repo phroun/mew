@@ -37,10 +37,10 @@ func fits(t *testing.T, rs []*RadioButton) {
 			t.Errorf("%q sits in %d units and needs %d", r.Text(), b.Width, want)
 		}
 		if i > 0 {
-			prev := rs[i-1].Bounds()
-			if b.X < prev.X+prev.Width {
+			prior := rs[i-1].Bounds()
+			if b.X < prior.X+prior.Width {
 				t.Errorf("%q starts at %d, inside %q which runs to %d",
-					r.Text(), b.X, rs[i-1].Text(), prev.X+prev.Width)
+					r.Text(), b.X, rs[i-1].Text(), prior.X+prior.Width)
 			}
 		}
 	}

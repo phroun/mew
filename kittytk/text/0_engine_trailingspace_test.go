@@ -59,11 +59,11 @@ func TestPixelMeasurementDoesNotRoundThroughUnits(t *testing.T) {
 
 	base := e.MeasurePx(f, "日", ppu)
 	var steps []int
-	prev := base
+	prior := base
 	for _, s := range []string{"日 ", "日  ", "日   ", "日    "} {
 		at := e.MeasurePx(f, s, ppu)
-		steps = append(steps, at-prev)
-		prev = at
+		steps = append(steps, at-prior)
+		prior = at
 	}
 	lo, hi := steps[0], steps[0]
 	for _, step := range steps {

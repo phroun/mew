@@ -17,7 +17,7 @@ import (
 //	Enter   commit the row and dismiss
 //	Escape  cancel the current cell (original value stays) and dismiss
 //	Tab     commit the cell, edit the next editable column (wraps)
-//	S-Tab   commit the cell, edit the previous editable column
+//	S-Tab   commit the cell, edit the prior editable column
 //	Up/Down commit the cell, move to that row, keep editing the SAME
 //	        column there (even on a combo cell, where arrows would
 //	        normally change the value - row navigation wins while the
@@ -191,7 +191,7 @@ func (t *TreeView) enterTargetColumn() *TreeColumn {
 	return col
 }
 
-// moveEnterTargetColumn walks the Enter target to the previous or next
+// moveEnterTargetColumn walks the Enter target to the prior or next
 // editable column WITHOUT editing anything and without touching the tree's
 // structure, which is what a keymap wanting a "left that never collapses"
 // binds. It stops at the ends rather than wrapping, so holding the key cannot
@@ -485,7 +485,7 @@ func (t *TreeView) endRowEdit(commit bool) {
 }
 
 // stepEditColumn commits the current cell and moves the editor to the
-// next (+1) or previous (-1) editable column, wrapping around. The
+// next (+1) or prior (-1) editable column, wrapping around. The
 // editor trinket is remounted, so text and enum columns mix freely.
 func (t *TreeView) stepEditColumn(delta int) {
 	cols := t.editableColumns()

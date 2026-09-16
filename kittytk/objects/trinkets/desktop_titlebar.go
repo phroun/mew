@@ -453,8 +453,8 @@ func (d *Desktop) hostMoveFinish() {
 // hostZoomState is the Ψ menu's Zoom toggle: the OS window rectangle to
 // restore when zooming back down. Guarded by Desktop.mu.
 type hostZoomState struct {
-	zoomed                     bool
-	prevX, prevY, prevW, prevH int // device px, saved at zoom-up
+	zoomed                                     bool
+	previousX, previousY, previousW, previousH int // device px, saved at zoom-up
 }
 
 // addHostWindowMenuItems puts Minimize and Zoom on the system (Ψ) menu,
@@ -559,15 +559,15 @@ func (d *Desktop) hostZoomToggle() {
 		// animate to its own stored floating rect (which can be stale, a
 		// layout from before the desktop was revealed) and then snap.
 		if rs, ok := surf.(platform.NativeRectSetter); ok {
-			rs.SetScreenRectPx(st.prevX, st.prevY, st.prevW, st.prevH)
+			rs.SetScreenRectPx(st.previousX, st.previousY, st.previousW, st.previousH)
 		} else {
 			if osZoomed {
 				if r, ok := surf.(platform.NativeRestorer); ok {
 					r.Restore()
 				}
 			}
-			native.SetScreenPositionPx(st.prevX, st.prevY)
-			native.SetScreenSizePx(st.prevW, st.prevH)
+			native.SetScreenPositionPx(st.previousX, st.previousY)
+			native.SetScreenSizePx(st.previousW, st.previousH)
 		}
 		d.RequestUpdate() // the zoom button's icon and the frame flip back
 		return
@@ -595,9 +595,9 @@ func (d *Desktop) hostZoomToggle() {
 	// Computed BEFORE the lock: paintableSurfacePx converts through
 	// HardPxToUnitX, which takes d.mu itself, and the mutex is not
 	// reentrant.
-	prevW, prevH := d.paintableSurfacePx(w, false), d.paintableSurfacePx(h, true)
+	previousW, previousH := d.paintableSurfacePx(w, false), d.paintableSurfacePx(h, true)
 	d.mu.Lock()
-	d.hostZoom = hostZoomState{zoomed: true, prevX: x, prevY: y, prevW: prevW, prevH: prevH}
+	d.hostZoom = hostZoomState{zoomed: true, previousX: x, previousY: y, previousW: previousW, previousH: previousH}
 	d.mu.Unlock()
 	// A screen-filling window keeps the maximized convention: square
 	// corners, no shadow, no frame (hostFrameInset and paintHostFrame
@@ -769,7 +769,7 @@ func (d *Desktop) handleHostTitleKey(event core.KeyPressEvent) bool {
 		case hostTitleButtonMinimize:
 			d.setHostTitleFocus(hostTitleButtonClose)
 		default:
-			// Off the backward end: the dock is previous in the ring (the
+			// Off the backward end: the dock is prior in the ring (the
 			// menu bar where there is no dock).
 			d.setHostTitleFocus(hostTitleButtonNone)
 			if d.dockVisible() {

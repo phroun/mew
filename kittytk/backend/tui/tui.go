@@ -1084,7 +1084,7 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	isTuesday := font.Name == "Tuesday"
 
 	for _, ch := range text {
-		// Zero-width combining marks attach to the previously drawn cell —
+		// Zero-width combining marks attach to the preceding drawn cell —
 		// they never occupy a cell of their own.
 		if cellRuneWidth(ch) == 0 {
 			t.appendCombining(col-1, row, ch)
@@ -1417,7 +1417,7 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hSide co
 	for _, ch := range text {
 		w := cellRuneWidth(ch)
 		if w == 0 {
-			continue // combining marks ride the previous cell
+			continue // combining marks ride the preceding cell
 		}
 		textCells += w
 		if w == 1 && isTuesday && isAlphanumeric(ch) {

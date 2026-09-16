@@ -5,7 +5,7 @@ import "math"
 // RuneSpanX reports the horizontal extent, in units, that the glyphs of rune
 // range [start, end) occupy within the shaped paragraph's first line — the
 // window a caller needs to cut one cluster's pixels out of a shaped run (e.g.
-// the per-cell Arabic renderer, which shapes prev+tatweel+letter+tatweel+next
+// the per-cell Arabic renderer, which shapes preceding+tatweel+letter+tatweel+following
 // as one joined run and then crops to the piece it wants). Cluster indices come
 // from the shaper, so ligatures (lam-alef) and marks attribute to the cluster's
 // lowest rune. ok is false if no glyph maps into the range.

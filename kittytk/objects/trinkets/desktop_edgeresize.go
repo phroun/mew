@@ -284,13 +284,13 @@ func applyHostResize(edges, startX, startY, startW, startH, dx, dy, minW, minH i
 func (d *Desktop) hostHoverUpdate(x, y core.Unit) {
 	d.mu.RLock()
 	active := d.hostEdge.active
-	prev := d.hostEdge.hover
+	previous := d.hostEdge.hover
 	d.mu.RUnlock()
 	if active {
 		return
 	}
 	edges := d.hostEdgeAt(x, y)
-	if edges == prev {
+	if edges == previous {
 		return
 	}
 	d.mu.Lock()

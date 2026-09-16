@@ -1991,7 +1991,7 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 			pos = len(t.text)
 		}
 		if event.Modifiers&core.ShiftModifier != 0 {
-			// Shift+click extends: the previous caret position is
+			// Shift+click extends: the prior caret position is
 			// (already) the anchor; only the moving end follows.
 			t.cursorPos = pos
 			t.selEnd = pos

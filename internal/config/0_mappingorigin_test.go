@@ -57,10 +57,10 @@ func TestMappingProvenanceThroughInclude(t *testing.T) {
 	// ^E, then ^B and ^C.
 	order := []string{"^A", "^D", "^E", "^B", "^C"}
 	for i := 1; i < len(order); i++ {
-		prev, cur := cfg.MappingOrigins[order[i-1]], cfg.MappingOrigins[order[i]]
-		if !(prev.Precedence < cur.Precedence) {
+		prior, cur := cfg.MappingOrigins[order[i-1]], cfg.MappingOrigins[order[i]]
+		if !(prior.Precedence < cur.Precedence) {
 			t.Errorf("precedence: %s (%d) should precede %s (%d)",
-				order[i-1], prev.Precedence, order[i], cur.Precedence)
+				order[i-1], prior.Precedence, order[i], cur.Precedence)
 		}
 	}
 }

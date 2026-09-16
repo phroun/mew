@@ -229,7 +229,7 @@ char *main_build_script(void) {
         "            new button caption=\"Tile\" action=demo.mdi.tile\n"
         "            new button caption=\"Cascade\" action=demo.mdi.cascade\n"
         "            new button caption=\"Next\" action=demo.mdi.next\n"
-        "            new button caption=\"Prev\" action=demo.mdi.prev\n"
+        "            new button caption=\"Prior\" action=demo.mdi.prior\n"
         "          }\n"
         "          mdistatus=new label caption=\"Active: none\"\n"
         "        }\n"

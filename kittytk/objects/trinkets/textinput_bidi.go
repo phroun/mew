@@ -136,7 +136,7 @@ func substituteFor(runes []rune, i int) (string, bool) {
 	if khatool.IsControl(r) {
 		return khatool.Substitute(r), true
 	}
-	if khatool.IsMark(r) && khatool.DefectiveMark(khatool.PrevBase(runes, i), r) {
+	if khatool.IsMark(r) && khatool.DefectiveMark(khatool.PrecedingBase(runes, i), r) {
 		return khatool.MarkForm(r), true
 	}
 	return "", false

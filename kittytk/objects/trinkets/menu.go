@@ -993,8 +993,8 @@ func (m *Menu) findNextEnabled(from int) int {
 	return -1
 }
 
-// findPrevEnabled finds the previous enabled item.
-func (m *Menu) findPrevEnabled(from int) int {
+// findPriorEnabled finds the prior enabled item.
+func (m *Menu) findPriorEnabled(from int) int {
 	n := len(m.items)
 	if n == 0 {
 		return -1
@@ -1756,7 +1756,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	switch m.KeyCommand(event.Key) {
 	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
-		m.currentIndex = m.findPrevEnabled(m.currentIndex)
+		m.currentIndex = m.findPriorEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.announceCurrentItem()
@@ -1815,7 +1815,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketEnd:
-		m.currentIndex = m.findPrevEnabled(0)
+		m.currentIndex = m.findPriorEnabled(0)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.Update()

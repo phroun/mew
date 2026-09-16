@@ -34,12 +34,12 @@ const (
 // Compute returns the visual layout of a line under the base direction, or nil
 // when visual order equals logical order.
 func Compute(runes []rune, baseRTL bool) *Layout {
-	return khatool.Order(runes, baseRTL, textwidth.RidesPreviousCell)
+	return khatool.Order(runes, baseRTL, textwidth.RidesPrecedingCell)
 }
 
 // ComputeMarked is Compute with the showBidi direction markers.
 func ComputeMarked(runes []rune, baseRTL bool) *Layout {
-	return khatool.OrderMarked(runes, baseRTL, textwidth.RidesPreviousCell)
+	return khatool.OrderMarked(runes, baseRTL, textwidth.RidesPrecedingCell)
 }
 
 // Shape returns the line with each Arabic letter in its contextual

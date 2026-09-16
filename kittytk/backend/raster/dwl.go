@@ -62,11 +62,11 @@ type dwlKey struct {
 // matching textImageCache.
 var dwlCache = struct {
 	sync.Mutex
-	cur, prev map[dwlKey]*image.RGBA
-	epoch     uint64
+	current, previous map[dwlKey]*image.RGBA
+	epoch             uint64
 }{
-	cur:  map[dwlKey]*image.RGBA{},
-	prev: map[dwlKey]*image.RGBA{},
+	current:  map[dwlKey]*image.RGBA{},
+	previous: map[dwlKey]*image.RGBA{},
 }
 
 const dwlCacheMax = 512
@@ -137,22 +137,22 @@ func (b *Backend) dwlGlyph(ch rune, combining string, fg color.RGBA, mode byte, 
 		// Font set changed: shaped output may differ - flush, as the text
 		// image cache does.
 		dwlCache.epoch = e
-		dwlCache.cur = map[dwlKey]*image.RGBA{}
-		dwlCache.prev = map[dwlKey]*image.RGBA{}
+		dwlCache.current = map[dwlKey]*image.RGBA{}
+		dwlCache.previous = map[dwlKey]*image.RGBA{}
 	}
-	img, ok := dwlCache.cur[key]
+	img, ok := dwlCache.current[key]
 	if !ok {
-		if img, ok = dwlCache.prev[key]; ok {
-			dwlCache.cur[key] = img // keep the working set warm
+		if img, ok = dwlCache.previous[key]; ok {
+			dwlCache.current[key] = img // keep the working set warm
 		}
 	}
 	if !ok {
 		img = b.renderDWLGlyph(ch, combining, fg, mode, cellH, boxPx)
-		if len(dwlCache.cur) >= dwlCacheMax {
-			dwlCache.prev = dwlCache.cur
-			dwlCache.cur = map[dwlKey]*image.RGBA{}
+		if len(dwlCache.current) >= dwlCacheMax {
+			dwlCache.previous = dwlCache.current
+			dwlCache.current = map[dwlKey]*image.RGBA{}
 		}
-		dwlCache.cur[key] = img
+		dwlCache.current[key] = img
 	}
 	return img
 }

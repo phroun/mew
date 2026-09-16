@@ -85,7 +85,7 @@ Writers' single deepest anxiety is losing work.
     count, stripped on export.
   - Opt-in editing-pass mode flagging filler words/adverbs.
 - **Chapter/scene navigation**: the outline breadcrumb already understands
-  markdown headings; add next/prev-section motions and scene-separator
+  markdown headings; add next/prior-section motions and scene-separator
   (`***`) awareness, plus a jump-to-heading picker, and a 120k-word
   single-file novel becomes navigable.
 - **Manuscript concerns**:

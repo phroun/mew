@@ -191,11 +191,11 @@ func (b *Backend) pxY(u core.Unit) int {
 // exact for a top-level window whose surface origin is 0; nested snap
 // origins are not composed.
 func (b *Backend) SetSnapOrigin(ux, uy core.Unit) (core.Unit, core.Unit) {
-	prevX, prevY := b.snapOX, b.snapOY
+	previousX, previousY := b.snapOX, b.snapOY
 	b.snapOX, b.snapOY = ux, uy
 	b.snapOPxX = snapAxis(ux, int(b.metrics.UnitsPerCellWidth), b.cellWPx())
 	b.snapOPxY = snapAxis(uy, int(b.metrics.UnitsPerCellHeight), b.cellHPx())
-	return prevX, prevY
+	return previousX, previousY
 }
 
 // pxPerUnit is the unsnapped device pixels covered by one unit, equal on
@@ -937,9 +937,9 @@ type textKey struct {
 // visible string.
 var textImageCache = struct {
 	sync.Mutex
-	epoch     uint64
-	cur, prev map[textKey]textImage
-}{cur: map[textKey]textImage{}, prev: map[textKey]textImage{}}
+	epoch             uint64
+	current, previous map[textKey]textImage
+}{current: map[textKey]textImage{}, previous: map[textKey]textImage{}}
 
 const textImageCacheMax = 512
 
@@ -964,22 +964,22 @@ func (b *Backend) cachedTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 	if e := engine().Epoch(); e != textImageCache.epoch {
 		// Font set changed: shaped output may differ - flush.
 		textImageCache.epoch = e
-		textImageCache.cur = map[textKey]textImage{}
-		textImageCache.prev = map[textKey]textImage{}
+		textImageCache.current = map[textKey]textImage{}
+		textImageCache.previous = map[textKey]textImage{}
 	}
-	ti, ok := textImageCache.cur[key]
+	ti, ok := textImageCache.current[key]
 	if !ok {
-		if ti, ok = textImageCache.prev[key]; ok {
-			textImageCache.cur[key] = ti // keep the working set warm
+		if ti, ok = textImageCache.previous[key]; ok {
+			textImageCache.current[key] = ti // keep the working set warm
 		}
 	}
 	if !ok {
 		ti = b.renderTextImage(f, s, fg, bg, underline, opaque)
-		if len(textImageCache.cur) >= textImageCacheMax {
-			textImageCache.prev = textImageCache.cur
-			textImageCache.cur = map[textKey]textImage{}
+		if len(textImageCache.current) >= textImageCacheMax {
+			textImageCache.previous = textImageCache.current
+			textImageCache.current = map[textKey]textImage{}
 		}
-		textImageCache.cur[key] = ti
+		textImageCache.current[key] = ti
 	}
 	return ti
 }

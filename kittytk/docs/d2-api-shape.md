@@ -278,7 +278,7 @@ with `protocol.Quote`, the new exported string-literal quoter).
 **MDI tab converted (2026-07-05):** `mdipane` and `dockrow`/
 `dockentry` registered; the tab is a script + veneer handlers.
 Spawning documents is `set mdi children={new window …}` (D19 append
-of a whole window subtree); Tile/Cascade/Next/Prev are flag-action
+of a whole window subtree); Tile/Cascade/Next/Prior are flag-action
 properties and restore/minimize/remove are id-directed actions; the
 dock choreography (minimize event → dockentry, entry click →
 restore, restore/remove → destroy entry) runs entirely over

@@ -132,7 +132,7 @@ class App:
         c.on_command("demo.mdi.tile", lambda: mdi.do("tile"))
         c.on_command("demo.mdi.cascade", lambda: mdi.do("cascade"))
         c.on_command("demo.mdi.next", lambda: mdi.do("next"))
-        c.on_command("demo.mdi.prev", lambda: mdi.set("prev"))
+        c.on_command("demo.mdi.prior", lambda: mdi.do("prior"))
 
         entries = {}  # window id -> dock entry handle
 

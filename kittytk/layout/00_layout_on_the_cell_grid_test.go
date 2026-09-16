@@ -149,10 +149,10 @@ func TestCellGridPlacementDoesNotOverlap(t *testing.T) {
 	l.Layout(c, core.UnitRect{Width: 200, Height: 253})
 
 	for i := 1; i < len(kids); i++ {
-		prev, cur := kids[i-1].Bounds(), kids[i].Bounds()
-		if cur.Y < prev.Y+prev.Height {
+		prior, cur := kids[i-1].Bounds(), kids[i].Bounds()
+		if cur.Y < prior.Y+prior.Height {
 			t.Errorf("child %d starts at y=%d, before child %d ends at %d",
-				i, cur.Y, i-1, prev.Y+prev.Height)
+				i, cur.Y, i-1, prior.Y+prior.Height)
 		}
 	}
 }

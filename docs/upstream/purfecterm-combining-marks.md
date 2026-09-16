@@ -53,7 +53,7 @@ entirely absent:
 NKo (U+07EB–U+07F3) and Tibetan (U+0F71–…) are missing too, and were how this
 surfaced in practice.
 
-Callers use the predicate to decide whether a rune rides the previous cell's
+Callers use the predicate to decide whether a rune rides the preceding cell's
 `Combining` string or claims a cell of its own, so a false negative directly
 becomes a column of drift.
 

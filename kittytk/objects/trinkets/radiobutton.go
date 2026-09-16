@@ -236,7 +236,7 @@ func (r *RadioButton) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if r.group != nil {
-			r.group.SelectPrevious()
+			r.group.SelectPrior()
 			return true
 		}
 	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
@@ -427,8 +427,8 @@ func (g *RadioGroup) SelectNext() {
 	}
 }
 
-// SelectPrevious selects the previous button in the group.
-func (g *RadioGroup) SelectPrevious() {
+// SelectPrior selects the prior button in the group.
+func (g *RadioGroup) SelectPrior() {
 	g.mu.RLock()
 	buttons := g.buttons
 	selected := g.selected
@@ -446,12 +446,12 @@ func (g *RadioGroup) SelectPrevious() {
 		}
 	}
 
-	// Find previous enabled button
+	// Find prior enabled button
 	for i := 1; i <= len(buttons); i++ {
-		prevIdx := (currentIdx - i + len(buttons)) % len(buttons)
-		if buttons[prevIdx].IsEnabled() {
-			buttons[prevIdx].SetFocus()
-			g.selectButton(buttons[prevIdx])
+		priorIdx := (currentIdx - i + len(buttons)) % len(buttons)
+		if buttons[priorIdx].IsEnabled() {
+			buttons[priorIdx].SetFocus()
+			g.selectButton(buttons[priorIdx])
 			return
 		}
 	}

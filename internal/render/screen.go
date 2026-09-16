@@ -231,7 +231,7 @@ func (sr *ScreenRenderer) slotWidth(layout *bidi.Layout, runes []rune, entry, co
 	}
 	// Base-aware, so an ill-formed mark measures the SPACING substitute painted
 	// for it rather than the zero cells a well-formed mark takes. Without that
-	// the caret walk would step over it as though it rode the previous cell,
+	// the caret walk would step over it as though it rode the preceding cell,
 	// and the columns this feeds would disagree with the paint.
 	return sr.runeWidthAt(runes, entry, col, w)
 }
@@ -1716,11 +1716,11 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		return layout != nil && li >= 0 && li < len(layout.RTL) && layout.RTL[li]
 	}
 
-	// prevBase is the base character a combining mark at logical index li
+	// precedingBase is the base character a combining mark at logical index li
 	// would attach to: the nearest preceding rune that is not itself a mark
 	// (a cluster may stack several marks on one base). 0 when the mark opens
 	// the line and has nothing to anchor onto. Feeds textwidth.DefectiveMark.
-	prevBase := func(li int) rune { return textwidth.PrevBase(runes, li) }
+	precedingBase := func(li int) rune { return textwidth.PrecedingBase(runes, li) }
 
 	// Arabic cursive shaping lives on the layout (Layout.Glyph): each Arabic
 	// letter is substituted with its contextual presentation form (computed
@@ -2089,7 +2089,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// textwidth.IsControl).
 			runeDisplay = substitutesColor + runeToHexOrCtrl(r) + baseColor
 			runeVisualWidth = substituteWidth(runeToHexOrCtrl(r))
-		} else if base := prevBase(logicalIdx); textwidth.DefectiveMark(base, r) {
+		} else if base := precedingBase(logicalIdx); textwidth.DefectiveMark(base, r) {
 			// An ill-formed combining mark — no base to anchor onto, or a
 			// script-specific mark riding a base of another script. It is
 			// corruption, not text, and it CANNOT be painted as zero-width:
@@ -2272,7 +2272,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		// introducer straight through onto the wire) and defective marks,
 		// which are painted as sized substitutes, not as riders.
 		if r == '\t' || textwidth.IsControl(r) || textwidth.Rune(r) != 0 ||
-			textwidth.DefectiveMark(prevBase(li), r) ||
+			textwidth.DefectiveMark(precedingBase(li), r) ||
 			(layout != nil && layout.Marked && bidi.IsDirectionControl(r)) {
 			break
 		}
@@ -2390,8 +2390,8 @@ func substituteWidth(s string) int { return len([]rune(s)) }
 //
 // This is the single place the decision is made; both the paint and the width
 // model call it, so they cannot drift.
-func defectiveMarkForm(prev, r rune) (string, int) {
-	if textwidth.AnchorMark(prev, r) {
+func defectiveMarkForm(base, r rune) (string, int) {
+	if textwidth.AnchorMark(base, r) {
 		// The circle takes a cell and the mark rides it — at ZERO width for a
 		// non-spacing mark (Mn/Me), but Mc marks are SPACING combining marks
 		// and take a cell of their own, so the pair's width is the circle plus
@@ -3256,7 +3256,7 @@ func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *viewp
 func (sr *ScreenRenderer) runeWidthAt(runes []rune, i, currentColumn int, w *viewport.Viewport) int {
 	r := runes[i]
 	if textwidth.IsMark(r) {
-		base := textwidth.PrevBase(runes, i)
+		base := textwidth.PrecedingBase(runes, i)
 		if textwidth.DefectiveMark(base, r) {
 			_, fw := defectiveMarkForm(base, r)
 			return fw

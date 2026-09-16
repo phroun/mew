@@ -3,7 +3,7 @@
 ## Summary
 
 Ghostty mispositions certain right-to-left combining marks, shifting them one
-cell to the right (onto the previous letter). It also decomposes a precomposed
+cell to the right (onto the preceding letter). It also decomposes a precomposed
 Hebrew presentation form when a combining mark follows it, which re-exposes the
 same misplacement even for text that was pre-composed to avoid it.
 

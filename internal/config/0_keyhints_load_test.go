@@ -9,9 +9,9 @@ import (
 // process actually runs on afterwards.
 func loadHinted(t *testing.T, env KeymapEnvironment, content string) Config {
 	t.Helper()
-	prev := CurrentKeymapEnvironment()
+	previous := CurrentKeymapEnvironment()
 	SetKeymapEnvironment(env)
-	t.Cleanup(func() { SetKeymapEnvironment(prev) })
+	t.Cleanup(func() { SetKeymapEnvironment(previous) })
 	return NewManager().LoadFromString(content)
 }
 

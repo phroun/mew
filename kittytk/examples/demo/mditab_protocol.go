@@ -13,7 +13,7 @@ import (
 
 // The MDI Demo tab, converted: the pane, its background control
 // panel, and the dock are protocol objects; spawning documents is
-// `set mdi children={new window …}`; Tile/Cascade/Next/Prev are
+// `set mdi children={new window …}`; Tile/Cascade/Next/Prior are
 // action properties; and the dock choreography (minimize -> entry,
 // click -> restore) runs entirely over pane/dock events.
 

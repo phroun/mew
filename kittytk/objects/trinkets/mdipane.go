@@ -48,7 +48,7 @@ type MDIPane struct {
 	// cycleOrder is the M-Tab sequence, kept separate from the visual z-order
 	// (windows) so cycling can raise a child to see it without committing the
 	// sequence. Most-recently-committed child is at the end. Committed only on a
-	// genuine child interaction or the idle lock-in - not by parent Next/Prev
+	// genuine child interaction or the idle lock-in - not by parent Next/Prior
 	// buttons or by stepping the run.
 	cycleOrder []*window.Window
 
@@ -432,7 +432,7 @@ func (m *MDIPane) SetActiveWindow(win *window.Window) {
 
 // mdiCycleCommitTimeout is the idle gap after which an in-progress MDI cycle
 // run locks its landing spot into the sequence. MDI cycling can be driven by
-// the parent's own Next/Prev buttons (no modifier to release), so the timer is
+// the parent's own Next/Prior buttons (no modifier to release), so the timer is
 // the commit mechanism here rather than modifier release.
 const mdiCycleCommitTimeout = 2 * time.Second
 
@@ -451,7 +451,7 @@ func (m *MDIPane) bringToCycleFront(win *window.Window) {
 // endCycleSession ends an in-progress cycle run, committing the child it landed
 // on to the front of the sequence. A no-op when no run is in progress. Fired by
 // a genuine child interaction (a key the child handles, or a click) or the idle
-// lock-in - never by stepping the run or the parent's Next/Prev buttons.
+// lock-in - never by stepping the run or the parent's Next/Prior buttons.
 func (m *MDIPane) endCycleSession() {
 	m.mu.Lock()
 	if !m.cycling {
@@ -616,7 +616,7 @@ func (m *MDIPane) cycle(forward bool) {
 
 	// Idle lock-in: a step long after the previous one is a fresh gesture, so
 	// lock the prior run's landing spot into the sequence first. MDI has no
-	// modifier-release to key off (the parent's Next/Prev buttons carry none),
+	// modifier-release to key off (the parent's Next/Prior buttons carry none),
 	// so the timer is the commit mechanism.
 	if wasCycling && gap > mdiCycleCommitTimeout {
 		m.endCycleSession()

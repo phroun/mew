@@ -28,7 +28,7 @@ func TestShowYehCell(t *testing.T) {
 	pt := int(math.Round(float64(boxH)/ppu)) * 3 / 4
 	f := &core.Font{Name: "ui-term", Size: pt}
 
-	// yeh cell: visual left = ك (logical next), visual right = ل (logical prev)
+	// yeh cell: visual left = ك (logically following), visual right = ل (logically preceding)
 	actx := arabicRenderContext('ي', 0xFEF4, 'ك', 'ل', true, true, nil)
 	t.Logf("window=%q  seg=[%d,%d) rt=[%d,%d) lt=[%d,%d)", actx.s, actx.seg0, actx.seg1, actx.rt0, actx.rt1, actx.lt0, actx.lt1)
 

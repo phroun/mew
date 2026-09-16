@@ -2001,7 +2001,7 @@ func (e *Editor) termGrid(id string, cols, rows int) {
 		e.termGridWant = make(map[string][4]int)
 	}
 	want := [4]int{cols, rows, pxW, pxH}
-	if prev, ok := e.termGridWant[id]; ok && prev == want {
+	if previous, ok := e.termGridWant[id]; ok && previous == want {
 		e.termMu.Unlock()
 		return
 	}

@@ -366,7 +366,7 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketItemUp:
-		// Move to same column in previous row
+		// Move to same column in prior row
 		if d.selectedIndex >= entriesPerRow {
 			d.selectedIndex -= entriesPerRow
 			d.Update()
@@ -383,7 +383,7 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdFocusPrior:
-		// Move to previous item, or off the start of the dock (backward).
+		// Move to prior item, or off the start of the dock (backward).
 		if d.selectedIndex > 0 {
 			d.selectedIndex--
 			d.Update()

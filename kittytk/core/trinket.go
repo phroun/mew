@@ -213,8 +213,8 @@ type FocusableTrinket interface {
 	NextFocusTrinket() Trinket
 	SetNextFocusTrinket(w Trinket)
 
-	// PrevFocusTrinket returns the previous trinket in the focus chain.
-	PrevFocusTrinket() Trinket
+	// PriorFocusTrinket returns the prior trinket in the focus chain.
+	PriorFocusTrinket() Trinket
 	SetPrevFocusTrinket(w Trinket)
 }
 

@@ -204,7 +204,7 @@ func titleFaces(font *core.Font, scale float64) (text, mono *core.Font) {
 // the slot. Both halves of that matter and each was gotten wrong once:
 // per-glyph centering by proportional widths let narrow ink sit
 // differently against its brackets than wide ink (one run advances each
-// character exactly from the edge the previous one ended on), and the
+// character exactly from the edge the prior one ended on), and the
 // proportional TITLE face lost the retro monospace the controls have at
 // 1.0, where DrawCell renders the cell font and its pitch IS the cell.
 func paintThreeCellButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, icon rune, st style.CellStyle) {

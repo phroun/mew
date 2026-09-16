@@ -762,8 +762,8 @@ trinket.ClearFocus()
 
 // Focus manager
 fm := window.FocusManager()
-fm.NextTrinket()      // Tab forward
-fm.PreviousTrinket()  // Tab backward
+fm.FocusNext()        // Tab forward
+fm.FocusPrior()       // Tab backward
 fm.SetWrapAround(true)
 
 // Callback

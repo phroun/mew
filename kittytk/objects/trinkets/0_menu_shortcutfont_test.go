@@ -17,8 +17,8 @@ import (
 // Either way it returns a copy, never mutating the shared base, and carries
 // the base's style through.
 func TestShortcutFont(t *testing.T) {
-	prev := core.MacNativeShortcuts()
-	defer core.SetMacNativeShortcuts(prev)
+	previous := core.MacNativeShortcuts()
+	defer core.SetMacNativeShortcuts(previous)
 
 	base := &core.Font{Name: "ui-text", Size: 12, Style: core.FontStyleBold}
 	want := int(float64(base.Size) * core.ShortcutScale())
@@ -92,12 +92,12 @@ func TestShortcutFont(t *testing.T) {
 // menu's at the same point size. At the defaults that is 0.8, or 0.64 in
 // native mode -- a 12pt body giving a 9pt shortcut, or a 7pt one.
 func TestShortcutScalesCompound(t *testing.T) {
-	prev, prevNative := core.MacNativeShortcuts(), core.ShortcutNativeScale()
-	prevScale := core.ShortcutScale()
+	previous, previousNative := core.MacNativeShortcuts(), core.ShortcutNativeScale()
+	previousScale := core.ShortcutScale()
 	t.Cleanup(func() {
-		core.SetMacNativeShortcuts(prev)
-		core.SetShortcutScale(prevScale)
-		core.SetShortcutNativeScale(prevNative)
+		core.SetMacNativeShortcuts(previous)
+		core.SetShortcutScale(previousScale)
+		core.SetShortcutNativeScale(previousNative)
 	})
 
 	base := &core.Font{Name: "ui-text", Size: 12}

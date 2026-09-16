@@ -71,13 +71,13 @@ type isearchResult struct {
 
 // isearchState is the live state of the open incremental-search prompt.
 type isearchState struct {
-	promptID  string
-	targetID  string
-	origin    viewport.Position  // caret when the search began
-	prevFind  viewport.FindState // target's find state before the search
-	stack     []isearchFrame     // positions to pop back to on backspace
-	lastLen   int                // rune length of the pattern last seen
-	backwards bool               // current direction (the find "b" option)
+	promptID     string
+	targetID     string
+	origin       viewport.Position  // caret when the search began
+	previousFind viewport.FindState // target's find state before the search
+	stack        []isearchFrame     // positions to pop back to on backspace
+	lastLen      int                // rune length of the pattern last seen
+	backwards    bool               // current direction (the find "b" option)
 
 	// Background scanning. seq is the newest pass's generation; stop belongs to
 	// that pass and is raised to abandon it (by a superseding keystroke, or by
@@ -146,9 +146,9 @@ func (e *Editor) startIncrementalSearch(dir int) bool {
 		return false
 	}
 	st := &isearchState{
-		targetID: tw.ID,
-		origin:   tw.CursorPos(),
-		prevFind: tw.Find,
+		targetID:     tw.ID,
+		origin:       tw.CursorPos(),
+		previousFind: tw.Find,
 	}
 	switch {
 	case dir < 0:
@@ -194,7 +194,7 @@ func (e *Editor) startIncrementalSearch(dir int) bool {
 		} else if s != nil && strings.TrimSpace(text) == "" {
 			// Accepted empty: nothing was searched — restore the previous
 			// find state; the caret never moved.
-			target.Find = s.prevFind
+			target.Find = s.previousFind
 		}
 		// Accepted with a pattern: the caret already sits on the match and the
 		// find state already carries the term and direction for find_next.
@@ -316,7 +316,7 @@ func (e *Editor) isearchKeystroke() bool {
 			st.isearchStop()
 			e.clearTaggedTransient(isearchToastTag)
 			clearMatchHighlight(tw)
-			tw.Find = st.prevFind
+			tw.Find = st.previousFind
 			return true
 		}
 		e.isearchApply(st, tw, pattern, tw.CursorPos())

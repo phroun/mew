@@ -1588,7 +1588,7 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 	// quasi-active torn window it named must go fully inactive, since the
 	// desktop now has a real active window rather than merely holding
 	// focus on the torn window's behalf.
-	prevTorn := d.tornFocusOwner
+	previousTorn := d.tornFocusOwner
 	if w.IsDetached() {
 		d.tornFocusOwner = w
 	} else {
@@ -1596,8 +1596,8 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 	}
 	d.mu.Unlock()
 
-	if prevTorn != nil && prevTorn != w && !w.IsDetached() {
-		prevTorn.SetActive(false)
+	if previousTorn != nil && previousTorn != w && !w.IsDetached() {
+		previousTorn.SetActive(false)
 	}
 
 	d.updateMenuBarContent()

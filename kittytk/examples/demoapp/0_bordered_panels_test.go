@@ -64,13 +64,13 @@ func TestATabsColumnDoesNotOverlapItself(t *testing.T) {
 			}
 			kids := p.Children()
 			for i := 1; i < len(kids); i++ {
-				prev, cur := kids[i-1].Bounds(), kids[i].Bounds()
-				if prev.Height <= 0 || cur.Height <= 0 {
+				prior, cur := kids[i-1].Bounds(), kids[i].Bounds()
+				if prior.Height <= 0 || cur.Height <= 0 {
 					continue
 				}
-				if cur.Y < prev.Y+prev.Height {
+				if cur.Y < prior.Y+prior.Height {
 					t.Errorf("%s: a %T at %+v starts before the %T above it ends at %d",
-						tab, kids[i], cur, kids[i-1], prev.Y+prev.Height)
+						tab, kids[i], cur, kids[i-1], prior.Y+prior.Height)
 				}
 			}
 		}

@@ -490,7 +490,7 @@ func TestNavLeftRightRTL(t *testing.T) {
 	}
 }
 
-// nav_down / nav_up move to the column-nearest link on the next / previous
+// nav_down / nav_up move to the column-nearest link on the next / prior
 // link line, and page (still succeeding) when none remains on screen.
 func TestNavVertical(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,

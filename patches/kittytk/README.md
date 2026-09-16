@@ -139,7 +139,7 @@ headline areas:
 
 1. **Cursive Arabic in the PurfecTerm gfx renderer** — the centerpiece. Cells
    holding Arabic (base letters or the presentation forms bidi-aware apps
-   emit) are joined for real: each cell shapes a window of prev + tatweels +
+   emit) are joined for real: each cell shapes a window of preceding + tatweels +
    letter + tatweels + next as ONE run so the font's GSUB produces true
    contextual forms, then keeps an exactly-cell-wide slice centred on the
    letter whose cut ends land mid-stroke, so adjacent cells meet at their

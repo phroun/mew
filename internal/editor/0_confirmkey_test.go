@@ -87,7 +87,7 @@ func TestConfirmArrowUpEnterChoosesOption(t *testing.T) {
 // blank input line above it — the default; a newline landing mid-list reads
 // the option line above the caret.
 func TestConfirmInsertedNewlineDefaultAndOption(t *testing.T) {
-	// End-of-buffer newline: previous line is the blank input line -> default.
+	// End-of-buffer newline: prior line is the blank input line -> default.
 	e, _ := newTestEditor(t, "")
 	e.KeyProcessor.MapKey("F35", "insert '\\n'")
 	res := openConfirm(e, true)
@@ -96,7 +96,7 @@ func TestConfirmInsertedNewlineDefaultAndOption(t *testing.T) {
 		t.Fatalf("end newline: result = %+v, want the default (yes)", res)
 	}
 
-	// Mid-list newline after arrowing up: previous line is the chosen option.
+	// Mid-list newline after arrowing up: prior line is the chosen option.
 	e2, _ := newTestEditor(t, "")
 	e2.KeyProcessor.MapKey("F35", "insert '\\n'")
 	res2 := openConfirm(e2, false) // "Y\nN\n": two ups land at end of "Y"

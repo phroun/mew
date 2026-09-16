@@ -6,9 +6,9 @@ import "testing"
 // native glyphs ⌃⌥⇧⌘ in canonical order, uppercases a single letter key, and
 // leaves named keys alone.
 func TestDisplayKeyMacNative(t *testing.T) {
-	prev := MacNativeShortcuts()
+	previous := MacNativeShortcuts()
 	SetMacNativeShortcuts(true)
-	defer SetMacNativeShortcuts(prev)
+	defer SetMacNativeShortcuts(previous)
 
 	cases := []struct{ in, want string }{
 		{"^N", "⌃N"},
@@ -50,9 +50,9 @@ func TestDisplayKeyMacNative(t *testing.T) {
 // With native rendering off, DisplayKey returns the compact notation
 // unchanged.
 func TestDisplayKeyPlain(t *testing.T) {
-	prev := MacNativeShortcuts()
+	previous := MacNativeShortcuts()
 	SetMacNativeShortcuts(false)
-	defer SetMacNativeShortcuts(prev)
+	defer SetMacNativeShortcuts(previous)
 
 	for _, key := range []string{"^N", "M-a", "m-a", "^S-S", "Delete", ""} {
 		if got := DisplayKey(key); got != key {
@@ -64,9 +64,9 @@ func TestDisplayKeyPlain(t *testing.T) {
 // A Shortcut is a key string like any other, and its method is the same
 // answer by another name.
 func TestShortcutDisplayStringDelegates(t *testing.T) {
-	prev := MacNativeShortcuts()
+	previous := MacNativeShortcuts()
 	SetMacNativeShortcuts(true)
-	defer SetMacNativeShortcuts(prev)
+	defer SetMacNativeShortcuts(previous)
 
 	for _, key := range []string{"^N", "M-A", "s-k", "Delete", ""} {
 		if got, want := Shortcut(key).DisplayString(), DisplayKey(key); got != want {

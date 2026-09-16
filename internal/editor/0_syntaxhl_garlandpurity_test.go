@@ -117,7 +117,7 @@ func TestSynCacheEditBelowKeepsCache(t *testing.T) {
 	}
 }
 
-// A backspace join at line start damages the previous line: the watermark
+// A backspace join at line start damages the prior line: the watermark
 // must reach it (DeleteBackward reports line-1).
 func TestWatermarkBackwardJoin(t *testing.T) {
 	e, w := newTestEditor(t, "// note\nint b;\n", "syntax=cpp")

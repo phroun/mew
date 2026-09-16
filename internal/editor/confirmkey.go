@@ -81,12 +81,12 @@ func (e *Editor) confirmKeyStroke() bool {
 			// parser resolves to the default; on an arrowed-to option the join
 			// is that option's text.
 			caretLine := w.CursorPos().Line
-			prev := ""
+			prior := ""
 			if caretLine > 0 {
-				prev = strings.TrimRight(w.Buffer.GetLine(caretLine-1), "\n\r")
+				prior = strings.TrimRight(w.Buffer.GetLine(caretLine-1), "\n\r")
 			}
 			cur := strings.TrimRight(w.Buffer.GetLine(caretLine), "\n\r")
-			e.settleConfirmPrompt(w, true, strings.TrimSpace(prev+cur))
+			e.settleConfirmPrompt(w, true, strings.TrimSpace(prior+cur))
 			return true
 		}
 		// The key itself is the response.

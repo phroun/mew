@@ -50,8 +50,8 @@ func TestSnapOriginRestores(t *testing.T) {
 	}
 	b.SetFontSize(13)
 	before := b.pxX(37)
-	prevX, prevY := b.SetSnapOrigin(19, 5)
-	b.SetSnapOrigin(prevX, prevY)
+	previousX, previousY := b.SetSnapOrigin(19, 5)
+	b.SetSnapOrigin(previousX, previousY)
 	if got := b.pxX(37); got != before {
 		t.Errorf("pxX(37) = %d after set+restore, want %d", got, before)
 	}

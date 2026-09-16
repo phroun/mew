@@ -286,7 +286,7 @@ var StandardIcons = struct {
 	Pause string
 	Stop  string
 	Next  string
-	Prev  string
+	Prior string
 
 	// Misc
 	User   string
@@ -348,7 +348,7 @@ var StandardIcons = struct {
 	Pause: "media.pause",
 	Stop:  "media.stop",
 	Next:  "media.next",
-	Prev:  "media.prev",
+	Prior: "media.prior",
 
 	User:   "misc.user",
 	Lock:   "misc.lock",

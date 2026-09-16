@@ -32,7 +32,7 @@ plus a target. Where the spans come from differs by surface:
   first two cover help/menus/markdown.
 
 Suggested interface shape: a per-window `linkAt(line, rune)`,
-`nextLink(from)`, `prevLink(from)`, `linksOnLine(line)` — with the provider
+`nextLink(from)`, `priorLink(from)`, `linksOnLine(line)` — with the provider
 chosen by window kind. Memoize per ChangeSeq like the outline memo.
 
 ## 2. Targets: PawScript as the universal action
@@ -61,7 +61,7 @@ directories": opening a file must never be able to execute commands.
 Add a per-window nav mode: **caret** (today's behavior) vs **bar**.
 
 - **Caret mode** (editable and read-only main buffers): links are inline.
-  `link_follow` activates the link under the caret; `link_next`/`link_prev`
+  `link_follow` activates the link under the caret; `link_next`/`link_prior`
   jump between spans. In *read-only* buffers, Enter can BE `link_follow`
   (nothing to insert), which makes browsing feel like a pager/browser.
 - **Bar mode** (work buffers): no caret. The bar is the focused *item*;
@@ -82,7 +82,7 @@ help/menu windows can theme independently.
 
 - Work buffers must become **focusable** (today only prompt windows take
   focus away from main buffers). The planned `focus_toggle` command plus
-  FocusNext/Prev covers cycling; the modebar should indicate the focused
+  FocusNext/Prior covers cycling; the modebar should indicate the focused
   window (it already knows classes).
 - **Key routing in bar mode:** a focused bar-mode window should interpret
   keys as navigation, not insertion. Cleanest fit with the existing config
@@ -131,7 +131,7 @@ Nothing today enforces read-only. Needed regardless of links:
    options display as the first real bar-mode menu.
 4. **Help system** on the same substrate (topics, cross-links, back stack).
 5. **Syntax-derived links** in markdown/dokuwiki buffers (caret mode,
-   link_follow/next/prev).
+   link_follow/next/prior).
 6. Later: decoration-anchored links.
 
 The menu system (3) is the smallest end-to-end proof: one window class, one

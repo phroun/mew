@@ -116,5 +116,5 @@ func CellRides(runes []rune, i int) bool {
 	if CellWidth(r) != 0 {
 		return false
 	}
-	return !khatool.DefectiveMark(khatool.PrevBase(runes, i), r)
+	return !khatool.DefectiveMark(khatool.PrecedingBase(runes, i), r)
 }

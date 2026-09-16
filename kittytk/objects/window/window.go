@@ -3349,16 +3349,16 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 		return true
 
 	case core.CmdFocusPrior:
-		// Move to previous title element, or loop to content's last trinket
-		prev := w.prevTitleFocus(titleFocus)
-		if prev == titleFocus {
+		// Move to prior title element, or loop to content's last trinket
+		prior := w.priorTitleFocus(titleFocus)
+		if prior == titleFocus {
 			// At first title element, loop to content's last trinket
 			w.SetTitleFocus(TitleFocusNone)
 			if fm := w.FocusManager(); fm != nil {
 				fm.FocusLast()
 			}
 		} else {
-			w.SetTitleFocus(prev)
+			w.SetTitleFocus(prior)
 		}
 		return true
 
@@ -3779,8 +3779,8 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 	return TitleFocusNone
 }
 
-// prevTitleFocus returns the previous title bar element before the given one.
-func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
+// priorTitleFocus returns the prior title bar element before the given one.
+func (w *Window) priorTitleFocus(current TitleFocus) TitleFocus {
 	w.mu.RLock()
 	flags := w.flags
 	w.mu.RUnlock()
@@ -4034,8 +4034,8 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 					break // Not at first trinket
 				}
 			}
-			// Not at first trinket, move to previous
-			return fm.FocusPrevious()
+			// Not at first trinket, move to prior
+			return fm.FocusPrior()
 		}
 
 		// Regular Tab - check if at last trinket
@@ -4269,11 +4269,11 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// an out-of-bounds move so its hover doesn't stick - chromeMouseTarget
 	// only forwards while the pointer is actually over the chrome.
 	w.mu.Lock()
-	prevChrome := w.lastChromeHover
+	previousChrome := w.lastChromeHover
 	w.lastChromeHover = chromeTarget
 	w.mu.Unlock()
-	if prevChrome != nil && prevChrome != chromeTarget {
-		if h, ok := prevChrome.(interface {
+	if previousChrome != nil && previousChrome != chromeTarget {
+		if h, ok := previousChrome.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
 			h.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
