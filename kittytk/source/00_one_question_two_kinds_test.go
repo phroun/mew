@@ -262,7 +262,7 @@ func TestASourceWithNoConnectionRefusesToOpen(t *testing.T) {
 	}
 }
 
-func mustPSL(t *testing.T, text string) *serval.PSLSource {
+func mustPSL(t *testing.T, text string) *serval.ListSource {
 	t.Helper()
 	src, err := serval.ParsePSLSource(text, serval.Whole)
 	if err != nil {
