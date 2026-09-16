@@ -308,7 +308,11 @@ func (c *Conn) open(stmt *wire.Statement, keys map[string]uint64,
 	fn := q.source.fill
 	q.source.mu.Unlock()
 
-	f := &Fill{Scope: scope, Query: q, Spec: spec}
+	extend, err := wire.ParseExtend(args)
+	if err != nil {
+		return fmt.Errorf("query: %w", err)
+	}
+	f := &Fill{Scope: scope, Query: q, Spec: spec, extend: extend}
 	*pending = append(*pending, func() { fn(f) })
 	return nil
 }
@@ -365,6 +369,17 @@ type Fill struct {
 	waiting *wire.Result // the last record, held so the end can ride on it
 	total   serval.RecordCount
 	closed  bool
+
+	// extend is the display saying it will hold the places it is sent, so a
+	// result may leave out what its place already carried, and placed is what
+	// each of them did carry.
+	//
+	// Nothing an author writes changes: they place what they have and send the
+	// record when they have it, and the leaving-out happens here. Which is the
+	// only place it can happen safely -- an author eliding by hand would have to
+	// know what the far end asked for.
+	extend bool
+	placed map[string]serval.Record
 }
 
 // Record adds one whole record to the answer: its key, and every field it has.
@@ -489,6 +504,15 @@ func (f *Fill) placing(place *wire.Result) error {
 	if place.ID != nil {
 		place.Ordered = f.ordered && f.records == 0
 		f.records++
+		if f.extend {
+			// What this place carried, kept until its result arrives to lean on
+			// it. Held only under extend: in replace mode nothing leans on
+			// anything and there is nothing to remember.
+			if f.placed == nil {
+				f.placed = map[string]serval.Record{}
+			}
+			f.placed[serval.Key(wire.AsData(place.ID))] = place.Fields
+		}
 	}
 	f.mu.Unlock()
 
@@ -508,8 +532,9 @@ func (f *Fill) placing(place *wire.Result) error {
 // does the end. Which form went out is not something the far end reads
 // differently.
 func (f *Fill) record(what string, id any, has serval.Totals, fields []*serval.Field) error {
+	key := wire.AsWire(serval.Val(id))
 	rec := &wire.Result{
-		ID:     wire.AsWire(serval.Val(id)),
+		ID:     key,
 		Fields: append(serval.Record(nil), fields...),
 		Whole:  what == wire.RecordArg,
 		Has:    has,
@@ -518,6 +543,19 @@ func (f *Fill) record(what string, id any, has serval.Totals, fields []*serval.F
 	if f.closed {
 		f.mu.Unlock()
 		return fmt.Errorf("this scope has already been answered")
+	}
+	if f.extend {
+		// What the place already carried comes off here, and the counts go on:
+		// a result under extend states how much of the record there is, which is
+		// the one thing only a result can say, and leaves the rest to what the
+		// far end is already holding.
+		if was, ok := f.placed[serval.Key(wire.AsData(key))]; ok {
+			if rec.Whole {
+				rec.Has = serval.Tally(rec.Fields)
+				rec.Whole = false
+			}
+			rec.Fields = lacking(rec.Fields, was)
+		}
 	}
 	held := f.waiting
 	rec.Ordered = f.ordered && f.records == 0
@@ -626,6 +664,25 @@ func (f *Fill) result(extra ...*wire.Arg) string {
 		Verb: wire.ResultVerb,
 		Args: append(args, extra...),
 	})
+}
+
+// lacking is a record without the members another already carried.
+//
+// By NAME, and not by name and value. Whoever asked merges what arrives into
+// what it holds and the first answer about a field stands, so a source that
+// contradicted itself inside one answer would be believed at its first word
+// either way -- there is nothing to preserve by sending the second.
+func lacking(fields, already serval.Record) serval.Record {
+	if len(already) == 0 {
+		return fields
+	}
+	out := make(serval.Record, 0, len(fields))
+	for _, f := range fields {
+		if !already.Has(f.Name) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // place builds one place statement, addressed to the query the same way a

@@ -172,6 +172,38 @@ class ServingAQueryTest(unittest.TestCase):
                          'result 1 id=42 record={ name "src/window.go"; size 2048 }'
                          ' complete exhausted total=2 exact')
 
+    def test_under_extend_a_result_carries_only_what_its_place_did_not(self):
+        # The display saying it will HOLD the places it is sent, so a result may
+        # leave out what its place already carried -- and in the limit carry no
+        # fields at all, just the counts, which is the claim only a result can
+        # make. Nothing an author writes changes either way.
+        def fill(f):
+            f.place(17, name="src/parser.go")
+            f.record(17, name="src/parser.go", size=1024)
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" count=10 extend')
+        self.assertEqual("\n".join(c.since(1)),
+                         'place 1 id=17 fields={ name "src/parser.go" }\n'
+                         'result 1 id=17 fields={ size 1024 } map=2'
+                         ' complete exhausted')
+
+    def test_without_extend_every_result_carries_the_lot(self):
+        # Saying nothing is replace, and the places are then pure decoration a
+        # reader may drop on the floor.
+        def fill(f):
+            f.place(17, name="src/parser.go")
+            f.record(17, name="src/parser.go", size=1024)
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" count=10')
+        self.assertEqual("\n".join(c.since(1)),
+                         'place 1 id=17 fields={ name "src/parser.go" }\n'
+                         'result 1 id=17 record={ name "src/parser.go"; size 1024 }'
+                         ' complete exhausted')
+
     def test_a_subset_counts_towards_what_was_sent(self):
         sent = []
 

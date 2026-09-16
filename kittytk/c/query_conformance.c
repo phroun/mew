@@ -45,7 +45,7 @@ static int answer(const char *kind, const char *text, char *out, size_t cap) {
         if (ok) { enc_qspec(&b, &spec); qspec_release(&spec); }
     } else {
         kt_qscope scope;
-        ok = parse_qscope(st->args, st->n, &scope, err);
+        ok = parse_qscope(st->args, st->n, &scope, NULL, err);
         if (ok) { enc_qscope(&b, &scope); qscope_release(&scope); }
     }
     stmt_free(st);

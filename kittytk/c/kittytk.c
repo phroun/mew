@@ -1518,7 +1518,8 @@ static int ident_value(const char *what, const kt_arg *a, kt_value *out, char *e
  * of it in one statement -- and they are read apart because they are different
  * things: the spec is what the query is, and the scope is what this one
  * question wanted. */
-static int parse_qscope(const kt_arg *args, int n, kt_qscope *out, char *err) {
+static int parse_qscope(const kt_arg *args, int n, kt_qscope *out, int *extend,
+                        char *err) {
     memset(out, 0, sizeof *out);
     for (int i = 0; i < n; i++) {
         const kt_arg *a = &args[i];
@@ -1559,6 +1560,12 @@ static int parse_qscope(const kt_arg *args, int n, kt_qscope *out, char *err) {
                 goto bad;
             }
             out->reversed = (a->flag == KT_FLAG_TRUE);
+        } else if (!strcmp(nm, KT_EXTEND_ARG)) {
+            if (a->has_value) {
+                qfail(err, "extend: it takes no value");
+                goto bad;
+            }
+            if (extend) *extend = (a->flag == KT_FLAG_TRUE);
         }
     }
     return 1;
@@ -1996,7 +2003,72 @@ struct kt_fill {
     char *held;   /* the last record, kept so the terminator can ride on it */
     int total;    /* how many the sequence has, where the source said */
     int exact;    /* and whether that figure is the whole story */
+
+    /* The display said it will HOLD the places it is sent, so a result may
+       leave out what its place already carried -- and placed is what each of
+       them did carry, kept until its result arrives to lean on it.
+
+       Nothing an author writes changes: they place what they have and send the
+       record when they have it, and the leaving-out happens here. */
+    int extend;
+    struct kt_placed { char *key; char *names; struct kt_placed *next; } *placed;
 };
+
+/* A field name read as an ordered member's index, or -1.
+
+   Its position written out -- `0`, `1`, `.2` -- and only in that spelling: no
+   sign, and no leading zeros but `0` itself. So `007` is a NAME that happens to
+   be digits, which is the same distinction everything else here makes. */
+static long member_index(const char *name) {
+    if (!name) return -1;
+    if (*name == '.') name++;
+    if (!*name) return -1;
+    if (name[0] == '0' && name[1]) return -1;
+    long v = 0;
+    for (const char *p = name; *p; p++) {
+        if (*p < '0' || *p > '9') return -1;
+        v = v * 10 + (*p - '0');
+    }
+    return v;
+}
+
+/* One identity as a key for the places an answer is holding, and the names that
+   place carried, run together. How a value is WRITTEN, which is not how
+   identity is decided anywhere that matters -- but both the place and the
+   result come from the same author passing the same value, and this never
+   leaves the answer it was made for. */
+static char *placed_key(const kt_value *id) {
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    enc_value(&b, id);
+    char *k = buf_dup(&b);
+    free(b.p);
+    return k;
+}
+
+/* Whether a place under this identity already carried a field of this name.
+   By NAME, and not by name and value: whoever asked merges what arrives into
+   what it holds and the first answer about a field stands, so a source that
+   contradicted itself inside one answer would be believed at its first word
+   either way. Called under f->mu. */
+static const char *placed_names(kt_fill *f, const char *key) {
+    for (struct kt_placed *p = f->placed; p; p = p->next)
+        if (!strcmp(p->key, key)) return p->names;
+    return NULL;
+}
+
+static int placed_has(const char *names, const char *name) {
+    if (!names || !name) return 0;
+    size_t n = strlen(name);
+    for (const char *p = names; *p; ) {
+        const char *e = strchr(p, 0x1f);
+        size_t len = e ? (size_t)(e - p) : strlen(p);
+        if (len == n && !strncmp(p, name, n)) return 1;
+        if (!e) break;
+        p = e + 1;
+    }
+    return 0;
+}
 
 static void enqueue_inbound(kt_conn *c, const char *text) {
     evnode *n = malloc(sizeof *n);
@@ -2064,10 +2136,11 @@ const kt_qspec *kt_query_spec(const kt_query *q) { return q ? &q->spec : NULL; }
 
 /* --- the sink --- */
 
-static kt_fill *fill_new(kt_conn *c, uint64_t query) {
+static kt_fill *fill_new(kt_conn *c, uint64_t query, int extend) {
     kt_fill *f = calloc(1, sizeof *f);
     f->c = c;
     f->query = query;
+    f->extend = extend;
     kt_mutex_init(&f->mu);
     return f;
 }
@@ -2125,26 +2198,47 @@ static int fill_write(kt_fill *f, const char *what, kt_value id,
     memset(&b, 0, sizeof b);
     fill_head(f, &b);
 
+    const char *skip = NULL;
+    char *key = NULL;
     kt_mutex_lock(&f->mu);
     /* The declaration rides on the first record, which is where it is worth
        anything. */
     if (f->ordered && f->records == 0) buf_puts(&b, " ordered");
+    if (f->extend) {
+        key = placed_key(&id);
+        skip = placed_names(f, key);
+    }
     kt_mutex_unlock(&f->mu);
+    if (skip && what == KT_RECORD_ARG) {
+        /* A result under extend states how much of the record there is, which
+           is the one thing only a result can say, and leaves the rest to what
+           the far end is already holding. */
+        what = KT_FIELDS_ARG;
+        named = ordered = 0;
+        for (int i = 0; i < n; i++) {
+            if (fields[i].kind == KT_V_NONE) continue;
+            if (member_index(fields[i].name) < 0) named++; else ordered++;
+        }
+    }
+    free(key);
 
     buf_puts(&b, " " KT_ID_ARG "=");
     enc_value(&b, &id);
     buf_put(&b, ' ');
     buf_puts(&b, what);
     buf_puts(&b, "={");
+    int wrote = 0;
     for (int i = 0; i < n; i++) {
-        buf_puts(&b, i ? "; " : " ");
+        if (placed_has(skip, fields[i].name)) continue;
+        buf_puts(&b, wrote ? "; " : " ");
+        wrote++;
         buf_puts(&b, fields[i].name ? fields[i].name : "");
         if (fields[i].kind != KT_V_NONE) {
             buf_put(&b, ' ');
             enc_value(&b, &fields[i]);
         }
     }
-    buf_puts(&b, n ? " }" : "}");
+    buf_puts(&b, wrote ? " }" : "}");
     /* A count of nothing is not written: most records have no members standing
        by position, and saying so every time would be noise. */
     if (what == KT_FIELDS_ARG) {
@@ -2219,7 +2313,24 @@ static int place_write(kt_fill *f, const kt_value *id, const kt_value *fields,
     char *held = f->held;
     f->held = NULL;
     if (held) { fill_push(f, held); free(held); }
-    if (id) f->records++;
+    if (id) {
+        f->records++;
+        if (f->extend) {
+            /* What this place carried, kept until its result leans on it. */
+            kt_buf names;
+            memset(&names, 0, sizeof names);
+            for (int i = 0; i < n; i++) {
+                if (i) buf_put(&names, 0x1f);
+                buf_puts(&names, fields[i].name ? fields[i].name : "");
+            }
+            struct kt_placed *p = calloc(1, sizeof *p);
+            p->key = placed_key(id);
+            p->names = buf_dup(&names);
+            free(names.p);
+            p->next = f->placed;
+            f->placed = p;
+        }
+    }
     fill_push(f, stmt);
     free(stmt);
     if (f->buf.len < KT_FLUSH_BYTES) {
@@ -2325,6 +2436,11 @@ static int fill_finish(kt_fill *f, const char *tail) {
     kt_mutex_unlock(&f->mu);
     int rc = fill_send(f, src);
     free(f->buf.p);
+    for (struct kt_placed *p = f->placed; p; ) {
+        struct kt_placed *next = p->next;
+        free(p->key); free(p->names); free(p);
+        p = next;
+    }
     free(f);
     return rc;
 }
@@ -2424,8 +2540,9 @@ static int batch_scope(kt_conn *c, kt_batch *b, kt_query *q,
     memset(&d, 0, sizeof d);
     d.kind = 0;
     d.q = q;
-    if (!parse_qscope(args, n, &d.req, b->err)) return 0;
-    d.sink = fill_new(c, q->id);
+    int extend = 0;
+    if (!parse_qscope(args, n, &d.req, &extend, b->err)) return 0;
+    d.sink = fill_new(c, q->id, extend);
     batch_defer(b, d);
     return 1;
 }

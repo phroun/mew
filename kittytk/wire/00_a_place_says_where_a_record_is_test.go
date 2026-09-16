@@ -168,3 +168,44 @@ func TestATotalRidesEitherCompletion(t *testing.T) {
 		t.Errorf("the order's completion wrote %s", got)
 	}
 }
+
+// --- extend ---------------------------------------------------------------
+
+// The display saying it will HOLD the places it is sent, so a result may leave
+// out what its place already carried.
+//
+// It is the ASKER's to say, for the one reason that matters: a reader that
+// dropped the places would then silently lose fields, so only the end doing the
+// dropping can promise not to.
+func TestExtendIsReadOffTheQueryAndDefaultsToReplace(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{`new query source="files" count=30 extend`, true},
+		{`new query source="files" count=30`, false},
+	} {
+		script, err := Parse(c.text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := ParseExtend(script.Statements[0].Args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("%s read as extend=%v", c.text, got)
+		}
+	}
+}
+
+// It is a declaration, not a setting with a value under it.
+func TestExtendTakesNoValue(t *testing.T) {
+	script, err := Parse(`new query source="files" extend="yes"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseExtend(script.Statements[0].Args); err == nil {
+		t.Error("extend was read with a value under it")
+	}
+}

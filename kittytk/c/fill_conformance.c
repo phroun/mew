@@ -192,6 +192,21 @@ static void fill_places(kt_query *q, const kt_qscope *req, kt_fill *sink, void *
     kt_fill_exhausted(sink);
 }
 
+/* Under extend a result carries only what its place did not -- and in the limit
+   carries no fields at all, just the counts, which is the claim only a result
+   can make. Nothing here changes between the two modes: the same handler is
+   served both ways, and the leaving-out happens in the library. */
+static void fill_leaning(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
+    (void)q; (void)req; (void)ud;
+    kt_value f = kt_vstr("name", "src/parser.go");
+    kt_fill_place(sink, kt_vint("", 17), &f, 1);
+    kt_value two[2];
+    two[0] = f;
+    two[1] = kt_vint("size", 1024);
+    kt_fill_record(sink, kt_vint("", 17), two, 2);
+    kt_fill_exhausted(sink);
+}
+
 static void fill_refuses(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_fail(sink, "no records past \"build.sh\"");
@@ -454,6 +469,31 @@ int main(void) {
              (unsigned long long)q, (unsigned long long)q, (unsigned long long)q,
              (unsigned long long)q, (unsigned long long)q);
     expect_str(answer, tmp, "places lead, the order settles, the total ends");
+    free(answer);
+
+    /* The display saying it will hold the places it is sent, so a result may
+       leave out what its place already carried. */
+    n = sent_count();
+    q = serve(fill_leaning, "count=10 extend");
+    answer = since(n + 1);
+    snprintf(tmp, sizeof tmp,
+             "place %llu id=17 fields={ name \"src/parser.go\" }\n"
+             "result %llu id=17 fields={ size 1024 } map=2 complete exhausted",
+             (unsigned long long)q, (unsigned long long)q);
+    expect_str(answer, tmp, "under extend a result leans on its place");
+    free(answer);
+
+    /* Saying nothing is replace, and the places are then decoration a reader
+       may drop on the floor. */
+    n = sent_count();
+    q = serve(fill_leaning, "count=10");
+    answer = since(n + 1);
+    snprintf(tmp, sizeof tmp,
+             "place %llu id=17 fields={ name \"src/parser.go\" }\n"
+             "result %llu id=17 record={ name \"src/parser.go\"; size 1024 } "
+             "complete exhausted",
+             (unsigned long long)q, (unsigned long long)q);
+    expect_str(answer, tmp, "without extend every result carries the lot");
     free(answer);
 
     /* A refusal is an answer. */

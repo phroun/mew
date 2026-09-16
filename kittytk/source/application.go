@@ -84,6 +84,16 @@ type appScope struct {
 	set *appSet
 	out serval.Sink
 
+	// extend says this scope asked for results that lean on their places, which
+	// it does only where the sink has somewhere to put a place. `held` is then
+	// what each place carried, kept until its result arrives to be merged with.
+	//
+	// The asking and the holding are the same fact, which is why nothing here is
+	// configured: a reader that drops places must not have results leaning on
+	// them, so the one that can hold them is the one that asks.
+	extend bool
+	held   map[string]serval.Record
+
 	mu   sync.Mutex
 	id   uint64
 	done bool
@@ -103,7 +113,11 @@ func (s *appSet) Read(sc *serval.Scope, out serval.Sink) error {
 		s.mu.Unlock()
 		return fmt.Errorf("this data set has been closed")
 	}
-	q := &appScope{set: s, out: out}
+	_, places := out.(serval.Placing)
+	q := &appScope{set: s, out: out, extend: places}
+	if places {
+		q.held = map[string]serval.Record{}
+	}
 	s.live = append(s.live, q)
 	s.mu.Unlock()
 
@@ -113,6 +127,9 @@ func (s *appSet) Read(sc *serval.Scope, out serval.Sink) error {
 	s.src.asked(q)
 
 	stmt := "q=new query " + wire.EncodeSpec(s.spec) + " " + wire.EncodeScope(sc)
+	if q.extend {
+		stmt += " " + wire.ExtendArg
+	}
 	if err := s.src.send(stmt + "\nend\n"); err != nil {
 		q.finish(serval.Complete{Error: err.Error()})
 		return err
@@ -274,6 +291,9 @@ func (q *appScope) takePlace(args []*wire.Arg) {
 		return
 	}
 	if r.ID != nil {
+		if q.extend {
+			q.held[serval.Key(wire.AsData(r.ID))] = r.Fields
+		}
 		_ = p.Place(wire.AsData(r.ID), r.Fields)
 	}
 	if r.Complete != nil {
@@ -301,6 +321,16 @@ func (q *appScope) take(args []*wire.Arg) {
 		// The application said which it sent, and that is passed on as it
 		// stands: this source claims nothing about the records it relays
 		// beyond what the far end claimed about them.
+		//
+		// Under extend it leans on its place, so what the place carried goes
+		// back on here -- which is the holding this end promised by asking.
+		if q.extend {
+			key := serval.Key(wire.AsData(r.ID))
+			if was, ok := q.held[key]; ok {
+				r.Fields = append(append(serval.Record(nil), was...), r.Fields...)
+				delete(q.held, key)
+			}
+		}
 		if r.Whole {
 			_ = q.out.Record(wire.AsData(r.ID), r.Fields)
 		} else {

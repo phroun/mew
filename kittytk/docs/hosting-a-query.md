@@ -397,14 +397,16 @@ between the reply that accepted it and the result that completes it.
 
 ## Places
 
-> **Status: built, except `extend`.** The `place` verb, the order's completion
-> and `total=` are in the KittyTK Wire Language and in all three clients, and
-> both conformance harnesses answer them. Below the wire, serval's `Placing` is
+> **Status: built.** The `place` verb, the order's completion, `total=` and
+> `extend` are in the KittyTK Wire Language and in all three clients, and all
+> three conformance harnesses answer them. Below the wire, serval's `Placing` is
 > a sink with somewhere to put a place, and `CachedSource` answers a stretch
 > whose order it holds and whose values it does not by placing the rest.
 >
-> **`extend` is designed and not built anywhere.** Results always carry
-> everything today, which is the default and the safe half.
+> **Nothing an author writes changes with `extend`.** They place what they have
+> and send the record when they have it; the leaving-out happens in the library,
+> which is the only place it can happen safely — an author eliding by hand would
+> have to know what the far end asked for.
 
 An answer can be worth starting on before it is finished, and what a reader
 needs first is almost never the values — it is **where the rows are**. A view

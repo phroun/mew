@@ -104,6 +104,22 @@ const (
 	// is; `total=0 exact` is a sequence counted and found empty, and is written.
 	TotalArg = "total"
 	ExactArg = "exact"
+
+	// ExtendArg is the display saying it will HOLD the places it is sent, so a
+	// result may leave out what its place already carried.
+	//
+	// It rides the query because it is about how this asker reads rather than
+	// about which records it wants, and it is the ASKER's to say for the one
+	// reason that matters: a reader that dropped the places would then silently
+	// lose fields. Only the end doing the dropping can promise not to.
+	//
+	// Which is the test for whether anything in this protocol needs opting into
+	// -- does dropping the statement still leave the answer true? Places pass
+	// it, and results that lean on them are the one thing that does not.
+	//
+	// Saying nothing is `replace`, where every result carries the lot. That is
+	// the default, and it is what every answer here does today.
+	ExtendArg = "extend"
 )
 
 // EncodeRecord renders a record as the block that carries it: one statement per
@@ -357,6 +373,23 @@ func ParseScope(args []*Arg) (*serval.Scope, error) {
 		}
 	}
 	return s, nil
+}
+
+// ParseExtend reads the display's declaration off the same arguments.
+//
+// It is not part of the scope and not part of the spec: the sequence is the
+// same sequence and the records wanted are the same records, and this says only
+// how the answer may be spelled.
+func ParseExtend(args []*Arg) (bool, error) {
+	for _, a := range args {
+		if a.Name == ExtendArg {
+			if a.Value != nil {
+				return false, fmt.Errorf("extend: it takes no value")
+			}
+			return a.Flag == FlagTrue, nil
+		}
+	}
+	return false, nil
 }
 
 // Encode renders the scope as the arguments that carry it.

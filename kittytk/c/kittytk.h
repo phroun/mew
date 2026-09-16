@@ -279,6 +279,19 @@ const kt_value *kt_bag_get(const kt_bag *b, const char *name);
 #define KT_TOTAL_ARG "total"
 #define KT_EXACT_ARG "exact"
 
+/* KT_EXTEND_ARG is the display saying it will HOLD the places it is sent, so a
+   result may leave out what its place already carried.
+
+   It rides the query because it is about how this asker reads rather than about
+   which records it wants, and it is the ASKER's to say for the one reason that
+   matters: a reader that dropped the places would then silently lose fields.
+   Only the end doing the dropping can promise not to.
+
+   Saying nothing is `replace`, where every result carries the lot. Nothing an
+   author writes changes either way -- place what you have, send the record when
+   you have it, and the leaving-out happens in the library. */
+#define KT_EXTEND_ARG "extend"
+
 /* Why a scope ended, which the asker cannot work out for itself: a scope that
    filled and one that ran out of records look identical from the far end, and
    they mean opposite things about whether there is any point asking again. */

@@ -567,7 +567,7 @@ class Conn:
         scope = _query.parse_scope(args)
         with q._source._lock:
             fn = q._source._fill
-        f = Fill(q, scope, spec)
+        f = Fill(q, scope, spec, _query.parse_extend(args))
         pending.append(lambda: fn(f))
 
 
@@ -975,6 +975,62 @@ class Query:
             return self._spec
 
 
+def _ident(v) -> str:
+    """One identity as a dict key, for the places one answer is holding.
+
+    How a value is WRITTEN, which is not how identity is decided anywhere that
+    matters -- but both the place and the result come from the same author
+    passing the same value, and this never leaves the answer it was made for."""
+    return protocol.encode_value(v)
+
+
+def _member_index(name: str):
+    """A field name read as an ordered member's index, or None.
+
+    Its position written out -- `0`, `1`, `.2` -- and only in that spelling: no
+    sign, and no leading zeros but `0` itself. So `007` is a NAME that happens
+    to be digits, which is the same distinction everything else here makes."""
+    if name.startswith("."):
+        name = name[1:]
+    if not name or not name.isdigit() or (len(name) > 1 and name[0] == "0"):
+        return None
+    return int(name)
+
+
+def _tally(fields):
+    """How many members a record carries, by name and by position.
+
+    An absence is not one: a name sent with nothing under it is knowledge ABOUT
+    the record rather than a member of it, and counting it would say the record
+    had a member it has not."""
+    named = ordered = 0
+    for f in fields:
+        if f.value is None:
+            continue
+        if _member_index(f.name) is None:
+            named += 1
+        else:
+            ordered += 1
+    return named, ordered
+
+
+def _lacking(fields, already):
+    """A record without the members another already carried.
+
+    By NAME, and not by name and value. Whoever asked merges what arrives into
+    what it holds and the first answer about a field stands, so a source that
+    contradicted itself inside one answer would be believed at its first word
+    either way."""
+    if not already:
+        return fields
+    seen = {f.name for f in already}
+    out = _query.Fields()
+    for f in fields:
+        if f.name not in seen:
+            out.append(f)
+    return out
+
+
 class Fill:
     """One scope of the sequence, asked for -- and where the records that
     answer it are written.
@@ -988,7 +1044,7 @@ class Fill:
     accumulate, so the answer may be produced over as long as it takes and
     interleaved with other work; nothing has to be held until the end."""
 
-    def __init__(self, query: Query, scope, spec):
+    def __init__(self, query: Query, scope, spec, extend=False):
         self.query = query
         self.spec = spec
         self.scope = scope
@@ -1005,6 +1061,13 @@ class Fill:
         self._ordered = False
         self._waiting = None  # the last record, held so the end can ride on it
         self._total = (0, False)  # how many the sequence has, and whether exact
+        # The display said it will HOLD the places it is sent, so a result may
+        # leave out what its place already carried -- and _placed is what each
+        # of them did carry. Nothing an author writes changes: they place what
+        # they have and send the record when they have it, and the leaving-out
+        # happens here.
+        self._extend = extend
+        self._placed = {}
         self._closed = False
 
     def record(self, id, **fields):
@@ -1119,6 +1182,8 @@ class Fill:
             if place.id is not None:
                 place.ordered = self._ordered and self._records == 0
                 self._records += 1
+                if self._extend:
+                    self._placed[_ident(place.id)] = place.fields
         if held is not None:
             self._emit(self._result(*held.args()))
         self._emit(self._place(*place.args()))
@@ -1141,11 +1206,22 @@ class Fill:
         bag = _query.Fields()
         for name, v in fields.items():
             bag.append(protocol.named(name, v))
-        rec = _query.Result(id=protocol.val(id), fields=bag, whole=whole,
+        key = protocol.val(id)
+        rec = _query.Result(id=key, fields=bag, whole=whole,
                             named=named, ordered_members=ordered)
         with self._lock:
             if self._closed:
                 raise RuntimeError("this scope has already been answered")
+            if self._extend:
+                was = self._placed.get(_ident(key))
+                if was is not None:
+                    # A result under extend states how much of the record there
+                    # is, which is the one thing only a result can say, and
+                    # leaves the rest to what the far end is already holding.
+                    if rec.whole:
+                        rec.named, rec.ordered_members = _tally(rec.fields)
+                        rec.whole = False
+                    rec.fields = _lacking(rec.fields, was)
             held = self._waiting
             rec.ordered = self._ordered and self._records == 0
             self._waiting = rec

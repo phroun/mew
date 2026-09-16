@@ -108,6 +108,17 @@ ERROR_ARG = "error"
 TOTAL_ARG = "total"
 EXACT_ARG = "exact"
 
+# EXTEND_ARG is the display saying it will HOLD the places it is sent, so a
+# result may leave out what its place already carried.
+#
+# It rides the query because it is about how this asker reads rather than about
+# which records it wants, and it is the ASKER's to say for the one reason that
+# matters: a reader that dropped the places would then silently lose fields.
+# Only the end doing the dropping can promise not to.
+#
+# Saying nothing is `replace`, where every result carries the lot.
+EXTEND_ARG = "extend"
+
 # Why a scope ended, which the asker cannot work out for itself: a scope that
 # filled and one that ran out of records look identical from the far end.
 STOP_FILLED = "filled"        # the count was reached; there is more past it
@@ -544,6 +555,20 @@ def parse_spec(args: List[Arg]) -> Spec:
             except QueryError as e:
                 raise QueryError("sort: %s" % e)
     return s
+
+
+def parse_extend(args: List[Arg]) -> bool:
+    """The display's declaration, off the same arguments.
+
+    Not part of the scope and not part of the spec: the sequence is the same
+    sequence and the records wanted are the same records, and this says only how
+    the answer may be spelled."""
+    for a in args:
+        if a.name == EXTEND_ARG:
+            if a.value is not None:
+                raise QueryError("extend: it takes no value")
+            return a.flag == FlagState.TRUE
+    return False
 
 
 def parse_scope(args: List[Arg]) -> Scope:
