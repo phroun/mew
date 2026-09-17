@@ -34,12 +34,18 @@ import (
 // A selector is what an include selects by, and what two includes must agree on
 // to share a source. The floor is deliberately absent.
 type selector struct {
-	key   string // the bundle's name
+	key   string // the bundle's name, or a registered source's
 	upper string // the version it must stay below, or "" for the newest there is
 	pin   string // an exact version or a hash, when it names one bundle for good
+	live  bool   // a source registered by name rather than a bundle in the store
 }
 
 func (s selector) String() string {
+	if s.live {
+		// Its own namespace: a bundle called `inbox` and a source called
+		// `inbox` are two things, and an include says which it meant.
+		return "source:" + s.key
+	}
 	switch {
 	case s.pin != "":
 		return s.key + "@" + s.pin
@@ -68,42 +74,55 @@ func isHex(s string) bool {
 	return s != ""
 }
 
-// parseWant reads what an include is bound to.
+// parseWant reads what an include is bound to: comma-separated terms, in any
+// order.
 //
-//	"deadbeef…"            a hash: one bundle, for good
-//	"0.1.0"                a version: one bundle, for good
-//	">= 0.1.0"             the newest, and not below 0.1.0
-//	">= 0.1.0, < 0.2.0"    the newest below 0.2.0, and not below 0.1.0
+//	"deadbeef…"                 a hash: one bundle, for good
+//	"0.1.0"                     a version: one bundle, for good
+//	">= 0.1.0"                  the newest, and not below 0.1.0
+//	">= 0.1.0, < 0.2.0"         the newest below 0.2.0, and not below 0.1.0
+//	"1.4.2, optional"           and an absence this author can live with
 //
-// A bare version is a pin rather than a floor, because an author who writes one
+// A bare version is a PIN rather than a floor, because an author who writes one
 // and means "or newer" has `>=` to say it with, and one who writes one and means
 // it exactly has nothing else.
 func parseWant(key, text string) (want, error) {
 	w := want{selector: selector{key: key}}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return w, fmt.Errorf("%q says nothing about which %s it wants", text, key)
-	}
-	if !strings.ContainsAny(text, "<>=,") {
-		w.pin = text
-		return w, nil
+	if strings.TrimSpace(text) == "" {
+		return w, fmt.Errorf("this include says nothing about which %s it wants", key)
 	}
 	for _, part := range strings.Split(text, ",") {
 		part = strings.TrimSpace(part)
 		switch {
+		case part == "":
+			continue
+		case part == optionalTerm:
+			w.optional = true
 		case strings.HasPrefix(part, ">="):
 			w.floor = strings.TrimSpace(part[2:])
 		case strings.HasPrefix(part, "<"):
 			w.upper = strings.TrimSpace(part[1:])
 		default:
-			return want{}, fmt.Errorf("%q is not a version expression this reads", part)
+			if w.pin != "" {
+				return want{}, fmt.Errorf("%q names two versions and can have one", text)
+			}
+			w.pin = part
 		}
 	}
-	if w.floor == "" && w.upper == "" {
+	switch {
+	case w.pin != "" && (w.floor != "" || w.upper != ""):
+		return want{}, fmt.Errorf(
+			"%q pins a version and bounds one; a pin has nothing to range over", text)
+	case w.pin == "" && w.floor == "" && w.upper == "":
 		return want{}, fmt.Errorf("%q names no version at all", text)
 	}
 	return w, nil
 }
+
+// optionalTerm is how an expression says an absence is survivable. It reads the
+// same wherever an expression is written, and the list form has a member of its
+// own for where there is no expression to put it in.
+const optionalTerm = "optional"
 
 // admits reports whether a version is one this want will take. The upper bound
 // took part in choosing it; the floor is checked here, on the answer.

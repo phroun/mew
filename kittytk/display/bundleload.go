@@ -24,6 +24,13 @@ package display
 // A bundle that includes nothing is its records and no more -- no composition
 // to merge and no amendment layer to carry, which is the leaf case and the
 // common one.
+//
+// An include names a BUNDLE or a SOURCE, and they are two namespaces. A bundle
+// is a document in the store, found by key and version. A source is a live
+// thing somebody registered under a name -- an application's records, a CSV
+// read at run time, anything at all -- and it has no version to select between,
+// because it is one object rather than a shelf of them. That is what lets a
+// bundle wrap and amend a source of ANY kind rather than only other bundles.
 
 import (
 	"fmt"
@@ -70,21 +77,26 @@ type Loaded struct {
 // of loading and settled again, possibly differently, at the next.
 type loader struct {
 	store   *appStore
+	live    Sources
 	built   map[string]serval.Source // by selector, which is what sharing is by
 	open    map[string]bool          // the bundles above this one, for cycles
 	trouble []Trouble
 }
 
+// Sources are live sources registered by name, for an include to reach with
+// `source:`. They are the caller's, made before the load and outliving it.
+type Sources map[string]serval.Source
+
 // LoadBundle builds a source out of the bundle a store holds under a key and a
 // version, following what it includes.
-func (s *appStore) LoadBundle(key, version string) (*Loaded, error) {
+func (s *appStore) LoadBundle(key, version string, live Sources) (*Loaded, error) {
 	l := &loader{
 		store: s,
+		live:  live,
 		built: map[string]serval.Source{},
 		open:  map[string]bool{},
 	}
-	sel := selector{key: key, pin: version}
-	src, err := l.build(sel, want{selector: sel})
+	src, err := l.build(want{selector: selector{key: key, pin: version}})
 	if err != nil {
 		return nil, err
 	}
@@ -93,9 +105,20 @@ func (s *appStore) LoadBundle(key, version string) (*Loaded, error) {
 
 // build is the source a want resolves to, made once per selector and handed out
 // again to everything else wanting the same.
-func (l *loader) build(sel selector, w want) (serval.Source, error) {
-	at := sel.String()
+func (l *loader) build(w want) (serval.Source, error) {
+	at := w.selector.String()
 	if src, made := l.built[at]; made {
+		return src, nil
+	}
+	if w.live {
+		// A registered source is already a source. There is nothing to read,
+		// nothing to assemble, and no ring to close: it was made before this
+		// load began.
+		src, held := l.live[w.key]
+		if !held || src == nil {
+			return nil, fmt.Errorf("nothing is registered as a source called %q", w.key)
+		}
+		l.built[at] = src
 		return src, nil
 	}
 	if l.open[at] {
@@ -283,7 +306,7 @@ func (l *loader) includesOf(e bundleEntry, n *pawscript.PSLNode) ([]serval.Inclu
 			l.note(e.key, alias, err.Error())
 			continue
 		}
-		src, err := l.build(w.selector, w)
+		src, err := l.build(w)
 		if err != nil {
 			if w.optional {
 				l.note(e.key, alias, err.Error()+", and this include is optional")
@@ -311,15 +334,11 @@ func wantOf(list *pawscript.PSLNode, alias string) (want, error) {
 	case pawscript.Symbol:
 		return parseWant(alias, string(x))
 	case *pawscript.PSLNode:
-		key := alias
-		if named := pslText(x, "key"); named != "" {
-			key = named
-		}
-		w, err := parseWant(key, pslText(x, "want"))
+		w, err := listWant(alias, x)
 		if err != nil {
 			return want{}, err
 		}
-		if b, held := x.Get("optional"); held {
+		if b, held := x.Get(optionalTerm); held {
 			if on, ok := b.(bool); ok {
 				w.optional = on
 			}
@@ -327,6 +346,34 @@ func wantOf(list *pawscript.PSLNode, alias string) (want, error) {
 		return w, nil
 	}
 	return want{}, fmt.Errorf("this include is bound to nothing a version is read from")
+}
+
+// listWant reads the long form, which is where an include says WHICH namespace
+// it means.
+//
+//	( bundle: "drop-folder", want: ">= 0.1.0" )   a document in the store
+//	( source: "mail.incoming" )                   a source registered by name
+//
+// A registered source takes no version expression. There is one of it, so there
+// is nothing to select between, and a `want` on one is refused rather than
+// quietly ignored -- an author who wrote it believed something that is not so.
+func listWant(alias string, x *pawscript.PSLNode) (want, error) {
+	named := pslText(x, "source")
+	held := pslText(x, "bundle")
+	switch {
+	case named != "" && held != "":
+		return want{}, fmt.Errorf("this include names both a source and a bundle")
+	case named != "":
+		if pslText(x, "want") != "" {
+			return want{}, fmt.Errorf(
+				"%q is a registered source, and there is one of it: a version says nothing about which", named)
+		}
+		return want{selector: selector{key: named, live: true}}, nil
+	}
+	if held == "" {
+		held = alias // the terse rule: an alias is the bundle's key
+	}
+	return parseWant(held, pslText(x, "want"))
 }
 
 // An amendment as the document states it: a record replaced, or one deleted.
