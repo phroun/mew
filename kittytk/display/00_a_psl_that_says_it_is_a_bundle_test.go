@@ -48,13 +48,8 @@ func TestABundleIsFoundByWhatItCallsItself(t *testing.T) {
 	if e.storeKey != "libraryV1" {
 		t.Errorf("figaro 0.1.0 is held by %q", e.storeKey)
 	}
-	// The hash is COMPUTED over the bytes, not something the document claimed
-	// about itself -- so it is the hash of exactly what was stored.
-	if want := hashOf([]byte(figaro)); e.hash != want {
-		t.Errorf("its hash is %q, and the bytes hash to %q", e.hash, want)
-	}
-
-	// And it is found by that hash, which names the content rather than the name.
+	// And it is found by the hash of its ITEM, which names the content rather
+	// than the name -- computed over the bytes, not claimed by the document.
 	if h := only(t, s.bundlesHashed(hashOf([]byte(figaro)))); h.storeKey != "libraryV1" {
 		t.Errorf("the hash found %q", h.storeKey)
 	}
@@ -278,17 +273,17 @@ func TestTheHashCoversTheMetadataToo(t *testing.T) {
 	const a = `( _bundle: ( key: "figaro", version: "0.1.0", author: "Day" ), ("r") )`
 	const b = `( _bundle: ( key: "figaro", version: "0.1.0", author: "Dey" ), ("r") )`
 
-	first, ok := bundleOf("one", []byte(a))
-	if !ok {
-		t.Fatal("it is not a bundle")
+	s := shelves(t)
+	if _, err := s.put("one", "psl", []byte(a)); err != nil {
+		t.Fatal(err)
 	}
-	second, _ := bundleOf("two", []byte(b))
-	if first.hash == second.hash {
-		t.Error("a change inside _bundle left the hash where it was")
+	if _, err := s.put("two", "psl", []byte(b)); err != nil {
+		t.Fatal(err)
 	}
-	// And the same bytes twice are the same bundle, whatever they are filed as.
-	again, _ := bundleOf("somewhere else", []byte(a))
-	if again.hash != first.hash {
-		t.Error("the same bytes hashed two ways")
+	if e := only(t, s.bundlesHashed(hashOf([]byte(a)))); e.storeKey != "one" {
+		t.Errorf("the hash of the first found %q", e.storeKey)
+	}
+	if e := only(t, s.bundlesHashed(hashOf([]byte(b)))); e.storeKey != "two" {
+		t.Errorf("a change inside _bundle did not change the hash: found %q", e.storeKey)
 	}
 }

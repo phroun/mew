@@ -26,8 +26,6 @@ package display
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,13 +46,13 @@ const bundleMark = "_bundle"
 // bundleEntry is one bundle, and where it is.
 //
 // The version is "" where the bundle states none, which is a bundle like any
-// other. The hash is not the bundle's to state: it is COMPUTED here, over the
-// bytes as they stand.
+// other. There is no hash here: a bundle's hash is its ITEM's hash, and one
+// hash per item computed in one place is better than two that have to agree.
+// The store key is the join.
 type bundleEntry struct {
 	storeKey string // the item in this directory holding it
 	key      string // _bundle.key, the name an include uses
 	version  string // _bundle.version
-	hash     string // of the bytes, computed
 }
 
 // bundleOf reads a stored document and says which bundle it is, if any.
@@ -88,25 +86,11 @@ func bundleOf(storeKey string, data []byte) (bundleEntry, bool) {
 		storeKey: storeKey,
 		key:      pslText(block, "key"),
 		version:  pslText(block, "version"),
-		hash:     hashOf(data),
 	}
 	if e.key == "" {
 		return bundleEntry{}, false
 	}
 	return e, true
-}
-
-// hashOf is a bundle's hash: what you get when you hash its bytes.
-//
-// A document does not state its own -- one that did would be asserting a claim
-// about itself, and a claim is not what an include pinning a hash is relying
-// on. It covers the file ENTIRE, `_bundle` and all, so correcting a date is a
-// different bundle and whatever pinned the old hash still names the old one.
-//
-// Nothing has to be excluded or normalised, because what is hashed is the file.
-func hashOf(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }
 
 // pslText is a member read as text, whether it was written as a string or as a
@@ -134,7 +118,7 @@ func pslText(n *pawscript.PSLNode, member string) string {
 // The index is tab separated and a line per bundle, so a field holding a tab or
 // a newline would read back as a different entry, or as two.
 func (e bundleEntry) writable() bool {
-	for _, f := range []string{e.key, e.version, e.hash, e.storeKey} {
+	for _, f := range []string{e.key, e.version, e.storeKey} {
 		if strings.ContainsAny(f, "\t\n\r") {
 			return false
 		}
@@ -202,10 +186,10 @@ func (s *storeDir) writeBundlesLocked(all map[string]bundleEntry) error {
 	sort.Strings(keys)
 
 	var sb strings.Builder
-	sb.WriteString("# KittyTK bundles: <key>\\t<version>\\t<hash>\\t<stored under>\n")
+	sb.WriteString("# KittyTK bundles: <key>\\t<version>\\t<stored under>\n")
 	for _, k := range keys {
 		e := all[k]
-		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\n", e.key, e.version, e.hash, e.storeKey)
+		fmt.Fprintf(&sb, "%s\t%s\t%s\n", e.key, e.version, e.storeKey)
 	}
 	return os.WriteFile(s.bundleIndexPath(), []byte(sb.String()), 0o600)
 }
@@ -218,10 +202,10 @@ func parseBundleLine(line string) (bundleEntry, bool) {
 		return bundleEntry{}, false
 	}
 	f := strings.Split(line, "\t")
-	if len(f) != 4 {
+	if len(f) != 3 {
 		return bundleEntry{}, false
 	}
-	e := bundleEntry{key: f[0], version: f[1], hash: f[2], storeKey: f[3]}
+	e := bundleEntry{key: f[0], version: f[1], storeKey: f[2]}
 	if e.key == "" || e.storeKey == "" {
 		return bundleEntry{}, false
 	}
@@ -325,26 +309,45 @@ func (s *appStore) bundlesNamed(key, version string) []bundleEntry {
 	return named(s.kept.bundles())
 }
 
-// bundlesHashed is every item whose bundle hashes to this, on the same terms.
+// bundlesHashed is every bundle whose ITEM hashes to this, on the same terms.
 //
 // A hash names content rather than a name and a version, so two items answering
 // to one hash are two copies of one bundle rather than a mistake -- but which
 // item to read is still not this store's to decide, so both are handed back.
 func (s *appStore) bundlesHashed(hash string) []bundleEntry {
 	if hash == "" {
-		return nil // a bundle carrying no hash is not found by not having one
+		return nil // an item not yet hashed is not found by not having one
 	}
-	hashed := func(all []bundleEntry) []bundleEntry {
-		var out []bundleEntry
-		for _, e := range all {
-			if e.hash == hash {
-				out = append(out, e)
-			}
-		}
-		return out
-	}
-	if hit := hashed(s.cached.bundles()); len(hit) > 0 {
+	if hit := s.cached.bundlesHashed(hash); len(hit) > 0 {
 		return hit
 	}
-	return hashed(s.kept.bundles())
+	return s.kept.bundlesHashed(hash)
+}
+
+// bundlesHashed joins the two indexes this directory keeps: the bundles, and
+// the items they are. An item with no hash yet gets one, which is the same
+// laziness the inventory has.
+func (s *storeDir) bundlesHashed(hash string) []bundleEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := s.readLocked()
+
+	var out []bundleEntry
+	var worked bool
+	for _, e := range s.bundlesLocked() {
+		it, held := items[e.storeKey]
+		if !held {
+			continue
+		}
+		it, filled := s.hashedLocked(items, it)
+		worked = worked || filled
+		if it.hash == hash {
+			out = append(out, e)
+		}
+	}
+	if worked {
+		_ = s.writeLocked(items)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].storeKey < out[j].storeKey })
+	return out
 }

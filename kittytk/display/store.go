@@ -35,6 +35,8 @@ package display
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -126,12 +128,35 @@ func storeKeyRules(key string) error {
 }
 
 // storeItem is one entry: what the app calls it, what it is, what it is filed
-// under, and how big it is.
+// under, how big it is, and what it hashes to.
+//
+// SIZE and HASH answer different questions at different moments. Size is the
+// cursor of an upload in progress -- it says how much has landed, so an app
+// knows where to carry on from -- and it means something at every moment of
+// one. The hash means nothing until the upload has finished, and then it is the
+// only thing that says whether what is here is already what the app holds.
 type storeItem struct {
 	key  string
 	typ  string
 	safe string
 	size int64
+
+	// hash is sha256 over the bytes, lowercase hex, and "" where it has not
+	// been worked out. An app compares it against its own copy to decide
+	// whether to upload at all, so being wrong here costs an upload silently
+	// SKIPPED -- which is why it is settled inside the same lock as the write
+	// that invalidates it, and never outside.
+	hash string
+}
+
+// hashOf is what an item hashes to: sha256 over its bytes, lowercase hex.
+//
+// One definition, for a bundle and for anything else, and it is on the wire --
+// an app works out its own copy's hash to compare, so a Go, a Python and a C
+// client all have to arrive at the same string.
+func hashOf(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // storeDir is one app's folder in one tree.
@@ -195,16 +220,44 @@ func (s *appStore) read(key string, offset int64) ([]byte, storeItem, bool, erro
 func (s *appStore) drop(key string) error { return s.dirFor(key).drop(key) }
 
 // list is the inventory: every item, by key.
+//
+// An item with no hash yet gets one here, and it is written down so the next
+// inventory does not pay for it again. That is the whole of the laziness: an
+// append leaves nothing to report, and the first question after it settles the
+// matter for good.
 func (s *storeDir) list() []storeItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := s.readLocked()
+
+	var worked bool
 	out := make([]storeItem, 0, len(items))
 	for _, it := range items {
+		it, filled := s.hashedLocked(items, it)
+		worked = worked || filled
 		out = append(out, s.sized(it))
+	}
+	if worked {
+		_ = s.writeLocked(items)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
 	return out
+}
+
+// hashedLocked is an item with its hash filled in, and whether that cost a
+// read. An item whose file will not open keeps its empty hash: saying nothing
+// is right, where saying something would be a guess an app acts on.
+func (s *storeDir) hashedLocked(items map[string]storeItem, it storeItem) (storeItem, bool) {
+	if it.hash != "" {
+		return it, false
+	}
+	data, err := os.ReadFile(s.pathOf(it))
+	if err != nil {
+		return it, false
+	}
+	it.hash = hashOf(data)
+	items[it.key] = it
+	return it, true
 }
 
 // put writes an item, replacing whatever the key held. A key whose type
@@ -266,6 +319,17 @@ func (s *storeDir) write(key, typ string, data []byte, extend bool) (storeItem, 
 	}
 	if err := f.Close(); err != nil {
 		return storeItem{}, err
+	}
+
+	// A put holds the whole item, so its hash costs one pass over a buffer
+	// beside the disk write just made. An append holds only the newest piece,
+	// and the hash of a part-written item is not a fact about anything -- so it
+	// is cleared, and worked out later by whoever asks, which is an app on a
+	// connection long after the upload ended.
+	if extend {
+		it.hash = ""
+	} else {
+		it.hash = hashOf(data)
 	}
 
 	items[key] = it
@@ -408,30 +472,30 @@ func (s *storeDir) writeLocked(items map[string]storeItem) error {
 	sort.Strings(keys)
 
 	var sb strings.Builder
-	sb.WriteString("# KittyTK stored items: <filed as> <type> <key>\n")
+	sb.WriteString("# KittyTK stored items: <filed as>\\t<type>\\t<hash>\\t<key>\n")
 	for _, k := range keys {
 		it := items[k]
-		fmt.Fprintf(&sb, "%s %s %s\n", it.safe, it.typ, it.key)
+		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\n", it.safe, it.typ, it.hash, it.key)
 	}
 	return os.WriteFile(s.indexPath(), []byte(sb.String()), 0o600)
 }
 
-// parseStoreLine reads one index line. The key is the remainder of the line,
-// so it may hold spaces; the two fields before it cannot.
+// parseStoreLine reads one index line.
+//
+// The fields are TAB separated, which is what lets a key sit beside three
+// others without being quoted: a key may hold spaces, and storeKeyRules refuses
+// everything below 0x20, so a key can never hold a tab. The hash is empty where
+// the item has not been hashed yet, which is two tabs together.
 func parseStoreLine(line string) (storeItem, bool) {
-	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, "#") {
+	line = strings.TrimRight(line, "\r\n")
+	if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 		return storeItem{}, false
 	}
-	fields := strings.Fields(line)
-	if len(fields) < 3 {
+	f := strings.Split(line, "\t")
+	if len(f) != 4 {
 		return storeItem{}, false
 	}
-	at := 0
-	for _, f := range fields[:2] {
-		at += strings.Index(line[at:], f) + len(f)
-	}
-	it := storeItem{safe: fields[0], typ: fields[1], key: strings.TrimSpace(line[at:])}
+	it := storeItem{safe: f[0], typ: f[1], hash: f[2], key: f[3]}
 	if it.safe == "" || !storeTypes[it.typ] || it.key == "" {
 		return storeItem{}, false
 	}

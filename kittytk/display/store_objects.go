@@ -195,12 +195,21 @@ func (s *storeObject) sendInventory() {
 }
 
 // itemChanged says what an item now is.
+//
+// The hash is left out where there is none, which is what an item part way
+// through being appended to has. Absent means "not settled", not "empty": an
+// app reads it as nothing to compare against and carries on uploading, which is
+// the safe way round.
 func (s *storeObject) itemChanged(h *blobHandle, it storeItem) {
-	s.answer(protocol.NewEvent(EventStoreBlob).
+	ev := protocol.NewEvent(EventStoreBlob).
 		WithUint("blob", h.id).
 		WithString("key", it.key).
 		WithWord("type", it.typ).
-		WithInt("size", int(it.size)))
+		WithInt("size", int(it.size))
+	if it.hash != "" {
+		ev = ev.WithString("hash", it.hash)
+	}
+	s.answer(ev)
 }
 
 // failed says what was refused and why. A refusal is an answer rather than a
@@ -413,7 +422,8 @@ func init() {
 				Field("blob", "uint", "The blob, addressable from here on.").
 				Field("key", "string", "What the app calls it. A leading # means the desktop may throw it away.").
 				Field("type", "enum", "txt, psl, bin, ini or conf.").
-				Field("size", "int", "Its size in bytes."),
+				Field("size", "int", "Its size in bytes. This is the cursor of an upload in progress: how much has landed, and so where to carry on from.").
+				Field("hash", "string", "sha256 over the item's bytes, lowercase hex. Compare it against your own copy to decide whether to upload at all. Absent where the item has been appended to and not asked about since, which reads as nothing to compare rather than as empty. Hash WHAT YOU SEND: an app that rewrites line endings on the way out and hashes what it read will never match, and will upload every time."),
 			EventStoreDone: protocol.NewEventDesc("The end of an inventory: every item has been sent.").
 				Field("store", "uint", "The store the inventory is of.").
 				Field("count", "int", "How many items were listed."),

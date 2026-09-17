@@ -563,3 +563,100 @@ func TestTheRulesApplyBehindTheMark(t *testing.T) {
 		}
 	}
 }
+
+// held is one item of a shelf's inventory, by key.
+func held(t *testing.T, s *storeDir, key string) storeItem {
+	t.Helper()
+	for _, it := range s.list() {
+		if it.key == key {
+			return it
+		}
+	}
+	t.Fatalf("nothing is filed under %q", key)
+	return storeItem{}
+}
+
+// A put holds the whole item, so it is hashed there and then -- and an app
+// asking the inventory the moment it connects pays nothing for the answer.
+func TestAPutIsHashedWhereItIsWritten(t *testing.T) {
+	s := shelf(t)
+	want := []byte("the whole of it")
+	it, err := s.put("notes", "txt", want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.hash != hashOf(want) {
+		t.Errorf("the put answered with hash %q", it.hash)
+	}
+	// And the index holds it, so nothing is read back to answer again.
+	if got := held(t, s, "notes").hash; got != hashOf(want) {
+		t.Errorf("the inventory says %q", got)
+	}
+}
+
+// Size is the cursor of an upload and means something at every moment of one.
+// The hash means nothing until the upload ends, so an append clears it rather
+// than hashing a part of something.
+func TestAnAppendClearsTheHashAndTheInventorySettlesIt(t *testing.T) {
+	s := shelf(t)
+	if _, err := s.put("log", "txt", []byte("one ")); err != nil {
+		t.Fatal(err)
+	}
+	it, err := s.appendTo("log", "txt", []byte("two"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.hash != "" {
+		t.Errorf("an append answered with a hash of part of an item: %q", it.hash)
+	}
+	// Size still says how much has landed, which is what a resume needs.
+	if it.size != 7 {
+		t.Errorf("the size after appending is %d", it.size)
+	}
+
+	// The first question after it settles the matter, over the whole item.
+	if got := held(t, s, "log").hash; got != hashOf([]byte("one two")) {
+		t.Errorf("the inventory says %q", got)
+	}
+	// And it was written down, so the next inventory does not work it out again.
+	items := s.readLocked()
+	if items["log"].hash == "" {
+		t.Error("the hash was worked out and not kept")
+	}
+}
+
+// A put replaces, so the hash follows the bytes rather than the key.
+func TestReplacingAnItemMovesItsHash(t *testing.T) {
+	s := shelf(t)
+	if _, err := s.put("notes", "txt", []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	before := held(t, s, "notes").hash
+	if _, err := s.put("notes", "txt", []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	after := held(t, s, "notes").hash
+	if after == before {
+		t.Error("the item was replaced and its hash stood")
+	}
+	if after != hashOf([]byte("second")) {
+		t.Errorf("the hash is %q, and the bytes hash to %q", after, hashOf([]byte("second")))
+	}
+}
+
+// A key may hold spaces and an unhashed item leaves its field empty, so the
+// index has to survive both at once.
+func TestTheIndexSurvivesASpacedKeyAndAnEmptyHash(t *testing.T) {
+	s := shelf(t)
+	if _, err := s.appendTo("my long notes", "txt", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	items := s.readLocked()
+	it, ok := items["my long notes"]
+	if !ok {
+		t.Fatalf("the index reads as %+v", items)
+	}
+	if it.hash != "" || it.typ != "txt" {
+		t.Errorf("it read back as %+v", it)
+	}
+}
