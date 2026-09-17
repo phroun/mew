@@ -6,6 +6,8 @@ package display_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -496,5 +498,55 @@ func TestTheStoreIsAddressedNotBuilt(t *testing.T) {
 	}
 	if !contains(asks, "inventory") {
 		t.Errorf("the store answers no inventory question; it answers %v", asks)
+	}
+}
+
+// The inventory carries each item's hash, which is what an app compares
+// against its own copy to decide whether it needs to upload at all. That is
+// the whole point of enumerating: read the list, work out what differs, send
+// only that.
+func TestTheInventoryCarriesAHashToCompareAgainst(t *testing.T) {
+	conn, answers := storeApp(t, "Comparing App")
+	const notes = "hello"
+	if err := conn.Store().Write("notes", "txt", []byte(notes)); err != nil {
+		t.Fatal(err)
+	}
+	wrote(t, answers, "notes")
+
+	// An app appending builds the item up, and an item part way through one has
+	// no hash to give: size says how much has landed, and that is what a resume
+	// needs.
+	if err := conn.Store().Write("log", "txt", []byte("one ")); err != nil {
+		t.Fatal(err)
+	}
+	id := wrote(t, answers, "log")
+	if err := conn.Blob(id).Append([]byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	wrote(t, answers, "log")
+
+	if err := conn.Store().List(); err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]string{}
+	for i := 0; i < 2; i++ {
+		ev := answers.await(t, client.StoreBlob)
+		key, _ := ev.Text("key")
+		hash, _ := ev.Text("hash")
+		found[key] = hash
+	}
+	answers.await(t, client.StoreDone)
+
+	// The app hashes its own copy the same way and the two agree, so it knows
+	// it has nothing to send.
+	want := sha256.Sum256([]byte(notes))
+	if got := found["notes"]; got != hex.EncodeToString(want[:]) {
+		t.Errorf("the inventory says %q, and the app's own copy hashes to %x", got, want)
+	}
+	// The appended item was settled by the inventory itself, over the whole of
+	// it rather than over the piece that arrived last.
+	whole := sha256.Sum256([]byte("one two"))
+	if got := found["log"]; got != hex.EncodeToString(whole[:]) {
+		t.Errorf("the appended item reads as %q", got)
 	}
 }
