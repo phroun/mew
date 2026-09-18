@@ -6,6 +6,7 @@ import (
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/serval"
 )
 
 // ListItem represents an item in a ListView.
@@ -34,8 +35,31 @@ type ListView struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	items        []*ListItem
+	// The rows this list was given, in the order it was given them. A list told
+	// to read a source of its own has none of these and reads that instead; see
+	// listsource.go, which is the one mechanism both go through.
+	items []*ListItem
+
+	// Where the rows come from, and what is known about where they are.
+	// source is a DECLARED one and nil for a list reading its own items; made
+	// is the one built out of those items. Two fields rather than one, because
+	// a made source assigned over the declared one would then look declared --
+	// and a list would stop noticing that its own items had changed.
+	source     serval.Source
+	made       serval.Source
+	set        serval.DataSet
+	spec       serval.Spec
+	bones      spine
+	restate    bool                 // a made source is out of date
+	fromSource map[string]*ListItem // rows a source named, by identity
+
+	// The current row, as both of the things it is. A blank row is selected by
+	// POSITION with no identity yet -- which keyboard scrolling requires, since
+	// moving the selection and scrolling are one motion -- and becomes selected
+	// by identity when the record arrives.
 	currentIndex int
+	currentID    *serval.Value
+
 	scrollOffset int
 
 	// Selection mode
@@ -108,6 +132,7 @@ func NewListView() *ListView {
 // AddItem adds an item to the list.
 func (l *ListView) AddItem(item *ListItem) {
 	l.items = append(l.items, item)
+	l.touched()
 	if l.currentIndex < 0 && len(l.items) == 1 {
 		l.SetCurrentIndex(0)
 	}
@@ -129,6 +154,7 @@ func (l *ListView) InsertItem(index int, item *ListItem) {
 	}
 
 	l.items = append(l.items[:index], append([]*ListItem{item}, l.items[index:]...)...)
+	l.touched()
 
 	// Adjust selection
 	newSelected := make(map[int]bool)
@@ -154,6 +180,7 @@ func (l *ListView) RemoveItem(index int) {
 	}
 
 	l.items = append(l.items[:index], l.items[index+1:]...)
+	l.touched()
 
 	// Adjust selection
 	newSelected := make(map[int]bool)
@@ -168,8 +195,8 @@ func (l *ListView) RemoveItem(index int) {
 
 	// Adjust current index
 	if l.currentIndex == index {
-		if l.currentIndex >= len(l.items) {
-			l.currentIndex = len(l.items) - 1
+		if l.currentIndex >= l.Count() {
+			l.currentIndex = l.Count() - 1
 		}
 		if l.onCurrentChanged != nil {
 			l.onCurrentChanged(l.currentIndex)
@@ -183,26 +210,47 @@ func (l *ListView) RemoveItem(index int) {
 // Clear removes all items.
 func (l *ListView) Clear() {
 	l.items = nil
-	l.currentIndex = -1
+	l.touched()
+	l.setCurrent(-1, nil)
 	l.scrollOffset = 0
 	l.selectedItems = make(map[int]bool)
 	l.Update()
 }
 
-// Count returns the number of items.
+// Count is how many rows the list has.
+//
+// It asks the sequence rather than counting a slice, so a list reading a source
+// answers the same way a list holding its own items does. Stating a sequence
+// counts it, which is why this costs nothing to ask repeatedly.
+//
+// A source that will not count itself leaves this as far as anything has been
+// placed, which is what there is to draw and is the honest figure.
 func (l *ListView) Count() int {
-	return len(l.items)
+	set := l.sequence()
+	if set == nil {
+		return 0
+	}
+	l.bones.learn(serval.Complete{Total: serval.CountOf(set)})
+	return l.bones.rows()
 }
 
-// Item returns the item at the given index.
+// Item is the row at a position, and nil for one off either end.
+//
+// Nil is also what a BLANK row answers -- one the list knows is there and knows
+// nothing else about yet, which is every row of a source-backed list until the
+// answer arrives. A caller drawing rows should ask for the stretch it wants
+// first; a caller asking one at a time gets one question per row.
 func (l *ListView) Item(index int) *ListItem {
-	if index < 0 || index >= len(l.items) {
+	if index < 0 || index >= l.Count() {
 		return nil
 	}
-	return l.items[index]
+	l.window(index, 1)
+	return l.rowAt(index)
 }
 
-// Items returns all items.
+// Items is the items this list was GIVEN, which for a list reading a source of
+// its own is none of them. A source's rows are not items and have no existence
+// here beyond the ones the list has been told about.
 func (l *ListView) Items() []*ListItem {
 	return l.items
 }
@@ -214,7 +262,7 @@ func (l *ListView) CurrentIndex() int {
 
 // SetCurrentIndex sets the current item index.
 func (l *ListView) SetCurrentIndex(index int) {
-	if index < -1 || index >= len(l.items) {
+	if index < -1 || index >= l.Count() {
 		return
 	}
 	if l.currentIndex == index {
@@ -257,10 +305,16 @@ func (l *ListView) SetCurrentIndex(index int) {
 	}
 
 	// Announce selection change for accessibility
-	if index >= 0 && index < len(l.items) {
+	if index >= 0 && index < l.Count() {
 		if am := core.FindAccessibilityManager(l); am != nil {
-			item := l.items[index]
-			am.AnnouncePolite(fmt.Sprintf("%s, list item, %d of %d", item.Text, index+1, len(l.items)))
+			// A blank row is announced as its place and nothing else: it is a
+			// row that is there, and saying so is truer than saying nothing
+			// while a screen reader waits for the record to arrive.
+			said := ""
+			if item := l.Item(index); item != nil {
+				said = item.Text + ", "
+			}
+			am.AnnouncePolite(fmt.Sprintf("%slist item, %d of %d", said, index+1, l.Count()))
 		}
 	}
 
@@ -295,7 +349,7 @@ func (l *ListView) IsSelected(index int) bool {
 
 // SetSelected sets the selection state of an item.
 func (l *ListView) SetSelected(index int, selected bool) {
-	if index < 0 || index >= len(l.items) {
+	if index < 0 || index >= l.Count() {
 		return
 	}
 	if l.selectionMode == NoSelection {
@@ -431,15 +485,26 @@ func (l *ListView) Paint(p *core.Painter) {
 
 	visibleCount := l.visibleCount() // clamped: never negative
 
+	// One question for the whole screenful, asked before anything is drawn.
+	// Asking per row would be a question per row, and a source that has to go
+	// and find out would be asked thirty times for one frame.
+	l.window(l.scrollOffset, visibleCount)
+
 	// Draw items (styles collected for the vertical edge fades).
 	rowStyles := make([]style.CellStyle, 0, visibleCount)
 	for i := 0; i < visibleCount; i++ {
 		itemIndex := l.scrollOffset + i
-		if itemIndex >= len(l.items) {
+		if itemIndex >= l.Count() {
 			break
 		}
 
-		item := l.items[itemIndex]
+		// A row the list cannot name yet is drawn BLANK -- its place, its
+		// banding, its selection bar, and no text. That is what keeps a drag
+		// smooth: the rows are where they will be, and the words catch up.
+		item := l.rowAt(itemIndex)
+		if item == nil {
+			item = blankRow
+		}
 		itemY := core.Unit(i) * metrics.UnitsPerCellHeight
 
 		// Determine style
@@ -534,7 +599,7 @@ func (l *ListView) Paint(p *core.Painter) {
 	l.paintVScrollFades(p, rowStyles, visibleCount)
 
 	// Draw scrollbar if needed
-	if len(l.items) > visibleCount {
+	if l.Count() > visibleCount {
 		l.paintScrollbar(p, visibleCount)
 	}
 }
@@ -548,7 +613,7 @@ func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyl
 	if !p.Graphical() {
 		return
 	}
-	maxScroll := len(l.items) - visibleCount
+	maxScroll := l.Count() - visibleCount
 	showTop := l.scrollOffset > 0
 	showBottom := maxScroll > 0 && l.scrollOffset < maxScroll
 	if !showTop && !showBottom {
@@ -608,7 +673,7 @@ func (l *ListView) onLane(x core.Unit) bool {
 
 // showsScrollbar reports whether there is a bar to hit at all.
 func (l *ListView) showsScrollbar() bool {
-	return len(l.items) > l.visibleCount()
+	return l.Count() > l.visibleCount()
 }
 
 // itemTextSide is where one item's text begins inside the room it is given.
@@ -626,7 +691,7 @@ func (l *ListView) itemTextSide(item *ListItem) core.HSide {
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
-	totalItems := len(l.items)
+	totalItems := l.Count()
 
 	scrollbarX = l.laneX()
 	trackHeight = visibleCount
@@ -673,7 +738,7 @@ func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 func (l *ListView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
 	metrics := l.EffectiveCellMetrics()
 	trackU = float64(core.Unit(visibleCount) * metrics.UnitsPerCellHeight)
-	totalItems := len(l.items)
+	totalItems := l.Count()
 	if totalItems <= visibleCount || visibleCount <= 0 {
 		return trackU, trackU, 0
 	}
@@ -774,23 +839,23 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
-		if l.currentIndex < len(l.items)-1 {
+		if l.currentIndex < l.Count()-1 {
 			l.SetCurrentIndex(l.currentIndex + 1)
 		}
 		return true
 
 	case core.CmdTrinketScrollDown:
 		// Jump by 5 items, scrolling to maintain relative position
-		if l.currentIndex < len(l.items)-1 {
+		if l.currentIndex < l.Count()-1 {
 			delta := 5
 			newIndex := l.currentIndex + delta
-			if newIndex >= len(l.items) {
-				newIndex = len(l.items) - 1
+			if newIndex >= l.Count() {
+				newIndex = l.Count() - 1
 			}
 			actualDelta := newIndex - l.currentIndex
 			// Scroll by same amount to maintain relative position
 			visibleCount := l.visibleCount()
-			maxScroll := len(l.items) - visibleCount
+			maxScroll := l.Count() - visibleCount
 			if maxScroll < 0 {
 				maxScroll = 0
 			}
@@ -804,14 +869,14 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketBeg:
-		if len(l.items) > 0 {
+		if l.Count() > 0 {
 			l.SetCurrentIndex(0)
 		}
 		return true
 
 	case core.CmdTrinketEnd:
-		if len(l.items) > 0 {
-			l.SetCurrentIndex(len(l.items) - 1)
+		if l.Count() > 0 {
+			l.SetCurrentIndex(l.Count() - 1)
 		}
 		return true
 
@@ -831,8 +896,8 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		metrics := l.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
 		newIndex := l.currentIndex + pageSize
-		if newIndex >= len(l.items) {
-			newIndex = len(l.items) - 1
+		if newIndex >= l.Count() {
+			newIndex = l.Count() - 1
 		}
 		l.SetCurrentIndex(newIndex)
 		return true
@@ -879,7 +944,7 @@ func (l *ListView) SetBounds(bounds core.UnitRect) {
 // scrolled down must pull the content back into the freed space
 // rather than strand a blank tail behind the vanished scrollbar.
 func (l *ListView) HandleResize(oldSize, newSize core.UnitSize) {
-	maxScroll := len(l.items) - l.visibleCount()
+	maxScroll := l.Count() - l.visibleCount()
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -959,7 +1024,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		} else {
 			// Page down
-			maxScroll := len(l.items) - visibleCount
+			maxScroll := l.Count() - visibleCount
 			l.scrollOffset += visibleCount
 			if l.scrollOffset > maxScroll {
 				l.scrollOffset = maxScroll
@@ -977,7 +1042,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	clickedIndex := l.scrollOffset + clickedRow
 
 	// Only start content drag if click is on a valid item
-	if clickedIndex >= 0 && clickedIndex < len(l.items) {
+	if clickedIndex >= 0 && clickedIndex < l.Count() {
 		// Start content drag - clear scrollbar drag flag
 		l.isDragging = true
 		l.scrollbarDragging = false
@@ -993,7 +1058,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 // vertical scrollbar thumb.
 func (l *ListView) overScrollbarThumb(x, y core.Unit) bool {
 	visibleCount := l.visibleCount()
-	if len(l.items) <= visibleCount {
+	if l.Count() <= visibleCount {
 		return false
 	}
 	bounds := l.Bounds()
@@ -1056,7 +1121,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 				newPos = scrollable
 			}
 			l.scrollbarThumbPos = newPos
-			maxScroll := len(l.items) - visibleCount
+			maxScroll := l.Count() - visibleCount
 			newOffset := 0
 			if scrollable > 0 && maxScroll > 0 {
 				newOffset = int(newPos*float64(maxScroll)/scrollable + 0.5)
@@ -1071,7 +1136,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		rowDelta := currentRow - l.scrollbarDragStart
 
 		visibleCount := l.visibleCount()
-		totalItems := len(l.items)
+		totalItems := l.Count()
 		maxScroll := totalItems - visibleCount
 
 		if maxScroll > 0 {
@@ -1111,8 +1176,8 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Clamp to valid range
 	if index < 0 {
 		index = 0
-	} else if index >= len(l.items) {
-		index = len(l.items) - 1
+	} else if index >= l.Count() {
+		index = l.Count() - 1
 	}
 
 	if index >= 0 && index != l.currentIndex {
@@ -1139,12 +1204,12 @@ func (l *ListView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 // HandleMouseWheel handles mouse wheel scrolling.
 func (l *ListView) HandleMouseWheel(event core.MouseWheelEvent) bool {
-	if len(l.items) == 0 {
+	if l.Count() == 0 {
 		return false
 	}
 
 	visibleCount := l.visibleCount()
-	maxScroll := len(l.items) - visibleCount
+	maxScroll := l.Count() - visibleCount
 	if maxScroll <= 0 {
 		return false
 	}
@@ -1177,7 +1242,7 @@ func (l *ListView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 // HandleFocusIn is called when focus is gained.
 func (l *ListView) HandleFocusIn() {
 	// Auto-select first item if nothing is selected
-	if l.currentIndex < 0 && len(l.items) > 0 {
+	if l.currentIndex < 0 && l.Count() > 0 {
 		l.SetCurrentIndex(0)
 	}
 	l.Update()
@@ -1195,12 +1260,12 @@ func (l *ListView) HandleFocusOut() {
 func (l *ListView) AccessibleInfo() core.AccessibleInfo {
 	info := l.AccessibleTrinket.AccessibleInfo()
 	info.Role = core.RoleList
-	info.SetSize = len(l.items)
+	info.SetSize = l.Count()
 
 	if l.currentIndex >= 0 {
 		info.PositionInSet = l.currentIndex + 1
-		if l.currentIndex < len(l.items) {
-			info.Value = l.items[l.currentIndex].Text
+		if item := l.rowAt(l.currentIndex); item != nil {
+			info.Value = item.Text
 		}
 	}
 
@@ -1241,10 +1306,13 @@ func (l *ListView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 	}
 	row := int(local.Y / metrics.UnitsPerCellHeight)
 	at := l.scrollOffset + row
-	if at < 0 || at >= len(l.items) {
+	if at < 0 || at >= l.Count() {
 		return "", core.UnitRect{}, false
 	}
-	item := l.items[at]
+	item := l.rowAt(at)
+	if item == nil {
+		return "", core.UnitRect{}, false // a blank row has nothing to say yet
+	}
 	x := l.rowTextX(metrics, item)
 	avail := bounds.Width - x
 	if l.showsScrollbar() {
