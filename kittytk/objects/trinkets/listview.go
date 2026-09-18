@@ -51,6 +51,7 @@ type ListView struct {
 	spec       serval.Spec
 	bones      spine
 	restate    bool                 // a made source is out of date
+	asks       asking               // which ask is current; see listdrag.go
 	fromSource map[string]*ListItem // rows a source named, by identity
 
 	// The current row, as both of the things it is. A blank row is selected by
@@ -488,7 +489,7 @@ func (l *ListView) Paint(p *core.Painter) {
 	// One question for the whole screenful, asked before anything is drawn.
 	// Asking per row would be a question per row, and a source that has to go
 	// and find out would be asked thirty times for one frame.
-	l.window(l.scrollOffset, visibleCount)
+	l.ask(l.scrollOffset, visibleCount)
 
 	// Draw items (styles collected for the vertical edge fades).
 	rowStyles := make([]style.CellStyle, 0, visibleCount)
@@ -726,6 +727,13 @@ func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 		if l.scrollOffset < maxScroll && thumbStart >= scrollableTrack {
 			thumbStart = scrollableTrack - 1
 		}
+		// A thumb resting at the foot of its track says THIS IS THE END OF THE
+		// SEQUENCE, and a length that is only a floor cannot say that: there is
+		// more below than anybody has counted. Keeping it a row short is a small
+		// true signal in place of a confident false one.
+		if l.thumbFloor() && thumbStart >= scrollableTrack {
+			thumbStart = scrollableTrack - 1
+		}
 	}
 
 	return
@@ -755,6 +763,10 @@ func (l *ListView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float6
 		posU = l.scrollbarThumbPos
 	} else if maxScroll > 0 {
 		posU = float64(l.scrollOffset) * scrollable / float64(maxScroll)
+	}
+	if l.thumbFloor() && posU >= scrollable && scrollable > 0 {
+		// The same on a pixel surface: a floor does not reach the bottom.
+		posU = scrollable - 1
 	}
 	if posU < 0 {
 		posU = 0

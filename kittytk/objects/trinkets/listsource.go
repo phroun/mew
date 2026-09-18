@@ -171,11 +171,14 @@ func (l *ListView) window(at, n int) {
 	// What the list EXPECTED, which it knows because it chose where to ask from.
 	// An answer that says where it began is believed over this; one that says
 	// nothing leaves the list its own arithmetic rather than nothing at all.
-	got := &rowSink{list: l, expected: at}
-	if err := set.Read(scope, got); err != nil {
+	// Nothing waits. Read hands the question over and returns; the answer
+	// reaches the sink when it reaches it, which for records held here is inside
+	// this call and for records somebody has to fetch is later. So what arrived
+	// is written down by Done and not by this returning -- doing it here would
+	// settle an empty answer every time and never settle a real one.
+	if err := set.Read(scope, &rowSink{list: l, expected: at, asked: l.asks}); err != nil {
 		return
 	}
-	got.settle()
 }
 
 // spineHolds reports whether every row of a stretch is already named.
@@ -198,7 +201,8 @@ type rowSink struct {
 	ids      []*serval.Value
 	begin    serval.RecordCount
 	done     serval.Complete
-	expected int // where the list asked from, and so where it expects the answer
+	expected int    // where the list asked from, and so where it expects the answer
+	asked    asking // which ask this answers, so a stale one can be dropped
 }
 
 func (s *rowSink) Ordered() {}
@@ -229,7 +233,16 @@ func (s *rowSink) Place(id *serval.Value, fields serval.Record) error {
 // no values for and be sure nothing will turn up between two it already holds.
 func (s *rowSink) Placed(c serval.Complete) { s.begin = c.First }
 
-func (s *rowSink) Done(c serval.Complete) { s.done = c }
+// Done ends the answer, which is when what arrived is written down.
+//
+// For records held in this process that is inside the Read that asked; for
+// records somebody had to fetch it is whenever they arrive, and the list repaints
+// because rows that were blank are not any more.
+func (s *rowSink) Done(c serval.Complete) {
+	s.done = c
+	s.settle()
+	s.list.Update()
+}
 
 func (s *rowSink) take(id *serval.Value, fields serval.Record) {
 	s.ids = append(s.ids, id)
@@ -252,7 +265,16 @@ func (s *rowSink) take(id *serval.Value, fields serval.Record) {
 // then be somewhere other than where the list says they are.
 func (s *rowSink) settle() {
 	l := s.list
+
+	// How long the sequence is holds good however old the answer: a count is
+	// about the sequence and not about the place this one asked for.
 	l.bones.learn(s.done)
+	if !l.current(s.asked) {
+		// An answer for somewhere the reader has since left. Writing it down
+		// would leave the spine holding where the reader was passing through
+		// rather than where it is.
+		return
+	}
 	first := s.done.First
 	if !first.Exact {
 		first = s.begin
