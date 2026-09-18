@@ -54,6 +54,13 @@ type ListView struct {
 	asks       asking               // which ask is current; see listdrag.go
 	fromSource map[string]*ListItem // rows a source named, by identity
 
+	// Which field a row SHOWS and which it means, empty for the ones a made
+	// source writes. They are one field until somebody says otherwise; see
+	// SetFields.
+	displayField string
+	valueField   string
+	values       map[string]*serval.Value // what a row means, by identity
+
 	// The current row, as both of the things it is. A blank row is selected by
 	// POSITION with no identity yet -- which keyboard scrolling requires, since
 	// moving the selection and scrolling are one motion -- and becomes selected

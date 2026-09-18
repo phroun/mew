@@ -298,10 +298,27 @@ func (s *rowSink) settle() {
 // hold is what a serval value can be -- so the text and whether it is enabled
 // cross, and a Go pointer could not have.
 func (l *ListView) learnRow(id *serval.Value, fields serval.Record) {
-	if id == nil || l.source == nil {
+	if id == nil {
 		return
 	}
 	key := serval.Key(id)
+
+	// What the row MEANS is kept whoever made it. A plain list means what it
+	// shows, which is not nothing -- it is the same answer arrived at the same
+	// way, and a caller asking what a row means should not have to know which
+	// kind of list it is asking.
+	if v := fields.Get(l.meaning()); v != nil {
+		if l.values == nil {
+			l.values = map[string]*serval.Value{}
+		}
+		l.values[key] = v
+	}
+
+	// A row the list made itself is already a ListItem, so there is nothing to
+	// build. Only a source's rows need one.
+	if l.source == nil {
+		return
+	}
 	if l.fromSource == nil {
 		l.fromSource = map[string]*ListItem{}
 	}
@@ -310,9 +327,9 @@ func (l *ListView) learnRow(id *serval.Value, fields serval.Record) {
 		item = &ListItem{Enabled: true}
 		l.fromSource[key] = item
 	}
-	if v := fields.Get(rowDisplay); v != nil {
+	if v := fields.Get(l.showing()); v != nil {
 		item.Text = v.Str
-	} else if v := fields.Get(rowValue); v != nil {
+	} else if v := fields.Get(l.meaning()); v != nil {
 		item.Text = v.Str
 	}
 	if v := fields.Get(rowEnabled); v != nil {

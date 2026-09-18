@@ -135,6 +135,33 @@ query of its own naming the record to carry on past — and a different sequence
 is another `new query` again, opened before the one it replaces is let go.
 `-raw` prints them as they would have crossed rather than as a table.
 
+## Naming one from the wire language
+
+A trinket written down in the KittyTK Wire Language says what it reads by NAME,
+because a statement cannot carry a Go value and the thing it names may not exist
+yet when the statement is read.
+
+```
+new listview source="source:mail.incoming"
+new listview source="bundle:objectLibrary@2.1.0" display="subject" value="id"
+```
+
+The two namespaces are the two a bundle's own includes use, so the language says
+this one way rather than two: `source:` is a live source somebody registered,
+`bundle:` — or the bare form — is a bundle to be found and assembled, and a
+version may ride after an `@`.
+
+`trinkets.RegisterSource` files a live one. Bundles resolve through a loader the
+**display** installs (`trinkets.SetBundleLoader`), because assembling one means
+reaching a store and a store is the display's; the trinket package holds the
+names and not the knowledge. With no loader installed a `bundle:` name says so
+plainly, rather than failing as though the bundle were missing.
+
+**`display` and `value` are one field until somebody says otherwise.** A plain
+list of strings has nothing to tell them apart. A list over a delimited file
+has: the column a reader sees and the column the program hands back need not be
+the same one, and `ValueAt` is what asks for the second.
+
 ## The layer above
 
 A PSL document read here is flat: `_bundle` is a member like any other, and

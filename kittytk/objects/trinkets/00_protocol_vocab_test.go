@@ -550,3 +550,37 @@ new label caption="tinted" fg=bright_yellow bg="#334455"
 		t.Errorf("bg = %v, want RGB 334455", s.Bg)
 	}
 }
+
+// A list told what to read in the wire language reads it, and the two field
+// names come through the same statement.
+func TestListViewReadsANamedSource(t *testing.T) {
+	RegisterSource("test.wire", namedRows(7))
+	defer UnregisterSource("test.wire")
+
+	f, _ := buildWithEvents(t, nil, `
+lv=new listview source="source:test.wire" display="subject" value="id"
+`)
+	lv := f.targets[0].(*ListView)
+	if lv.Count() != 7 {
+		t.Fatalf("it counts %d rows, want 7", lv.Count())
+	}
+	if got := lv.Item(4); got == nil || got.Text != "message 4" {
+		t.Errorf("row 4 shows %v, want the subject", got)
+	}
+	if v := lv.ValueAt(4); v == nil || !v.IsInt || v.Int != 1004 {
+		t.Errorf("row 4 means %v, want 1004", v)
+	}
+}
+
+// A name nothing stands for is refused by the statement rather than leaving a
+// list quietly empty.
+func TestListViewRefusesANameNothingStandsFor(t *testing.T) {
+	script, err := protocol.Parse(`lv=new listview source="source:not.registered"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := &captureFactory{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}
+	if _, err := protocol.NewSession().Execute(script, f); err == nil {
+		t.Fatal("the statement was taken, and nothing stands for that name")
+	}
+}
