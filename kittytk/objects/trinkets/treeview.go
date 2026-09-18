@@ -104,6 +104,11 @@ type TreeView struct {
 	// byID leads a row's key back to the very item the caller handed in,
 	// because everything reading flatList compares pointers.
 	byID map[core.ObjectID]*TreeItem
+	// kinds is what each kind of row puts in the columns (see treemap.go),
+	// keyed by the name its serval.NodeType is registered under. serval holds
+	// the types; the view holds the mapping, because serval must not learn what
+	// a column is.
+	kinds map[string]NodeMap
 
 	// Appearance
 	indentWidth int // Characters per indent level

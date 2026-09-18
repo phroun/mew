@@ -27,13 +27,20 @@ package trinkets
 // POINTERS the tree was given, so that everything reading flatList goes on
 // comparing pointers as it always has.
 //
-// # Sorting stays where it is
+// # The source sorts, through the mapping
 //
-// A tree sorts each level by its own columns, with cached numeric values and
-// case-folded text, and none of that belongs in a data layer. So the made source
-// is not asked to sort: each row carries `seq`, its position among its siblings
-// AFTER visualSiblings has run, and every level is ordered by that. serval
-// preserves the order it was handed rather than being taught to reproduce it.
+// A tree states its sort in COLUMNS, and each kind of row translates that into
+// fields of its own -- see treemap.go. So serval does the sorting, one mechanism
+// whether the rows are the tree's own or somebody else's, and a made row carries
+// a typed value per column for it to sort by: a size in bytes and not "1.2 MB",
+// because the number is what the column MEANS.
+//
+// `seq` is still there and has a better job than it started with. It was a bridge
+// while the source was not asked to sort; it is now the LAST sort level, which is
+// what makes the sort stable -- rows equal on every level keep the order the
+// application put them in, exactly as `sort.SliceStable` did. Unsorted, it is the
+// whole order, so a tree whose items were inserted rather than appended still
+// draws them where they were put.
 
 import (
 	"github.com/phroun/kittytk/core"
@@ -103,11 +110,14 @@ func (t *TreeView) makeSource() *serval.TreeSource {
 	var rows []serval.Row
 	t.byID = map[core.ObjectID]*TreeItem{}
 
+	// `seq` is the item's own position among its siblings -- the order the
+	// application put them in, untouched. The SORT is what reorders them, and it
+	// is stated in columns and translated per kind.
 	var walk func(items []*TreeItem, parent *TreeItem)
 	walk = func(items []*TreeItem, parent *TreeItem) {
-		for i, item := range t.visualSiblings(items) {
+		for i, item := range items {
 			t.byID[item.ID] = item
-			fields := serval.Record{serval.Named(treeSeq, i)}
+			fields := append(t.cells(item, ""), serval.Named(treeSeq, i))
 			if parent != nil {
 				fields = append(fields, serval.Named(treeParent, int64(parent.ID)))
 			}
@@ -117,19 +127,18 @@ func (t *TreeView) makeSource() *serval.TreeSource {
 	}
 	walk(t.rootItems, nil)
 
-	bySeq := []serval.SortLevel{{Field: treeSeq}}
+	// A made source has one kind of row, so one translation serves every level.
+	by := t.sortFields("")
 	src, err := serval.NewTreeSource(serval.TreeOptions{
 		Source: serval.NewListSource(rows),
-		// The top level is the rows with no parent, in the order the tree's own
-		// sort put them.
 		Spec: &serval.Spec{
 			Filter: &serval.Filter{
 				Op: serval.OpEq, Field: treeParent, Values: []*serval.Value{nil},
 			},
-			Sort: bySeq,
+			Sort: by,
 		},
 		Types: serval.NodeTypes{Default: &serval.NodeType{
-			Children: serval.Sorted(serval.ChildrenByKey(treeParent), bySeq...),
+			Children: serval.Sorted(serval.ChildrenByKey(treeParent), by...),
 		}},
 	})
 	if err != nil {
