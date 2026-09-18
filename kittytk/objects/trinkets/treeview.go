@@ -7,6 +7,7 @@ import (
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/serval"
 )
 
 // TreeItem represents an item in a TreeView.
@@ -93,6 +94,16 @@ type TreeView struct {
 	flatList     []*TreeItem // Flattened list of visible items
 	currentIndex int
 	scrollOffset int
+
+	// Where the rows come from (see treesource.go). A tree given no source
+	// makes one out of its own items, so flatList is a window on a sequence
+	// either way rather than something the view walks for itself.
+	made    *serval.TreeSource
+	set     serval.DataSet
+	restate bool
+	// byID leads a row's key back to the very item the caller handed in,
+	// because everything reading flatList compares pointers.
+	byID map[core.ObjectID]*TreeItem
 
 	// Appearance
 	indentWidth int // Characters per indent level
@@ -627,9 +638,13 @@ func (t *TreeView) SetOnItemCollapsed(handler func(item *TreeItem)) {
 }
 
 // rebuildFlatList rebuilds the flattened list of visible items.
+//
+// It reads the visible rows out of a sequence rather than walking the items --
+// see treesource.go. What the walk used to work out for itself, a TreeSource now
+// answers: which rows show, in what order, and how deep each one stands.
 func (t *TreeView) rebuildFlatList() {
-	t.flatList = nil
-	t.flattenItems(t.rootItems)
+	t.touched()
+	t.flatList = t.flatten()
 
 	// Clamp scroll offset to valid range after list size changes
 	t.clampScrollOffset()
@@ -677,15 +692,6 @@ func (t *TreeView) clampScrollOffset() {
 	}
 	if t.scrollOffset < 0 {
 		t.scrollOffset = 0
-	}
-}
-
-func (t *TreeView) flattenItems(items []*TreeItem) {
-	for _, item := range t.visualSiblings(items) {
-		t.flatList = append(t.flatList, item)
-		if item.Expanded && len(item.Children) > 0 {
-			t.flattenItems(item.Children)
-		}
 	}
 }
 
