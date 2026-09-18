@@ -87,11 +87,11 @@ type MenuItem struct {
 	ShortcutText string
 	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
 	// picture. A name nothing has registered draws nothing.
-	Icon         string
-	Enabled      bool
-	Checkable    bool
-	Checked      bool
-	Separator    bool // If true, this is a separator line
+	Icon      string
+	Enabled   bool
+	Checkable bool
+	Checked   bool
+	Separator bool // If true, this is a separator line
 	// InPlace: activating this item performs its action but KEEPS the
 	// menu open, re-rendering the updated content in place (checkable
 	// toggles that users flip several times in a row - column choosers,

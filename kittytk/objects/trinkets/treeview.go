@@ -17,12 +17,12 @@ type TreeItem struct {
 	// address the same number the reply surfaced.
 	ID core.ObjectID
 
-	Text     string
+	Text string
 	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
 	// picture. A name nothing has registered draws nothing.
-	Icon     string
-	Data     interface{} // User data
-	Enabled  bool
+	Icon    string
+	Data    interface{} // User data
+	Enabled bool
 
 	// ReadOnly holds this row out of the row editor, whatever its columns
 	// allow. Editability is otherwise a column's answer -- every row in an

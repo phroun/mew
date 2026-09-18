@@ -15,7 +15,7 @@ type Button struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	text         string
+	text string
 	// icon is the NAME of a registered icon (style.RegisterIcon), not a
 	// picture. A name nothing has registered draws nothing.
 	icon         string

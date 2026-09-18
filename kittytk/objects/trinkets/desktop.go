@@ -291,8 +291,8 @@ type Desktop struct {
 	// tooltipLeavingTimer the wait for it to finish so it can be taken off.
 	tooltipLeaving      *desktopTooltip
 	tooltipLeavingTimer *DesktopTimer
-	pointerMovedAt time.Time
-	tooltipShownAt time.Time
+	pointerMovedAt      time.Time
+	tooltipShownAt      time.Time
 	// tooltipDwell overrides how long the pointer rests before a note
 	// appears, and tooltipFade how long one takes to arrive and to leave.
 	// Zero takes tooltipDwellDefault and tooltipFadeDur.

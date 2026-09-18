@@ -62,7 +62,7 @@ type TabTrinket struct {
 
 // Tab represents a single tab in a TabTrinket.
 type Tab struct {
-	Text     string
+	Text string
 	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
 	// picture. A name nothing has registered draws nothing.
 	Icon     string
