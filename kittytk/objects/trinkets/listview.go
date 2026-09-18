@@ -10,8 +10,12 @@ import (
 
 // ListItem represents an item in a ListView.
 type ListItem struct {
-	Text    string
-	Icon    *style.TextIcon
+	Text string
+
+	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	Icon string
+
 	Data    interface{} // User data
 	Enabled bool
 }
@@ -487,10 +491,10 @@ func (l *ListView) Paint(p *core.Painter) {
 		x += metrics.UnitsPerCellWidth
 
 		// Draw icon if present
-		if l.showIcons && item.Icon != nil {
+		if l.showIcons && item.Icon != "" {
 			// Draw icon (simplified - just first char for now)
-			if len(item.Icon.Cells) > 0 {
-				cell := item.Icon.Cells[0]
+			if icon, ok := style.IconText(item.Icon, style.IconSmall); ok && len(icon.Cells) > 0 {
+				cell := icon.Cells[0]
 				p.DrawCell(core.LeadingX(l, bounds.Width, x, metrics.UnitsPerCellWidth*2), itemY, cell.Char, cell.Style)
 			}
 			x += metrics.UnitsPerCellWidth * 2
@@ -1216,7 +1220,7 @@ func (l *ListView) AccessibleInfo() core.AccessibleInfo {
 // does, kept in one place so what is measured is what is drawn.
 func (l *ListView) rowTextX(metrics core.CellMetrics, item *ListItem) core.Unit {
 	x := metrics.UnitsPerCellWidth
-	if l.showIcons && item.Icon != nil {
+	if l.showIcons && item.Icon != "" {
 		x += metrics.UnitsPerCellWidth * 2
 	}
 	return x

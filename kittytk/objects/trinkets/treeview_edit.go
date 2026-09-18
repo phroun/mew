@@ -131,12 +131,16 @@ func (t *TreeView) setCellValue(item *TreeItem, col *TreeColumn, v string) {
 
 // treeCellTextInset is how far into a tree-hosting cell the caption text
 // begins, measured along the run: the indent, the expander cell, and the icon
-// (when the item has one) - mirroring paintTreeCell exactly. Where that lands
-// in the span is treeRunX's answer.
+// (when the item names one) - mirroring paintTreeCell exactly. Where that
+// lands in the span is treeRunX's answer.
+//
+// The NAME reserves the cell, not the picture: a row whose icon has not been
+// registered yet keeps its caption where it will be once it has, rather than
+// shifting the moment somebody dresses the application.
 func (t *TreeView) treeCellTextInset(item *TreeItem) core.Unit {
 	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	inset := core.Unit(item.Level()*t.indentWidth+1+treeLeftPadCells) * cw
-	if item.Icon != nil && len(item.Icon.Cells) > 0 {
+	if item.Icon != "" {
 		inset += cw * 2
 	}
 	return inset

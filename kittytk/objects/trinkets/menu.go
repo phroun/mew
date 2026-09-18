@@ -85,7 +85,9 @@ type MenuItem struct {
 	// column shows the bound shortcut, a space, then this text, so a command
 	// reachable either way advertises both. See MenuItem.ShortcutDisplay.
 	ShortcutText string
-	Icon         *style.TextIcon
+	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	Icon         string
 	Enabled      bool
 	Checkable    bool
 	Checked      bool
@@ -236,7 +238,7 @@ func (m *MenuItem) SetShortcut(shortcut core.Shortcut) *MenuItem {
 }
 
 // SetIcon sets the icon.
-func (m *MenuItem) SetIcon(icon *style.TextIcon) *MenuItem {
+func (m *MenuItem) SetIcon(icon string) *MenuItem {
 	m.Icon = icon
 	return m
 }
@@ -1666,8 +1668,8 @@ func (m *Menu) Paint(p *core.Painter) {
 			if item.Checked {
 				mm.DrawGlyph(p, x, itemY, '✓', tickStyle)
 			}
-		} else if item.Icon != nil {
-			m.paintGutterIcon(p, mm, itemY, item.Icon, tickStyle)
+		} else if icon, ok := style.IconText(item.Icon, style.IconSmall); ok {
+			m.paintGutterIcon(p, mm, itemY, &icon, tickStyle)
 		}
 		x += mm.CellW * 2 // Move past checkmark + 1 gutter space
 

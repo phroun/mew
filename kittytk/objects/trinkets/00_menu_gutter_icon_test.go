@@ -1,6 +1,8 @@
 package trinkets
 
 import (
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/phroun/kittytk/backend/raster"
@@ -8,10 +10,19 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
+// testIcons numbers the names these tests register, so that two menus built in
+// one test are two icons rather than one overwriting the other.
+var testIcons int64
+
 // iconMenu builds a one-item menu carrying the given icon, on the given
 // backend, and paints it.
-func iconMenu(t *testing.T, b core.RenderBackend, icon *style.TextIcon) *Menu {
+//
+// An item names its icon rather than holding it, so the picture is registered
+// under a name of this call's own and the NAME is what the item is given.
+func iconMenu(t *testing.T, b core.RenderBackend, icon style.TextIcon) *Menu {
 	t.Helper()
+	name := fmt.Sprintf("test.gutter.%d", atomic.AddInt64(&testIcons, 1))
+	style.RegisterIcon(&style.Icon{ID: name, TextSmall: icon})
 	d := NewDesktop()
 	d.SetBackend(b)
 	d.SetBounds(core.UnitRect{Width: 300, Height: 200})
@@ -19,7 +30,7 @@ func iconMenu(t *testing.T, b core.RenderBackend, icon *style.TextIcon) *Menu {
 	d.AddChild(bar)
 	m := NewMenu("File")
 	item := NewMenuItem("Open Recent")
-	item.SetIcon(icon)
+	item.SetIcon(name)
 	m.AddItem(item)
 	m.AddItem(NewMenuItem("Close"))
 	bar.AddMenu(m)
@@ -37,7 +48,7 @@ func TestMenuGutterIconSpansTheGutter(t *testing.T) {
 	rec := &cellRecorder{nullBackend: &nullBackend{}}
 
 	icon := style.NewSmallTextIcon("<->", style.DefaultStyle())
-	m := iconMenu(t, rec, &icon)
+	m := iconMenu(t, rec, icon)
 	mm := m.menuMetrics()
 
 	for i, want := range []rune{'<', '-', '>'} {
@@ -63,7 +74,7 @@ func TestMenuGutterIconCentresWhenNarrow(t *testing.T) {
 
 	icon := style.NewTextIcon(1, 1)
 	icon.Set(0, 0, '*', style.DefaultStyle())
-	m := iconMenu(t, rec, &icon)
+	m := iconMenu(t, rec, icon)
 	mm := m.menuMetrics()
 
 	want := m.popupX + mm.CellW // the middle of three cells
@@ -92,7 +103,7 @@ func TestMenuGutterIconGroundOnACellSurface(t *testing.T) {
 	// Transparent: the gutter's colour is what the cell gets.
 	rec := &cellRecorder{nullBackend: &nullBackend{}}
 	clear := style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(style.ColorTransparent))
-	m := iconMenu(t, rec, &clear)
+	m := iconMenu(t, rec, clear)
 
 	want := m.GetScheme().GetMenuGutter().Bg
 	found := 0
@@ -116,7 +127,7 @@ func TestMenuGutterIconGroundOnACellSurface(t *testing.T) {
 	rec = &cellRecorder{nullBackend: &nullBackend{}}
 	red := style.RGB(255, 0, 0)
 	painted := style.NewSmallTextIcon("<->", style.DefaultStyle().WithBg(red))
-	iconMenu(t, rec, &painted)
+	iconMenu(t, rec, painted)
 
 	found = 0
 	for _, c := range rec.cells {
@@ -153,7 +164,7 @@ func TestMenuGutterIconGroundOnAPixelSurface(t *testing.T) {
 		core.SetTextMeasurer(b)
 		b.Clear(style.DefaultStyle().WithBg(style.RGB(255, 255, 255)))
 
-		m := iconMenu(t, b, &icon)
+		m := iconMenu(t, b, icon)
 		mm := m.menuMetrics()
 		p := core.NewPainter(b)
 		rowPx := p.UnitSpanPxY(0, mm.RowH)

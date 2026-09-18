@@ -18,7 +18,9 @@ type TreeItem struct {
 	ID core.ObjectID
 
 	Text     string
-	Icon     *style.TextIcon
+	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	Icon     string
 	Data     interface{} // User data
 	Enabled  bool
 

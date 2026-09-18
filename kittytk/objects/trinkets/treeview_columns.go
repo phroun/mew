@@ -1940,8 +1940,11 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	// Past the apparatus: the icon's cell, then everything left of the span
 	// for the caption.
 	at := t.cellTextInset(sp, item)
-	if item.Icon != nil && len(item.Icon.Cells) > 0 {
-		cell := item.Icon.Cells[0]
+	// The NAME reserves the cell and the picture fills it, so a row named an
+	// icon nothing has registered yet keeps its caption where it will be once
+	// something has. See treeCellTextInset, which measures the same way.
+	if icon, ok := style.IconText(item.Icon, style.IconSmall); ok && len(icon.Cells) > 0 {
+		cell := icon.Cells[0]
 		p.DrawCell(t.treeRunX(sp, at-2*cw, cw), itemY, cell.Char, cell.Style)
 	}
 	avail := t.cellTextRoom(sp, item)

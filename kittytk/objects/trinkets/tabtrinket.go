@@ -63,7 +63,9 @@ type TabTrinket struct {
 // Tab represents a single tab in a TabTrinket.
 type Tab struct {
 	Text     string
-	Icon     *style.TextIcon
+	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	Icon     string
 	Content  core.Trinket
 	Enabled  bool
 	Closable bool // Per-tab closable setting
@@ -496,7 +498,7 @@ func (t *TabTrinket) TabText(index int) string {
 }
 
 // SetTabIcon sets the icon of a tab.
-func (t *TabTrinket) SetTabIcon(index int, icon *style.TextIcon) {
+func (t *TabTrinket) SetTabIcon(index int, icon string) {
 	if index < 0 || index >= len(t.tabs) {
 		return
 	}

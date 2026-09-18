@@ -16,7 +16,9 @@ type Button struct {
 	core.AccessibleTrinket
 
 	text         string
-	icon         *style.Icon
+	// icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	icon         string
 	iconSize     style.IconSize
 	checkable    bool
 	checked      bool
@@ -61,13 +63,11 @@ func NewButton(text string) *Button {
 	return b
 }
 
-// NewIconButton creates a button with an icon.
-func NewIconButton(icon *style.Icon) *Button {
+// NewIconButton creates a button showing the icon registered under a name.
+func NewIconButton(icon string) *Button {
 	b := NewButton("")
 	b.icon = icon
-	if icon != nil {
-		b.SetAccessibleName(icon.ID)
-	}
+	b.SetAccessibleName(icon)
 	return b
 }
 
@@ -84,13 +84,13 @@ func (b *Button) SetText(text string) {
 	b.InvalidateLayout()
 }
 
-// Icon returns the button icon.
-func (b *Button) Icon() *style.Icon {
+// Icon returns the name of the button's icon.
+func (b *Button) Icon() string {
 	return b.icon
 }
 
-// SetIcon sets the button icon.
-func (b *Button) SetIcon(icon *style.Icon) {
+// SetIcon names the button's icon.
+func (b *Button) SetIcon(icon string) {
 	b.icon = icon
 	b.Update()
 	b.InvalidateLayout()
@@ -282,7 +282,7 @@ func (b *Button) SizeHint() core.UnitSize {
 
 	// Add icon width if present (icons use fixed width)
 	iconWidth := core.Unit(0)
-	if b.icon != nil {
+	if b.icon != "" {
 		if b.iconSize == style.IconSmall {
 			iconWidth = metrics.TextWidth(3)
 		} else {
@@ -398,16 +398,8 @@ func (b *Button) Paint(p *core.Painter) {
 
 	// Icon handling
 	iconWidth := core.Unit(0)
-	if b.icon != nil {
-		var textIcon style.TextIcon
-		if b.iconSize == style.IconSmall && b.icon.HasText(style.IconSmall) {
-			textIcon = b.icon.TextSmall
-		} else if b.icon.HasText(style.IconLarge) {
-			textIcon = b.icon.TextLarge
-		}
-		if textIcon.Width > 0 {
-			iconWidth = metrics.TextWidth(textIcon.Width + 1)
-		}
+	if textIcon, ok := style.IconText(b.icon, b.iconSize); ok && textIcon.Width > 0 {
+		iconWidth = metrics.TextWidth(textIcon.Width + 1)
 	}
 
 	// The face is as wide as what it holds -- unless the layout gave the button
@@ -481,14 +473,8 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 
 	// Draw icon if present
-	if b.icon != nil && iconWidth > 0 {
-		var textIcon style.TextIcon
-		if b.iconSize == style.IconSmall && b.icon.HasText(style.IconSmall) {
-			textIcon = b.icon.TextSmall
-		} else if b.icon.HasText(style.IconLarge) {
-			textIcon = b.icon.TextLarge
-		}
-
+	if iconWidth > 0 {
+		textIcon, _ := style.IconText(b.icon, b.iconSize)
 		if textIcon.Width > 0 {
 			x := xOffset + metrics.UnitsPerCellWidth // After left bracket (1 cell)
 			y := yOffset
