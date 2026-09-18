@@ -40,23 +40,23 @@ func only(t *testing.T, got []bundleEntry) bundleEntry {
 // by the name and version it states inside itself.
 func TestABundleIsFoundByWhatItCallsItself(t *testing.T) {
 	s := shelves(t)
-	if _, err := s.put("libraryV1", "psl", []byte(figaro)); err != nil {
+	if _, err := s.put("figaro-v1", "psl", []byte(figaro)); err != nil {
 		t.Fatal(err)
 	}
 
 	e := only(t, s.bundlesNamed("figaro", "0.1.0"))
-	if e.storeKey != "libraryV1" {
+	if e.storeKey != "figaro-v1" {
 		t.Errorf("figaro 0.1.0 is held by %q", e.storeKey)
 	}
 	// And it is found by the hash of its ITEM, which names the content rather
 	// than the name -- computed over the bytes, not claimed by the document.
-	if h := only(t, s.bundlesHashed(hashOf([]byte(figaro)))); h.storeKey != "libraryV1" {
+	if h := only(t, s.bundlesHashed(hashOf([]byte(figaro)))); h.storeKey != "figaro-v1" {
 		t.Errorf("the hash found %q", h.storeKey)
 	}
 
 	// The store key is the app's own word and says nothing about the bundle:
 	// asking for it by the name it is FILED under finds nothing.
-	if got := s.bundlesNamed("libraryV1", "0.1.0"); len(got) != 0 {
+	if got := s.bundlesNamed("figaro-v1", "0.1.0"); len(got) != 0 {
 		t.Errorf("the store key answered as a bundle key: %+v", got)
 	}
 }
@@ -83,12 +83,12 @@ func TestAPlainPslIsNotABundle(t *testing.T) {
 // the way back: an index line nothing will ever read is still a line.
 func TestABundleWithNoNameIsNotOne(t *testing.T) {
 	nameless := `( _bundle: ( author: "nobody", version: "0.1.0" ), ("r") )`
-	if e, ok := bundleOf("somewhere", []byte(nameless)); ok {
+	if e, ok := bundleOf("named-somewhere", []byte(nameless)); ok {
 		t.Errorf("a bundle with no key read as %+v", e)
 	}
 	// And the same document with one is.
 	named := `( _bundle: ( key: "named", version: "0.1.0" ), ("r") )`
-	if _, ok := bundleOf("somewhere", []byte(named)); !ok {
+	if _, ok := bundleOf("named-somewhere", []byte(named)); !ok {
 		t.Error("a bundle with a key did not read as one")
 	}
 }
@@ -112,17 +112,17 @@ func TestABundleAppendedInPiecesIsFoundWhenItCloses(t *testing.T) {
 	s := shelves(t)
 	head, tail := figaro[:40], figaro[40:]
 
-	if _, err := s.appendTo("growing", "psl", []byte(head)); err != nil {
+	if _, err := s.appendTo("figaro-growing", "psl", []byte(head)); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.bundlesNamed("figaro", "0.1.0"); len(got) != 0 {
 		t.Fatalf("a half-written bundle was indexed: %+v", got)
 	}
 
-	if _, err := s.appendTo("growing", "psl", []byte(tail)); err != nil {
+	if _, err := s.appendTo("figaro-growing", "psl", []byte(tail)); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "growing" {
+	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "figaro-growing" {
 		t.Errorf("the finished bundle is held by %q", e.storeKey)
 	}
 }
@@ -133,19 +133,19 @@ func TestWhatIsNoLongerABundleIsNoLongerIndexed(t *testing.T) {
 		name string
 		stop func(*appStore) error
 	}{
-		{"dropped", func(s *appStore) error { return s.drop("held") }},
+		{"dropped", func(s *appStore) error { return s.drop("figaro-held") }},
 		{"replaced with a plain psl", func(s *appStore) error {
-			_, err := s.put("held", "psl", []byte(`( ("just a record") )`))
+			_, err := s.put("figaro-held", "psl", []byte(`( ("just a record") )`))
 			return err
 		}},
 		{"replaced with another type", func(s *appStore) error {
-			_, err := s.put("held", "txt", []byte("words"))
+			_, err := s.put("figaro-held", "txt", []byte("words"))
 			return err
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := shelves(t)
-			if _, err := s.put("held", "psl", []byte(figaro)); err != nil {
+			if _, err := s.put("figaro-held", "psl", []byte(figaro)); err != nil {
 				t.Fatal(err)
 			}
 			if len(s.bundlesNamed("figaro", "0.1.0")) != 1 {
@@ -165,7 +165,7 @@ func TestWhatIsNoLongerABundleIsNoLongerIndexed(t *testing.T) {
 // the store hands back both rather than choosing.
 func TestTwoItemsClaimingOneBundleAreBothReported(t *testing.T) {
 	s := shelves(t)
-	for _, key := range []string{"first", "second"} {
+	for _, key := range []string{"figaro-first", "figaro-second"} {
 		if _, err := s.put(key, "psl", []byte(figaro)); err != nil {
 			t.Fatal(err)
 		}
@@ -184,22 +184,22 @@ func TestTwoItemsClaimingOneBundleAreBothReported(t *testing.T) {
 // as the collision it is not.
 func TestACachedBundleShadowsTheKeptOne(t *testing.T) {
 	s := shelves(t)
-	if _, err := s.put("library", "psl", []byte(figaro)); err != nil {
+	if _, err := s.put("figaro-library", "psl", []byte(figaro)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.put("#library", "psl", []byte(figaro)); err != nil {
+	if _, err := s.put("#figaro-library", "psl", []byte(figaro)); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "#library" {
+	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "#figaro-library" {
 		t.Errorf("the answer was %q, not the cached copy", e.storeKey)
 	}
 
 	// The two halves are indexed apart, so a cache sweep cannot take the kept
 	// one with it -- and what it leaves is what answers next time.
-	if err := s.drop("#library"); err != nil {
+	if err := s.drop("#figaro-library"); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "library" {
+	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "figaro-library" {
 		t.Errorf("after the cache went, the answer was %q", e.storeKey)
 	}
 }
@@ -208,16 +208,16 @@ func TestACachedBundleShadowsTheKeptOne(t *testing.T) {
 func TestTwoVersionsOfOneBundleAreTwoBundles(t *testing.T) {
 	s := shelves(t)
 	older := `( _bundle: ( key: "figaro", version: "0.0.9" ), ("r") )`
-	if _, err := s.put("new", "psl", []byte(figaro)); err != nil {
+	if _, err := s.put("figaro-new", "psl", []byte(figaro)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.put("old", "psl", []byte(older)); err != nil {
+	if _, err := s.put("figaro-old", "psl", []byte(older)); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "new" {
+	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "figaro-new" {
 		t.Errorf("0.1.0 is held by %q", e.storeKey)
 	}
-	if e := only(t, s.bundlesNamed("figaro", "0.0.9")); e.storeKey != "old" {
+	if e := only(t, s.bundlesNamed("figaro", "0.0.9")); e.storeKey != "figaro-old" {
 		t.Errorf("0.0.9 is held by %q", e.storeKey)
 	}
 	// A version it does not state is not a version it answers to.
@@ -230,13 +230,13 @@ func TestTwoVersionsOfOneBundleAreTwoBundles(t *testing.T) {
 // store that existed before this was written -- still answers.
 func TestTheIndexIsBuiltAgainWhenItIsGone(t *testing.T) {
 	s := shelves(t)
-	if _, err := s.put("library", "psl", []byte(figaro)); err != nil {
+	if _, err := s.put("figaro-library", "psl", []byte(figaro)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(s.kept.bundleIndexPath()); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "library" {
+	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "figaro-library" {
 		t.Errorf("after the index went, the answer was %q", e.storeKey)
 	}
 }
@@ -245,10 +245,10 @@ func TestTheIndexIsBuiltAgainWhenItIsGone(t *testing.T) {
 func TestAKeyWithASpaceInItSurvivesTheIndex(t *testing.T) {
 	s := shelves(t)
 	spaced := `( _bundle: ( key: "the figaro library", version: "0.1.0 beta" ) )`
-	if _, err := s.put("spaced", "psl", []byte(spaced)); err != nil {
+	if _, err := s.put("the figaro library spaced", "psl", []byte(spaced)); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesNamed("the figaro library", "0.1.0 beta")); e.storeKey != "spaced" {
+	if e := only(t, s.bundlesNamed("the figaro library", "0.1.0 beta")); e.storeKey != "the figaro library spaced" {
 		t.Errorf("it came back as %q", e.storeKey)
 	}
 }
@@ -258,10 +258,10 @@ func TestAKeyWithASpaceInItSurvivesTheIndex(t *testing.T) {
 func TestABareNameAndAQuotedOneAreTheSameBundle(t *testing.T) {
 	s := shelves(t)
 	bare := `( _bundle: ( key: figaro, version: "0.1.0" ) )`
-	if _, err := s.put("bare", "psl", []byte(bare)); err != nil {
+	if _, err := s.put("figaro-bare", "psl", []byte(bare)); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "bare" {
+	if e := only(t, s.bundlesNamed("figaro", "0.1.0")); e.storeKey != "figaro-bare" {
 		t.Errorf("a bare key came back as %q", e.storeKey)
 	}
 }
@@ -274,16 +274,76 @@ func TestTheHashCoversTheMetadataToo(t *testing.T) {
 	const b = `( _bundle: ( key: "figaro", version: "0.1.0", author: "Dey" ), ("r") )`
 
 	s := shelves(t)
-	if _, err := s.put("one", "psl", []byte(a)); err != nil {
+	if _, err := s.put("figaro-one", "psl", []byte(a)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.put("two", "psl", []byte(b)); err != nil {
+	if _, err := s.put("figaro-two", "psl", []byte(b)); err != nil {
 		t.Fatal(err)
 	}
-	if e := only(t, s.bundlesHashed(hashOf([]byte(a)))); e.storeKey != "one" {
+	if e := only(t, s.bundlesHashed(hashOf([]byte(a)))); e.storeKey != "figaro-one" {
 		t.Errorf("the hash of the first found %q", e.storeKey)
 	}
-	if e := only(t, s.bundlesHashed(hashOf([]byte(b)))); e.storeKey != "two" {
+	if e := only(t, s.bundlesHashed(hashOf([]byte(b)))); e.storeKey != "figaro-two" {
 		t.Errorf("a change inside _bundle did not change the hash: found %q", e.storeKey)
+	}
+}
+
+// Being a bundle is TWO statements agreeing: the document says what it is, and
+// the app says it meant to file it as that. The store key begins with the
+// bundle's key; the cache mark leads it or does not appear, and says how long
+// the item lives rather than what it is, so it takes no part.
+func TestABundleIsFiledUnderItsOwnKey(t *testing.T) {
+	for _, at := range []string{
+		"figaro",          // the bare name
+		"figaro-0.1.3",    // a version after it
+		"figaro-revised",  // any suffix at all
+		"#figaro",         // and cached
+		"#figaro-scratch", // cached, with a suffix
+	} {
+		s := shelves(t)
+		if _, err := s.put(at, "psl", []byte(figaro)); err != nil {
+			t.Fatalf("%s: %v", at, err)
+		}
+		if got := s.bundlesNamed("figaro", "0.1.0"); len(got) != 1 {
+			t.Errorf("filed as %q, it was not indexed: %+v", at, got)
+		}
+	}
+
+	for _, at := range []string{
+		"scratch",   // says nothing about what it holds
+		"fig",       // a prefix OF the key is not the key as a prefix
+		"my-figaro", // the key is in it, but not at the front
+		"Figaro",    // a name is a name, and case is part of one
+	} {
+		s := shelves(t)
+		if _, err := s.put(at, "psl", []byte(figaro)); err != nil {
+			t.Fatalf("%s: %v", at, err)
+		}
+		if got := s.bundlesNamed("figaro", "0.1.0"); len(got) != 0 {
+			t.Errorf("filed as %q, it was indexed anyway: %+v", at, got)
+		}
+	}
+}
+
+// What the rule is FOR. Without it any document claiming a high version joins
+// the shelf its contents name, and a scratch copy wins a resolution that
+// nothing about the app's own filing would have predicted.
+func TestAStrayCopyCannotWinAResolution(t *testing.T) {
+	s := shelves(t)
+	if _, err := s.put("figaro-0.1.0", "psl", []byte(figaro)); err != nil {
+		t.Fatal(err)
+	}
+	stray := `( _bundle: ( key: "figaro", version: "9.9.9" ), ("from nowhere") )`
+	if _, err := s.put("scratch", "psl", []byte(stray)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shelf holds one figaro, and it is the one that was filed as figaro.
+	under := s.bundlesUnder("figaro")
+	if len(under) != 1 {
+		t.Fatalf("the shelf holds %+v", under)
+	}
+	if under[0].version != "0.1.0" {
+		t.Errorf("a stray copy claiming %s joined the shelf", under[0].version)
 	}
 }

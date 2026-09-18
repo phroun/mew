@@ -66,6 +66,17 @@ type bundleEntry struct {
 //
 // A `_bundle` with no key is not indexed. The index exists to answer a question
 // asked by name, and a bundle no include can name has no answer to give.
+//
+// Neither is one whose STORE KEY does not begin with its bundle key. That makes
+// being a bundle two statements agreeing rather than one: the document says
+// what it is, and the app says it meant to file it as that. `figaro`,
+// `figaro-0.1.3`, `figaro-revised` and `#figaro` all say so; `scratch` does not,
+// however much of a bundle its contents look like.
+//
+// What that buys is not a faster lookup -- the index is already only bundles --
+// but a narrower field of candidates. Without it a stray copy under any name at
+// all joins the shelf its contents name and can win a resolution by claiming a
+// high version, and nothing about the app's own filing would have said so.
 func bundleOf(storeKey string, data []byte) (bundleEntry, bool) {
 	if !bytes.Contains(data, []byte(bundleMark)) {
 		return bundleEntry{}, false
@@ -87,10 +98,17 @@ func bundleOf(storeKey string, data []byte) (bundleEntry, bool) {
 		key:      pslText(block, "key"),
 		version:  pslText(block, "version"),
 	}
-	if e.key == "" {
+	if e.key == "" || !filedAsItsOwnKey(storeKey, e.key) {
 		return bundleEntry{}, false
 	}
 	return e, true
+}
+
+// filedAsItsOwnKey reports whether an item is filed under a name that begins
+// with the bundle it holds. The cache mark leads the key or does not appear, and
+// says how long the item lives rather than what it is, so it takes no part.
+func filedAsItsOwnKey(storeKey, bundleKey string) bool {
+	return strings.HasPrefix(strings.TrimPrefix(storeKey, cacheMark), bundleKey)
 }
 
 // pslText is a member read as text, whether it was written as a string or as a
