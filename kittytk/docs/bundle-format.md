@@ -4,8 +4,8 @@
 > the loader today. The example is not a sketch: `display`'s tests read this
 > document, load the bundle in it, and fail if it stops meaning what it says.
 >
-> `data-sources-and-bundles.md` is the design conversation behind it and
-> `psl-as-a-data-source.md` is what the sources it becomes then do.
+> `bundles.md` is the design conversation behind it and serval's
+> `docs/sources.md` is what the sources it becomes then do.
 
 A bundle is an authored **document**, held in an app's store, that a loader
 turns into a data source. It is not a source itself and has no operations of its

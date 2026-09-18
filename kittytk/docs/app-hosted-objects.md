@@ -4,7 +4,7 @@
 > below are decided. The first hosted type — a query — is implemented in all
 > three client libraries (`hosting-a-query.md`); the display side that speaks
 > to it is not. See `live-data-negotiation.md` for what it is for, and
-> `data-sources-and-bundles.md` for the layering underneath.
+> `bundles.md` for the layering underneath.
 
 Everything so far runs one way. An application says `new`, `set`, `ask`, `do`,
 `destroy`; the display owns the objects those verbs address and answers with

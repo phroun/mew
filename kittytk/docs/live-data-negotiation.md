@@ -58,7 +58,7 @@ source, this sort, this filter — prepared once and drawn from. Those three nam
 it and nothing else does, so two queries naming the same three are reading one
 data set, and whatever was worked out for either holds for both. It holds no
 position of its own, so readers at different places share one. It is
-`source.DataSet`, and it is built (`psl-as-a-data-source.md`).
+`serval.DataSet`, and it is built (serval's `docs/sources.md`).
 
 **A cache** is server-side, shared by every data set over one source, and is a
 wrapper rather than a policy — a source that should not be cached simply is not

@@ -27,7 +27,7 @@ of the record rather than a word in its own right: `.size` is the member called
 size, `size` is the word size. A source whose records carry their own contents
 needs the distinction — otherwise a member called `key` and the record key are
 the same name — and one that does not need it never writes a dot.
-`psl-as-a-data-source.md` is where it is put to work.
+serval's `docs/sources.md` is where it is put to work.
 
 **A symbol is a bare token that is not a number**, which is decided by what the
 token says rather than by what it starts with: `2026-09-13` is a symbol,

@@ -1,14 +1,15 @@
-# Data sources and bundles
+# Bundles
 
 > **Status: the design conversation, with the reading half built.** This is
-> where the reasoning lives, not the contract. Reading records out of a
-> document, composing several sources under names of their own, amending one
-> with replacements and deletions, caching the result and invalidating it on
-> notice are all built, and `psl-as-a-data-source.md` is what they do. So is the
-> loader: a store notices a `_bundle` on the way past and hashes it, includes
-> resolve by version or by hash, and what a bundle declares becomes a source.
-> `bundle-format.md` is what that looks like and what it becomes, and its
-> example is a fixture rather than a sketch.
+> where the reasoning lives, not the contract. `bundle-format.md` is the format
+> itself, with a worked example that is a fixture rather than a sketch, and the
+> loader is built: a store notices a `_bundle` on the way past and hashes it,
+> includes resolve by version or by hash, and what a bundle declares becomes a
+> source.
+>
+> **What a source IS is not here.** Composition, amendment, caching and
+> invalidation are serval's and are written down in that library's
+> `docs/sources.md`; `data-sources.md` is what KittyTK adds to them.
 >
 > What is still conversation is the blob store, name resolution beyond the app's
 > own store, and the live binding that would tell a source its newest had moved.
@@ -199,6 +200,11 @@ This is what lets `_bundle` and `_amendments` be about the document rather than
 records of it: they live in the keyed space, so adding or removing metadata
 **cannot shift a record's index**. A bundle's ordered records are numbered by
 the records alone.
+
+The reading underneath makes no such distinction — to serval both spaces are
+records, keyed by index or by name, and `_bundle` is a record like any other
+until the loader keeps it out. Being *about* the document is a statement of
+this layer, and this is what makes it a cheap one.
 
 ## Why the separator is a slash
 

@@ -658,7 +658,7 @@ in name "a" "b" 3             operands hold any value
 of the record rather than a word in its own right: `.size` is the member called
 size, `size` is the word size. An application whose records carry their own
 contents needs the distinction; one that has a fixed set of columns never writes
-a dot. `psl-as-a-data-source.md` is where it is put to work.
+a dot. serval's `docs/sources.md` is where it is put to work.
 
 **The filter does not have to be walked by hand.** `wire.Match(rec, spec.Filter)`
 answers it for anything that can produce a field by name:
