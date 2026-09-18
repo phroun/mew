@@ -6,13 +6,13 @@
 > one with replacements and deletions, caching the result and invalidating it on
 > notice are all built, and `psl-as-a-data-source.md` is what they do. The store
 > also notices a `_bundle` on the way past and can say which item holds which
-> bundle. What is still discussion is everything that makes a bundle a *bundle*
-> rather than a source: the hash, the Merkle DAG, the blob store, name
-> resolution, versions, and the loader that would assemble a source from what a
-> bundle declares. Nothing reads `_bundle` or `_amendments` yet, and nothing
-> computes a hash. Several points at the end are open questions, and where this
-> states a decision, that is a decision reached in conversation and nothing
-> more.
+> bundle, hashing it. The LOADER is built too: `_bundle` and `_amendments` are
+> read, includes are resolved by version or by hash, and what a bundle declares
+> becomes a source — `bundle-format.md` is what one looks like and what it
+> becomes. What is still discussion is the blob store, name resolution beyond
+> the app's own store, and the live binding that would tell a source its newest
+> had moved. Several points at the end are open questions, and where this states
+> a decision, that is a decision reached in conversation and nothing more.
 
 A **data source** is a named collection an Application draws records from: an
 object library, a message catalogue, a set of user-provided plug-in objects.
@@ -23,9 +23,12 @@ Application having to know where any of it physically lives.
 
 ## What a bundle is
 
-An authored document, loaded to construct a data source. To be written, and to
-say what "A key *and* a hash" below leaves unsaid: that having a name is what
-lets a bundle be the thing an include names and the loader fetches.
+An authored document, loaded to construct a data source.
+
+**`bundle-format.md` is what one looks like**, with a worked example the loader
+is tested against. This section is still to be written, and should say what "A
+key *and* a hash" below leaves unsaid: that having a name is what lets a bundle
+be the thing an include names and the loader fetches.
 
 ## Layering
 

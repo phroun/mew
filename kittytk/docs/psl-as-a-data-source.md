@@ -3,12 +3,13 @@
 > **Status: built.** Records read out of a document, composed, amended, and
 > scoped. The PSL READING itself is flat — it takes a `_bundle` member for a
 > record like any other and resolves no hash — but composition and amendment sit
-> above it and are built, and shadowing is what an amendment does. What is not
-> built is the bundle layer proper: hashes, name resolution, versions, and the
-> loader that would turn a bundle document into the sources below.
-> `data-sources-and-bundles.md` is the conversation those belong to,
-> `hosting-a-query.md` is the wire spelling, and serval's `docs/ordering.md` is
-> the comparison both ends stand on.
+> above it and are built, and shadowing is what an amendment does. The bundle
+> layer above THAT is built as well: a loader turns a bundle document into the
+> sources below, which is what `bundle-format.md` describes.
+> `data-sources-and-bundles.md` is the conversation they belong to,
+> `bundle-format.md` is what a bundle looks like and what the loader makes of
+> one, `hosting-a-query.md` is the wire spelling, and serval's
+> `docs/ordering.md` is the comparison both ends stand on.
 
 A display sometimes holds the records itself, and then there is nobody to ask.
 It is the same question either way — this filter, this sort, this scope — so
