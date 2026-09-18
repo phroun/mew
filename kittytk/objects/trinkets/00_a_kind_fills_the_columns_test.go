@@ -37,7 +37,7 @@ func fieldsFor(tv *TreeView, kind string) string {
 // its own source relies on.
 func TestByDefaultAColumnTakesTheFieldOfItsOwnName(t *testing.T) {
 	tv := mappedTree()
-	if got, want := fieldsFor(tv, ""), "caption size kind"; got != want {
+	if got, want := fieldsFor(tv, ""), "value size kind"; got != want {
 		t.Errorf("the identity mapping names\n  %s\nwant\n  %s", got, want)
 	}
 }
@@ -141,7 +141,7 @@ func TestEachKindMapsTheSameColumnToItsOwnField(t *testing.T) {
 		t.Errorf("windows name\n  %s\nwant\n  %s", got, want)
 	}
 	// And a kind nobody mapped is the identity, not an error.
-	if got, want := fieldsFor(tv, "volumes"), "caption size kind"; got != want {
+	if got, want := fieldsFor(tv, "volumes"), "value size kind"; got != want {
 		t.Errorf("an unmapped kind names\n  %s\nwant\n  %s", got, want)
 	}
 }
@@ -257,7 +257,7 @@ func TestUnsortedTheOrderIsTheApplicationsOwn(t *testing.T) {
 // guessed and nothing falls back to another rung.
 func TestAColumnThatMatchesNothingIsEmpty(t *testing.T) {
 	tv := mappedTree()
-	tv.SetKindMap("", InOrder("caption", "nothingHasThis"))
+	tv.SetKindMap("", InOrder(serval.ValueField, "nothingHasThis"))
 
 	it := NewTreeItem("a row")
 	it.SetValue("size", "10")
@@ -276,3 +276,71 @@ func TestAColumnThatMatchesNothingIsEmpty(t *testing.T) {
 		t.Errorf("the sequence holds %d rows", len(out.ids))
 	}
 }
+
+// **The three cheap rungs line up one-to-one with the three shapes a `Whole`
+// reading produces**, which is why each picks a different name for the same cell
+// and why none of them is an invented convention.
+//
+//	a plain value         key, value                 the caption is `value`
+//	named members         key, .caption, .size       the caption is `.caption`
+//	positional members    key, .0, .1                the caption is `.0`
+//
+// `value` never wears a dot because it is the record's own value and not a member
+// of it: `psl.go` answers nil for it on a list, having no value beside its members
+// to give. So a simple list of strings needs no mapping at all -- the same reason
+// the identity rung exists, reached from the record's side instead of the
+// column's. serval's own tests are what pin the shapes; this pins that the rungs
+// agree with them.
+func TestTheRungsMatchTheShapesARecordComesIn(t *testing.T) {
+	tv := mappedTree()
+	for _, c := range []struct {
+		shape   string
+		m       NodeMap
+		caption string
+	}{
+		{"a plain value", NodeMap{}, serval.ValueField},
+		{"named members", NodeMap{Dotted: true}, ".caption"},
+		{"positional members", NodeMap{Positional: true}, ".0"},
+	} {
+		tv.SetKindMap("", c.m)
+		if got := tv.cellOf("", nil).sortField(); got != c.caption {
+			t.Errorf("%s: the caption is %q, want %q", c.shape, got, c.caption)
+		}
+	}
+}
+
+// And a MADE row's caption goes out under the same name, so a tree's own items
+// and a simple list of strings read identically -- which is the whole of why one
+// mechanism serves both.
+func TestAMadeRowsCaptionIsUnderTheSameName(t *testing.T) {
+	tv := NewTreeView()
+	it := NewTreeItem("the label")
+	tv.AddRootItem(it)
+
+	var out captionRows
+	if err := tv.sequence().Read(&serval.Scope{Count: 10}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.fields) != 1 {
+		t.Fatalf("the tree stated %d rows", len(out.fields))
+	}
+	if got := out.fields[0].Get(serval.ValueField); !serval.Equal(got, serval.NewText("the label")) {
+		t.Errorf("a made row carries %v under %q, want its caption",
+			got, serval.ValueField)
+	}
+}
+
+// captionRows keeps the fields as well as the identities, which treeRows does not.
+type captionRows struct {
+	fields []serval.Record
+}
+
+func (r *captionRows) Ordered() {}
+func (r *captionRows) Record(_ *serval.Value, f serval.Record) error {
+	r.fields = append(r.fields, f)
+	return nil
+}
+func (r *captionRows) Subset(id *serval.Value, f serval.Record, _ serval.Totals) error {
+	return r.Record(id, f)
+}
+func (r *captionRows) Done(serval.Complete) {}

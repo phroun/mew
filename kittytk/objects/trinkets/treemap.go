@@ -29,9 +29,27 @@ package trinkets
 // entry to make, and a grafted kind sharing no data columns with its parent still
 // draws. That is a guarantee rather than a fallback.
 //
+// **Its default is `value`, and that is not an invented name.** It is serval's:
+// a record read under `Whole` that is NOT a list carries exactly `key` and
+// `value`, the whole of it being one thing. So a simple list of strings needs no
+// mapping at all -- which is the same reason the identity rung exists, arrived at
+// from the record's side instead of the column's.
+//
+// And the three rungs below line up one-to-one with the three shapes that reading
+// produces, which is why each picks a different name for the same cell:
+//
+//	a plain value         key, value                   the caption is `value`
+//	named members         key, .caption, .size         the caption is `.caption`
+//	positional members    key, .0, .1                  the caption is `.0`
+//
+// `value` never wears a dot, because it is the record's own value and not a
+// member of it -- `psl.go` answers nil for it on a list, having no value beside
+// its members to give.
+//
 // # Four rungs, and the first two need almost nothing
 //
-//	NodeMap{}                       the IDENTITY: column `size` is field `size`
+//	NodeMap{}                       the IDENTITY: column `size` is field `size`,
+//	                                and the caption is `value`
 //	NodeMap{Dotted: true}           column `size` is field `.size`
 //	NodeMap{Positional: true}       `.0` is the caption, `.1` the first column
 //	InOrder(".caption", ".size")    a list, lined up with the columns
@@ -72,9 +90,10 @@ import (
 	"github.com/phroun/serval"
 )
 
-// treeCaption is the field a made row's caption goes in -- the label beside the
-// twisty, which every row has.
-const treeCaption = "caption"
+// captionMember is the member a record that is a LIST calls its label, under the
+// dotted rung. A record that is not a list has no members at all -- its whole
+// value is `value`, which is what the identity rung takes.
+const captionMember = "caption"
 
 // A CellMap says which of a source's fields fills one column.
 type CellMap struct {
@@ -199,9 +218,9 @@ func (t *TreeView) cellOf(kind string, col *TreeColumn) CellMap {
 		case m.Positional:
 			return CellMap{Value: positionName(0)}
 		case m.Dotted:
-			return CellMap{Value: "." + treeCaption}
+			return CellMap{Value: "." + captionMember}
 		}
-		return CellMap{Value: treeCaption}
+		return CellMap{Value: serval.ValueField}
 	}
 	if c, ok := m.Columns[col.ID]; ok && c.sortField() != "" {
 		return c
@@ -268,6 +287,9 @@ func (t *TreeView) sortFields(kind string) []serval.SortLevel {
 // out. Left out it would read as `undefined`, which ranks before every string --
 // a different order from the one the view has always drawn.
 func (t *TreeView) cells(item *TreeItem, kind string) serval.Record {
+	// The caption goes out under whatever name this kind's mapping asks for,
+	// which with nothing declared is serval's own `value` -- so a made row and a
+	// simple list of strings read the same way.
 	out := serval.Record{
 		serval.Named(t.cellOf(kind, nil).sortField(), item.Text),
 	}
