@@ -352,11 +352,20 @@ typedef struct {
  * field, so it is the one way to turn over a sequence whose records are read in
  * a way that cannot name their identity at all.
  *
+ * from is a position to start NEAR, for a reader that has a place in mind
+ * rather than a record: a thumb dragged down a long sequence knows how far down
+ * it is and knows no identity there at all. Best effort and never a promise --
+ * `first` on the answer says where the scope really began, and a reader that
+ * meant somewhere else asks again from what it learned. Nought is the
+ * beginning, which is where a scope starts anyway, so an unset one asks for
+ * nothing; after wins over it, and a scope naming both is refused.
+ *
  * It is valid for the length of the callback and freed after it returns. */
 typedef struct {
     const kt_value *after;   /* NULL: the first record in walk order */
     const kt_value *until;   /* NULL: walk to the count or to the end */
     int count;
+    int from;                /* 0: the beginning, which asks for nothing */
     int reversed;
     const kt_qspec *spec;    /* the sequence, so a handler need not have kept it */
 } kt_qscope;

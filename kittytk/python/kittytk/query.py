@@ -108,6 +108,15 @@ ERROR_ARG = "error"
 TOTAL_ARG = "total"
 EXACT_ARG = "exact"
 
+# Where in the sequence the answer BEGAN: the position of its first record,
+# counted in the sequence's own order however the scope walked it. Beside
+# `total` the two are a scroll thumb -- how long, and where -- and it is what
+# answers `from`. It crosses only when it is known, and what crosses is exact:
+# a count can honestly be a floor, a position cannot, and silence means the
+# reader stays where it was rather than believing a figure nobody sent.
+FIRST_ARG = "first"
+FROM_ARG = "from"
+
 # EXTEND_ARG is the display saying it will HOLD the places it is sent, so a
 # result may leave out what its place already carried.
 #
@@ -307,11 +316,20 @@ class Scope:
     level turns over, the one the sort does not write included -- an identity
     settles what the named levels leave equal, and a sequence read backwards
     settles it backwards too. It belongs to the scope rather than the sequence
-    because it costs nothing: one prepared ordering is read either way."""
+    because it costs nothing: one prepared ordering is read either way.
+
+    from_ is a position to start NEAR, for a reader that has a place in mind
+    rather than a record: a thumb dragged down a long sequence knows how far
+    down it is and knows no identity there at all. Best effort and never a
+    promise -- the answer's `first` says where the scope really began, and a
+    reader that meant somewhere else asks again from what it learned. Nought is
+    the beginning, which is where a scope starts anyway, so an unset one asks
+    for nothing; `after` wins over it, and a scope naming both is refused."""
 
     after: Optional[Value] = None
     until: Optional[Value] = None
     count: int = 0
+    from_: int = 0
     reversed: bool = False
 
     def encode(self) -> str:
@@ -321,6 +339,8 @@ class Scope:
             parts.append("after=" + encode_value(self.after))
         if self.until is not None:
             parts.append("until=" + encode_value(self.until))
+        if self.from_:
+            parts.append("from=%d" % self.from_)
         parts.append("count=%d" % self.count)
         if self.reversed:
             parts.append("reversed")
@@ -345,6 +365,10 @@ class Complete:
     # not exact is nothing said.
     total: int = 0
     exact: bool = False
+
+    # Where the answer began, and None where the source could not say. Never a
+    # floor: a position is known or it is not.
+    first: Optional[int] = None
 
 
 @dataclass
@@ -403,6 +427,8 @@ class Result:
                 out.append(Arg(name=WATERMARK_ARG, value=c.watermark))
             if c.stop:
                 out.append(Arg(name=c.stop, flag=FlagState.TRUE))
+            if c.first is not None:
+                out.append(Arg(name=FIRST_ARG, value=new_int(c.first)))
             if c.total or c.exact:
                 out.append(Arg(name=TOTAL_ARG, value=new_int(c.total)))
                 if c.exact:
@@ -593,10 +619,22 @@ def parse_scope(args: List[Arg]) -> Scope:
             if a.value.kind == ValueKind.BLOCK:
                 raise QueryError("%s: an identity is a value, not a block" % a.name)
             setattr(s, a.name, a.value)
+        elif a.name == "from":
+            if a.value is None or a.value.kind != ValueKind.NUMBER or not a.value.is_int:
+                raise QueryError("from: expected a whole number")
+            if a.value.number < 0:
+                raise QueryError("from: %d is not a position" % a.value.number)
+            s.from_ = int(a.value.number)
         elif a.name == "reversed":
             if a.value is not None:
                 raise QueryError("reversed: it takes no value")
             s.reversed = a.flag == FlagState.TRUE
+    if s.after is not None and s.from_:
+        # A record is not a position. One names a thing and the other names a
+        # place in a sequence, and a scope carrying both has a bug that only
+        # ever shows here.
+        raise QueryError(
+            "from: a scope says where to start with after or with from, not both")
     return s
 
 
@@ -657,6 +695,9 @@ def _parse_result(args: List[Arg], place: bool) -> Result:
         elif a.name == TOTAL_ARG:
             done.total = _count_arg(a)
             ended = totalled = True
+        elif a.name == FIRST_ARG:
+            done.first = _count_arg(a)
+            ended = True
         elif a.name == EXACT_ARG:
             # It strengthens a figure rather than stating one, so it ends
             # nothing on its own.

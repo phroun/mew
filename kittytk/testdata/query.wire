@@ -375,6 +375,39 @@ want after=(left/1) count=1
 scope after="abc" count=1
 want after="abc" count=1
 
+# --- a place, for a reader that has one in mind and no identity there ---
+
+# A thumb dragged down a long sequence knows how far down it is and knows no
+# record there at all. `from` is best effort and never a promise: the answer's
+# `first` says where the scope really began, and a reader that meant somewhere
+# else asks again from what it learned.
+scope from=600 count=20
+want from=600 count=20
+
+# Nought is the beginning, which is where a scope starts anyway, so it asks for
+# nothing and is not written back.
+scope from=0 count=20
+want count=20
+
+scope from=-1 count=20
+bad
+
+scope from=x count=20
+bad
+
+scope from=1.5 count=20
+bad
+
+# A record is not a position. One names a thing, the other names a place, and a
+# scope carrying both has a bug that only ever shows here.
+scope after=17 from=600 count=20
+bad
+
+# Walking backwards from a place: the position is in the SEQUENCE, which is the
+# order `total` and `first` are both counted in, and not in the walk.
+scope from=600 count=20 reversed
+want from=600 count=20 reversed
+
 # Walking the sequence from its end. It names no field, which is what lets it
 # turn over a sequence whose records cannot name their own identity at all.
 scope count=30 reversed

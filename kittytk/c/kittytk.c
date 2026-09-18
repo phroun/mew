@@ -1013,6 +1013,11 @@ static void enc_qscope(kt_buf *b, const kt_qscope *s) {
         buf_puts(b, "until="); enc_value(b, s->until);
         wrote = 1;
     }
+    if (s->from) {
+        snprintf(tmp, sizeof tmp, "%sfrom=%d", wrote ? " " : "", s->from);
+        buf_puts(b, tmp);
+        wrote = 1;
+    }
     snprintf(tmp, sizeof tmp, "%scount=%d", wrote ? " " : "", s->count);
     buf_puts(b, tmp);
     if (s->reversed) buf_puts(b, " reversed");
@@ -1554,6 +1559,16 @@ static int parse_qscope(const kt_arg *args, int n, kt_qscope *out, int *extend,
                 if (out->until) { value_release((kt_value *)out->until); free((void *)out->until); }
                 out->until = v;
             }
+        } else if (!strcmp(nm, "from")) {
+            if (!a->has_value || a->kind != 0) {
+                qfail(err, "from: expected a whole number");
+                goto bad;
+            }
+            if (a->ival < 0) {
+                qfail(err, "from: %lld is not a position", (long long)a->ival);
+                goto bad;
+            }
+            out->from = (int)a->ival;
         } else if (!strcmp(nm, "reversed")) {
             if (a->has_value) {
                 qfail(err, "reversed: it takes no value");
@@ -1567,6 +1582,14 @@ static int parse_qscope(const kt_arg *args, int n, kt_qscope *out, int *extend,
             }
             if (extend) *extend = (a->flag == KT_FLAG_TRUE);
         }
+    }
+    if (out->after && out->from) {
+        /* A record is not a position. One names a thing and the other names a
+         * place in a sequence, and a scope carrying both has a bug that only
+         * ever shows here. */
+        qfail(err, "from: a scope says where to start with after or with from,"
+                   " not both");
+        goto bad;
     }
     return 1;
 bad:

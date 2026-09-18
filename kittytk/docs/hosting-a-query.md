@@ -219,6 +219,7 @@ those records go.
 | `after` | the identity to start past — the display holds that one. Absent is the start of the sequence |
 | `until` | the identity to stop before — the display holds that one and everything beyond it. Absent walks to the count or to the end |
 | `count` | how many records are wanted |
+| `from` | a POSITION to begin near, where the display has a place in mind and no identity there. Best effort; nought is the start |
 
 The whole of what the application does with that: start past `after`, send
 `count` records, and stop early if it reaches `until`.
@@ -303,6 +304,49 @@ the loss a lie.
 
 Which is why an application never has to reproduce the comparison core exactly.
 Exactness buys a smaller answer, not a correct one.
+
+## A place, and where the answer really began
+
+Everything above names a RECORD. A display dragging a scroll thumb has no
+record to name: it knows it is sixty percent of the way down a sequence it has
+mostly never seen, and the identity there is exactly what it is trying to find
+out.
+
+`from` is that question, and `first` is the answer to it.
+
+```
+DISPLAY → APP   q=new query source="files" sort={ name } from=600 count=20
+APP → DISPLAY   result q ordered
+APP → DISPLAY   result q id=… record={ … }
+                …
+APP → DISPLAY   result q complete filled watermark=… first=600 total=9000 exact
+```
+
+**`from` is best effort and never a promise.** An application that can place a
+position lands on it; one that cannot starts where it would have started anyway.
+Either way `first` says where the answer ACTUALLY began, so a display that meant
+somewhere else asks again from what it learned, and converges. Nothing has to be
+negotiated, because a display that asks for a different place and is told the
+same figure has learned that this application does not seek.
+
+**`first` crosses only when it is known, and what crosses is exact.** A count
+can honestly be a floor — part of a sequence seen is at least that many — but a
+position cannot be reckoned the same way, and *at least the six hundredth* is
+not something a display can put a thumb on. So there is no weak form, `exact`
+does not apply to it, and silence means the display stays where it was rather
+than believing a figure nobody sent.
+
+An unhonoured `from` answered in silence would be read as *you are at the top*,
+and the display would paint the first rows of the sequence as though they were
+the six hundredth. So an application that ignores `from` and starts at the
+beginning says `first=0` — which is true, and is how the display finds out.
+
+Beside `total`, the two are a scroll thumb: how long the sequence is, and where
+in it this answer sits.
+
+**A record is not a position**, so `after` and `from` on one scope is refused
+rather than answered from one of them. A display holding the record it wants to
+carry on past knows something better than a place.
 
 ## What a result carries
 

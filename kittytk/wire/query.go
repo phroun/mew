@@ -105,6 +105,28 @@ const (
 	TotalArg = "total"
 	ExactArg = "exact"
 
+	// FirstArg is where in the sequence the answer BEGAN: the position of its
+	// first record, counted in the sequence's own order however the scope
+	// walked it.
+	//
+	// Beside `total` the two are a scroll thumb -- how long, and where -- and
+	// together they are what lets a reader draw one over records it has never
+	// seen. It is also what answers `from`: a scope that asked to begin at a
+	// place is told where it actually began, and asks again from that.
+	//
+	// **It crosses only when it is known, and what crosses is exact.** A count
+	// can honestly be a floor, part of a sequence seen being at least that many;
+	// a position cannot be reckoned the same way, and "at least the six
+	// hundredth" is not something a reader can put a thumb on. So there is no
+	// weak form and `exact` does not apply to it: either the position is here or
+	// nothing is, and silence means the reader stays where it was rather than
+	// believing a figure nobody sent.
+	FirstArg = "first"
+	// FromArg is a position a scope asks to begin NEAR, for a reader that has a
+	// place in mind and no identity there: a thumb dragged down a long sequence.
+	// It is best effort, and `first` on the answer says where it really began.
+	FromArg = "from"
+
 	// ExtendArg is the display saying it will HOLD the places it is sent, so a
 	// result may leave out what its place already carried.
 	//
@@ -353,6 +375,14 @@ func ParseScope(args []*Arg) (*serval.Scope, error) {
 				return nil, fmt.Errorf("count: %d records is not a number of records", a.Value.Int)
 			}
 			s.Count = int(a.Value.Int)
+		case FromArg:
+			if a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt {
+				return nil, fmt.Errorf("from: expected a whole number")
+			}
+			if a.Value.Int < 0 {
+				return nil, fmt.Errorf("from: %d is not a position", a.Value.Int)
+			}
+			s.From = int(a.Value.Int)
 		case "after", "until":
 			if a.Value == nil {
 				return nil, fmt.Errorf("%s: expected an identity", a.Name)
@@ -371,6 +401,13 @@ func ParseScope(args []*Arg) (*serval.Scope, error) {
 			}
 			s.Reversed = a.Flag == FlagTrue
 		}
+	}
+	if s.After != nil && s.From != 0 {
+		// A record is not a position. One names a thing and the other names a
+		// place in a sequence, and a scope carrying both has a bug that only
+		// ever shows here.
+		return nil, fmt.Errorf("from: a scope says where to start with after or" +
+			" with from, not both")
 	}
 	return s, nil
 }
@@ -400,6 +437,9 @@ func EncodeScope(s *serval.Scope) string {
 	}
 	if s.Until != nil {
 		parts = append(parts, "until="+EncodeValue(asWire(s.Until)))
+	}
+	if s.From != 0 {
+		parts = append(parts, fmt.Sprintf("from=%d", s.From))
 	}
 	parts = append(parts, fmt.Sprintf("count=%d", s.Count))
 	if s.Reversed {
@@ -504,6 +544,13 @@ func parseResult(args []*Arg, place bool) (*Result, error) {
 			}
 			done.Total.N = n
 			ended, totalled = true, true
+		case FirstArg:
+			n, err := countArg(a)
+			if err != nil {
+				return nil, err
+			}
+			done.First = serval.Exactly(n)
+			ended = true
 		case ExactArg:
 			// It strengthens a figure rather than stating one, so it ends
 			// nothing on its own.
@@ -576,6 +623,12 @@ func (r *Result) Args() []*Arg {
 		}
 		if c.Stop != "" {
 			out = append(out, &Arg{Name: string(c.Stop), Flag: FlagTrue})
+		}
+		if c.First.Exact {
+			// Only when it is known, and what is written is exact. Unknown does
+			// not cross: a reader told nothing stays where it was, and there is
+			// no weaker thing to say about a position.
+			out = append(out, &Arg{Name: FirstArg, Value: NewInt(int64(c.First.N))})
 		}
 		if !c.Total.Nothing() {
 			// A figure of nothing is not written: `total=0` alone says only
