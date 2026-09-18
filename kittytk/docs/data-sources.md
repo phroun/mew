@@ -143,7 +143,7 @@ yet when the statement is read.
 
 ```
 new listview source="source:mail.incoming"
-new listview source="bundle:objectLibrary@2.1.0" display="subject" value="id"
+new listview source="bundle:objectLibrary@2.1.0" display=".caption" value=".id"
 ```
 
 The two namespaces are the two a bundle's own includes use, so the language says
@@ -161,6 +161,17 @@ plainly, rather than failing as though the bundle were missing.
 list of strings has nothing to tell them apart. A list over a delimited file
 has: the column a reader sees and the column the program hands back need not be
 the same one, and `ValueAt` is what asks for the second.
+
+**A bundle's fields wear a dot**, and this is where it bites. A bundle is read
+under serval's `Whole`, so a record that is a list names its members `.caption`,
+`.id`, `.0` — the dot being how a name says it is a member of the record rather
+than a word in its own right. The bare `display` and `value` a list assumes are
+the names a *made* source writes; a source of somebody else's making has its
+own, and naming them is what `display=` and `value=` are for.
+
+A bundle record written `("some text")` is a list with one positional member, so
+what it shows is `.0` and not `value` — `value` being the whole of a record that
+is *not* a list. That catches people, this author included.
 
 ## The layer above
 

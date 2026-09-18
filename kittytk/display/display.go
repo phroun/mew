@@ -482,6 +482,10 @@ func (s *Server) serveConn(nc net.Conn) {
 	c.ctx = ctx
 	c.factory = &hostFactory{inner: protocol.NewRegistryFactory(ctx)}
 
+	// How a trinket on this connection turns a NAME into a source. Per
+	// connection because a store is: see findSource.
+	trinkets.SetSourceFinder(ctx, c.findSource)
+
 	// The connection is a full Application (D22). It is a protocol object in
 	// its own right: register it in the session so the client can address it
 	// by ID (set app-wide properties), and hand that ID over in the handshake.

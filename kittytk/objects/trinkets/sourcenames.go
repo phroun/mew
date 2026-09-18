@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/serval"
 )
 
@@ -114,6 +115,96 @@ func LookupSource(name string) (serval.Source, error) {
 			" a display installs that", key)
 	}
 	return loader(key, version)
+}
+
+// BundleName reads a name as a BUNDLE's: its key, and the version riding after
+// an `@` where one does. False for a name that means a live source instead.
+//
+// It is exported because whoever can actually find a bundle is not this package
+// -- assembling one means reaching a store -- so somebody else has to be able to
+// tell the two kinds of name apart with the same reading this does.
+func BundleName(name string) (key, version string, ok bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.HasPrefix(name, sourceMark) {
+		return "", "", false
+	}
+	key = strings.TrimPrefix(name, bundleMark)
+	if at := strings.LastIndex(key, "@"); at >= 0 {
+		key, version = key[:at], key[at+1:]
+	}
+	if key == "" {
+		return "", "", false
+	}
+	return key, version, true
+}
+
+// LiveSources is every name registered in this process, as a map somebody else
+// can hold. A copy, so that registering later does not change one in flight.
+func LiveSources() map[string]serval.Source {
+	sources.mu.RLock()
+	defer sources.mu.RUnlock()
+	out := make(map[string]serval.Source, len(sources.live))
+	for name, src := range sources.live {
+		out[name] = src
+	}
+	return out
+}
+
+// --- one connection's own way of finding them -----------------------------
+
+// A SourceFinder turns a name into a source for ONE connection.
+//
+// Connection-scoped because a STORE is: the desktop keeps a separate one per
+// host identity and app name, so the bundle two different applications each call
+// `objectLibrary` is two different bundles. A process-wide answer would hand one
+// application another's, which is the hole the whole trust boundary exists to
+// close.
+type SourceFinder func(name string) (serval.Source, error)
+
+// sourcesStash is where a connection's finder is kept. Stash is what
+// connection-scoped trinket state uses, so the protocol package goes on knowing
+// nothing about sources.
+const sourcesStash = "trinkets.sources"
+
+type sourceHolder struct {
+	mu   sync.RWMutex
+	find SourceFinder
+}
+
+func holderIn(ctx *protocol.BindContext) *sourceHolder {
+	if ctx == nil {
+		return nil
+	}
+	h, _ := ctx.Stash(sourcesStash, func() any { return &sourceHolder{} }).(*sourceHolder)
+	return h
+}
+
+// SetSourceFinder gives one connection its own way of finding sources.
+func SetSourceFinder(ctx *protocol.BindContext, find SourceFinder) {
+	h := holderIn(ctx)
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.find = find
+}
+
+// LookupSourceOn is what a name stands for ON a connection.
+//
+// The connection's own finder where it has one, and the process-wide names
+// where it has not -- which is what an application built in Go, with no
+// connection at all, is reading.
+func LookupSourceOn(ctx *protocol.BindContext, name string) (serval.Source, error) {
+	if h := holderIn(ctx); h != nil {
+		h.mu.RLock()
+		find := h.find
+		h.mu.RUnlock()
+		if find != nil {
+			return find(name)
+		}
+	}
+	return LookupSource(name)
 }
 
 // SetSourceByName points this list at a named source.

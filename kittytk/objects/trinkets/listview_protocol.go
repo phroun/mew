@@ -52,12 +52,20 @@ func init() {
 			// the two namespaces a bundle's own includes use, so the language
 			// says this one way rather than two.
 			"source": protocol.NewProperty("string", wprop("source",
-				func(_ *protocol.BindContext, l *ListView, v *protocol.Value, f protocol.FlagState) error {
+				func(ctx *protocol.BindContext, l *ListView, v *protocol.Value, f protocol.FlagState) error {
 					s, err := protocol.AsString("source", v, f)
 					if err != nil {
 						return err
 					}
-					return l.SetSourceByName(s)
+					// Through the CONNECTION, because a store is per connection
+					// and the bundle two applications each call objectLibrary is
+					// two different bundles.
+					src, err := LookupSourceOn(ctx, s)
+					if err != nil {
+						return err
+					}
+					l.SetSource(src)
+					return nil
 				})).Tip("Where the rows come from: source:<name>, or a bundle key."),
 
 			// Which field of a record the list SHOWS, and which it means. One
