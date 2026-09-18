@@ -106,7 +106,10 @@ func (l *ListView) resolve() {
 		if at, ok := l.bones.posOf(l.currentID); ok {
 			l.currentIndex = at
 			if l.selectionMode == SingleSelection {
-				l.selectedItems = map[int]bool{at: true}
+				// The identity was known all along; it is the POSITION that
+				// just arrived, so the selection was already right and this
+				// only says so in the shape the rest of the list reads.
+				l.chosen.only(l.currentID)
 			}
 		}
 	}

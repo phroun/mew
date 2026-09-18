@@ -63,9 +63,10 @@ type ListView struct {
 
 	scrollOffset int
 
-	// Selection mode
+	// Selection mode, and which rows are chosen -- by IDENTITY, because a
+	// position means nothing once the rows move. See listchoice.go.
 	selectionMode SelectionMode
-	selectedItems map[int]bool
+	chosen        selection
 
 	// Appearance
 	ledger    bool
@@ -110,7 +111,6 @@ func NewListView() *ListView {
 	l := &ListView{
 		currentIndex:  -1,
 		selectionMode: SingleSelection,
-		selectedItems: make(map[int]bool),
 	}
 	l.TrinketBase = *core.NewTrinketBase()
 	l.SetCommands(
@@ -157,16 +157,12 @@ func (l *ListView) InsertItem(index int, item *ListItem) {
 	l.items = append(l.items[:index], append([]*ListItem{item}, l.items[index:]...)...)
 	l.touched()
 
-	// Adjust selection
-	newSelected := make(map[int]bool)
-	for idx := range l.selectedItems {
-		if idx >= index {
-			newSelected[idx+1] = true
-		} else {
-			newSelected[idx] = true
-		}
+	// A made source keys its rows BY POSITION, so an insert rewrites the keys
+	// after it and what is chosen has to move with them. A declared source's
+	// keys are its own and are not positions, so nothing renumbers them.
+	if l.source == nil {
+		l.chosen.shift(index, 1)
 	}
-	l.selectedItems = newSelected
 
 	if l.currentIndex >= index {
 		l.currentIndex++
@@ -183,16 +179,12 @@ func (l *ListView) RemoveItem(index int) {
 	l.items = append(l.items[:index], l.items[index+1:]...)
 	l.touched()
 
-	// Adjust selection
-	newSelected := make(map[int]bool)
-	for idx := range l.selectedItems {
-		if idx < index {
-			newSelected[idx] = true
-		} else if idx > index {
-			newSelected[idx-1] = true
-		}
+	// The removed row's key goes, and the keys after it come down one -- a made
+	// source keying its rows by position. A declared source's keys are its own.
+	if l.source == nil {
+		l.chosen.drop(serval.NewInt(int64(index)))
+		l.chosen.shift(index+1, -1)
 	}
-	l.selectedItems = newSelected
 
 	// Adjust current index
 	if l.currentIndex == index {
@@ -214,7 +206,7 @@ func (l *ListView) Clear() {
 	l.touched()
 	l.setCurrent(-1, nil)
 	l.scrollOffset = 0
-	l.selectedItems = make(map[int]bool)
+	l.chosen.clear()
 	l.Update()
 }
 
@@ -296,9 +288,20 @@ func (l *ListView) SetCurrentIndex(index int) {
 	}
 
 	if l.selectionMode == SingleSelection {
-		l.selectedItems = make(map[int]bool)
+		// The row is read first, because choosing one means NAMING it. Without
+		// this the selection quietly does not record: the current row moves, and
+		// nothing is chosen, because the list had not yet been told what stands
+		// there.
+		//
+		// A row that still cannot be named -- a source that has not answered --
+		// leaves the selection empty rather than holding the row before it, and
+		// resolve fills it in when the record arrives.
+		l.chosen.clear()
 		if index >= 0 {
-			l.selectedItems[index] = true
+			l.window(index, 1)
+			if id, ok := l.bones.idAt(index); ok {
+				l.chosen.only(id)
+			}
 		}
 		if l.onSelectionChanged != nil {
 			l.onSelectionChanged()
@@ -338,74 +341,9 @@ func (l *ListView) SelectionMode() SelectionMode {
 func (l *ListView) SetSelectionMode(mode SelectionMode) {
 	l.selectionMode = mode
 	if mode == NoSelection {
-		l.selectedItems = make(map[int]bool)
+		l.chosen.clear()
 	}
 	l.Update()
-}
-
-// IsSelected returns whether the item at index is selected.
-func (l *ListView) IsSelected(index int) bool {
-	return l.selectedItems[index]
-}
-
-// SetSelected sets the selection state of an item.
-func (l *ListView) SetSelected(index int, selected bool) {
-	if index < 0 || index >= l.Count() {
-		return
-	}
-	if l.selectionMode == NoSelection {
-		return
-	}
-
-	if l.selectionMode == SingleSelection && selected {
-		l.selectedItems = make(map[int]bool)
-	}
-
-	if selected {
-		l.selectedItems[index] = true
-	} else {
-		delete(l.selectedItems, index)
-	}
-	l.Update()
-
-	if l.onSelectionChanged != nil {
-		l.onSelectionChanged()
-	}
-}
-
-// SelectedIndexes returns all selected item indexes.
-func (l *ListView) SelectedIndexes() []int {
-	var result []int
-	for idx := range l.selectedItems {
-		result = append(result, idx)
-	}
-	return result
-}
-
-// SelectAll selects all items.
-func (l *ListView) SelectAll() {
-	if l.selectionMode == SingleSelection || l.selectionMode == NoSelection {
-		return
-	}
-
-	for i := range l.items {
-		l.selectedItems[i] = true
-	}
-	l.Update()
-
-	if l.onSelectionChanged != nil {
-		l.onSelectionChanged()
-	}
-}
-
-// ClearSelection clears all selections.
-func (l *ListView) ClearSelection() {
-	l.selectedItems = make(map[int]bool)
-	l.Update()
-
-	if l.onSelectionChanged != nil {
-		l.onSelectionChanged()
-	}
 }
 
 // SetLedger turns ledger banding on: non-selected rows alternate the
@@ -512,7 +450,7 @@ func (l *ListView) Paint(p *core.Painter) {
 		var s style.CellStyle
 		if !item.Enabled {
 			s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetListBG())
-		} else if l.selectedItems[itemIndex] {
+		} else if l.IsSelected(itemIndex) {
 			if focused {
 				s = scheme.GetFocusedListItem()
 			} else {
