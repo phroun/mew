@@ -1,18 +1,19 @@
 # Data sources and bundles
 
-> **Status: conversation, with the reading half built.** This is a design
-> discussion written down so it is not lost, not a contract. Reading records out
-> of a document, composing several sources under names of their own, amending
-> one with replacements and deletions, caching the result and invalidating it on
-> notice are all built, and `psl-as-a-data-source.md` is what they do. The store
-> also notices a `_bundle` on the way past and can say which item holds which
-> bundle, hashing it. The LOADER is built too: `_bundle` and `_amendments` are
-> read, includes are resolved by version or by hash, and what a bundle declares
-> becomes a source — `bundle-format.md` is what one looks like and what it
-> becomes. What is still discussion is the blob store, name resolution beyond
-> the app's own store, and the live binding that would tell a source its newest
-> had moved. Several points at the end are open questions, and where this states
-> a decision, that is a decision reached in conversation and nothing more.
+> **Status: the design conversation, with the reading half built.** This is
+> where the reasoning lives, not the contract. Reading records out of a
+> document, composing several sources under names of their own, amending one
+> with replacements and deletions, caching the result and invalidating it on
+> notice are all built, and `psl-as-a-data-source.md` is what they do. So is the
+> loader: a store notices a `_bundle` on the way past and hashes it, includes
+> resolve by version or by hash, and what a bundle declares becomes a source.
+> `bundle-format.md` is what that looks like and what it becomes, and its
+> example is a fixture rather than a sketch.
+>
+> What is still conversation is the blob store, name resolution beyond the app's
+> own store, and the live binding that would tell a source its newest had moved.
+> The sections below say which of them they are. Where this states a decision,
+> that is a decision reached in conversation and nothing more.
 
 A **data source** is a named collection an Application draws records from: an
 object library, a message catalogue, a set of user-provided plug-in objects.
@@ -23,12 +24,23 @@ Application having to know where any of it physically lives.
 
 ## What a bundle is
 
-An authored document, loaded to construct a data source.
+An authored **document**, held in an app's store, that a loader turns into a
+data source. It is not a source itself and has no operations of its own: it
+states what to assemble — includes, amendments, records of its own — and the
+loader assembles it. `bundle-format.md` is what one looks like.
 
-**`bundle-format.md` is what one looks like**, with a worked example the loader
-is tested against. This section is still to be written, and should say what "A
-key *and* a hash" below leaves unsaid: that having a name is what lets a bundle
-be the thing an include names and the loader fetches.
+What makes a document a bundle is a `_bundle` member, and what `_bundle` carries
+first is a **key** and a **version**. That pair is the name others reach it by:
+an include says a key and what versions it will take, and the loader finds the
+item. Two versions of one key are two bundles and can be held at once, which is
+why the key alone cannot be what an item is stored under. The store key is the
+app's to choose and need only **begin** with the bundle's key, so being a bundle
+is two statements agreeing — the document says what it is, and the app says it
+meant to file it as that.
+
+Having a name is what lets a bundle be a thing an include can name at all. A
+hash alone would be reachable but not askable for: you cannot request the newest
+of something you can only name by its content.
 
 ## Layering
 
@@ -83,8 +95,8 @@ part of this design, but the name is what would make it possible later.
 **Not in the bundle.** A bundle does not carry its own hash: the hash of a
 bundle is what you get when you hash its bytes, and a document asserting one
 about itself is a claim rather than a fact. It is computed by whoever holds the
-bytes and recorded in the store's bundle index, beside the key and the version
-it was found under.
+bytes and recorded in the store's index, beside the key and the version it was
+found under.
 
 That settles the obvious problem — a hash inside the document would have to
 cover itself — without a canonical form to write down and get wrong. There is
@@ -94,15 +106,24 @@ It covers the file ENTIRE, `_bundle` and all. So an author who corrects a date
 or a name has a different bundle, and anything pinning the old hash still names
 the old one. That is what a version is for.
 
-Two things follow. An include may name a literal hash, and where every include
-in a graph does, a parent's bytes hold its children's hashes and hashing the
-parent covers the lot — the Merkle property, earned rather than asserted.
-Where an include names a version RANGE instead, it does not: what the range
-resolves to is not in the parent's bytes and may resolve differently later. So
-the graph is verifiable exactly as far as it is pinned, which is a property to
-state rather than a gap to apologise for.
+The store hashes every item, not only bundles, because the hash answers a
+question an Application asks about all of them: whether the copy the Desktop
+holds is still the copy it meant to put there, and so whether it needs
+re-uploading. An item is uploaded in chunks and its size is the cursor through
+that; the hash is what says the upload finished, so it is taken once on
+completion and cleared by anything that appends.
+
+Two things follow from what the hash covers. An include may name a literal
+hash, and where every include in a graph does, a parent's bytes hold its
+children's hashes and hashing the parent covers the lot — the Merkle property,
+earned rather than asserted. Where an include names a version RANGE instead, it
+does not: what the range resolves to is not in the parent's bytes and may
+resolve differently later. So the graph is verifiable exactly as far as it is
+pinned, which is a property to state rather than a gap to apologise for.
 
 ## Keeping the filesystem off the wire
+
+*Conversation. Nothing below this line is built.*
 
 The Application is frequently **not on the same machine** as the data. That is
 the premise of the scheme and filesystem work (see `scheme-architecture.md`),
@@ -122,11 +143,14 @@ because filling in the directory API behind it later does not change the
 protocol.
 
 The interior of the design is path-free for the same reason: the store for
-immutable bundles is a **blob store**, not a filesystem. Put bytes and get a
-hash, get bytes for a hash, ask whether a hash is held, evict. No paths,
+immutable bundles would be a **blob store**, not a filesystem. Put bytes and get
+a hash, get bytes for a hash, ask whether a hash is held, evict. No paths,
 directories, listing, rename or metadata.
 
 ## Caching and trust are the same boundary
+
+*Conversation. The identity it rests on exists; the cache lifetime built on it
+does not.*
 
 A source persists beyond a connection, so the Desktop has to recognise an
 Application as the same one it saw before. That identity already exists:
@@ -145,45 +169,6 @@ same approved name, which is one Application.
 Names are scoped per Application. Applications are independent and do not
 interact, so there is no namespace governance, no reserved prefixes and no
 cross-application visibility to design.
-
-## The shape on the wire
-
-A bundle is a PSL list. The presence of a `_bundle` key is what marks it as
-one.
-
-```
-(
-  _bundle: (
-    key: "figaro",
-    version: "0.1.0",
-    author: "Jeffrey R. Day",
-    date: "2026-09-08",
-    includes: (
-      subBundle: "d06f00d"
-      another: ">= 1.0"
-    )
-  ),
-  _amendments: (
-    subBundle/1: ("replacement_for_record_1"),
-    subBundle/2: nil            # a deleted record
-  ),
-  ("ordered_record1", a: "one", b: 12),
-  ("ordered_record2", a: "two", b: 14.5),
-  key: ("keyed_record", a: "three", b: 2)
-)
-```
-
-- `_bundle` carries the identity and the includes. The **key and the version
-  together** are what an include names, so two versions of one bundle are two
-  bundles and can be held at once — which is why the key alone cannot be what
-  an item is stored under. An include is an alias bound either to a literal
-  hash or to a version expression.
-- `_amendments` replaces or deletes records inherited from an include, which
-  is how a source built on someone else's bundle can differ from it without
-  copying it.
-- The remaining members are the records themselves.
-
-A record's id resolves *through* the bundle it is in.
 
 ## Two spaces, not one sequence
 
@@ -210,42 +195,27 @@ key**, and its behaviour settles the semantics:
 | `~mixed.a` | `apple` | dot is the key accessor |
 | `~numkey 0` | `first-item` | with a key literally named `0` present: a numeric key does **not** shadow index 0 |
 
-This matters for the bundle format because `_bundle` and `_amendments` live in
-the keyed space. Adding or removing metadata therefore
-**cannot shift a record's index**: a bundle's ordered records are numbered by
+This is what lets `_bundle` and `_amendments` be about the document rather than
+records of it: they live in the keyed space, so adding or removing metadata
+**cannot shift a record's index**. A bundle's ordered records are numbered by
 the records alone.
 
-## Addressing a record
+## Why the separator is a slash
 
-A record address is the bundle alias, then a separator, then either an index or
-a key.
+An address is the include's name, a slash, and the record's key, all the way
+down; `bundle-format.md` shows the form. The slash was chosen over the two
+alternatives on evidence.
 
-**The separator is a forward slash.** It parses bare, needs no quoting, and
-composes:
-
-```
-objectLibrary/figaro/3          the fourth ordered record of figaro
-objectLibrary/figaro/someKey    a keyed record
-another/subBundle/2             through two levels of include
-```
-
-Slash was chosen over the two alternatives on evidence. Underscore is a legal
-word character, so the split point is ambiguous — include `sub` with record key
-`bundle_x` and include `sub_bundle` with record key `x` produce the same
-string. Dot does not survive as a key at all: `(subBundle.1: "x")` comes back
-as key `subBundle` with the `.1` swallowed. Slash survives quoted or bare, and
-nests, which underscore could not.
+Underscore is a legal word character, so the split point is ambiguous — include
+`sub` with record key `bundle_x` and include `sub_bundle` with record key `x`
+produce the same string. Dot does not survive as a key at all: `(subBundle.1:
+"x")` comes back as key `subBundle` with the `.1` swallowed. Slash survives
+quoted or bare, and nests, which underscore could not — and because it does, no
+restriction on underscores in aliases or keys is needed anywhere.
 
 Because the address form is one grammar all the way down, it reads the same way
 as `box:///…` and `profile:///…` already do, so the system speaks one idiom for
 addressing rather than two.
-
-**Numeric keys are forbidden as bundle record keys.** With that ban, the last
-segment parses with one rule: all ASCII digits means an index, anything else
-means a key. Forbidding numeric keys outright also avoids `01` and `1` becoming
-two spellings of one index, and it is a single validation at bundle load. Since
-the separator is a slash, no restriction on underscores in aliases or keys is
-needed.
 
 **A slash inside a key is not forbidden. It is what makes the key an address.**
 A key holding one reads as one: the text before the first slash names an
@@ -261,19 +231,23 @@ source holds its own records and merges them into its child's answer rather
 than routing them by slash, so nothing structural collides. Two records wanting
 one id is the author's to avoid, and that is the only collision there is.
 
-The last segment is the only place a rule is needed, and the numeric ban above
-is the whole of it.
+The last segment is the only place a rule is needed. **Numeric keys are
+forbidden as bundle record keys**, and with that ban the segment parses with one
+rule: all ASCII digits means an index, anything else means a key. Forbidding
+them outright also avoids `01` and `1` becoming two spellings of one index, and
+it is a single validation at load.
 
-**The store's key rules are its own, and are not this grammar.** It refuses a
-slash because a store is **not a filesystem** — a real one is coming,
-separately — and is nearer to cookies or a browser's local storage: a flat set
-of names, each holding one thing. Allowing paths in keys would invite an app to
-treat it as the filesystem it is not, which is why the slash is refused there
-rather than merely discouraged. Its other two rules travel with it: nothing
-that is only digits, and nothing unprintable, its index being a line per item
-so that a key with a newline in it writes a line that reads back as a different
-item. None of the three is load-bearing for addressing, and relaxing one would
-say nothing about the other.
+**The store's key rules are its own, and are not this grammar.** A store key
+never appears in an address: an include names a key and a version, and the
+bundle index is what turns that into an item. The store refuses a slash because
+a store is **not a filesystem** — a real one is coming, separately — and is
+nearer to cookies or a browser's local storage: a flat set of names, each
+holding one thing. Allowing paths in keys would invite an app to treat it as the
+filesystem it is not, which is why the slash is refused there rather than merely
+discouraged. Its other rule travels with it: nothing unprintable, its index
+being a line per item, so that a key with a newline in it writes a line that
+reads back as a different item. Neither is load-bearing for addressing, and
+relaxing one would say nothing about the other.
 
 ## Reaching a bundle from Go
 
@@ -296,17 +270,25 @@ One serializer behaviour to know: **keyed members are sorted on emit**, so
 declaration order among keyed records is not something to rely on. Ordered
 records keep their order.
 
+Reading a bundle by hand is rarely what is wanted, though: `LoadBundle` on an
+app's store takes a key and a version, resolves the includes and hands back the
+assembled source together with whatever it has to report.
+
 ## Open questions
 
-- **Version expressions in includes.** The sketch binds one include to a
-  literal hash and another to `">= 1.0"`. How a range resolves to a hash, who
-  resolves it, and what happens when it cannot, are undiscussed.
+- **Who tells a selector its newest has moved.** Selection is newest-wins and
+  sharing is by selector, so every include asking for "the newest" of a key
+  holds one object between them. Nothing tells that object when a newer version
+  arrives in the store. Invalidation is told rather than decided, so the
+  question is what notice the store would send and what it costs — `Replaced`
+  over the whole source is the blunt answer and probably the wrong one.
+- **Name resolution beyond the app's own store.** An include resolves against
+  the store the loading app can see. Where a bundle is somewhere else, nothing
+  says who is asked or what the asking looks like.
 - **Are records typed or opaque?** Whether a source knows anything about the
   shape of what it holds.
 - **The missing-record event.** What happens when a consumer asks for
   something the source does not have, and how that reaches whoever could
   supply it.
-- **Parts as the unit of versioning.** Whether a version is a property of a
-  bundle, of a source, or of something smaller.
 - **Whether sources carry bulk.** Whether this mechanism is meant for records
   measured in bytes or in megabytes, which decides much about the blob store.
