@@ -128,7 +128,7 @@ func (t *TreeView) makeSource() *serval.TreeSource {
 			},
 			Sort: bySeq,
 		},
-		Types: serval.ChildTypes{Default: &serval.ChildType{
+		Types: serval.NodeTypes{Default: &serval.NodeType{
 			Children: serval.Sorted(serval.ChildrenByKey(treeParent), bySeq...),
 		}},
 	})
