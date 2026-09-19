@@ -31,7 +31,15 @@ import (
 func (c *conn) findSource(name string) (serval.Source, error) {
 	key, version, isBundle := trinkets.BundleName(name)
 	if !isBundle {
-		return trinkets.LookupSource(name)
+		if src, err := trinkets.LookupSource(name); err == nil {
+			return src, nil
+		}
+		// **Nothing in this process stands for it, and this is a connection**, so
+		// it is this application's: an application hosts the far end of a name the
+		// display knows, and there is nothing else the name could mean here. A
+		// trinket with no connection still gets the refusal, which is where a
+		// misspelling is caught. See appsources.go.
+		return c.appSource(name), nil
 	}
 
 	// Asked for each time rather than held from the handshake, because renaming

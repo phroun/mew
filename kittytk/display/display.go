@@ -389,6 +389,11 @@ type conn struct {
 	relayMu sync.Mutex
 	relayTo *conn
 
+	// sources is the far ends this connection has stood up: one per source name
+	// a trinket on it named that the process registry did not hold. See
+	// appsources.go.
+	sources *appSources
+
 	// What the store was asked during a batch and will say when the batch is
 	// over: `set` runs with emission suppressed, so an answer to one waits here
 	// (see storeObject.answer).
@@ -481,6 +486,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	}
 	c.ctx = ctx
 	c.factory = &hostFactory{inner: protocol.NewRegistryFactory(ctx)}
+	c.sources = &appSources{}
 
 	// How a trinket on this connection turns a NAME into a source. Per
 	// connection because a store is: see findSource.
@@ -596,6 +602,14 @@ func answers(batch []*protocol.Statement) bool {
 // they are dropped, which is what happens to an answer to a question the
 // display has stopped caring about.
 func (c *conn) relay(batch []*protocol.Statement) {
+	// The records a query asked for go to the source that asked, which is the
+	// ordinary path now that a trinket can read an application's own. Whatever is
+	// left over is somebody else's answer, and the debug relay is the only other
+	// thing listening.
+	batch = c.inbound(batch)
+	if len(batch) == 0 {
+		return
+	}
 	c.relayMu.Lock()
 	to := c.relayTo
 	c.relayMu.Unlock()
