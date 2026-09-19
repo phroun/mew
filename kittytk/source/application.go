@@ -157,7 +157,7 @@ func (s *appSet) Close() {
 	s.mu.Unlock()
 
 	for _, q := range live {
-		q.finish(serval.Complete{Error: "this data set has been closed"})
+		q.hungUp(serval.Complete{Error: "this data set has been closed"})
 	}
 }
 
@@ -357,7 +357,17 @@ func (q *appScope) take(args []*wire.Arg) {
 // application knowing that these records are still being held -- which is what
 // invalidation will need and nothing yet does, so for now the honest thing is
 // to say at once that they may be let go.
-func (q *appScope) finish(done serval.Complete) {
+// finish ends a scope: with the answer where one came, and with a reason where the
+// reader hung up instead.
+//
+// `answered` is what separates the two, and it decides whether anybody is told.
+// **Hanging up is not news.** The tree's descent opens a level, reads it and
+// closes it in one breath -- a synchronous source having filled the sink by then --
+// so over a source that answers LATER the close arrives first and the scope ends
+// unanswered. Calling that an arrival made the reader re-read, which opened the
+// level again, which closed it again: eight hundred thousand queries in twelve
+// seconds, and not one of them answered.
+func (q *appScope) finishWith(done serval.Complete, answered bool) {
 	q.mu.Lock()
 	if q.done {
 		q.mu.Unlock()
@@ -376,8 +386,18 @@ func (q *appScope) finish(done serval.Complete) {
 	// record: a hundred thousand records would be a hundred thousand notices and
 	// a hundred thousand re-reads, and a scope is what was asked for anyway --
 	// asked once and answered once.
-	q.set.src.arrived()
+	if answered {
+		q.set.src.arrived()
+	}
 }
+
+// finish is a scope ending because its answer came.
+func (q *appScope) finish(done serval.Complete) { q.finishWith(done, true) }
+
+// hungUp is a scope ending because the reader let it go, which nobody is told
+// about: there is nothing new to read, and saying so would send a reader back for
+// an answer that is not coming.
+func (q *appScope) hungUp(done serval.Complete) { q.finishWith(done, false) }
 
 // WhenArrived adds something to be told once an answer has landed
 // (serval.Arriving).

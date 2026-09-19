@@ -347,7 +347,23 @@ func TestABundleDeclaresTheShapeAndTheAppServesTheRecords(t *testing.T) {
 	// knows which thread a notice arrives on and knows it must not be actioned
 	// there, which is an argument for it supplying the hop for the sources it
 	// builds -- revisiting part of the choice made in arrival.go.
-	t.Skip("the arrival notice is actioned on the connection's read thread and deadlocks")
+	// SKIPPED until a tree's descent can read a source that answers LATER, which
+	// is the one thing left and is well understood.
+	//
+	// `descent.level` opens a level, reads it and CLOSES it in one breath. A source
+	// with its records to hand has filled the sink by then; one across a connection
+	// has only sent the query, so the close hangs up before the answer arrives and
+	// every level comes back empty.
+	//
+	// Nothing about naming or liveness is involved: the far end exists the moment a
+	// name is used, the query goes out correctly, and the application answers it.
+	// The reader is simply not there any more when it does.
+	//
+	// What this is NOT, having been wrong about it twice: not a thread, and not a
+	// deadlock. An earlier version of this comment blamed the connection's read
+	// thread; the probe showed eight hundred thousand queries in twelve seconds,
+	// each one closed before it could be answered, which is neither.
+	t.Skip("a tree's descent closes each level before an async source can answer")
 
 	sock := filepath.Join(t.TempDir(), "display.sock")
 	desktop, _, stop := servingDesktop(t, sock)
