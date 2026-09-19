@@ -107,7 +107,7 @@ func trinketID(w core.Trinket) uint64 {
 // connection (called once at construction); events describes what that
 // wiring emits, and is passed beside it so the pair is changed together.
 func regTrinket(name string, construct func() core.Trinket, props map[string]protocol.Property, events map[string]protocol.EventDesc, appendFn func(parent, child core.Trinket) error, bind func(ctx *protocol.BindContext, w core.Trinket)) {
-	spec := &protocol.TypeSpec{
+	descriptor := &protocol.TypeSpec{
 		New:    func() any { return construct() },
 		Props:  props,
 		Events: events,
@@ -131,11 +131,11 @@ func regTrinket(name string, construct func() core.Trinket, props map[string]pro
 	// registered one of its own -- a type whose children are a particular
 	// kind names them, and says so in its own words.
 	if appendFn != nil {
-		if _, own := spec.Props["children"]; !own {
-			if spec.Props == nil {
-				spec.Props = map[string]protocol.Property{}
+		if _, own := descriptor.Props["children"]; !own {
+			if descriptor.Props == nil {
+				descriptor.Props = map[string]protocol.Property{}
 			}
-			spec.Props["children"] = protocol.NewCollection(func(p, c any) error {
+			descriptor.Props["children"] = protocol.NewCollection(func(p, c any) error {
 				pw, ok1 := p.(core.Trinket)
 				cw, ok2 := c.(core.Trinket)
 				if !ok1 || !ok2 {
@@ -146,13 +146,13 @@ func regTrinket(name string, construct func() core.Trinket, props map[string]pro
 		}
 	}
 	if bind != nil {
-		spec.Bind = func(ctx *protocol.BindContext, t any) {
+		descriptor.Bind = func(ctx *protocol.BindContext, t any) {
 			if w, ok := t.(core.Trinket); ok {
 				bind(ctx, w)
 			}
 		}
 	}
-	protocol.RegisterType(name, spec)
+	protocol.RegisterType(name, descriptor)
 }
 
 func init() {

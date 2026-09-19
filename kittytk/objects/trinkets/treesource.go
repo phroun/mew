@@ -204,7 +204,7 @@ func (t *TreeView) makeSource() *serval.TreeSource {
 	src, err := serval.NewTreeSource(serval.TreeOptions{
 		Source: serval.NewListSource(rows),
 		Fields: treeFields,
-		Spec: &serval.Spec{
+		Descriptor: &serval.DataSetDescriptor{
 			Filter: &serval.Filter{
 				Op: serval.OpEq, Field: treeParent, Values: []*serval.Value{nil},
 			},

@@ -68,14 +68,14 @@ func run(src serval.Source, script *wire.Script, out *printer) error {
 				return fmt.Errorf("new: expected a query")
 			}
 			args := stmt.Args[1:]
-			spec, err := wire.ParseSpec(args)
+			descriptor, err := wire.ParseDescriptor(args)
 			if err != nil {
 				return err
 			}
 			if set != nil {
 				set.Close()
 			}
-			if set, err = src.Open(spec); err != nil {
+			if set, err = src.Open(descriptor); err != nil {
 				return err
 			}
 			// Opening carries the first scope, because a display never wants a

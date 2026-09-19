@@ -106,8 +106,8 @@ class ServingAQueryTest(unittest.TestCase):
         self.assertEqual(f.until.number, 42)
         self.assertTrue(f.reversed)
         # The sequence comes with it, so the handler need not have kept it.
-        self.assertEqual(f.spec.source, "files")
-        self.assertEqual(f.spec.fields.names(), ["name", "size"])
+        self.assertEqual(f.descriptor.source, "files")
+        self.assertEqual(f.descriptor.fields.names(), ["name", "size"])
 
     def test_each_scope_is_a_query_of_its_own(self):
         asked = []
@@ -268,7 +268,7 @@ class ServingAQueryTest(unittest.TestCase):
         display opens the replacement before destroying what it replaces, which
         keeps the source in use while the reader moves across."""
         specs = []
-        c, _ = serve_one(lambda f: (specs.append(f.spec), f.exhausted()))
+        c, _ = serve_one(lambda f: (specs.append(f.descriptor), f.exhausted()))
 
         send(c, 'q=new query source="files" sort={ name natural } count=1')
         n = len(c.sent)
@@ -292,7 +292,7 @@ class ServingAQueryTest(unittest.TestCase):
         send(c, "set 1 sort={ size desc }")
         self.assertIn("error", "\n".join(c.sent[n:]),
                       "a restatement was accepted")
-        self.assertEqual(c.query(1).spec().sort[0].field, "name",
+        self.assertEqual(c.query(1).descriptor().sort[0].field, "name",
                          "the refused restatement changed the query anyway")
 
     def test_the_display_can_drop_the_query(self):

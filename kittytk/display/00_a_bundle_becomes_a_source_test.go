@@ -30,7 +30,7 @@ func stock(t *testing.T, s *appStore, at, text string) {
 // keysOf reads every record a source holds, by identity.
 func keysOf(t *testing.T, src serval.Source) []string {
 	t.Helper()
-	set, err := src.Open(&serval.Spec{})
+	set, err := src.Open(&serval.DataSetDescriptor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestIncludesWantingTheNewestShareOneSource(t *testing.T) {
 	}
 	// And what they share is the NEWEST, not the one either floor named: the
 	// floor says what is acceptable, never which to take.
-	set, err := a.Open(&serval.Spec{})
+	set, err := a.Open(&serval.DataSetDescriptor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestAnIncludePinnedToAHashTakesThatOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := got.Source.Open(&serval.Spec{})
+	set, err := got.Source.Open(&serval.DataSetDescriptor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestASourceCannotImpersonateABundlesSelector(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	set, err := got.Source.Open(&serval.Spec{})
+	set, err := got.Source.Open(&serval.DataSetDescriptor{})
 	if err != nil {
 		t.Fatal(err)
 	}

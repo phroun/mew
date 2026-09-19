@@ -130,7 +130,7 @@ func (l *ListView) sequence() serval.DataSet {
 		read = l.made
 	}
 	if l.set == nil && read != nil {
-		set, err := read.Open(&l.spec)
+		set, err := read.Open(&l.descriptor)
 		if err != nil {
 			// A sequence that cannot be stated is a list with no rows, and the
 			// refusal is the source's to explain. There is nothing a list can

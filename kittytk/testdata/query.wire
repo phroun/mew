@@ -7,7 +7,7 @@
 #
 # Each case is two lines. The first is what arrived:
 #
-#   spec <the sequence arguments of `new query` or of the `set` that restates it>
+#   descriptor <the sequence arguments of `new query` or of the `set` that restates it>
 #   fill <the window arguments of `new query` or of `query <q> ...`>
 #
 # The second is what it has to come out as, written back from the structure:
@@ -21,45 +21,45 @@
 #
 # See docs/hosting-a-query.md and docs/sort-and-filter.md.
 
-# --- the spec, at its smallest ---
+# --- the descriptor, at its smallest ---
 
-spec source=files
+descriptor source=files
 want source="files"
 
-spec source="my files"
+descriptor source="my files"
 want source="my files"
 
-spec
+descriptor
 want
 
 # --- fields: a bag of names, and the same bag is how exclusions are written ---
 
-spec source=f fields={ name; size; modified }
+descriptor source=f fields={ name; size; modified }
 want source="f" fields={ name; size; modified }
 
-spec source=f fields={} exclude={ thumbnail }
+descriptor source=f fields={} exclude={ thumbnail }
 want source="f" exclude={ thumbnail }
 
 # A field list holds names and never values, so it has a shorter spelling:
 # the names separated by commas. It reads into the same bag the block does,
 # and the block is what comes back out.
 
-spec source=f fields=".name, .size"
+descriptor source=f fields=".name, .size"
 want source="f" fields={ .name; .size }
 
-spec source=f fields="  .name ,.size  " exclude="blob"
+descriptor source=f fields="  .name ,.size  " exclude="blob"
 want source="f" fields={ .name; .size } exclude={ blob }
 
-spec source=f fields=""
+descriptor source=f fields=""
 want source="f"
 
 # A stray comma leaves a name with nothing in it, which is a typo rather than
 # a field. Dropping it quietly would narrow the query by one and say nothing.
 
-spec source=f fields=".name, , .size"
+descriptor source=f fields=".name, , .size"
 bad
 
-spec source=f fields=","
+descriptor source=f fields=","
 bad
 
 # --- a field named by its index ---
@@ -68,21 +68,21 @@ bad
 # its index. A block is a list of statements, so this is the one place where a
 # statement's head is not a word.
 
-spec source=f fields={ 0; 1; .name }
+descriptor source=f fields={ 0; 1; .name }
 want source="f" fields={ 0; 1; .name }
 
-spec source=f fields="0, 1"
+descriptor source=f fields="0, 1"
 want source="f" fields={ 0; 1 }
 
 # The digits stand as they are written: a name that went out one way comes
 # back the same way, so these are two different names.
 
-spec source=f fields={ 7; 007 }
+descriptor source=f fields={ 7; 007 }
 want source="f" fields={ 7; 007 }
 
 # A sort level names its field in the head, so an index reaches it.
 
-spec source=f sort={ 0 natural; 1 desc }
+descriptor source=f sort={ 0 natural; 1 desc }
 want source="f" sort={ 0 natural; 1 desc }
 
 # A filter names its field in ARGUMENT position, where a bare 0 is the number
@@ -91,13 +91,13 @@ want source="f" sort={ 0 natural; 1 desc }
 # comes back as a protected symbol, because that is the spelling that says
 # name.
 
-spec source=f filter={ eq 0 "a" }
+descriptor source=f filter={ eq 0 "a" }
 want source="f" filter={ eq (0) "a" }
 
-spec source=f filter={ eq (0) "a" }
+descriptor source=f filter={ eq (0) "a" }
 want source="f" filter={ eq (0) "a" }
 
-spec source=f filter={ has 7; lacks .name }
+descriptor source=f filter={ has 7; lacks .name }
 want source="f" filter={ has (7); lacks .name }
 
 # A number names the field the decimal it IS, not the digits it was written
@@ -105,121 +105,121 @@ want source="f" filter={ has (7); lacks .name }
 # has already been read as the number seven and the zeros are gone. A name
 # that wants its zeros says it is a name.
 
-spec source=f filter={ eq 007 "a" }
+descriptor source=f filter={ eq 007 "a" }
 want source="f" filter={ eq (7) "a" }
 
-spec source=f filter={ eq (007) "a" }
+descriptor source=f filter={ eq (007) "a" }
 want source="f" filter={ eq (007) "a" }
 
 # Which is also how a name with no bare spelling at all reaches one. A symbol
 # carries every name but the two it has no room for, and a quoted string is a
 # name written as text, which carries those.
 
-spec source=f filter={ eq (two words) "a" }
+descriptor source=f filter={ eq (two words) "a" }
 want source="f" filter={ eq (two words) "a" }
 
-spec source=f filter={ eq "two words" "a" }
+descriptor source=f filter={ eq "two words" "a" }
 want source="f" filter={ eq (two words) "a" }
 
-spec source=f filter={ eq "a)b" "x" }
+descriptor source=f filter={ eq "a)b" "x" }
 want source="f" filter={ eq "a)b" "x" }
 
 # A bare word is still the ordinary spelling, and still comes back bare.
 
-spec source=f filter={ eq name "a" }
+descriptor source=f filter={ eq name "a" }
 want source="f" filter={ eq name "a" }
 
 # A float and a block name nothing: a float has more than one spelling for one
 # value, and a block is a set.
 
-spec source=f filter={ eq 1.5 "a" }
+descriptor source=f filter={ eq 1.5 "a" }
 bad
 
-spec source=f filter={ eq { name } "a" }
+descriptor source=f filter={ eq { name } "a" }
 bad
 
 # And a field is named rather than asserted or argued: `!` and `?` say
 # something a name cannot, and a named argument is not an operand at all.
 
-spec source=f filter={ eq !name "a" }
+descriptor source=f filter={ eq !name "a" }
 bad
 
-spec source=f filter={ eq ?name "a" }
+descriptor source=f filter={ eq ?name "a" }
 bad
 
-spec source=f filter={ eq at=name "a" }
+descriptor source=f filter={ eq at=name "a" }
 bad
 
 # --- the sort ---
 
-spec source=f sort={ name }
+descriptor source=f sort={ name }
 want source="f" sort={ name }
 
-spec source=f sort={ name desc }
+descriptor source=f sort={ name desc }
 want source="f" sort={ name desc }
 
-spec source=f sort={ name asc }
+descriptor source=f sort={ name asc }
 want source="f" sort={ name }
 
-spec source=f sort={ name fold; size desc; modified desc }
+descriptor source=f sort={ name fold; size desc; modified desc }
 want source="f" sort={ name fold; size desc; modified desc }
 
-spec source=f sort={ name natural }
+descriptor source=f sort={ name natural }
 want source="f" sort={ name natural }
 
-spec source=f sort={ name exact desc }
+descriptor source=f sort={ name exact desc }
 want source="f" sort={ name exact desc }
 
 # A collation may also be named, which is how a filter writes one.
-spec source=f sort={ name collate=natural }
+descriptor source=f sort={ name collate=natural }
 want source="f" sort={ name natural }
 
 # `desc` asserted false is ascending, said out loud.
-spec source=f sort={ name !desc }
+descriptor source=f sort={ name !desc }
 want source="f" sort={ name }
 
-spec source=f sort={ name sideways }
+descriptor source=f sort={ name sideways }
 bad
 
-spec source=f sort={ name desc=1 }
+descriptor source=f sort={ name desc=1 }
 bad
 
-spec source=f sort=name
+descriptor source=f sort=name
 bad
 
 # --- id: a record's identity, which is not a field ---
 
 # It names no field, because an identity is not one: it travels beside a
 # record's fields rather than among them.
-spec source=f filter={ id (left/1) }
+descriptor source=f filter={ id (left/1) }
 want source="f" filter={ id (left/1) }
 
-spec source=f filter={ id (left/1) (left/note) 7 "notes" }
+descriptor source=f filter={ id (left/1) (left/note) 7 "notes" }
 want source="f" filter={ id (left/1) (left/note) 7 "notes" }
 
-spec source=f filter={ not { id (left/1) } }
+descriptor source=f filter={ not { id (left/1) } }
 want source="f" filter={ not { id (left/1) } }
 
 # A field called `key` is a field like any other, and asks something else.
-spec source=f filter={ eq key (left/1) }
+descriptor source=f filter={ eq key (left/1) }
 want source="f" filter={ eq key (left/1) }
 
-spec source=f filter={ id }
+descriptor source=f filter={ id }
 bad
 
-spec source=f filter={ id key (left/1) }
+descriptor source=f filter={ id key (left/1) }
 bad
 
-spec source=f filter={ id at=(left/1) }
+descriptor source=f filter={ id at=(left/1) }
 bad
 
 # --- reversed belongs to the scope, not to the sequence ---
 #
 # A sequence is one prepared ordering and a scope reads it either way, so the
 # direction is asked for with the records rather than stated with the sort. The
-# spec does not carry it at all.
+# descriptor does not carry it at all.
 
-spec source=f reversed
+descriptor source=f reversed
 want source="f"
 
 scope count=10 reversed
@@ -228,10 +228,10 @@ want count=10 reversed
 # Every level turns over with it, the one the sort does not write included -- so
 # this is the mirror of `sort={ size }`, where `sort={ size desc }` is a third
 # sequence again, with ties left facing the way they were.
-spec source=f sort={ size }
+descriptor source=f sort={ size }
 want source="f" sort={ size }
 
-spec source=f sort={ size desc }
+descriptor source=f sort={ size desc }
 want source="f" sort={ size desc }
 
 # Asserted false is the sequence as stated, said out loud.
@@ -243,44 +243,44 @@ bad
 
 # --- the filter: a block is an AND, so the top of a parsed tree always is ---
 
-spec source=f filter={ eq kind folder }
+descriptor source=f filter={ eq kind folder }
 want source="f" filter={ eq kind folder }
 
-spec source=f filter={ eq kind folder; ge size 1024 }
+descriptor source=f filter={ eq kind folder; ge size 1024 }
 want source="f" filter={ eq kind folder; ge size 1024 }
 
-spec source=f filter={}
+descriptor source=f filter={}
 want source="f" filter={}
 
 # A symbol and a string are different questions, and the value's own spelling
 # says which was asked.
-spec source=f filter={ eq kind "folder" }
+descriptor source=f filter={ eq kind "folder" }
 want source="f" filter={ eq kind "folder" }
 
-spec source=f filter={ ne kind folder; lt size 10; le size 20; gt size 1; ge size 2 }
+descriptor source=f filter={ ne kind folder; lt size 10; le size 20; gt size 1; ge size 2 }
 want source="f" filter={ ne kind folder; lt size 10; le size 20; gt size 1; ge size 2 }
 
-spec source=f filter={ or { eq kind folder; eq kind disk } }
+descriptor source=f filter={ or { eq kind folder; eq kind disk } }
 want source="f" filter={ or { eq kind folder; eq kind disk } }
 
-spec source=f filter={ not { starts name "." } }
+descriptor source=f filter={ not { starts name "." } }
 want source="f" filter={ not { starts name "." } }
 
-spec source=f filter={ and { eq a 1; or { eq b 2; not { eq c 3 } } } }
+descriptor source=f filter={ and { eq a 1; or { eq b 2; not { eq c 3 } } } }
 want source="f" filter={ and { eq a 1; or { eq b 2; not { eq c 3 } } } }
 
 # A set written as a block holds bare names; written as operands it holds any
 # value. Both are the same structure, so both come out the same way.
-spec source=f filter={ in kind { folder; disk } }
+descriptor source=f filter={ in kind { folder; disk } }
 want source="f" filter={ in kind folder disk }
 
-spec source=f filter={ in kind folder disk }
+descriptor source=f filter={ in kind folder disk }
 want source="f" filter={ in kind folder disk }
 
-spec source=f filter={ in name "a" "b" 3 }
+descriptor source=f filter={ in name "a" "b" 3 }
 want source="f" filter={ in name "a" "b" 3 }
 
-spec source=f filter={ contains title "report" collate=fold }
+descriptor source=f filter={ contains title "report" collate=fold }
 want source="f" filter={ contains title "report" collate=fold }
 
 # `collate=` is the one name a predicate reserves, and it reserves it WITH ITS
@@ -288,70 +288,70 @@ want source="f" filter={ contains title "report" collate=fold }
 # can be called that -- and a collation written with its value left off is
 # caught by the operand count rather than by its spelling.
 
-spec source=f filter={ eq collate "x" }
+descriptor source=f filter={ eq collate "x" }
 want source="f" filter={ eq collate "x" }
 
-spec source=f filter={ contains title "report" collate }
+descriptor source=f filter={ contains title "report" collate }
 bad
 
-spec source=f filter={ starts name "READ"; ends name ".md" }
+descriptor source=f filter={ starts name "READ"; ends name ".md" }
 want source="f" filter={ starts name "READ"; ends name ".md" }
 
 # There is no presence operator: undefined is a value with a rank of its own.
-spec source=f filter={ eq thumbnail undefined }
+descriptor source=f filter={ eq thumbnail undefined }
 want source="f" filter={ eq thumbnail undefined }
 
-spec source=f filter={ eq deleted false; ne owner nil }
+descriptor source=f filter={ eq deleted false; ne owner nil }
 want source="f" filter={ eq deleted false; ne owner nil }
 
-spec source=f filter={ lt ratio -2.5 }
+descriptor source=f filter={ lt ratio -2.5 }
 want source="f" filter={ lt ratio -2.5 }
 
 # A whole float stays a float: `3` is an integer and `3.0` is not, and a value
 # that changed type between the two ends would be comparing different things.
-spec source=f filter={ lt ratio 3.0 }
+descriptor source=f filter={ lt ratio 3.0 }
 want source="f" filter={ lt ratio 3.0 }
 
-spec source=f filter={ lt ratio 3 }
+descriptor source=f filter={ lt ratio 3 }
 want source="f" filter={ lt ratio 3 }
 
-spec source=f filter={ eq name "say \"hi\"" }
+descriptor source=f filter={ eq name "say \"hi\"" }
 want source="f" filter={ eq name "say \"hi\"" }
 
-spec source=f filter={ between size 1 2 }
+descriptor source=f filter={ between size 1 2 }
 bad
 
-spec source=f filter={ eq }
+descriptor source=f filter={ eq }
 bad
 
-spec source=f filter={ eq kind }
+descriptor source=f filter={ eq kind }
 bad
 
-spec source=f filter={ eq kind folder disk }
+descriptor source=f filter={ eq kind folder disk }
 bad
 
-spec source=f filter={ not {} }
+descriptor source=f filter={ not {} }
 bad
 
-spec source=f filter={ or }
+descriptor source=f filter={ or }
 bad
 
-spec source=f filter={ eq kind folder collate=1 }
+descriptor source=f filter={ eq kind folder collate=1 }
 bad
 
 # An asserted name says something a value cannot, so it is not read as one.
-spec source=f filter={ eq kind !folder }
+descriptor source=f filter={ eq kind !folder }
 bad
 
-spec source=f filter={ eq kind ?folder }
+descriptor source=f filter={ eq kind ?folder }
 bad
 
-spec source=f filter=name
+descriptor source=f filter=name
 bad
 
 # --- everything at once ---
 
-spec source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind folder; eq kind disk }; ge size 1024; not { starts name "." } } sort={ name natural; size desc }
+descriptor source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind folder; eq kind disk }; ge size 1024; not { starts name "." } } sort={ name natural; size desc }
 want source="files" fields={ name; size } exclude={ blob } filter={ or { eq kind folder; eq kind disk }; ge size 1024; not { starts name "." } } sort={ name natural; size desc }
 
 # --- a scope ---
@@ -439,16 +439,16 @@ bad
 # one -- a sort level, a filter predicate, a field bag -- so nothing but the
 # lexer has anything to say about it.
 
-spec source=f sort={ .name natural; key desc }
+descriptor source=f sort={ .name natural; key desc }
 want source="f" sort={ .name natural; key desc }
 
-spec source=f filter={ eq .key "figaro" }
+descriptor source=f filter={ eq .key "figaro" }
 want source="f" filter={ eq .key "figaro" }
 
-spec source=f filter={ ge .0 1024 }
+descriptor source=f filter={ ge .0 1024 }
 want source="f" filter={ ge .0 1024 }
 
-spec source=f fields={ key; .name; value }
+descriptor source=f fields={ key; .name; value }
 want source="f" fields={ key; .name; value }
 
 scope after=3 count=10
@@ -468,44 +468,44 @@ want after=3 count=10
 # except a token with a leading sign: that says number and nothing else, so one
 # that does not measure up is refused.
 
-spec source=f filter={ eq .when 2026-09-13 }
+descriptor source=f filter={ eq .when 2026-09-13 }
 want source="f" filter={ eq .when 2026-09-13 }
 
-spec source=f filter={ eq .kind kebab-case }
+descriptor source=f filter={ eq .kind kebab-case }
 want source="f" filter={ eq .kind kebab-case }
 
-spec source=f filter={ eq .id 1x }
+descriptor source=f filter={ eq .id 1x }
 want source="f" filter={ eq .id 1x }
 
-spec source=f filter={ eq .n 1e5x }
+descriptor source=f filter={ eq .n 1e5x }
 want source="f" filter={ eq .n 1e5x }
 
 # And what does measure up is a number, integer or float. A float's canonical
 # spelling is not settled between the three -- `1e5` writes back as 100000.0
 # here and as 1e+05 there -- so the cases below are ones they already agree on,
 # and each language covers the rest in its own tests.
-spec source=f filter={ eq .n 1e+21 }
+descriptor source=f filter={ eq .n 1e+21 }
 want source="f" filter={ eq .n 1e+21 }
 
-spec source=f filter={ eq .n 6.02e+23 }
+descriptor source=f filter={ eq .n 6.02e+23 }
 want source="f" filter={ eq .n 6.02e+23 }
 
-spec source=f filter={ eq .n +3 }
+descriptor source=f filter={ eq .n +3 }
 want source="f" filter={ eq .n 3 }
 
-spec source=f filter={ eq .n -3.5 }
+descriptor source=f filter={ eq .n -3.5 }
 want source="f" filter={ eq .n -3.5 }
 
 # A leading sign is a number and nothing else.
-spec source=f filter={ eq .n -x }
+descriptor source=f filter={ eq .n -x }
 bad
 
-spec source=f filter={ eq .n +1e }
+descriptor source=f filter={ eq .n +1e }
 bad
 
 # A dot leads a member name, so it never leads a number: `.0` is the item at
 # position 0 and not the number zero.
-spec source=f sort={ .0 natural }
+descriptor source=f sort={ .0 natural }
 want source="f" sort={ .0 natural }
 
 # --- a symbol the grammar has no bare spelling for ---
@@ -519,22 +519,22 @@ want source="f" sort={ .0 natural }
 # What can be written bare is written bare, so the brackets appear only where
 # they are carrying something.
 
-spec source=f filter={ eq .addr (objectLibrary/figaro/3) }
+descriptor source=f filter={ eq .addr (objectLibrary/figaro/3) }
 want source="f" filter={ eq .addr (objectLibrary/figaro/3) }
 
-spec source=f filter={ eq .kind (*star) }
+descriptor source=f filter={ eq .kind (*star) }
 want source="f" filter={ eq .kind (*star) }
 
-spec source=f filter={ eq .n (1e+21) }
+descriptor source=f filter={ eq .n (1e+21) }
 want source="f" filter={ eq .n (1e+21) }
 
-spec source=f filter={ eq .kind (plain) }
+descriptor source=f filter={ eq .kind (plain) }
 want source="f" filter={ eq .kind plain }
 
-spec source=f filter={ eq .kind () }
+descriptor source=f filter={ eq .kind () }
 bad
 
-spec source=f filter={ eq .kind (unterminated }
+descriptor source=f filter={ eq .kind (unterminated }
 bad
 
 # --- has, lacks, and what cannot be compared ---
@@ -545,34 +545,34 @@ bad
 # inherit. So presence gets operators that do not try to compare, and they take
 # no value.
 
-spec source=f filter={ has .tags }
+descriptor source=f filter={ has .tags }
 want source="f" filter={ has .tags }
 
-spec source=f filter={ lacks .thumbnail }
+descriptor source=f filter={ lacks .thumbnail }
 want source="f" filter={ lacks .thumbnail }
 
-spec source=f filter={ has .tags; lacks .thumbnail; ge .size 1024 }
+descriptor source=f filter={ has .tags; lacks .thumbnail; ge .size 1024 }
 want source="f" filter={ has .tags; lacks .thumbnail; ge .size 1024 }
 
-spec source=f filter={ not { lacks .tags } }
+descriptor source=f filter={ not { lacks .tags } }
 want source="f" filter={ not { lacks .tags } }
 
-spec source=f filter={ has .tags "x" }
+descriptor source=f filter={ has .tags "x" }
 bad
 
-spec source=f filter={ lacks .tags undefined }
+descriptor source=f filter={ lacks .tags undefined }
 bad
 
-spec source=f filter={ has }
+descriptor source=f filter={ has }
 bad
 
 # A comparison takes a simple value. A block is a set, and a set is only
 # something `in` can be asked about.
-spec source=f filter={ eq .tags { a; b } }
+descriptor source=f filter={ eq .tags { a; b } }
 bad
 
-spec source=f filter={ ge .tags {} }
+descriptor source=f filter={ ge .tags {} }
 bad
 
-spec source=f filter={ in .kind { folder; disk } }
+descriptor source=f filter={ in .kind { folder; disk } }
 want source="f" filter={ in .kind folder disk }

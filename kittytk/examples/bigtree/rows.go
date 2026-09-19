@@ -171,11 +171,11 @@ func serve(body []row) func(*client.Fill) {
 		// ordering the whole body would be ordering rows nobody asked about.
 		level := make([]row, 0, 64)
 		for _, r := range body {
-			if serval.Match(serval.NewInt(r.key), r.fields(), f.Spec.Filter) {
+			if serval.Match(serval.NewInt(r.key), r.fields(), f.Descriptor.Filter) {
 				level = append(level, r)
 			}
 		}
-		order(level, f.Spec, f.Scope)
+		order(level, f.Descriptor, f.Scope)
 
 		f.Ordered()
 		sent := 0
@@ -202,15 +202,15 @@ func serve(body []row) func(*client.Fill) {
 // one" would name more than one place. `Reversed` turns every level over, that one
 // included -- dropping it is the one hint an application cannot drop, because every
 // other omission only makes an answer bigger and this one makes it wrong.
-func order(level []row, spec *serval.Spec, sc *serval.Scope) {
-	levels := append(serval.Levels(spec.Sort), serval.Level{})
+func order(level []row, descriptor *serval.DataSetDescriptor, sc *serval.Scope) {
+	levels := append(serval.Levels(descriptor.Sort), serval.Level{})
 	if sc != nil && sc.Reversed {
 		levels = serval.Reverse(levels)
 	}
 	tuple := func(r row) []*serval.Value {
 		fields := r.fields()
-		out := make([]*serval.Value, 0, len(spec.Sort)+1)
-		for _, l := range spec.Sort {
+		out := make([]*serval.Value, 0, len(descriptor.Sort)+1)
+		for _, l := range descriptor.Sort {
 			out = append(out, fields.Get(l.Field))
 		}
 		return append(out, serval.NewInt(r.key))

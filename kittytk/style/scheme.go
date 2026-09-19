@@ -618,8 +618,8 @@ func (s *Scheme) GetTooltipBorder() CellStyle {
 	}
 	return DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)
 }
-func (s *Scheme) GetDock() CellStyle              { return or(s.Dock) }
-func (s *Scheme) GetDockItem() CellStyle          { return or(s.DockItem) }
+func (s *Scheme) GetDock() CellStyle     { return or(s.Dock) }
+func (s *Scheme) GetDockItem() CellStyle { return or(s.DockItem) }
 
 func (s *Scheme) GetFocusedDockItem() CellStyle { return or(s.FocusedDockItem) }
 

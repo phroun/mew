@@ -330,7 +330,7 @@ func serveTree(f *client.Fill) {
 			fields = append(fields, serval.Named("up", r.up))
 		}
 		key := serval.NewInt(r.key)
-		if !serval.Match(key, fields, f.Spec.Filter) {
+		if !serval.Match(key, fields, f.Descriptor.Filter) {
 			continue
 		}
 		if err := f.Record(key, fields...); err != nil {

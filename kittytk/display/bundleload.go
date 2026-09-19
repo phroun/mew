@@ -273,7 +273,7 @@ func (l *loader) assemble(e bundleEntry, text string) (serval.Source, error) {
 	over := serval.NewAmendedSource(composed)
 
 	// Its own records stand beside what it included, under keys of their own.
-	set, err := own.Open(&serval.Spec{})
+	set, err := own.Open(&serval.DataSetDescriptor{})
 	if err != nil {
 		return nil, err
 	}

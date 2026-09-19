@@ -295,11 +295,11 @@ func encodeFieldName(name string) string {
 	return EncodeValue(NewWord(name))
 }
 
-// ParseSpec reads a query spec from the arguments of the statement carrying
+// ParseDescriptor reads a query descriptor from the arguments of the statement carrying
 // it: `new query source=... filter={...} sort={...}`, or the `set` that
 // restates it.
-func ParseSpec(args []*Arg) (*serval.Spec, error) {
-	s := &serval.Spec{}
+func ParseDescriptor(args []*Arg) (*serval.DataSetDescriptor, error) {
+	s := &serval.DataSetDescriptor{}
 	for _, a := range args {
 		switch a.Name {
 		case "source":
@@ -340,8 +340,8 @@ func ParseSpec(args []*Arg) (*serval.Spec, error) {
 	return s, nil
 }
 
-// Encode renders the spec as the arguments of the statement that carries it.
-func EncodeSpec(s *serval.Spec) string {
+// Encode renders the descriptor as the arguments of the statement that carries it.
+func EncodeDescriptor(s *serval.DataSetDescriptor) string {
 	var parts []string
 	if s.Source != "" {
 		parts = append(parts, "source="+quoteString(s.Source))
@@ -361,12 +361,12 @@ func EncodeSpec(s *serval.Spec) string {
 	return strings.Join(parts, " ")
 }
 
-// ParseScope reads the scope off the same arguments the spec was read from.
+// ParseScope reads the scope off the same arguments the descriptor was read from.
 //
 // The two travel together -- `new query` states the sequence and asks for a run
 // of it in one statement, because nobody wants a sequence without wanting
 // records of it -- and they are read apart because they are different things
-// with different lifetimes: the spec is what the query is, and the scope is
+// with different lifetimes: the descriptor is what the query is, and the scope is
 // what this one question wanted.
 func ParseScope(args []*Arg) (*serval.Scope, error) {
 	s := &serval.Scope{}
@@ -419,7 +419,7 @@ func ParseScope(args []*Arg) (*serval.Scope, error) {
 
 // ParseExtend reads the display's declaration off the same arguments.
 //
-// It is not part of the scope and not part of the spec: the sequence is the
+// It is not part of the scope and not part of the descriptor: the sequence is the
 // same sequence and the records wanted are the same records, and this says only
 // how the answer may be spelled.
 func ParseExtend(args []*Arg) (bool, error) {

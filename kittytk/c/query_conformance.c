@@ -39,10 +39,10 @@ static int answer(const char *kind, const char *text, char *out, size_t cap) {
     kt_buf b;
     memset(&b, 0, sizeof b);
     int ok;
-    if (!strcmp(kind, "spec")) {
-        kt_qspec spec;
-        ok = parse_qspec(st->args, st->n, &spec, err);
-        if (ok) { enc_qspec(&b, &spec); qspec_release(&spec); }
+    if (!strcmp(kind, "descriptor")) {
+        kt_descriptor descriptor;
+        ok = parse_descriptor(st->args, st->n, &descriptor, err);
+        if (ok) { enc_descriptor(&b, &descriptor); descriptor_release(&descriptor); }
     } else {
         kt_qscope scope;
         ok = parse_qscope(st->args, st->n, &scope, NULL, err);
@@ -119,7 +119,7 @@ int main(int argc, char **argv) {
         char *rest = strchr(line, ' ');
         if (rest) *rest++ = '\0';
         else rest = line + strlen(line);
-        if (!strcmp(line, "spec") || !strcmp(line, "scope")) {
+        if (!strcmp(line, "descriptor") || !strcmp(line, "scope")) {
             if (open_line) { printf("line %d: a case with no answer\n", open_line); failures++; }
             snprintf(kind, sizeof kind, "%.15s", line);
             snprintf(text, sizeof text, "%s", rest);
@@ -146,7 +146,7 @@ int main(int argc, char **argv) {
     {
         const char *runs_on = "filter={ eq .kind (two\nlines) }";
         char got[4096];
-        if (answer("spec", runs_on, got, sizeof got)) {
+        if (answer("descriptor", runs_on, got, sizeof got)) {
             printf("a symbol running past its statement was read as %s\n", got);
             failures++;
         }

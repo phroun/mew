@@ -23,13 +23,13 @@ func newSortableTree() *TreeView {
 	size.Sortable = true
 	tv.AddColumn(size)
 
-	for _, spec := range []struct{ name, size string }{
+	for _, descriptor := range []struct{ name, size string }{
 		{"banana", "20"},
 		{"Apple", "30"},
 		{"cherry", "10"},
 	} {
-		it := NewTreeItem(spec.name)
-		it.SetValue("size", spec.size)
+		it := NewTreeItem(descriptor.name)
+		it.SetValue("size", descriptor.size)
 		tv.AddRootItem(it)
 	}
 	// A folder with children: children must sort within it, staying

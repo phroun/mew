@@ -91,8 +91,8 @@ type Window struct {
 	// title bar centres its name, so a note anchored to the whole band would
 	// stand at the far left of the window rather than on the name.
 	titleTextAt core.UnitRect
-	flags WindowFlags
-	state WindowState
+	flags       WindowFlags
+	state       WindowState
 
 	// windowType classifies the window's role (main, normal, mdichild,
 	// dialog, modal, toolpalette). owner is the resolved non-overlay window a

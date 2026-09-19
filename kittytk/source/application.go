@@ -54,16 +54,16 @@ func (h *ApplicationSource) Name() string { return h.name }
 // Open states a sequence. Nothing is said on the wire yet: a query is opened
 // with the first scope of it, because there is no reason to name a sequence
 // nobody is reading.
-func (h *ApplicationSource) Open(spec *serval.Spec) (serval.DataSet, error) {
-	if spec == nil {
-		spec = &serval.Spec{}
+func (h *ApplicationSource) Open(descriptor *serval.DataSetDescriptor) (serval.DataSet, error) {
+	if descriptor == nil {
+		descriptor = &serval.DataSetDescriptor{}
 	}
 	if h.send == nil {
 		return nil, fmt.Errorf("this source has no connection to ask")
 	}
-	stated := *spec
+	stated := *descriptor
 	stated.Source = h.name
-	return &appSet{src: h, spec: &stated}, nil
+	return &appSet{src: h, descriptor: &stated}, nil
 }
 
 // An appSet is one sequence, from this side.
@@ -73,8 +73,8 @@ func (h *ApplicationSource) Open(spec *serval.Spec) (serval.DataSet, error) {
 // here is a query of its own -- and this holds only what they are all queries
 // *of*.
 type appSet struct {
-	src  *ApplicationSource
-	spec *serval.Spec
+	src        *ApplicationSource
+	descriptor *serval.DataSetDescriptor
 
 	mu     sync.Mutex
 	closed bool
@@ -134,7 +134,7 @@ func (s *appSet) Read(sc *serval.Scope, out serval.Sink) error {
 	// opposite order is how two threads stop dead.
 	s.src.asked(q)
 
-	stmt := "q=new query " + wire.EncodeSpec(s.spec) + " " + wire.EncodeScope(sc)
+	stmt := "q=new query " + wire.EncodeDescriptor(s.descriptor) + " " + wire.EncodeScope(sc)
 	if q.extend {
 		stmt += " " + wire.ExtendArg
 	}

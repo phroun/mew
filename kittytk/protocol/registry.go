@@ -352,27 +352,27 @@ var (
 )
 
 // RegisterType registers a builtin type. Builtin names begin lowercase
-// (D18). Panics on programmer error (duplicate, bad spec) - callers
+// (D18). Panics on programmer error (duplicate, bad descriptor) - callers
 // are init functions.
-func RegisterType(name string, spec *TypeSpec) {
+func RegisterType(name string, descriptor *TypeSpec) {
 	if !isLowerInitial(name) {
 		panic(fmt.Sprintf("protocol: builtin type %q must begin lowercase (D18)", name))
 	}
-	if spec == nil {
-		panic(fmt.Sprintf("protocol: type %q: a spec is required", name))
+	if descriptor == nil {
+		panic(fmt.Sprintf("protocol: type %q: a descriptor is required", name))
 	}
 	// A hosted type is never built here, so it declares no constructor; every
 	// other type must, or `new` would have nothing to hand back.
-	if spec.New == nil && !spec.Hosted {
-		panic(fmt.Sprintf("protocol: type %q: spec.New is required", name))
+	if descriptor.New == nil && !descriptor.Hosted {
+		panic(fmt.Sprintf("protocol: type %q: descriptor.New is required", name))
 	}
-	if spec.New != nil && spec.Hosted {
-		panic(fmt.Sprintf("protocol: type %q: a hosted type is not constructed over the wire, so spec.New is never called", name))
+	if descriptor.New != nil && descriptor.Hosted {
+		panic(fmt.Sprintf("protocol: type %q: a hosted type is not constructed over the wire, so descriptor.New is never called", name))
 	}
-	if !spec.Virtual && spec.ID == nil {
-		panic(fmt.Sprintf("protocol: type %q: spec.ID is required for non-virtual types", name))
+	if !descriptor.Virtual && descriptor.ID == nil {
+		panic(fmt.Sprintf("protocol: type %q: descriptor.ID is required for non-virtual types", name))
 	}
-	for prop, p := range spec.Props {
+	for prop, p := range descriptor.Props {
 		if err := checkPropertyShape(p); err != nil {
 			panic(fmt.Sprintf("protocol: type %q: property %q: %v", name, prop, err))
 		}
@@ -382,7 +382,7 @@ func RegisterType(name string, spec *TypeSpec) {
 	if _, dup := regTypes[name]; dup {
 		panic(fmt.Sprintf("protocol: type %q registered twice", name))
 	}
-	regTypes[name] = spec
+	regTypes[name] = descriptor
 }
 
 // RegisterCommonProperty registers a property available on every
@@ -436,12 +436,12 @@ const UniversalEvent = "command"
 func EventNames(typeName string) []string {
 	regMu.RLock()
 	defer regMu.RUnlock()
-	spec, ok := regTypes[typeName]
+	descriptor, ok := regTypes[typeName]
 	if !ok {
 		return nil
 	}
-	names := make([]string, 0, len(spec.Events))
-	for n := range spec.Events {
+	names := make([]string, 0, len(descriptor.Events))
+	for n := range descriptor.Events {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -450,11 +450,11 @@ func EventNames(typeName string) []string {
 
 // callsOf is the table a verb consults: the questions for ask, the actions for
 // do. Both are declared on the TypeSpec and both are checked the same way.
-func callsOf(spec *TypeSpec, verb string) map[string]CallDesc {
+func callsOf(descriptor *TypeSpec, verb string) map[string]CallDesc {
 	if verb == "do" {
-		return spec.Does
+		return descriptor.Does
 	}
-	return spec.Asks
+	return descriptor.Asks
 }
 
 // AskNames returns the sorted questions a type answers.
@@ -465,12 +465,12 @@ func DoNames(typeName string) []string { return callNames(typeName, "do") }
 
 func callNames(typeName, verb string) []string {
 	regMu.RLock()
-	spec := regTypes[typeName]
+	descriptor := regTypes[typeName]
 	regMu.RUnlock()
-	if spec == nil {
+	if descriptor == nil {
 		return nil
 	}
-	calls := callsOf(spec, verb)
+	calls := callsOf(descriptor, verb)
 	names := make([]string, 0, len(calls))
 	for n := range calls {
 		names = append(names, n)
@@ -491,12 +491,12 @@ func TypeDoes(typeName, action string) bool {
 
 func typeDeclares(typeName, verb, name string) bool {
 	regMu.RLock()
-	spec := regTypes[typeName]
+	descriptor := regTypes[typeName]
 	regMu.RUnlock()
-	if spec == nil {
+	if descriptor == nil {
 		return false
 	}
-	_, declared := callsOf(spec, verb)[name]
+	_, declared := callsOf(descriptor, verb)[name]
 	return declared
 }
 
@@ -511,8 +511,8 @@ func AnyTypeDoes(action string) bool { return anyTypeDeclares("do", action) }
 func anyTypeDeclares(verb, name string) bool {
 	regMu.RLock()
 	defer regMu.RUnlock()
-	for _, spec := range regTypes {
-		if _, declared := callsOf(spec, verb)[name]; declared {
+	for _, descriptor := range regTypes {
+		if _, declared := callsOf(descriptor, verb)[name]; declared {
 			return true
 		}
 	}
@@ -564,11 +564,11 @@ func TypeEmits(typeName, event string) bool {
 	}
 	regMu.RLock()
 	defer regMu.RUnlock()
-	spec, ok := regTypes[typeName]
+	descriptor, ok := regTypes[typeName]
 	if !ok {
 		return false
 	}
-	_, declared := spec.Events[event]
+	_, declared := descriptor.Events[event]
 	return declared
 }
 
@@ -582,8 +582,8 @@ func AnyTypeEmits(event string) bool {
 	}
 	regMu.RLock()
 	defer regMu.RUnlock()
-	for _, spec := range regTypes {
-		if _, declared := spec.Events[event]; declared {
+	for _, descriptor := range regTypes {
+		if _, declared := descriptor.Events[event]; declared {
 			return true
 		}
 	}
@@ -637,19 +637,19 @@ func NewRegistryFactory(ctx *BindContext) *RegistryFactory {
 // New implements Factory.
 func (f *RegistryFactory) New(typeName string) (Object, error) {
 	regMu.RLock()
-	spec := regTypes[typeName]
+	descriptor := regTypes[typeName]
 	regMu.RUnlock()
-	if spec == nil {
+	if descriptor == nil {
 		return nil, fmt.Errorf("unknown trinket type %q", typeName)
 	}
 	// A hosted type's instance belongs to the connection, which already has
 	// one. Building a second would hand the client an object attached to
 	// nothing -- and asking a nil target for its identity is a crash.
-	if spec.Hosted {
+	if descriptor.Hosted {
 		return nil, fmt.Errorf("%s is not created over the wire: the host registers one and hands over its ID", typeName)
 	}
-	o := &registryObject{ctx: f.ctx, spec: spec, typeName: typeName, target: spec.New()}
-	if spec.Virtual {
+	o := &registryObject{ctx: f.ctx, descriptor: descriptor, typeName: typeName, target: descriptor.New()}
+	if descriptor.Virtual {
 		o.virtualID = virtualIDSource()
 		// Virtual targets that want to know their identity (e.g. tree
 		// items, whose IDs outlive construction) receive it here.
@@ -660,18 +660,18 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 		// properties (a column's enum= naming a collection).
 		f.ctx.RegisterRef(o.virtualID, o.target)
 	}
-	if spec.Bind != nil {
-		spec.Bind(f.ctx, o.target)
+	if descriptor.Bind != nil {
+		descriptor.Bind(f.ctx, o.target)
 	}
 	return o, nil
 }
 
 type registryObject struct {
-	ctx       *BindContext
-	spec      *TypeSpec
-	typeName  string
-	target    any
-	virtualID uint64
+	ctx        *BindContext
+	descriptor *TypeSpec
+	typeName   string
+	target     any
+	virtualID  uint64
 }
 
 // Target exposes the constructed object (the trinket) so the embedding
@@ -749,10 +749,10 @@ func (o *registryObject) Do(action string, args []*Arg) error {
 // property resolves a name against this type's own table and, for a
 // non-virtual type, the common properties behind it.
 func (o *registryObject) property(name string) (Property, bool) {
-	if p, ok := o.spec.Props[name]; ok {
+	if p, ok := o.descriptor.Props[name]; ok {
 		return p, true
 	}
-	if o.spec.Virtual {
+	if o.descriptor.Virtual {
 		return Property{}, false
 	}
 	regMu.RLock()
@@ -763,18 +763,18 @@ func (o *registryObject) property(name string) (Property, bool) {
 
 // ID implements Object.
 func (o *registryObject) ID() uint64 {
-	if o.spec.Virtual || o.spec.ID == nil {
+	if o.descriptor.Virtual || o.descriptor.ID == nil {
 		return o.virtualID
 	}
-	return o.spec.ID(o.target)
+	return o.descriptor.ID(o.target)
 }
 
 // Destroy implements the session's optional destroyer interface.
 func (o *registryObject) Destroy() error {
-	if o.spec.Destroy == nil {
+	if o.descriptor.Destroy == nil {
 		return fmt.Errorf("this type does not support destroy")
 	}
-	return o.spec.Destroy(o.target)
+	return o.descriptor.Destroy(o.target)
 }
 
 // EventControl is implemented by RegistryFactory so the session's

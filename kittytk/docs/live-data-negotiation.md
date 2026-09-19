@@ -116,10 +116,10 @@ different places can therefore share one query without interfering. If a query
 ever grew a position, dedup would break the same day.
 
 **Dedup by the query as sent.** The server renders a result set's filter and
-sort into text to put them on the wire, and renders the same spec the same way
-every time, so the application can key its table on that text — a string
-compare, not a structural walk of two filter trees. That matters most where
-structural comparison is real work and string comparison is not.
+sort into text to put them on the wire, and renders the same descriptor the
+same way every time, so the application can key its table on that text — a
+string compare, not a structural walk of two filter trees. That matters most
+where structural comparison is real work and string comparison is not.
 
 **The application counts.** If it hands the same query back to two requests, it
 knows when the last of them goes and drops it at zero.
@@ -282,10 +282,11 @@ scroll history.
 
 **A statement is a small set of concerns**:
 
-- the **row extents** currently depended on — built: `Covers(spec)` returns them,
-  taken from the runs themselves, both ends inclusive and by identity
-- the **fields**, grouped by the part each plays — built: `Spec.Roles()` returns
-  sort, filter and detail, and `Whole` for a query that asked for whole records
+- the **row extents** currently depended on — built: `Covers(descriptor)`
+  returns them, taken from the runs themselves, both ends inclusive and by
+  identity - the **fields**, grouped by the part each plays — built:
+  `DataSetDescriptor.Roles()` returns sort, filter and detail, and `Whole` for
+  a query that asked for whole records
 - the **count**, a standing concern with no extent at all — built:
   `RecordCount` is a figure, a floor, or nothing, and it is keyed by the filter
   rather than the sequence, so a re-sort keeps it

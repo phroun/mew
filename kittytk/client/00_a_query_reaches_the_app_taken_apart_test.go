@@ -162,10 +162,10 @@ func TestAScopeArrivesTakenApart(t *testing.T) {
 		t.Error("it asked for the sequence backwards and that did not arrive")
 	}
 	// The sequence comes with it, so the handler need not have kept it.
-	if got.Spec.Source != "files" || len(got.Spec.Sort) != 1 {
-		t.Errorf("the spec came through as %#v", got.Spec)
+	if got.Descriptor.Source != "files" || len(got.Descriptor.Sort) != 1 {
+		t.Errorf("the descriptor came through as %#v", got.Descriptor)
 	}
-	if names := strings.Join(got.Spec.Fields.Names(), ","); names != "name,size" {
+	if names := strings.Join(got.Descriptor.Fields.Names(), ","); names != "name,size" {
 		t.Errorf("this sequence wants %q", names)
 	}
 }
@@ -340,9 +340,9 @@ func TestALongAnswerGoesOutInBatches(t *testing.T) {
 // destroys what it is replacing, which is what keeps the source in use while
 // the reader moves across.
 func TestADifferentSequenceIsADifferentQuery(t *testing.T) {
-	var specs []*serval.Spec
+	var specs []*serval.DataSetDescriptor
 	c, r, _ := serveOne(t, func(f *Fill) {
-		specs = append(specs, f.Spec)
+		specs = append(specs, f.Descriptor)
 		_ = f.Exhausted()
 	})
 
@@ -381,7 +381,7 @@ func TestAQueryCannotBeRestated(t *testing.T) {
 	if !strings.Contains(answered, "error") {
 		t.Errorf("a restatement was accepted: %q", answered)
 	}
-	if q := c.Query(1); q == nil || q.Spec().Sort[0].Field != "name" {
+	if q := c.Query(1); q == nil || q.Descriptor().Sort[0].Field != "name" {
 		t.Error("the refused restatement changed the query anyway")
 	}
 }

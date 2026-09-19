@@ -93,7 +93,7 @@ func serve(f *client.Fill, send func(key any, fields ...*serval.Field) error) {
 		name string
 		size int64
 	}(nil), appRecords...)
-	if len(f.Spec.Sort) > 0 && f.Spec.Sort[0].Field == ".size" {
+	if len(f.Descriptor.Sort) > 0 && f.Descriptor.Sort[0].Field == ".size" {
 		for i := 0; i < len(rows); i++ {
 			for j := i + 1; j < len(rows); j++ {
 				if rows[j].size < rows[i].size {
@@ -143,9 +143,9 @@ type reader struct {
 	set serval.DataSet
 }
 
-func opened(t *testing.T, src serval.Source, spec string) *reader {
+func opened(t *testing.T, src serval.Source, descriptor string) *reader {
 	t.Helper()
-	set, err := src.Open(parseSpec(t, spec))
+	set, err := src.Open(parseSpec(t, descriptor))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,9 +167,9 @@ func (r *reader) scope(args string) (*collector, serval.Complete) {
 }
 
 // read is one scope of a sequence nobody reads twice, naming no kind.
-func read(t *testing.T, src serval.Source, spec, scope string) (*collector, serval.Complete) {
+func read(t *testing.T, src serval.Source, descriptor, scope string) (*collector, serval.Complete) {
 	t.Helper()
-	return opened(t, src, spec).scope(scope)
+	return opened(t, src, descriptor).scope(scope)
 }
 
 func TestOneQuestionTwoKinds(t *testing.T) {
@@ -257,7 +257,7 @@ func (errBroken) Error() string { return "the connection is broken" }
 
 // A source with nothing to ask cannot open a sequence at all.
 func TestASourceWithNoConnectionRefusesToOpen(t *testing.T) {
-	if _, err := NewApplicationSource("files", nil).Open(&serval.Spec{}); err == nil {
+	if _, err := NewApplicationSource("files", nil).Open(&serval.DataSetDescriptor{}); err == nil {
 		t.Error("a source with no connection opened a sequence")
 	}
 }
@@ -436,17 +436,17 @@ func (c *collector) joined() string { return strings.Join(c.keys, ",") }
 // --- stating a sequence, the way one arrives --------------------------
 //
 // These read the wire's own grammar, which is what this side of the boundary
-// is for: a spec reaches an application source as text and is taken apart
+// is for: a descriptor reaches an application source as text and is taken apart
 // before anything sees it. serval's own tests build their specs instead,
 // having no grammar to lean on.
 
-func parseSpec(t *testing.T, args string) *serval.Spec {
+func parseSpec(t *testing.T, args string) *serval.DataSetDescriptor {
 	t.Helper()
-	spec, err := wire.ParseSpec(statement(t, "new query "+args).Args[1:])
+	descriptor, err := wire.ParseDescriptor(statement(t, "new query "+args).Args[1:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	return spec
+	return descriptor
 }
 
 func parseScope(t *testing.T, args string) *serval.Scope {

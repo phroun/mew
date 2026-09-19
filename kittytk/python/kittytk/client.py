@@ -638,13 +638,13 @@ class Conn:
             raise ValueError("new: I host nothing called %r" % stmt.args[0].name)
         args = stmt.args[1:]
 
-        spec = _query.parse_spec(args)
+        descriptor = _query.parse_descriptor(args)
         with self._lock:
-            source = self._sources.get(spec.source)
+            source = self._sources.get(descriptor.source)
         if source is None:
-            raise ValueError("query: I serve nothing called %r" % spec.source)
+            raise ValueError("query: I serve nothing called %r" % descriptor.source)
 
-        q = Query(self, source, self._mint_id(), spec)
+        q = Query(self, source, self._mint_id(), descriptor)
         with self._lock:
             self._queries[q.id()] = q
         if stmt.key:
@@ -653,7 +653,7 @@ class Conn:
         scope = _query.parse_scope(args)
         with q._source._lock:
             fn = q._source._fill
-        f = Fill(q, scope, spec, _query.parse_extend(args))
+        f = Fill(q, scope, descriptor, _query.parse_extend(args))
         pending.append(lambda: fn(f))
 
 
@@ -1091,12 +1091,12 @@ class Query:
     The display opens it; the application names it, because the ids in every
     statement that follows are the application's own."""
 
-    def __init__(self, conn: "Conn", source: Source, oid: int, spec):
+    def __init__(self, conn: "Conn", source: Source, oid: int, descriptor):
         self._conn = conn
         self._source = source
         self._id = oid
         self._lock = threading.Lock()
-        self._spec = spec
+        self._spec = descriptor
 
     def id(self) -> int:
         """What this application calls the query, and what the display
@@ -1107,7 +1107,7 @@ class Query:
         """Where its records come from."""
         return self._source
 
-    def spec(self):
+    def descriptor(self):
         """The sequence this query names, which is what it was opened with. A
         query does not change."""
         with self._lock:
@@ -1183,9 +1183,9 @@ class Fill:
     accumulate, so the answer may be produced over as long as it takes and
     interleaved with other work; nothing has to be held until the end."""
 
-    def __init__(self, query: Query, scope, spec, extend=False):
+    def __init__(self, query: Query, scope, descriptor, extend=False):
         self.query = query
-        self.spec = spec
+        self.descriptor = descriptor
         self.scope = scope
         self.after = scope.after
         self.until = scope.until

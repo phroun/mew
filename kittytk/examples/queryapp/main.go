@@ -112,11 +112,11 @@ var entries = []entry{
 func serveWindow(f *client.Fill) {
 	rows := make([]entry, 0, len(entries))
 	for _, e := range entries {
-		if serval.Match(serval.NewInt(e.key), e, f.Spec.Filter) {
+		if serval.Match(serval.NewInt(e.key), e, f.Descriptor.Filter) {
 			rows = append(rows, e)
 		}
 	}
-	order(rows, f.Spec, f.Scope)
+	order(rows, f.Descriptor, f.Scope)
 
 	// Where to start: the scope names the record it starts past, so find it
 	// and step over it. An identity means one record, which is why it is what
@@ -195,11 +195,11 @@ func (e entry) Field(name string) *serval.Value {
 // order sorts by the query's levels, with the record's identity as the
 // implicit final one -- without it two records could tie, and "the record
 // after this one" would name more than one place.
-func order(rows []entry, spec *serval.Spec, sc *serval.Scope) {
-	cmp := levels(spec, sc)
+func order(rows []entry, descriptor *serval.DataSetDescriptor, sc *serval.Scope) {
+	cmp := levels(descriptor, sc)
 	sort.SliceStable(rows, func(i, j int) bool {
 		return serval.CompareLevels(
-			tuple(rows[i], spec.Sort), tuple(rows[j], spec.Sort), cmp) < 0
+			tuple(rows[i], descriptor.Sort), tuple(rows[j], descriptor.Sort), cmp) < 0
 	})
 }
 
@@ -209,8 +209,8 @@ func order(rows []entry, spec *serval.Spec, sc *serval.Scope) {
 // which is why it has to be honoured rather than ignored. Every other hint an
 // application drops can only make the answer bigger; dropping this one makes
 // it wrong, and `Ordered` would then be a lie.
-func levels(spec *serval.Spec, sc *serval.Scope) []serval.Level {
-	out := append(serval.Levels(spec.Sort), serval.Level{})
+func levels(descriptor *serval.DataSetDescriptor, sc *serval.Scope) []serval.Level {
+	out := append(serval.Levels(descriptor.Sort), serval.Level{})
 	if sc != nil && sc.Reversed {
 		return serval.Reverse(out)
 	}

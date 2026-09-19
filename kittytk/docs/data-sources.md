@@ -30,11 +30,11 @@ records on a sink.
 
 ## A relay, not a translation
 
-**The shapes are the wire's own.** A `serval.Spec` and a `serval.Scope` arrive
-exactly as `wire/query.go` takes them off a statement, and `serval.Complete` is
-the three things `result <id> complete` can carry — `ordered`, a watermark,
-`exhausted`. So `ApplicationSource` passes a question down and answers back up
-without a structure of its own in between.
+**The shapes are the wire's own.** A `serval.DataSetDescriptor` and a
+`serval.Scope` arrive exactly as `wire/query.go` takes them off a statement,
+and `serval.Complete` is the three things `result <id> complete` can carry —
+`ordered`, a watermark, `exhausted`. So `ApplicationSource` passes a question
+down and answers back up without a structure of its own in between.
 
 It makes no claims either. A source here says whether it sent the record entire
 or only the fields that were asked for; `ApplicationSource` says whatever the

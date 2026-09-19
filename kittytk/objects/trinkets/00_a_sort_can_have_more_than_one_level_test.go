@@ -28,15 +28,15 @@ func staffTree(t *testing.T) *TreeView {
 	salary.Numeric = true
 	tv.AddColumn(salary)
 
-	for _, spec := range []struct{ name, dept, salary string }{
+	for _, descriptor := range []struct{ name, dept, salary string }{
 		{"ash", "sales", "40,000"},
 		{"bo", "engineering", "90,000"},
 		{"cy", "sales", "120,000"},
 		{"dee", "engineering", "90,000"},
 	} {
-		it := NewTreeItem(spec.name)
-		it.SetValue("dept", spec.dept)
-		it.SetValue("salary", spec.salary)
+		it := NewTreeItem(descriptor.name)
+		it.SetValue("dept", descriptor.dept)
+		it.SetValue("salary", descriptor.salary)
 		tv.AddRootItem(it)
 	}
 	tv.SetBounds(core.UnitRect{Width: 640, Height: 200})

@@ -129,8 +129,8 @@ func connectionsTree(peers, apps *serval.ListSource) (*serval.TreeSource, error)
 		// The tree's own five fields, out of the way of the columns: see
 		// trinkets.TreeFieldNames. Nothing here collides with them today, and a
 		// column renamed tomorrow would have done so silently.
-		Fields: trinkets.TreeFieldNames(),
-		Spec:   &serval.Spec{Sort: []serval.SortLevel{{Field: rowSeq}}},
+		Fields:     trinkets.TreeFieldNames(),
+		Descriptor: &serval.DataSetDescriptor{Sort: []serval.SortLevel{{Field: rowSeq}}},
 		Types: serval.NodeTypes{
 			Default: &serval.NodeType{Then: serval.Always(appsKind)},
 			Named: map[string]*serval.NodeType{

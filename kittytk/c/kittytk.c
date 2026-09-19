@@ -297,9 +297,9 @@ struct kt_script { kt_stmt *stmts; int n; };
  *
  * A view's records come from more than one place at once, and each end orders
  * what it holds before the results are folded together -- so both ends must
- * compute the SAME order from the same spec without conferring.
+ * compute the SAME order from the same descriptor without conferring.
  *
- * serval's docs/ordering.md is the spec, ../testdata/compare.wire the corpus
+ * serval's docs/ordering.md is the descriptor, ../testdata/compare.wire the corpus
  * every implementation of it answers. wire/compare.go is the Go side and
  * python/kittytk/protocol.py the Python one; all three answer case for case.
  */
@@ -977,7 +977,7 @@ static void enc_sort(kt_buf *b, const kt_sortlevel *l, int n) {
     buf_puts(b, " }");
 }
 
-static void enc_qspec(kt_buf *b, const kt_qspec *s) {
+static void enc_descriptor(kt_buf *b, const kt_descriptor *s) {
     int wrote = 0;
     if (s->source && *s->source) {
         buf_puts(b, "source=");
@@ -1049,7 +1049,7 @@ static void filter_release(kt_filter *f) {
     memset(f, 0, sizeof *f);
 }
 
-static void qspec_release(kt_qspec *s) {
+static void descriptor_release(kt_descriptor *s) {
     free((void *)s->source);
     bag_release(&s->fields);
     bag_release(&s->exclude);
@@ -1457,8 +1457,8 @@ bad:
     return 0;
 }
 
-/* A query spec, from the arguments of the statement carrying it. */
-static int parse_qspec(const kt_arg *args, int n, kt_qspec *out, char *err) {
+/* A query descriptor, from the arguments of the statement carrying it. */
+static int parse_descriptor(const kt_arg *args, int n, kt_descriptor *out, char *err) {
     memset(out, 0, sizeof *out);
     out->source = strdup("");
     for (int i = 0; i < n; i++) {
@@ -1494,7 +1494,7 @@ static int parse_qspec(const kt_arg *args, int n, kt_qspec *out, char *err) {
     }
     return 1;
 bad:
-    qspec_release(out);
+    descriptor_release(out);
     return 0;
 }
 
@@ -1517,11 +1517,11 @@ static int ident_value(const char *what, const kt_arg *a, kt_value *out, char *e
     return 1;
 }
 
-/* The scope, from the same arguments the spec was read from.
+/* The scope, from the same arguments the descriptor was read from.
  *
  * The two travel together -- `new query` states the sequence and asks for a run
  * of it in one statement -- and they are read apart because they are different
- * things: the spec is what the query is, and the scope is what this one
+ * things: the descriptor is what the query is, and the scope is what this one
  * question wanted. */
 static int parse_qscope(const kt_arg *args, int n, kt_qscope *out, int *extend,
                         char *err) {
@@ -1684,7 +1684,7 @@ struct kt_source {
 struct kt_query {
     uint64_t id;
     kt_source *source;
-    kt_qspec spec;
+    kt_descriptor descriptor;
 };
 
 struct kt_conn {
@@ -2136,7 +2136,7 @@ static kt_query *query_with(kt_conn *c, uint64_t id) {
 }
 
 static void query_release(kt_query *q) {
-    qspec_release(&q->spec);
+    descriptor_release(&q->descriptor);
     free(q);
 }
 
@@ -2172,7 +2172,7 @@ void kt_source_on_statement(kt_source *s, kt_hstmt_cb cb, void *ud) {
 
 uint64_t kt_query_id(const kt_query *q) { return q ? q->id : 0; }
 const kt_source *kt_query_source(const kt_query *q) { return q ? q->source : NULL; }
-const kt_qspec *kt_query_spec(const kt_query *q) { return q ? &q->spec : NULL; }
+const kt_descriptor *kt_query_spec(const kt_query *q) { return q ? &q->descriptor : NULL; }
 
 /* --- the sink --- */
 
@@ -2604,21 +2604,21 @@ static int batch_open(kt_conn *c, kt_batch *b, const kt_stmt *st) {
     const kt_arg *args = st->n > 1 ? &st->args[1] : NULL;
     int n = st->n - 1;
 
-    kt_qspec spec;
-    if (!parse_qspec(args, n, &spec, b->err)) return 0;
+    kt_descriptor descriptor;
+    if (!parse_descriptor(args, n, &descriptor, b->err)) return 0;
 
     kt_mutex_lock(&c->hmu);
-    kt_source *source = source_named(c, spec.source);
+    kt_source *source = source_named(c, descriptor.source);
     if (!source) {
         kt_mutex_unlock(&c->hmu);
-        qfail(b->err, "query: I serve nothing called \"%s\"", spec.source);
-        qspec_release(&spec);
+        qfail(b->err, "query: I serve nothing called \"%s\"", descriptor.source);
+        descriptor_release(&descriptor);
         return 0;
     }
     kt_query *q = calloc(1, sizeof *q);
     q->id = ++c->last_hosted_id;
     q->source = source;
-    q->spec = spec;
+    q->descriptor = descriptor;
     c->queries = realloc(c->queries, (c->nqueries + 1) * sizeof(kt_query *));
     c->queries[c->nqueries++] = q;
     kt_mutex_unlock(&c->hmu);
@@ -2727,7 +2727,7 @@ static void run_batch(kt_conn *c, kt_stmt *stmts, const char **texts, int n) {
 
         switch (d->kind) {
         case 0:
-            d->req.spec = &d->q->spec;
+            d->req.descriptor = &d->q->descriptor;
             if (ok && fill) fill(d->q, &d->req, d->sink, fill_ud);
             else kt_fill_fail(d->sink, ok ? "this source has nothing to fill it" : b.err);
             qscope_release(&d->req);

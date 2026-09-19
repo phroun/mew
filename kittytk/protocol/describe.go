@@ -230,15 +230,15 @@ func DescribeVocabulary() *Vocabulary {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		spec := regTypes[n]
+		descriptor := regTypes[n]
 		v.Types = append(v.Types, TypeInfo{
 			Name:    n,
-			Virtual: spec.Virtual,
-			Hosted:  spec.Hosted,
-			Asks:    sortedCallInfos(spec.Asks),
-			Does:    sortedCallInfos(spec.Does),
-			Props:   sortedPropInfos(spec.Props),
-			Events:  sortedEventInfos(spec.Events),
+			Virtual: descriptor.Virtual,
+			Hosted:  descriptor.Hosted,
+			Asks:    sortedCallInfos(descriptor.Asks),
+			Does:    sortedCallInfos(descriptor.Does),
+			Props:   sortedPropInfos(descriptor.Props),
+			Events:  sortedEventInfos(descriptor.Events),
 		})
 	}
 	return v

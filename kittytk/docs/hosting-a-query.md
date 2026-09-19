@@ -768,8 +768,9 @@ size, `size` is the word size. An application whose records carry their own
 contents needs the distinction; one that has a fixed set of columns never writes
 a dot. serval's `docs/sources.md` is where it is put to work.
 
-**The filter does not have to be walked by hand.** `wire.Match(rec, spec.Filter)`
-answers it for anything that can produce a field by name:
+**The filter does not have to be walked by hand.**
+`wire.Match(rec, descriptor.Filter)` answers it for anything that can produce a
+field by name:
 
 ```go
 func (e entry) Field(name string) *wire.Value { ... }

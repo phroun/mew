@@ -104,6 +104,12 @@ github.com/phroun/serval v0.1.1-alpha.0.20260919062012-3960451517f4 h1:JimSG70jO
 github.com/phroun/serval v0.1.1-alpha.0.20260919062012-3960451517f4/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
 github.com/phroun/serval v0.1.1-alpha.0.20260919062132-a4971a718f87 h1:hhG/uUY6GbEWpOUqGRIRNb6zr62AaAx42V2uCyTiSB4=
 github.com/phroun/serval v0.1.1-alpha.0.20260919062132-a4971a718f87/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
+github.com/phroun/serval v0.1.1-alpha.0.20260919231710-cf9538e15398 h1:f13Tg6NhkkKoVF6bhGdYOOxwCgT3KWmxsSUuu/lX4rs=
+github.com/phroun/serval v0.1.1-alpha.0.20260919231710-cf9538e15398/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
+github.com/phroun/serval v0.1.1-alpha.0.20260919232315-994d58b5f50b h1:Ue4e+XwMuzNDmRL9Q7u+TnKFhjhzZFkNy5BTT1SRQyA=
+github.com/phroun/serval v0.1.1-alpha.0.20260919232315-994d58b5f50b/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
+github.com/phroun/serval v0.1.1-alpha.0.20260919232450-85965af9949d h1:SmGpptAl9RiYcpk66NsUFG5X5b5KweJcoQHgj3mCKv4=
+github.com/phroun/serval v0.1.1-alpha.0.20260919232450-85965af9949d/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c/go.mod h1:cNQ3dwVJtS5Hmnjxy6AgTPd0Inb3pW05ftPSX7NZO7Q=
 github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef h1:Ch6Q+AZUxDBCVqdkI8FSpFyZDtCVBc2VmejdNrm5rRQ=

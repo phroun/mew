@@ -469,13 +469,13 @@ typedef struct {
     const kt_sortlevel *sort;
     int nsort;
 
-} kt_qspec;
+} kt_descriptor;
 
 /* The run of records a query asks for: where to start, which way to walk, how
  * many, and where the asker's own knowledge picks up again.
  *
  * It is not a filter and it names no field. The sequence is already decided by
- * the spec, and a scope only says which part of it to read.
+ * the descriptor, and a scope only says which part of it to read.
  *
  * after and until are identities, not positions: an identity means something
  * only to the source that issued it. Start past after, send count records, and
@@ -504,7 +504,7 @@ typedef struct {
     int count;
     int from;                /* 0: the beginning, which asks for nothing */
     int reversed;
-    const kt_qspec *spec;    /* the sequence, so a handler need not have kept it */
+    const kt_descriptor *descriptor;    /* the sequence, so a handler need not have kept it */
 } kt_qscope;
 
 /* Where the answer is written. Unlike the request, it may be kept and used
@@ -678,7 +678,7 @@ void kt_source_on_statement(kt_source *s, kt_hstmt_cb cb, void *ud);
 /* What a query is: which source it reads, and the sequence as it stands. */
 uint64_t kt_query_id(const kt_query *q);
 const kt_source *kt_query_source(const kt_query *q);
-const kt_qspec *kt_query_spec(const kt_query *q);
+const kt_descriptor *kt_query_spec(const kt_query *q);
 
 /* --- introspection (describe, D24) ----------------------------------- */
 

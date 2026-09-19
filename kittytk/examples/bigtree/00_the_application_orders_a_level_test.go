@@ -58,7 +58,7 @@ func tied() []row {
 // this one" would name more than one row -- which is what a scope is asked from.
 func TestATieIsBrokenByTheRecordsIdentity(t *testing.T) {
 	level := tied()
-	order(level, &serval.Spec{Sort: []serval.SortLevel{{Field: "kind"}}}, nil)
+	order(level, &serval.DataSetDescriptor{Sort: []serval.SortLevel{{Field: "kind"}}}, nil)
 	// Folder before Text, and inside each the keys ascend.
 	if got := keysOf(level); !sameKeys(got, 1, 2, 3, 4) {
 		t.Errorf("sorted by kind the level reads %v, want the ties broken by key", got)
@@ -70,16 +70,16 @@ func TestATieIsBrokenByTheRecordsIdentity(t *testing.T) {
 // dropping this one makes it wrong -- and `Ordered` then claims an order that is not
 // the sequence's.
 func TestAReversedScopeTurnsEveryLevelOver(t *testing.T) {
-	spec := &serval.Spec{Sort: []serval.SortLevel{{Field: "kind"}}}
+	descriptor := &serval.DataSetDescriptor{Sort: []serval.SortLevel{{Field: "kind"}}}
 
 	forward := tied()
-	order(forward, spec, &serval.Scope{})
+	order(forward, descriptor, &serval.Scope{})
 	if got := keysOf(forward); !sameKeys(got, 1, 2, 3, 4) {
 		t.Fatalf("forward the level reads %v", got)
 	}
 
 	back := tied()
-	order(back, spec, &serval.Scope{Reversed: true})
+	order(back, descriptor, &serval.Scope{Reversed: true})
 	if got := keysOf(back); !sameKeys(got, 4, 3, 2, 1) {
 		t.Errorf("reversed the level reads %v, want every level turned over "+
 			"-- the tiebreak too, or two rows tie in the other direction", got)
@@ -90,7 +90,7 @@ func TestAReversedScopeTurnsEveryLevelOver(t *testing.T) {
 // place per row and a scope can still say where it starts.
 func TestALevelWithNoSortIsInIdentityOrder(t *testing.T) {
 	level := tied()
-	order(level, &serval.Spec{}, nil)
+	order(level, &serval.DataSetDescriptor{}, nil)
 	if got := keysOf(level); !sameKeys(got, 1, 2, 3, 4) {
 		t.Errorf("with no sort the level reads %v, want identity order", got)
 	}

@@ -64,17 +64,17 @@ func main() {
 
 	// Open the query and ask for its first scope in one statement, because a
 	// display never wants a sequence without wanting rows of it.
-	spec := fmt.Sprintf("source=%s", wire.Quote(*source))
+	descriptor := fmt.Sprintf("source=%s", wire.Quote(*source))
 	if *fields != "" {
-		spec += " fields={ " + *fields + " }"
+		descriptor += " fields={ " + *fields + " }"
 	}
 	if *filter != "" {
-		spec += " filter={ " + *filter + " }"
+		descriptor += " filter={ " + *filter + " }"
 	}
 	if *sortBy != "" {
-		spec += " sort={ " + *sortBy + " }"
+		descriptor += " sort={ " + *sortBy + " }"
 	}
-	p.say(fmt.Sprintf("q=new query %s count=%d", spec, *need))
+	p.say(fmt.Sprintf("q=new query %s count=%d", descriptor, *need))
 	id, ok := p.collect(true)
 	if !ok {
 		os.Exit(1)
@@ -90,7 +90,7 @@ func main() {
 		if p.lastRow != "" {
 			after = " after=" + p.lastRow
 		}
-		p.say(fmt.Sprintf("n=new query %s%s count=%d", spec, after, *more))
+		p.say(fmt.Sprintf("n=new query %s%s count=%d", descriptor, after, *more))
 		next, ok := p.collect(true)
 		if ok {
 			p.say(fmt.Sprintf("destroy %d", id))

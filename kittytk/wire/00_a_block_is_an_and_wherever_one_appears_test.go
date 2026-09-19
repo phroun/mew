@@ -69,7 +69,7 @@ func TestTheTopOfAFilterMeansTheSameWrittenOut(t *testing.T) {
 		}},
 	} {
 		text := EncodeFilter(f)
-		script, err := Parse("spec filter=" + text)
+		script, err := Parse("descriptor filter=" + text)
 		if err != nil {
 			t.Errorf("%s wrote as %s, which does not parse: %v", f, text, err)
 			continue

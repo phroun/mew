@@ -60,14 +60,14 @@ func TestTreeNumericColumnSort(t *testing.T) {
 	bytes.Sortable = true
 	bytes.Numeric = true
 	tv.AddColumn(bytes)
-	for _, spec := range []struct{ name, bytes string }{
+	for _, descriptor := range []struct{ name, bytes string }{
 		{"ten", "10"},
 		{"nine", "9"},
 		{"kilo", "1,024"},
 		{"half", "0.5"},
 	} {
-		it := NewTreeItem(spec.name)
-		it.SetValue("bytes", spec.bytes)
+		it := NewTreeItem(descriptor.name)
+		it.SetValue("bytes", descriptor.bytes)
 		tv.AddRootItem(it)
 	}
 	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
@@ -98,15 +98,15 @@ func TestTreeSortProxyColumn(t *testing.T) {
 	raw.Hidden = true
 	tv.AddColumn(raw)
 
-	for _, spec := range []struct{ name, size, raw string }{
+	for _, descriptor := range []struct{ name, size, raw string }{
 		{"big", "1.5 MB", "1572864"},
 		{"ten", "10 KB", "10240"},
 		{"two", "2 KB", "2048"},
 		{"nine", "9 KB", "9216"},
 	} {
-		it := NewTreeItem(spec.name)
-		it.SetValue("size", spec.size)
-		it.SetValue("rawsize", spec.raw)
+		it := NewTreeItem(descriptor.name)
+		it.SetValue("size", descriptor.size)
+		it.SetValue("rawsize", descriptor.raw)
 		tv.AddRootItem(it)
 	}
 	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})

@@ -31,6 +31,12 @@ code says and what we say.
   *Following* are Unicode's words for text — cluster bases, joining runs, a
   mark riding the cell in front — and stay Unicode's. The test: could both be
   pointed at simultaneously? Then prior. Is one of them gone? Then previous.
+- **A DataSetDescriptor describes a data set** — which one we are talking
+  about. `Open` takes one and hands back the DataSet it names, and `dataSetKey`
+  derives that set's identity from it. Never abbreviated to `Desc`: `desc` is
+  already a sort keyword on the wire (`sort={ name desc }`), so the short form
+  would read as *descending* in the one domain where that is a real word.
+  `descriptor` is the parameter everywhere.
 - **PSL is not PawScript.** PSL is PawScript Serialized Lists, a data format,
   and is no more PawScript than JSON is JavaScript.
 - **The KittyTK Wire Language** is the language; `kittytk/wire/` is the package

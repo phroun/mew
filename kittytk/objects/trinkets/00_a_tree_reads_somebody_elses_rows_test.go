@@ -39,8 +39,8 @@ func hostsAndApps(t *testing.T) *serval.TreeSource {
 		}),
 	})
 	src, err := serval.NewTreeSource(serval.TreeOptions{
-		Source: hosts,
-		Spec:   &serval.Spec{Sort: []serval.SortLevel{{Field: "seq"}}},
+		Source:     hosts,
+		Descriptor: &serval.DataSetDescriptor{Sort: []serval.SortLevel{{Field: "seq"}}},
 		Types: serval.NodeTypes{
 			Default: &serval.NodeType{Then: serval.Always("applications")},
 			Named: map[string]*serval.NodeType{
@@ -330,8 +330,8 @@ func deepTree(t *testing.T) *serval.TreeSource {
 		}),
 	})
 	src, err := serval.NewTreeSource(serval.TreeOptions{
-		Source: hosts,
-		Spec:   &serval.Spec{},
+		Source:     hosts,
+		Descriptor: &serval.DataSetDescriptor{},
 		Types: serval.NodeTypes{
 			Default: &serval.NodeType{Then: serval.Always("applications")},
 			Named: map[string]*serval.NodeType{
@@ -448,8 +448,8 @@ func plainTree(t *testing.T) *serval.TreeSource {
 		}),
 	})
 	src, err := serval.NewTreeSource(serval.TreeOptions{
-		Source: hosts,
-		Spec:   &serval.Spec{},
+		Source:     hosts,
+		Descriptor: &serval.DataSetDescriptor{},
 		Types: serval.NodeTypes{
 			Default: &serval.NodeType{Then: serval.Always("applications")},
 			Named: map[string]*serval.NodeType{
@@ -528,9 +528,9 @@ func sized(t *testing.T) *serval.TreeSource {
 		}),
 	})
 	src, err := serval.NewTreeSource(serval.TreeOptions{
-		Source: rows,
-		Spec:   &serval.Spec{Sort: []serval.SortLevel{{Field: "seq"}}},
-		Types:  serval.NodeTypes{Default: &serval.NodeType{}},
+		Source:     rows,
+		Descriptor: &serval.DataSetDescriptor{Sort: []serval.SortLevel{{Field: "seq"}}},
+		Types:      serval.NodeTypes{Default: &serval.NodeType{}},
 	})
 	if err != nil {
 		t.Fatalf("stating the tree: %v", err)
@@ -599,9 +599,9 @@ func TestARowSaysWhetherItMayBeWrittenIn(t *testing.T) {
 		}),
 	})
 	src, err := serval.NewTreeSource(serval.TreeOptions{
-		Source: rows,
-		Spec:   &serval.Spec{},
-		Types:  serval.NodeTypes{Default: &serval.NodeType{}},
+		Source:     rows,
+		Descriptor: &serval.DataSetDescriptor{},
+		Types:      serval.NodeTypes{Default: &serval.NodeType{}},
 	})
 	if err != nil {
 		t.Fatalf("stating the tree: %v", err)
@@ -634,7 +634,7 @@ func TestADeclaredSourcesSiblingsAreNotSortedTwice(t *testing.T) {
 	})
 	src, err := serval.NewTreeSource(serval.TreeOptions{
 		Source: rows,
-		Spec: &serval.Spec{Sort: []serval.SortLevel{
+		Descriptor: &serval.DataSetDescriptor{Sort: []serval.SortLevel{
 			{Field: "value", Level: serval.Level{Collation: serval.CollateNatural}},
 		}},
 		Types: serval.NodeTypes{Default: &serval.NodeType{}},
@@ -674,9 +674,9 @@ func TestASortedDeclaredSourceIsNotComparedTheViewsOwnWay(t *testing.T) {
 		serval.NewRow(serval.NewInt(2), serval.Record{serval.Named("value", "item2")}),
 	})
 	src, err := serval.NewTreeSource(serval.TreeOptions{
-		Source: rows,
-		Spec:   &serval.Spec{},
-		Types:  serval.NodeTypes{Default: &serval.NodeType{}},
+		Source:     rows,
+		Descriptor: &serval.DataSetDescriptor{},
+		Types:      serval.NodeTypes{Default: &serval.NodeType{}},
 	})
 	if err != nil {
 		t.Fatalf("stating the tree: %v", err)

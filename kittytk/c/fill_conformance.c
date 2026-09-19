@@ -121,14 +121,14 @@ static void copy_request(kt_query *q, const kt_qscope *req) {
     seen_after = req->after ? req->after->ival : -1;
     seen_until = req->until ? req->until->ival : -1;
     seen_fields[0] = '\0';
-    for (int i = 0; req->spec && i < req->spec->fields.n; i++) {
+    for (int i = 0; req->descriptor && i < req->descriptor->fields.n; i++) {
         if (i) strncat(seen_fields, ",", sizeof seen_fields - strlen(seen_fields) - 1);
-        strncat(seen_fields, req->spec->fields.v[i].name,
+        strncat(seen_fields, req->descriptor->fields.v[i].name,
                 sizeof seen_fields - strlen(seen_fields) - 1);
     }
     snprintf(seen_source, sizeof seen_source, "%s",
-             req->spec && req->spec->source ? req->spec->source : "");
-    seen_sort_levels = req->spec ? req->spec->nsort : -1;
+             req->descriptor && req->descriptor->source ? req->descriptor->source : "");
+    seen_sort_levels = req->descriptor ? req->descriptor->nsort : -1;
 }
 
 static void fill_two(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
@@ -359,8 +359,8 @@ int main(void) {
     expect(seen_reversed == 1, "the direction came through");
     expect(seen_after == 17 && seen_until == 42, "both ends came through");
     expect_str(seen_fields, "name,size", "the fields came through");
-    expect_str(seen_source, "files", "the spec came with the scope");
-    expect(seen_sort_levels == 1, "the spec's sort came with the scope");
+    expect_str(seen_source, "files", "the descriptor came with the scope");
+    expect(seen_sort_levels == 1, "the descriptor's sort came with the scope");
     char *answer = since(n);
     expect_str(answer,
         "reply q=1\n"
@@ -380,7 +380,7 @@ int main(void) {
        while the reader moves across. */
     n = sent_count();
     ask("r=new query source=\"files\" sort={ size desc } count=2\nend", n);
-    expect(seen_sort_levels == 1, "the second query carried its own spec");
+    expect(seen_sort_levels == 1, "the second query carried its own descriptor");
     answer = since(n);
     expect(!!strstr(answer, "reply r=2"), "the second query was named in its own right");
     free(answer);

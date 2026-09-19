@@ -29,8 +29,8 @@ type held struct {
 	src   *slowSource
 }
 
-func (s *slowSource) Open(spec *serval.Spec) (serval.DataSet, error) {
-	inner, err := serval.NewListSource(s.rows).Open(spec)
+func (s *slowSource) Open(descriptor *serval.DataSetDescriptor) (serval.DataSet, error) {
+	inner, err := serval.NewListSource(s.rows).Open(descriptor)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +53,9 @@ func (v *slowSet) Read(s *serval.Scope, out serval.Sink) error {
 }
 
 // answer lets one held question through, which is the moment its records arrive.
-func (h *held) answer(t *testing.T, spec *serval.Spec, rows []serval.Row) {
+func (h *held) answer(t *testing.T, descriptor *serval.DataSetDescriptor, rows []serval.Row) {
 	t.Helper()
-	set, err := serval.NewListSource(rows).Open(spec)
+	set, err := serval.NewListSource(rows).Open(descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,13 +112,13 @@ func TestAnAnswerForSomewhereTheReaderHasLeftIsDropped(t *testing.T) {
 	l.ask(500, 20) // the reader moved on; this supersedes it
 
 	// The stale answer arrives first, as a slow one would.
-	src.asked[0].answer(t, &l.spec, src.rows)
+	src.asked[0].answer(t, &l.descriptor, src.rows)
 	if _, ok := l.IDAt(100); ok {
 		t.Error("it wrote down an answer for a place the reader had left")
 	}
 
 	// And the one being waited for lands.
-	src.asked[1].answer(t, &l.spec, src.rows)
+	src.asked[1].answer(t, &l.descriptor, src.rows)
 	id, ok := l.IDAt(500)
 	if !ok {
 		t.Fatal("the answer it was waiting for did not land")
@@ -140,7 +140,7 @@ func TestAStaleAnswerStillTeachesTheLength(t *testing.T) {
 	l.ask(0, 20)
 	l.ask(300, 20)
 	// Nothing has told the spine a length except the count it took when stated.
-	src.asked[0].answer(t, &l.spec, src.rows) // the stale one
+	src.asked[0].answer(t, &l.descriptor, src.rows) // the stale one
 	if got := l.bones.length(); !got.Exact || got.N != 700 {
 		t.Errorf("a stale answer left the length at %v, want exactly 700", got)
 	}
@@ -171,7 +171,7 @@ func TestAskingForWhatIsHeldSupersedesNothing(t *testing.T) {
 	l, src := slowList(t, 500)
 
 	l.ask(100, 20)
-	src.asked[0].answer(t, &l.spec, src.rows)
+	src.asked[0].answer(t, &l.descriptor, src.rows)
 	if _, ok := l.IDAt(105); !ok {
 		t.Fatal("the answer did not land")
 	}
@@ -181,7 +181,7 @@ func TestAskingForWhatIsHeldSupersedesNothing(t *testing.T) {
 	if len(src.asked) != 2 {
 		t.Fatalf("it asked %d questions, want 2", len(src.asked))
 	}
-	src.asked[1].answer(t, &l.spec, src.rows)
+	src.asked[1].answer(t, &l.descriptor, src.rows)
 	if _, ok := l.IDAt(305); !ok {
 		t.Error("the outstanding answer was discarded by a question nobody asked")
 	}
@@ -223,8 +223,8 @@ func TestAFlooredLengthKeepsTheThumbOffTheBottom(t *testing.T) {
 // would stand for a source that counts after all.
 type uncountedSource struct{ rows []serval.Row }
 
-func (u *uncountedSource) Open(spec *serval.Spec) (serval.DataSet, error) {
-	set, err := serval.NewListSource(u.rows).Open(spec)
+func (u *uncountedSource) Open(descriptor *serval.DataSetDescriptor) (serval.DataSet, error) {
+	set, err := serval.NewListSource(u.rows).Open(descriptor)
 	if err != nil {
 		return nil, err
 	}

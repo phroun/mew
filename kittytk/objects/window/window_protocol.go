@@ -146,8 +146,8 @@ func init() {
 		}).Tip("Window " + dim + " in desktop units")
 	}
 
-	for name, spec := range windowFlagProps {
-		name, flag, doc := name, spec.flag, spec.doc
+	for name, descriptor := range windowFlagProps {
+		name, flag, doc := name, descriptor.flag, descriptor.doc
 		props[name] = protocol.NewProperty("flag", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			b, err := protocol.AsBool(name, v, f)
 			if err != nil {

@@ -39,7 +39,7 @@ func TestAFieldNameSurvivesBeingWrittenOut(t *testing.T) {
 		want := &serval.Filter{Op: serval.OpEq, Field: name, Values: []*serval.Value{serval.NewText("x")}}
 		text := EncodeFilter(&serval.Filter{Op: serval.OpAnd, Children: []*serval.Filter{want}})
 
-		script, err := Parse("spec filter=" + text)
+		script, err := Parse("descriptor filter=" + text)
 		if err != nil {
 			t.Errorf("%q wrote as %s, which does not parse: %v", name, text, err)
 			continue
@@ -76,7 +76,7 @@ func TestAFilterWithNoFieldIsRefused(t *testing.T) {
 	text := EncodeFilter(&serval.Filter{Op: serval.OpAnd, Children: []*serval.Filter{
 		{Op: serval.OpEq, Values: []*serval.Value{serval.NewText("x")}},
 	}})
-	script, err := Parse("spec filter=" + text)
+	script, err := Parse("descriptor filter=" + text)
 	if err != nil {
 		t.Fatalf("%s does not parse: %v", text, err)
 	}

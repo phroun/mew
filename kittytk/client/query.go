@@ -162,10 +162,10 @@ func (c *Conn) ProvideSource(name string, fill func(*Fill)) (*Source, error) {
 // flight when the display changes its mind are separated from the new ones by
 // the number they are addressed to rather than by where they fall in a stream.
 type Query struct {
-	c      *Conn
-	source *Source
-	id     uint64
-	spec   *serval.Spec
+	c          *Conn
+	source     *Source
+	id         uint64
+	descriptor *serval.DataSetDescriptor
 }
 
 // ID is what this application calls the query, and what the display addresses
@@ -175,8 +175,9 @@ func (q *Query) ID() uint64 { return q.id }
 // Source is where its records come from.
 func (q *Query) Source() *Source { return q.source }
 
-// Spec is the sequence this query names, which is what it was opened with.
-func (q *Query) Spec() *serval.Spec { return q.spec }
+// Descriptor describes the data set this query reads: which source, which
+// filter, which sort. It is what the query was opened with and does not change.
+func (q *Query) Descriptor() *serval.DataSetDescriptor { return q.descriptor }
 
 // Queries lists what this connection is currently serving.
 func (c *Conn) Queries() []*Query {
@@ -311,18 +312,18 @@ func (c *Conn) open(stmt *wire.Statement, keys map[string]uint64,
 	}
 	args := stmt.Args[1:]
 
-	spec, err := wire.ParseSpec(args)
+	descriptor, err := wire.ParseDescriptor(args)
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
 	c.mu.Lock()
-	source := c.sources[spec.Source]
+	source := c.sources[descriptor.Source]
 	c.mu.Unlock()
 	if source == nil {
-		return fmt.Errorf("query: I serve nothing called %q", spec.Source)
+		return fmt.Errorf("query: I serve nothing called %q", descriptor.Source)
 	}
 
-	q := &Query{c: c, source: source, id: c.mintID(), spec: spec}
+	q := &Query{c: c, source: source, id: c.mintID(), descriptor: descriptor}
 	c.mu.Lock()
 	if c.queries == nil {
 		c.queries = make(map[uint64]*Query)
@@ -346,7 +347,7 @@ func (c *Conn) open(stmt *wire.Statement, keys map[string]uint64,
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
-	f := &Fill{Scope: scope, Query: q, Spec: spec, extend: extend}
+	f := &Fill{Scope: scope, Query: q, Descriptor: descriptor, extend: extend}
 	*pending = append(*pending, func() { fn(f) })
 	return nil
 }
@@ -392,8 +393,8 @@ func hostedTarget(stmt *wire.Statement, keys map[string]uint64) (uint64, []*wire
 // interleaved with other work; nothing has to be held until the end.
 type Fill struct {
 	*serval.Scope
-	Query *Query
-	Spec  *serval.Spec
+	Query      *Query
+	Descriptor *serval.DataSetDescriptor
 
 	mu      sync.Mutex
 	buf     strings.Builder

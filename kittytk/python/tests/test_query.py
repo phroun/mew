@@ -27,7 +27,7 @@ def read_corpus():
             if not line or line.startswith("#"):
                 continue
             verb, _, rest = line.partition(" ")
-            if verb in ("spec", "scope"):
+            if verb in ("descriptor", "scope"):
                 assert pending is None, "line %d: a case with no answer" % n
                 pending = [n, verb, rest, "", False]
             elif verb == "want":
@@ -50,8 +50,8 @@ def answer(kind, text):
     """Parse one case and render the structure back out."""
     script = protocol.parse(kind + " " + text)
     args = script.statements[0].args
-    if kind == "spec":
-        return query.parse_spec(args).encode()
+    if kind == "descriptor":
+        return query.parse_descriptor(args).encode()
     return query.parse_scope(args).encode()
 
 

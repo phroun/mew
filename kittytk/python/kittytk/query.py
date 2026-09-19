@@ -294,7 +294,7 @@ class SortLevel:
 
 
 @dataclass
-class Spec:
+class DataSetDescriptor:
     """What sequence a query names: which records, in which order.
 
     It is stated once, when the query is made, and never again. A query is the
@@ -309,7 +309,7 @@ class Spec:
     sort: List[SortLevel] = dataclasses.field(default_factory=list)
 
     def encode(self) -> str:
-        """The spec as the arguments of the statement that carries it."""
+        """The descriptor as the arguments of the statement that carries it."""
         parts = []
         if self.source:
             parts.append("source=" + quote(self.source))
@@ -330,7 +330,7 @@ class Scope:
     how many, and where the asker's own knowledge picks up again.
 
     It is not a filter and it names no field. The sequence is already decided
-    by the spec, and a scope only says which part of it to read -- so a source
+    by the descriptor, and a scope only says which part of it to read -- so a source
     prepares one ordering and serves every scope of it cheaply, rather than
     preparing a new one because the reader scrolled.
 
@@ -727,9 +727,9 @@ def encode_field_name(name: str) -> str:
     return encode_value(new_word(name))
 
 
-def parse_spec(args: List[Arg]) -> Spec:
-    """A query spec, from the arguments of the statement carrying it."""
-    s = Spec()
+def parse_descriptor(args: List[Arg]) -> DataSetDescriptor:
+    """A query descriptor, from the arguments of the statement carrying it."""
+    s = DataSetDescriptor()
     for a in args:
         if a.name == "source":
             if a.value is None:
@@ -762,7 +762,7 @@ def parse_spec(args: List[Arg]) -> Spec:
 def parse_extend(args: List[Arg]) -> bool:
     """The display's declaration, off the same arguments.
 
-    Not part of the scope and not part of the spec: the sequence is the same
+    Not part of the scope and not part of the descriptor: the sequence is the same
     sequence and the records wanted are the same records, and this says only how
     the answer may be spelled."""
     for a in args:
@@ -774,11 +774,11 @@ def parse_extend(args: List[Arg]) -> bool:
 
 
 def parse_scope(args: List[Arg]) -> Scope:
-    """The scope, from the same arguments the spec was read from.
+    """The scope, from the same arguments the descriptor was read from.
 
     The two travel together -- `new query` states the sequence and asks for a
     run of it in one statement -- and they are read apart because they are
-    different things: the spec is what the query is, and the scope is what this
+    different things: the descriptor is what the query is, and the scope is what this
     one question wanted."""
     s = Scope()
     for a in args:
