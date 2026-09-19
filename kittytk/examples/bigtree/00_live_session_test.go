@@ -179,7 +179,32 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 		if !flat[0].IsLeaf() {
 			t.Error("a flat row says it has children")
 		}
+		// **A data column called `kind` reads the record's own field**, which is a
+		// name a tree would otherwise take for itself. Here because a Details tree
+		// with a Kind column is what this app is, and its every cell came back empty.
+		if got := flat[0].Value("kind"); got != "Text" {
+			t.Errorf("the Kind column reads %q, want the record's own", got)
+		}
 	})
+
+	// Sorting a hundred thousand rows is the APPLICATION's to do: the header click
+	// sends `sort=` down with the query, and an app that ignores it draws the arrow
+	// and changes nothing -- while `Ordered` claims the rows are in the sequence's
+	// order, so the display believes it and does not sort them either.
+	onUI(desktop, func() { tv.SetSorted(true, -1, true) })
+	waitFor(t, desktop, 10*time.Second, func() bool {
+		rows := tv.RootItems()
+		return len(rows) == flatRows && rows[0].Text == "item 099999"
+	}, "the flat level sorted by name, descending")
+
+	// Put it back the way the window declared it, because **a sort survives a change
+	// of source**: it is the view's state and not the sequence's, and what follows
+	// reads the deep body in the order its containers are named.
+	onUI(desktop, func() { tv.SetSorted(true, -1, false) })
+	waitFor(t, desktop, 10*time.Second, func() bool {
+		rows := tv.RootItems()
+		return len(rows) == flatRows && rows[0].Text == "item 000000"
+	}, "the flat level sorted by name, ascending again")
 
 	// --- a hundred thousand over three levels -----------------------------
 	//
@@ -200,6 +225,34 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 			t.Error("a container says it is a leaf; the records said it has children")
 		}
 	})
+
+	// **And it opens**, which is the other half of a hierarchy and is not implied by
+	// the twisty being drawn. A level with a standing is marked by its PATH, so a
+	// view asking by identity marks a node that is not there: the twisty was drawn
+	// from a real child count, the mark went into the set, and nothing moved.
+	onUI(desktop, func() { tv.ExpandItem(deep[0]) })
+	waitFor(t, desktop, 20*time.Second, func() bool {
+		top := tv.RootItems()
+		return len(top) == deepDirs && len(top[0].Children) == deepSubs
+	}, "the first container's children")
+}
+
+// waitFor polls a condition on the thread that owns the trinkets, because a tree
+// over an application's records walks on a thread of its own and tells when it is
+// done -- so the rows exist a moment after the asking, not during it.
+func waitFor(t *testing.T, desktop *trinkets.Desktop, within time.Duration,
+	yet func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		done := false
+		onUI(desktop, func() { done = yet() })
+		if done {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("waited %s for %s", within, what)
 }
 
 // The two bodies are what the app serves, and the sizes are what the demo claims.

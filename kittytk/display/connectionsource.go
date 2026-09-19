@@ -126,6 +126,10 @@ func connectionsRecords(rows []connectionsRow) (peers, apps []serval.Row) {
 func connectionsTree(peers, apps *serval.ListSource) (*serval.TreeSource, error) {
 	return serval.NewTreeSource(serval.TreeOptions{
 		Source: peers,
+		// The tree's own five fields, out of the way of the columns: see
+		// trinkets.TreeFieldNames. Nothing here collides with them today, and a
+		// column renamed tomorrow would have done so silently.
+		Fields: trinkets.TreeFieldNames(),
 		Spec:   &serval.Spec{Sort: []serval.SortLevel{{Field: rowSeq}}},
 		Types: serval.NodeTypes{
 			Default: &serval.NodeType{Then: serval.Always(appsKind)},

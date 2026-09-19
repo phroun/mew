@@ -47,9 +47,16 @@ type TreeItem struct {
 	// opening.
 	Kids int
 
-	// rowKey is the source's identity for a row that came from one, which is
-	// what a mark is keyed by. A made row has none: its key is its ObjectID.
+	// rowKey is the source's identity for a row that came from one. A made row
+	// has none: its key is its ObjectID.
 	rowKey *serval.Value
+
+	// rowMark is the segment this row's MARK is filed under, which is not always
+	// its identity: a level with a standing is marked by PATH, and the tree is
+	// what says which -- see serval's TreeSource.MarkedByPath. Read once, when
+	// the row is learned, because the record with the path in it is in hand then
+	// and never afterwards.
+	rowMark string
 
 	// Values holds this item's data-column cell text, keyed by
 	// TreeColumn.ID (see SetValue/Value in treeview_columns.go).

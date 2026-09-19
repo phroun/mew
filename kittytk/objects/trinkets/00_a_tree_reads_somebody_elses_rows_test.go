@@ -872,3 +872,134 @@ func TestAFlatSourceIsStillGrownIntoATree(t *testing.T) {
 		t.Error("the grown tree has no marks")
 	}
 }
+
+// --- what the walk spells, and what it eats ------------------------------
+
+// folderRows is a hierarchy addressed by WHERE a row lives rather than by whose
+// child it is: the shape a file listing has, and the one a bundle's tree hint
+// reaches for -- an include renames every key it carries, so a parent's key is not
+// something an application can point at.
+//
+//	volume         dir ""
+//	  group        dir "volume"
+//	    file.txt   dir "volume/group"
+func folderRows() *serval.ListSource {
+	return serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("name", "volume"), serval.Named("dir", ""),
+			serval.Named("kind", "Folder"), serval.Named("kids", 1),
+		}),
+		serval.NewRow(serval.NewInt(2), serval.Record{
+			serval.Named("name", "group"), serval.Named("dir", "volume"),
+			serval.Named("kind", "Folder"), serval.Named("kids", 1),
+		}),
+		serval.NewRow(serval.NewInt(3), serval.Record{
+			serval.Named("name", "file.txt"), serval.Named("dir", "volume/group"),
+			serval.Named("kind", "Text"),
+		}),
+	})
+}
+
+// onFolders is a view over that, declared the way a hint declares one.
+func onFolders(t *testing.T) *TreeView {
+	t.Helper()
+	src := folderRows()
+	src.SetTreeHint(serval.TreeHint{
+		Location: "dir", Name: "name", Delimiter: "/",
+		Label: "name", Children: "kids",
+	})
+
+	tv := NewTreeView()
+	tv.AddColumn(NewTreeColumn("kind", "Kind", 10*cell))
+	tv.SetSource(src)
+	return tv
+}
+
+// **A row marked by its PATH is expanded by its path**, and the view has to spell
+// the chain the way the walk spells it.
+//
+// It used to spell identities always, which for an adjacency list is right and for
+// a location descent names a node that is not there. Nothing failed: the twisty was
+// drawn from a real child count, the mark went into the set under a chain nobody
+// walked, and the row sat there unopened. See serval's TreeSource.MarkedByPath.
+func TestALocationDescendedRowExpandsByItsPath(t *testing.T) {
+	tv := onFolders(t)
+	top := tv.RootItems()
+	if len(top) != 1 {
+		t.Fatalf("the tree holds %d top rows, want the one with no container", len(top))
+	}
+	if top[0].IsLeaf() {
+		t.Fatal("the container says it is a leaf")
+	}
+
+	tv.ExpandItem(top[0])
+	if got, want := strings.Join(visualCaptions(tv), " "), "volume group"; got != want {
+		t.Errorf("after expanding, the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+	// And the chain is the PATH and not the key, which is the fact underneath.
+	if got, want := tv.chainOf(tv.flatList[0]), []string{"volume"}; len(got) != 1 || got[0] != want[0] {
+		t.Errorf("the chain is %q, want %q -- the segment the walk used", got, want)
+	}
+
+	// Two levels down, so the chain is more than one segment and each one is a whole
+	// path rather than a step.
+	tv.ExpandItem(tv.flatList[1])
+	if got, want := strings.Join(visualCaptions(tv), " "), "volume group file.txt"; got != want {
+		t.Errorf("two levels down, the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+	if got := tv.chainOf(tv.flatList[1]); len(got) != 2 || got[0] != "volume" || got[1] != "volume/group" {
+		t.Errorf("the deeper chain is %q, want each ancestor's whole path", got)
+	}
+}
+
+// An adjacency list is still marked by IDENTITY, which is the other half of the
+// same fact and is what every tree did before a standing existed.
+func TestAnAdjacencyDescendedRowExpandsByItsKey(t *testing.T) {
+	tv, _ := onHosts(t)
+	kestrel := tv.flatList[0]
+	want := serval.Key(serval.NewInt(1))
+	if got := tv.chainOf(kestrel); len(got) != 1 || got[0] != want {
+		t.Errorf("the chain is %q, want the record's identity %q", got, want)
+	}
+	tv.ExpandItem(kestrel)
+	if got, want := strings.Join(visualCaptions(tv), " "),
+		"kestrel a browser an editor merlin"; got != want {
+		t.Errorf("after expanding, the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// **A column may be called `kind`**, and the seven other names a tree's own fields
+// would otherwise take.
+//
+// A flattening carries a depth, a path, a child count, a mark state and a kind, and
+// serval writes them over the record's own field of that name -- deliberately, a
+// view being unable to draw without them, which is why the names are the caller's
+// to move. This is the caller, so it moves them: see treeFields.
+//
+// Before that, a file listing with a Kind column drew every cell of it empty. The
+// tree had eaten the field and put its own node-type kind there, and for a tree of
+// one shape that is the empty string. Nothing failed anywhere.
+func TestAColumnMayBeCalledAfterOneOfTheTreesOwnFields(t *testing.T) {
+	tv := onFolders(t)
+	if got, want := tv.flatList[0].Value("kind"), "Folder"; got != want {
+		t.Errorf("the Kind column reads %q, want the record's own %q", got, want)
+	}
+
+	// Every one of the five, because moving one and forgetting the rest is the shape
+	// the next mistake would take.
+	for _, name := range []string{"depth", "path", "expandable", "state", "kind"} {
+		src := serval.NewListSource([]serval.Row{
+			serval.NewRow(serval.NewInt(1), serval.Record{
+				serval.Named("label", "a row"),
+				serval.Named(name, "the record's own"),
+			}),
+		})
+		tv := NewTreeView()
+		tv.AddColumn(NewTreeColumn(name, name, 10*cell))
+		tv.SetKeyField("label")
+		tv.SetSource(src)
+		if got, want := tv.flatList[0].Value(name), "the record's own"; got != want {
+			t.Errorf("a column called %q reads %q, want %q", name, got, want)
+		}
+	}
+}

@@ -33,6 +33,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/phroun/kittytk/client"
@@ -144,38 +145,79 @@ func deepBody() []row {
 
 // serve answers one scope of a body.
 //
-// **It honours the filter and the count, which is the application's job.** A tree
-// asks each level for the rows under one node -- the top level being "those with no
-// container" -- and an application that sent everything regardless would put every
-// record at every level. That was the last bug in getting this working at all.
+// **It honours the filter, the sort and the count, which is the application's
+// job.** Each of the three was a bug here before it was a line:
 //
-// The scan is over the whole body, which is this application's own cost and is
-// visible as such: a real one would index by container. It is left plain here
-// because what this demo is for is watching the TREE behave, and a level answering
-// out of an index would hide how much it was asked for.
+//   - The FILTER makes a level. A tree asks for the rows under one node -- the top
+//     level being "those with no container" -- and an application that sent
+//     everything regardless puts every record at every level.
+//   - The SORT is the level's order. Clicking a column header sends `sort=` down to
+//     here, and an application that ignores it draws the arrow and changes nothing.
+//     Worse than merely ignoring it, because `Ordered` below CLAIMS these records
+//     are in the sequence's order -- so the display believes the answer and does
+//     not sort it either.
+//   - The COUNT is the window. Sending a hundred thousand rows for a window of
+//     forty is correct and slow, which for a demo about how much a tree asks for
+//     would hide the whole point.
+//
+// The scan and the sort are over the whole matching level, which is this
+// application's own cost and is visible as such: a real one would index by
+// container and keep its orders. It is left plain here because what this demo is
+// for is watching the TREE behave, and a level answering out of an index would hide
+// how much it was asked for.
 func serve(body []row) func(*client.Fill) {
 	return func(f *client.Fill) {
-		sent := 0
-		f.Ordered()
+		// The level first, because the sort is a sort of the rows that are IN it and
+		// ordering the whole body would be ordering rows nobody asked about.
+		level := make([]row, 0, 64)
 		for _, r := range body {
+			if serval.Match(serval.NewInt(r.key), r.fields(), f.Spec.Filter) {
+				level = append(level, r)
+			}
+		}
+		order(level, f.Spec, f.Scope)
+
+		f.Ordered()
+		sent := 0
+		for _, r := range level {
 			if sent >= f.Count {
 				// Complete up to the last one that went out, which is what lets a
 				// reader ask for the next window without asking again for this one.
 				_ = f.Filled(nil)
 				return
 			}
-			key := serval.NewInt(r.key)
-			fields := r.fields()
-			if !serval.Match(key, fields, f.Spec.Filter) {
-				continue
-			}
-			if err := f.Record(key, fields...); err != nil {
+			if err := f.Record(serval.NewInt(r.key), r.fields()...); err != nil {
 				return
 			}
 			sent++
 		}
 		_ = f.Exhausted()
 	}
+}
+
+// order puts a level in the order the query asked for.
+//
+// The record's own identity is the last level always, and it is not decoration: two
+// rows equal on every named level would otherwise tie, and "the record after this
+// one" would name more than one place. `Reversed` turns every level over, that one
+// included -- dropping it is the one hint an application cannot drop, because every
+// other omission only makes an answer bigger and this one makes it wrong.
+func order(level []row, spec *serval.Spec, sc *serval.Scope) {
+	levels := append(serval.Levels(spec.Sort), serval.Level{})
+	if sc != nil && sc.Reversed {
+		levels = serval.Reverse(levels)
+	}
+	tuple := func(r row) []*serval.Value {
+		fields := r.fields()
+		out := make([]*serval.Value, 0, len(spec.Sort)+1)
+		for _, l := range spec.Sort {
+			out = append(out, fields.Get(l.Field))
+		}
+		return append(out, serval.NewInt(r.key))
+	}
+	sort.SliceStable(level, func(i, j int) bool {
+		return serval.CompareLevels(tuple(level[i]), tuple(level[j]), levels) < 0
+	})
 }
 
 // deepBundle is the document that says what shape the deep body is.

@@ -55,6 +55,44 @@ const (
 	treeSeq    = "seq"    // where it stands among its siblings
 )
 
+// treeFields is where a tree's OWN five fields go, moved out of the data's way.
+//
+// A flattening carries a depth, a path, a child count, a mark state and a kind, and
+// serval writes them into each row -- **dropping the record's own field of that
+// name**, because a view cannot draw without them. That is deliberate and
+// documented there, and the conclusion drawn from it is that the names are the
+// caller's to move. This is the caller.
+//
+// It has to move them because of what sits on the other side: a view's columns are
+// named by whoever wrote the window, and serval's defaults are `depth`, `path`,
+// `expandable`, `state` and `kind`. A file listing with a Kind column is the most
+// ordinary thing anybody builds, and with the default names its every cell came back
+// empty -- the tree having eaten the field and put its own node-type kind, which for
+// a tree of one shape is the empty string. Nothing failed; a column was simply
+// blank.
+//
+// The `tree:` mark is the wire's own way of saying which namespace a name is in, so
+// a data field colliding with one of these would have to be called `tree:kind` on
+// purpose. These names never cross the wire -- a tree adds them after a level has
+// answered, so they exist only in the rows a view reads.
+var treeFields = serval.TreeFields{
+	Depth:      "tree:depth",
+	Path:       "tree:path",
+	Expandable: "tree:expandable",
+	State:      "tree:state",
+	Kind:       "tree:kind",
+}
+
+// TreeFieldNames is where a tree's own fields go, for anybody building a
+// `serval.TreeSource` a TreeView will read.
+//
+// Exported because a tree is not always built here -- the connections window builds
+// its own, and so may an application -- and every one of them is putting these five
+// names beside fields somebody else chose. A view does not need this to READ a tree
+// (it asks the source, through `serval.TreeFieldsOf`); what it is for is not eating
+// a column on the way in.
+func TreeFieldNames() serval.TreeFields { return treeFields }
+
 // everyTreeRow is the count a whole flattened tree is read with. The made
 // source holds its records, so this is a ceiling against a source that would
 // answer forever rather than a window.
@@ -153,8 +191,19 @@ func (t *TreeView) makeSource() *serval.TreeSource {
 
 	// A made source has one kind of row, so one translation serves every level.
 	by := t.sortFields("")
+	// An EQUIVALENT mutant today, and kept: a made source's rows are read for their
+	// IDENTITIES and nothing else -- flatten maps each key back to the item the
+	// caller handed in, which is where the text and the cells already are -- so
+	// there is no field for the tree's five to eat. The level's own sort names
+	// column IDs and runs below the tree, before anything is written over.
+	//
+	// It is here because the answer must not depend on that. A made row that was
+	// ever read for what it HOLDS would collide the moment somebody declared a
+	// column called `kind`, and one file giving two answers about where a tree's
+	// fields go is the trap rather than the saving.
 	src, err := serval.NewTreeSource(serval.TreeOptions{
 		Source: serval.NewListSource(rows),
+		Fields: treeFields,
 		Spec: &serval.Spec{
 			Filter: &serval.Filter{
 				Op: serval.OpEq, Field: treeParent, Values: []*serval.Value{nil},
@@ -410,6 +459,11 @@ func (t *TreeView) growFromHint() {
 			opt, used = fromHint, true
 		}
 	}
+	// **Whichever branch built it**, the tree's own fields go where a column will
+	// not be. A hint's Options does not name them and neither does oneGeneration,
+	// because where they go is not a fact about the records -- it is a fact about
+	// who is reading them. See treeFields.
+	opt.Fields = treeFields
 	grown, err := serval.NewTreeSource(opt)
 	if err != nil {
 		return
@@ -520,6 +574,14 @@ func (t *TreeView) learnRow(id *serval.Value, fields serval.Record,
 
 	kind := serval.Segment(fields.Get(names.Kind))
 	m := t.kinds[kind]
+
+	// **The segment this row's mark is filed under**, asked of the tree rather than
+	// guessed: a level with a standing is marked by its PATH and an adjacency list by
+	// its identity, and a row carries both without saying which. See chainOf.
+	item.rowMark = key
+	if src := t.marks(); src != nil && src.MarkedByPath(kind) {
+		item.rowMark = serval.Segment(fields.Get(names.Path))
+	}
 
 	item.Text = serval.Segment(fields.Get(t.cellOf(kind, nil).showField()))
 	if m.Icon != "" {
@@ -663,10 +725,17 @@ func (t *TreeView) marks() *serval.TreeSource {
 // A descent has this in hand, having walked it; a view reaching in from the side
 // has to walk back UP for it, which is what the parentage rebuilt from the depth
 // is for.
+//
+// **A segment is what the WALK spells, and that is not always the identity.** A
+// level with a standing is marked by its path, so a chain of identities names a
+// node that is not there -- which opens nothing and says nothing, the marks having
+// no opinion about a chain nobody walked. `rowMark` is what the row was learned
+// under, and asking the tree at that moment is what keeps the two spellings
+// together.
 func (t *TreeView) chainOf(item *TreeItem) []string {
 	var up []string
 	for at := item; at != nil; at = at.Parent {
-		up = append(up, serval.Key(at.rowKey))
+		up = append(up, at.rowMark)
 	}
 	for i, j := 0, len(up)-1; i < j; i, j = i+1, j-1 {
 		up[i], up[j] = up[j], up[i]
