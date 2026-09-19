@@ -780,12 +780,20 @@ func parsePredicate(st *Statement) (*serval.Filter, error) {
 
 // Encode renders a filter node as wire text: a block for the top of a tree, a
 // statement for anything inside one.
+//
+// **Only an AND is flattened into the outer block**, because a block IS an and
+// wherever one appears -- so writing an `or`'s children straight into it would
+// turn the disjunction into a conjunction, and a top-level `not` into its
+// opposite. They are written as the statement they are, inside the block the top
+// of a filter always is.
+//
+// The reading back is an and of one or, which means what the or meant: an
+// operator of one operand is that operand.
 func EncodeFilter(f *serval.Filter) string {
 	if f == nil {
 		return "{}"
 	}
-	switch f.Op {
-	case serval.OpAnd, serval.OpOr, serval.OpNot:
+	if f.Op == serval.OpAnd {
 		parts := make([]string, 0, len(f.Children))
 		for _, c := range f.Children {
 			parts = append(parts, encodeFilterStatement(c))
@@ -794,6 +802,11 @@ func EncodeFilter(f *serval.Filter) string {
 			return "{}"
 		}
 		return "{ " + strings.Join(parts, "; ") + " }"
+	}
+	if (f.Op == serval.OpOr || f.Op == serval.OpNot) && len(f.Children) == 0 {
+		// Nothing to join and nothing to negate, which is no filter rather than an
+		// operator with an empty block after it.
+		return "{}"
 	}
 	return "{ " + encodeFilterStatement(f) + " }"
 }

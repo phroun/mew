@@ -183,15 +183,41 @@ new treeview source="source:hosts.tree" showheader
 `serval.TreeSource` answers its visible rows flat and in pre-order with a depth,
 a kind and a child count on each, and the view rebuilds the parentage from the
 depth — which is why `Level()`, `IsLeaf()` and `Expanded` go on being asked the
-same way over rows that were never written down. A source that is *not* a
-hierarchy is read as one flat level, which is a tree of one generation and is
-ordinary rather than an error.
+same way over rows that were never written down.
+
+**What a view reads is a flattening**, so a declared source is grown into a
+`TreeSource` whether it says it is a hierarchy or not: a hint says how many
+generations there are, not whether there is a flattening to read. A source that
+is *not* a hierarchy becomes a tree of **one generation** — every record at the
+top, nothing under anything — which is ordinary rather than an error.
+
+That matters most for a source that answers *later*. A view reads into a sink and
+uses what the sink got, so a view reading an application's records straight would
+read before they existed and read nothing — and read nothing again on every
+arrival notice, asking once more each time. A tree is what holds a walk across
+the waiting and tells when it has finished. A flat source that answers at once
+flattens on the thread that asked and is as it always was.
 
 A tree has columns where a list has one field, and which of a kind's fields fills
 which column is `SetKindMap` — Go, for now. The wire language can say where the
 rows come from and not yet what each kind puts where, so a tree named from a
 statement gets the **identity** mapping: a column called `size` is the field
-`size`, and the caption is `value`. `treemap.go` is the rungs above that.
+`size`.
+
+The one exception is the caption, because the key column has no `id` to name a
+field with — so it says `display=`, the same one word a list says:
+
+```
+new treeview source="source:files" display="name" showheader columns={
+	new column id=size caption="Size" width=80
+}
+```
+
+Without it the caption falls to `value`, which is the whole of a record that is
+not a list and is rarely what a hierarchy's records carry. A source with a tree
+hint may also say what its records are *called* (`label:`), and that is the
+weakest rung: `display=` is the caller's saying and beats it. `treemap.go` is the
+rungs in order.
 
 ## The layer above
 

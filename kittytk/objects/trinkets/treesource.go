@@ -346,18 +346,38 @@ func (t *TreeView) SetTreeHint(hint serval.TreeHint) {
 // hint where nobody told it.
 func (t *TreeView) TreeHint() serval.TreeHint { return t.saidHint }
 
-// growFromHint makes a tree out of a source that SAYS its records are one.
+// growFromHint makes a tree out of a declared source.
 //
-// **The source is asked, and nothing is guessed.** A flat source stays flat: this
-// does nothing at all unless the source implements serval's `Hinting` and says
-// something -- at which point the hint already knows what tree it describes, and
-// `Options` is it. Nothing here reads a field name or decides what a column means.
+// **What a view reads is a flattening**: rows in pre-order with a depth on each
+// one, answered when the whole walk has been taken in. A `TreeSource` is what
+// answers that, and so a declared source is grown into one whether it says it is a
+// hierarchy or not -- a hint says HOW MANY generations there are, not whether
+// there is a flattening to read.
+//
+// So there are two ways down and both end in a TreeSource:
+//
+//	the source SAYS      serval's `Hinting`, or a hint the view was told, and
+//	                     `Options` already knows what tree it describes
+//	the source is FLAT   one generation: every record stands at the top and
+//	                     nothing is under anything
+//
+// **The source is still asked, and nothing is guessed.** The flat case reads no
+// field name and decides no column's meaning -- it is the absence of a descent
+// said plainly, which is what a `NodeType` with no criterion means.
+//
+// It matters most for a source that answers LATER. A view reads into a sink and
+// uses what the sink got, so a view reading an application's records straight
+// would read before they existed and read nothing -- and read nothing again on
+// every notice, asking once more each time. A tree is what holds a walk across the
+// waiting and tells when it has finished, which is the whole reason the layer is
+// there. A flat source that answers at once flattens on the thread that asked and
+// is as it always was.
 //
 // A source that is ALREADY a tree is left alone: it has descended for itself, and
 // a hint on it would describe the records its levels are drawn from rather than
 // the flattening it answers.
 //
-// A hint that cannot mean what it says leaves the source flat. It is a
+// A hint that cannot mean what it says leaves the source ONE generation. It is a
 // description that turned out contradictory, and one flat level of real records
 // beats no rows at all -- the same call a bundle load makes about a bad include.
 func (t *TreeView) growFromHint() {
@@ -378,27 +398,42 @@ func (t *TreeView) growFromHint() {
 	if !said {
 		hint, said = serval.TreeHintOf(t.source)
 	}
-	if !said {
-		return
-	}
-	// Also EQUIVALENT today: a hint that fails Check yields the zero TreeOptions,
-	// and NewTreeSource refuses one for having no source -- so ignoring this error
-	// reaches the same nil by a longer road. Said here because the two refusals are
-	// about different things, and relying on the second to catch the first would be
-	// relying on an accident.
-	opt, err := hint.Options(t.source)
-	if err != nil {
-		return
+
+	// A hint that fails Check yields the zero TreeOptions and NewTreeSource refuses
+	// one for having no source, so the error could be ignored and the same nil
+	// reached by a longer road. It is read because the two refusals are about
+	// different things, and because a contradictory hint has to fall back to one
+	// generation rather than to no tree at all.
+	opt, used := oneGeneration(t.source), false
+	if said {
+		if fromHint, err := hint.Options(t.source); err == nil {
+			opt, used = fromHint, true
+		}
 	}
 	grown, err := serval.NewTreeSource(opt)
 	if err != nil {
 		return
 	}
 	t.grown = grown
-	// The label is the hint's one word about what a record is CALLED, and the
-	// caption is where that goes. It is the weakest rung, so anything the caller
-	// declared still wins -- see cellOf.
-	t.hintLabel = hint.Label
+	if used {
+		// The label is the hint's one word about what a record is CALLED, and the
+		// caption is where that goes. It is the weakest rung, so anything the caller
+		// declared still wins -- see cellOf.
+		t.hintLabel = hint.Label
+	}
+}
+
+// oneGeneration is the tree a FLAT source is: every record at the top, and a node
+// type with no criterion, which is how "nothing is under anything" is said.
+//
+// No filter on the top level either, because there is no field to filter on -- a
+// flat source's every record stands there, and saying which ones do would be
+// inventing a shape the source never described.
+func oneGeneration(src serval.Source) serval.TreeOptions {
+	return serval.TreeOptions{
+		Source: src,
+		Types:  serval.NodeTypes{Default: &serval.NodeType{}},
+	}
 }
 
 // Reread says the declared source's answer has changed, so the view reads it

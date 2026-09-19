@@ -211,12 +211,43 @@ func (t *TreeView) SetKindMap(kind string, m NodeMap) {
 	// The mapping is what translates a column into this kind's fields, so a
 	// declared tree's order has to be said again in the new words.
 	t.tellOrder()
+	// And every row's cells were read through the mapping that has just changed, so
+	// what they hold is stale -- a declared source's rows especially, their captions
+	// and values having nowhere else to come from. A repaint would reach this
+	// anyway; saying it here is what makes the mapping take effect at the moment it
+	// is declared rather than at the next frame.
+	t.rebuildFlatList()
 	t.Update()
 }
 
 // KindMap is what that kind puts in the columns, and the zero one where nothing
 // was declared -- which reads as the identity mapping.
 func (t *TreeView) KindMap(kind string) NodeMap { return t.kinds[kind] }
+
+// SetKeyField says which of a record's fields the KEY column reads.
+//
+// **It is the one thing a column's `id` cannot say for the caption.** A column
+// declared in the wire language names its field by its id -- column `size` reads
+// field `size` -- and the key column has no id to name one with, so a tree over a
+// flat source had no way at all to say that the caption is `name`. A list has said
+// `display=` since it could read a source, and this is the same saying.
+//
+// It is the caption's most specific rung, so it beats what a source's own hint
+// says a record is called. The caller knows which of several names this window
+// wants; a document knows only what its records carry.
+//
+// Said of the DEFAULT kind, which is the top level's and a tree of one shape's
+// only one. A tree of several kinds says more with `SetKindMap`, and this is the
+// short way for the common case rather than a second mechanism.
+func (t *TreeView) SetKeyField(field string) {
+	m := t.kinds[""]
+	m.Caption = CellMap{Value: field}
+	t.SetKindMap("", m)
+}
+
+// KeyField is the field the key column reads where one was said, and empty
+// otherwise -- at which point the rungs in cellOf answer.
+func (t *TreeView) KeyField() string { return t.kinds[""].Caption.Value }
 
 // cellOf is the field pair for one column under one kind, and the identity where
 // nothing was declared. A nil column is the KEY column, which is the caption.

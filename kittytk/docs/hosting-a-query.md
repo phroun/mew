@@ -691,6 +691,14 @@ Both are spelled as `sort-and-filter.md` defines and mean what serval's
 rather than as text. A filter block is an AND, so the top of a parsed filter
 tree always is — one shape to walk, whether it held one predicate or twenty.
 
+Which cuts the other way when a filter is *written out*: only an `and` may have
+its children put straight into the outer block. An `or` and a `not` are written
+as the statement they are, `filter={ or { … } }`, because a block already means
+and — writing their children into it would read back as a conjunction, which for
+an `or` asks for the rows satisfying every branch at once. It does not fail; it
+answers wrongly and quietly, and a tree hint with no root spelled out is the case
+that found it.
+
 A set may be written either way, and both read to the same structure:
 
 ```

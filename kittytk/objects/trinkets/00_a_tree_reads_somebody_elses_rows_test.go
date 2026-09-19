@@ -763,11 +763,17 @@ func TestAHintedSourceIsGrownIntoATree(t *testing.T) {
 // beats no rows at all.
 func TestAContradictoryHintLeavesTheSourceFlat(t *testing.T) {
 	src := serval.NewListSource([]serval.Row{
-		serval.NewRow(serval.NewInt(1), serval.Record{serval.Named("value", "a row")}),
-		serval.NewRow(serval.NewInt(2), serval.Record{serval.Named("value", "another")}),
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("value", "a row"), serval.Named("name", "not this one"),
+		}),
+		serval.NewRow(serval.NewInt(2), serval.Record{
+			serval.Named("value", "another"), serval.Named("name", "nor this"),
+		}),
 	})
 	// Two ways down, which is one too many.
-	src.SetTreeHint(serval.TreeHint{Parent: "up", Location: "where", Delimiter: "/"})
+	src.SetTreeHint(serval.TreeHint{
+		Parent: "up", Location: "where", Delimiter: "/", Label: "name",
+	})
 
 	tv := NewTreeView()
 	tv.SetSource(src)
@@ -778,6 +784,14 @@ func TestAContradictoryHintLeavesTheSourceFlat(t *testing.T) {
 		if !item.IsLeaf() {
 			t.Errorf("%q draws a twisty over a hint nothing could use", item.Text)
 		}
+	}
+	// **Nor is its LABEL taken**, which the captions above already say: they read
+	// `value` and not `name`. The label is one saying out of a description that
+	// turned out contradictory, and there is nothing to say which part of it was the
+	// mistake -- so the whole hint is put aside rather than picked over. A caller who
+	// knows the field says so with SetKeyField.
+	if tv.hintLabel != "" {
+		t.Errorf("the caption reads %q, taken out of a hint nothing could use", tv.hintLabel)
 	}
 }
 
@@ -797,5 +811,64 @@ func TestADeclaredCaptionBeatsTheHintsLabel(t *testing.T) {
 	tv.SetSource(src)
 	if got, want := tv.flatList[0].Text, "what the caller asked for"; got != want {
 		t.Errorf("the caption reads %q, want %q", got, want)
+	}
+}
+
+// The key column reads the field it was TOLD, which is the one thing a column's id
+// cannot say: a column names its field by its id, and the key column has no id.
+//
+// Without it a tree over a flat source has no way at all to say that the caption is
+// `name` -- the wire language declares columns by id and nothing else, so the
+// caption fell to the identity rung and drew nothing.
+func TestTheKeyColumnReadsTheFieldItWasTold(t *testing.T) {
+	src := serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("name", "what it is called"),
+			serval.Named("value", "something else"),
+		}),
+	})
+
+	tv := NewTreeView()
+	tv.SetSource(src)
+	if got, want := tv.flatList[0].Text, "something else"; got != want {
+		t.Fatalf("with nothing said the caption reads %q, want the identity rung's %q", got, want)
+	}
+
+	tv.SetKeyField("name")
+	if got, want := tv.KeyField(), "name"; got != want {
+		t.Errorf("the key field reads %q, want %q", got, want)
+	}
+	if got, want := tv.flatList[0].Text, "what it is called"; got != want {
+		t.Errorf("the caption reads %q, want %q", got, want)
+	}
+
+	// It beats a hint's label, being the caller's saying against the data's -- the
+	// same order every other rung above the label keeps.
+	src.SetTreeHint(serval.TreeHint{Parent: "up", Label: "value"})
+	tv.SetSource(src)
+	if got, want := tv.flatList[0].Text, "what it is called"; got != want {
+		t.Errorf("with a hint in play the caption reads %q, want the caller's %q", got, want)
+	}
+}
+
+// A declared source is grown into a tree whether it says it is a hierarchy or not,
+// because what a view reads is a FLATTENING: rows in pre-order with a depth on
+// each, answered when the walk has been taken in.
+//
+// It matters for a source that answers later -- a view reading such a source
+// straight reads before the records exist, and reads nothing again on every notice
+// -- and the flat case is where that is easiest to state.
+func TestAFlatSourceIsStillGrownIntoATree(t *testing.T) {
+	tv := NewTreeView()
+	tv.SetSource(serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{serval.Named("value", "one")}),
+	}))
+	if _, ok := tv.reading().(*serval.TreeSource); !ok {
+		t.Errorf("a flat source reads as %T, want a tree of one generation", tv.reading())
+	}
+	// And the tree it was grown into is the one the marks and the order are said to,
+	// rather than something else standing beside it.
+	if tv.marks() == nil {
+		t.Error("the grown tree has no marks")
 	}
 }

@@ -431,6 +431,12 @@ func treeViewProps() map[string]protocol.Property {
 				return nil
 			})).Tip("Where the rows come from: source:<name>, or a bundle key."),
 
+		// Which of a record's fields the key column reads, for a tree over a
+		// declared source. A column names its field by its `id`; the key column
+		// has no id, so it says it here -- the same one word a list says.
+		"display": stringProp("display", (*TreeView).SetKeyField).
+			Tip("Field the key (tree) column reads, for a declared source."),
+
 		"selected":     intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
 		"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth).Tip("Indent width per tree level."),
 
