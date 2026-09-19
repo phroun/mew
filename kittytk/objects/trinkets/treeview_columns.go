@@ -442,6 +442,14 @@ func (t *TreeView) sortKeyFor(it *TreeItem, idx int) string {
 // their parent - the hierarchy is never flattened away, exactly like
 // Finder's list view.
 func (t *TreeView) visualSiblings(items []*TreeItem) []*TreeItem {
+	// **A DECLARED source's children are already in visual order**, serval having
+	// produced the run this slice was rebuilt from. Sorting them again here would
+	// be a second, different comparison over the same rows -- this one folds with
+	// strings.ToLower where serval applies the level's collation -- and the two
+	// disagreeing puts the elbow of a tree line on the wrong row.
+	if t.source != nil {
+		return items
+	}
 	if !t.sorted || len(items) < 2 || len(t.sortLevels) == 0 {
 		return items
 	}
@@ -829,7 +837,10 @@ func (t *TreeView) drawTreeLineCell(p *core.Painter, x, y core.Unit, r rune, s s
 // the VISUAL (sorted) order - the state that picks ├ vs └ and runs the
 // │ continuation through deeper rows.
 func (t *TreeView) hasNextVisualSibling(item *TreeItem) bool {
-	siblings := t.rootItems
+	// RootItems and not the field: a DECLARED source's top level is not the
+	// caller's own list, which is empty there -- reading the field found no
+	// siblings at all and drew every top row as the last of its run.
+	siblings := t.RootItems()
 	if item.Parent != nil {
 		siblings = item.Parent.Children
 	}

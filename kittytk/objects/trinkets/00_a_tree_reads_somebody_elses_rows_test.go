@@ -617,3 +617,89 @@ func TestARowSaysWhetherItMayBeWrittenIn(t *testing.T) {
 		}
 	}
 }
+
+// **Nothing sorts a declared source's rows twice.** The sibling run the tree
+// holds was rebuilt from the sequence serval produced, so it is already in visual
+// order -- and the view's own comparison is a DIFFERENT one, folding with
+// strings.ToLower where serval applies the level's collation. Two comparisons over
+// one run that disagree put the elbow of a tree line on the wrong row.
+//
+// A collation the view has no equivalent for is what shows it: `natural` compares
+// digit runs as numbers, so item2 stands before item10 where folding puts item10
+// first.
+func TestADeclaredSourcesSiblingsAreNotSortedTwice(t *testing.T) {
+	rows := serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{serval.Named("value", "item10")}),
+		serval.NewRow(serval.NewInt(2), serval.Record{serval.Named("value", "item2")}),
+	})
+	src, err := serval.NewTreeSource(serval.TreeOptions{
+		Source: rows,
+		Spec: &serval.Spec{Sort: []serval.SortLevel{
+			{Field: "value", Level: serval.Level{Collation: serval.CollateNatural}},
+		}},
+		Types: serval.NodeTypes{Default: &serval.NodeType{}},
+	})
+	if err != nil {
+		t.Fatalf("stating the tree: %v", err)
+	}
+	tv := NewTreeView()
+	tv.SetTreeLines(true)
+	tv.SetSource(src)
+
+	// serval's natural order, which is what the rows arrive in.
+	if got, want := strings.Join(visualCaptions(tv), " "), "item2 item10"; got != want {
+		t.Fatalf("the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+	// And the tree lines agree with the rows, rather than with a second comparison
+	// that would have made item10 the first of the two.
+	first, second := tv.flatList[0], tv.flatList[1]
+	if !tv.hasNextVisualSibling(first) {
+		t.Errorf("%q draws as the last of its run; it is the first", first.Text)
+	}
+	if tv.hasNextVisualSibling(second) {
+		t.Errorf("%q draws as having a sibling after it; it is the last", second.Text)
+	}
+}
+
+// And with a sort IN FORCE, which is the case that needs saying carefully.
+//
+// The view tells the source the order its columns state, so ordinarily the two
+// agree by construction -- there is nothing for a second comparison to disagree
+// with. They part where the mapping names a collation the view's own comparison
+// has no equivalent for: serval compares `natural` by digit runs, and the view
+// folds with strings.ToLower, which puts item10 first.
+func TestASortedDeclaredSourceIsNotComparedTheViewsOwnWay(t *testing.T) {
+	rows := serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{serval.Named("value", "item10")}),
+		serval.NewRow(serval.NewInt(2), serval.Record{serval.Named("value", "item2")}),
+	})
+	src, err := serval.NewTreeSource(serval.TreeOptions{
+		Source: rows,
+		Spec:   &serval.Spec{},
+		Types:  serval.NodeTypes{Default: &serval.NodeType{}},
+	})
+	if err != nil {
+		t.Fatalf("stating the tree: %v", err)
+	}
+	tv := NewTreeView()
+	tv.SetTreeLines(true)
+	tv.SetKindMap("", NodeMap{Caption: CellMap{
+		Value: "value", Collate: serval.CollateNatural,
+	}})
+	tv.SetSource(src)
+	tv.SetSorted(true, -1, false) // the key column, ascending
+
+	if got, want := strings.Join(visualCaptions(tv), " "), "item2 item10"; got != want {
+		t.Fatalf("sorted naturally the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+	// The elbow has to follow the rows. Folding would make item10 the first of
+	// the two and put the last-of-run mark on item2.
+	if !tv.hasNextVisualSibling(tv.flatList[0]) {
+		t.Errorf("%q draws as the last of its run; it is the first",
+			tv.flatList[0].Text)
+	}
+	if tv.hasNextVisualSibling(tv.flatList[1]) {
+		t.Errorf("%q draws as having a sibling after it; it is the last",
+			tv.flatList[1].Text)
+	}
+}
