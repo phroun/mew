@@ -240,6 +240,7 @@ func (l *loader) assemble(e bundleEntry, text string) (serval.Source, error) {
 		if len(amendments) > 0 {
 			l.note(e.key, "", "this amends what it includes, and it includes nothing")
 		}
+		l.sayShape(e, n, own)
 		return own, nil // a leaf: its records, and no layer to carry
 	}
 
@@ -271,6 +272,9 @@ func (l *loader) assemble(e bundleEntry, text string) (serval.Source, error) {
 			over.Replace(a.key, a.fields)
 		}
 	}
+	// Said of the whole assembled layer, which is what a reader is handed. An
+	// include's own hint stays with the include -- see bundletree.go.
+	l.sayShape(e, n, over)
 	return over, nil
 }
 

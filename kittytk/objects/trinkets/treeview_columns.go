@@ -1596,7 +1596,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				spanMatchesCol(sp, enterCol) {
 				cellStyle = scheme.GetFocusedListItem()
 				segX, segW := sp.x, sp.w
-				if sp.col == nil || (host != nil && sp.col == host) {
+				if t.hostsTree(sp.col) {
 					segX, segW = t.treeCellEditZone(sp, item)
 				}
 				if segX < clip.X {
@@ -1909,11 +1909,27 @@ func (t *TreeView) cellTextRoom(sp colSpan, item *TreeItem) core.Unit {
 	return room
 }
 
+// hostsTree reports whether a column carries the tree apparatus: the key column
+// always, and the first visible data column where the key column is hidden.
+//
+// **It is one predicate because five places ask it**, and they must not answer
+// differently. The painter draws the value past the apparatus, the tooltip offers
+// a cut word from where it begins, the editor opens over it and the mouse resolves
+// a click against it -- and the one that spelled the question out for itself and
+// forgot the hidden-key half drew every hosting value on top of its own twisty.
+func (t *TreeView) hostsTree(col *TreeColumn) bool {
+	if col == nil {
+		return true
+	}
+	host := t.treeHostColumn()
+	return host != nil && col == host
+}
+
 // cellTextInset is how far into a span a cell's text begins. A nil item is a
 // HEADING rather than a row: a caption stands behind no indent, expander or
 // icon, so it is padded like any data cell whichever column it heads.
 func (t *TreeView) cellTextInset(sp colSpan, item *TreeItem) core.Unit {
-	if sp.col == nil && item != nil {
+	if item != nil && t.hostsTree(sp.col) {
 		return t.treeCellTextInset(item)
 	}
 	return t.EffectiveCellMetrics().UnitsPerCellWidth / 2

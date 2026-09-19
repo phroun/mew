@@ -659,7 +659,6 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 	}
 	metrics := t.EffectiveCellMetrics()
 	lay := t.columnLayout()
-	host := t.treeHostColumn()
 	for _, sp := range lay.spans {
 		if !spanMatchesCol(sp, t.editCol) {
 			continue
@@ -673,7 +672,7 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 		// A tree-hosting cell's editor starts where the caption TEXT
 		// starts - past the indent, expander, and icon - so it lines
 		// up with the value it replaces.
-		if sp.col == nil || (host != nil && sp.col == host) {
+		if t.hostsTree(sp.col) {
 			inset := t.treeCellTextInset(t.editItem)
 			w := sp.w - inset
 			if w <= 0 {
