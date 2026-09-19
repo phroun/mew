@@ -483,6 +483,10 @@ func (s *Server) serveConn(nc net.Conn) {
 	// across the seam (the app-side registry lives in the app).
 	ctx := &protocol.BindContext{
 		Emit: func(ev *protocol.Event) { c.send(ev.Encode()) },
+		// An answer goes out the same way an event does and passes neither of the
+		// gates an event passes: nothing has to have subscribed, and it does not
+		// wait for the suppression to lift. See protocol.BindContext.EmitAnswer.
+		Answer: func(a *protocol.Answer) { c.send(a.Encode()) },
 	}
 	c.ctx = ctx
 	c.factory = &hostFactory{inner: protocol.NewRegistryFactory(ctx)}
@@ -1050,6 +1054,18 @@ func (f *hostFactory) Unsubscribe(id uint64, typ string) {
 		ec.Unsubscribe(id, typ)
 	}
 }
+
+// Answers forwards to the registry factory, so a question asked on this connection
+// answers on it. Without this the capability is lost at the wrapper and a question
+// has nowhere to send an answer -- the same way round as everything else a wrapper
+// must hand on.
+func (f *hostFactory) Answers(key string) *protocol.Answers {
+	if ac, ok := f.inner.(protocol.AnswerControl); ok {
+		return ac.Answers(key)
+	}
+	return nil
+}
+
 func (f *hostFactory) Suppressed(fn func()) {
 	if ec, ok := f.inner.(protocol.EventControl); ok {
 		ec.Suppressed(fn)

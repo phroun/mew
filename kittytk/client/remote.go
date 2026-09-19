@@ -86,6 +86,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		scanner: wire.NewScanner(nc),
 		replies: make(chan replyOrError, 1),
 		events:  make(chan *wire.Event, 256),
+		answers: make(chan *wire.Answer, 256),
 		inbound: make(chan []*wire.Statement, 64),
 	}
 	c.transport = rt
@@ -162,6 +163,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	go rt.readLoop()
 	go rt.eventLoop()
 	go rt.inboundLoop()
+	go rt.answerLoop()
 	return c, nil
 }
 
@@ -219,6 +221,11 @@ type remoteTransport struct {
 	inbound   chan []*wire.Statement
 	pendingIn []*wire.Statement
 
+	// answers carry what a question this application asked was answered with.
+	// Their own goroutine for the same reason events have one: a handler that
+	// executes statements must not be able to stop the reader that routes them.
+	answers chan *wire.Answer
+
 	closeOnce sync.Once
 }
 
@@ -254,6 +261,7 @@ func (t *remoteTransport) readLoop() {
 		close(t.replies)
 		close(t.events)
 		close(t.inbound)
+		close(t.answers)
 		t.conn.markClosed()
 	}()
 	for {
@@ -314,6 +322,16 @@ func (t *remoteTransport) readLoop() {
 				// handshake step -- the display says it whenever it has
 				// something to give.
 				t.conn.handOver(stmt)
+			case wire.AnswerVerb:
+				// An answer to a question this application asked. Not an event and
+				// not a reply: it is correlated to the ask that wanted it, and
+				// routed on the reader because routing is all it needs -- whoever
+				// asked decides what to do with it.
+				if script, err := wire.Parse(text); err == nil && len(script.Statements) == 1 {
+					if a, err := wire.ParseAnswer(script.Statements[0].Args); err == nil {
+						t.answers <- a
+					}
+				}
 			case "event":
 				// One verb, two things: an event RECORD opens with a bare type
 				// word, and the describe stream's description of one names the
@@ -352,6 +370,13 @@ func (t *remoteTransport) answer(r replyOrError) {
 func (t *remoteTransport) eventLoop() {
 	for ev := range t.events {
 		t.conn.deliver(ev)
+	}
+}
+
+// answerLoop delivers answers in order, on a goroutine of their own.
+func (t *remoteTransport) answerLoop() {
+	for a := range t.answers {
+		t.conn.inboundAnswer(a)
 	}
 }
 

@@ -45,6 +45,10 @@ type Conn struct {
 	// by object ID. Nil entries under a future remote transport.
 	targets map[uint64]any
 
+	// asks is what this connection is waiting to be answered, by the correlation
+	// key it minted for each question. See answers.go.
+	asks asked
+
 	// App handlers by (object, event type) and by event type.
 	handlers     map[uint64]map[string][]func(*wire.Event)
 	typeHandlers map[string][]func(*wire.Event)

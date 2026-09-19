@@ -25,9 +25,14 @@ import (
 // application answers it with.
 //
 // Three pairs, and nothing carries two of them: `query` is answered by
-// `result`, `ask` by `answer`, and `sub` -- or an object's mere existence --
-// by `event`. So a record arriving for a list can never be mistaken for
-// something a subscription raised.
+// `result`, `ask` by `answer` (see answer.go), and `sub` -- or an object's mere
+// existence -- by `event`. So a record arriving for a list can never be mistaken
+// for something a subscription raised.
+//
+// The third pair was named here before it existed, and said so nowhere: `ask` was
+// added with "an `answer` statement with a correlation key is the fix, and is not in
+// this", and this comment was written three days later as though it were. It is
+// there now, and the comment is true.
 const (
 	QueryVerb  = "query"  // `new query source="files" sort={ name } count=30`
 	ResultVerb = "result" // `result 9 id=42 record={ ... }`

@@ -157,7 +157,10 @@ func (h *hostObject) Do(action string, _ []*protocol.Arg) error {
 // Ask answers a question put to the display. Nothing else reads these back, so
 // an app that means to turn one of them over has to be told which way it is
 // first. Every question is answered with the same event, carrying all of it.
-func (h *hostObject) Ask(question string, args []*protocol.Arg) error {
+// Ask still answers with events, which is the migration `answer` makes possible and
+// not part of adding it: this question's answers are a client's to read either way,
+// and changing both at once would leave nothing to compare against.
+func (h *hostObject) Ask(question string, args []*protocol.Arg, _ *protocol.Answers) error {
 	switch question {
 	case AskDark, AskDesktop:
 		h.answer()

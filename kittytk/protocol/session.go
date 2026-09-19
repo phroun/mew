@@ -46,11 +46,11 @@ type destroyer interface {
 // suits state that changes and does not suit a question with an argument in it,
 // or an answer that comes in more than one piece.
 //
-// An answer is events, not a reply. The reply says the batch was understood; what
-// the object had to say arrives as the events its type declares, which is how
-// everything else the display tells a client arrives.
+// An answer is not a reply and no longer an event. The reply says the batch was
+// understood; what the object had to say arrives as `answer` statements correlated
+// to the key the ask carried -- see protocol/answers.go and wire/answer.go.
 type asker interface {
-	Ask(question string, args []*Arg) error
+	Ask(question string, args []*Arg, out *Answers) error
 }
 
 // doer is an optional Object capability backing the do verb: the object is told
@@ -238,7 +238,7 @@ func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) err
 		s.forget(obj.ID())
 		return nil
 	case "ask":
-		return s.askObject(stmt.Args)
+		return s.askObject(f, stmt.Key, stmt.Args)
 	case "do":
 		return s.suppressed(f, func() error { return s.doObject(stmt.Args) })
 	case "sub", "unsub":
@@ -282,7 +282,7 @@ func (s *Session) suppressed(f Factory, fn func() error) error {
 // It runs OUTSIDE the emission suppression that wraps `new` and `set`: those
 // suppress so a property a client set does not echo back at it, and an answer to
 // a question is not an echo. It is the whole point of having asked.
-func (s *Session) askObject(args []*Arg) error {
+func (s *Session) askObject(f Factory, key string, args []*Arg) error {
 	obj, _, rest, err := s.resolveTarget("ask", args)
 	if err != nil {
 		return err
@@ -298,7 +298,16 @@ func (s *Session) askObject(args []*Arg) error {
 	if err := checkAskName(s.objectTypes[obj.ID()], question); err != nil {
 		return err
 	}
-	return a.Ask(question, rest[1:])
+	// **The refusals above stay Go errors and fail the batch.** A question nobody
+	// answers, or one this type does not declare, is a statement that was not
+	// understood -- and the reply is where "not understood" belongs. What the
+	// ANSWERS carry is a question that was understood and could not be answered,
+	// which is `out.Fail` and reaches whoever asked.
+	var out *Answers
+	if ac, ok := f.(AnswerControl); ok {
+		out = ac.Answers(key)
+	}
+	return a.Ask(question, rest[1:], out)
 }
 
 // doObject tells an object to do something: `do <target> <action> [args...]`.

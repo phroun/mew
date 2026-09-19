@@ -29,6 +29,10 @@ type BindContext struct {
 	// EmitEvent, which is nil-safe.
 	Emit func(*Event)
 
+	// Answer delivers one piece of an answer to a question. Nil when the
+	// connection takes none. Objects call EmitAnswer, which is nil-safe.
+	Answer func(*Answer)
+
 	mu       sync.Mutex
 	actions  map[uint64]string
 	subs     map[uint64]map[string]bool     // trinketID -> event types ("" = all; ID 0 = all trinkets)
@@ -94,6 +98,26 @@ func (c *BindContext) EmitEvent(ev *Event) {
 		return
 	}
 	c.Emit(ev)
+}
+
+// EmitAnswer sends one piece of an answer, and passes NEITHER of the two gates an
+// event passes.
+//
+// **That is the whole reason the verb exists.** An answer is solicited and belongs
+// to one question, so:
+//
+//   - Nothing has to have subscribed to receive it. Asking IS the subscription. An
+//     answer carried as an event could not push an inventory at all, because the run
+//     ends in an event type the client had no reason to have subscribed to.
+//   - It does not wait for the suppression to lift. That is there to stop a property
+//     a client set echoing back at it, and an answer to a question is not an echo --
+//     which askObject already relies on, running outside the suppression for exactly
+//     this reason.
+func (c *BindContext) EmitAnswer(a *Answer) {
+	if c == nil || c.Answer == nil || a == nil {
+		return
+	}
+	c.Answer(a)
 }
 
 // subscribedLocked checks the subscription table. Caller holds c.mu.
@@ -701,14 +725,14 @@ func (o *registryObject) Append(slot string, child Object) error {
 
 // Ask puts a question to the target, backing the ask verb for anything the wire
 // built. The target answers; this only carries the question to it.
-func (o *registryObject) Ask(question string, args []*Arg) error {
+func (o *registryObject) Ask(question string, args []*Arg, out *Answers) error {
 	a, ok := o.target.(interface {
-		Ask(string, []*Arg) error
+		Ask(string, []*Arg, *Answers) error
 	})
 	if !ok {
 		return fmt.Errorf("ask: a %s answers no questions", o.typeName)
 	}
-	return a.Ask(question, args)
+	return a.Ask(question, args, out)
 }
 
 // Do forwards an action to the target, if it performs any.
@@ -763,6 +787,10 @@ func (f *RegistryFactory) Unsubscribe(trinketID uint64, eventType string) {
 	f.ctx.Unsubscribe(trinketID, eventType)
 }
 func (f *RegistryFactory) Suppressed(fn func()) { f.ctx.Suppressed(fn) }
+
+// Answers implements AnswerControl: a question's answers go out on this
+// connection, correlated to the key its ask carried.
+func (f *RegistryFactory) Answers(key string) *Answers { return f.ctx.Answers(key) }
 
 // --- D17 typed-conversion helpers for property appliers ---
 

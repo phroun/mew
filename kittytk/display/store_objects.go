@@ -82,7 +82,7 @@ func (s *storeObject) Set(name string, _ *protocol.Value, _ protocol.FlagState) 
 }
 
 // Ask answers a question put to the store.
-func (s *storeObject) Ask(question string, _ []*protocol.Arg) error {
+func (s *storeObject) Ask(question string, _ []*protocol.Arg, _ *protocol.Answers) error {
 	switch question {
 	case AskInventory:
 		s.sendInventory()
@@ -355,7 +355,7 @@ func blobArg(call, name string, args []*protocol.Arg) ([]byte, error) {
 }
 
 // Ask answers a question put to the blob.
-func (h *blobHandle) Ask(question string, args []*protocol.Arg) error {
+func (h *blobHandle) Ask(question string, args []*protocol.Arg, _ *protocol.Answers) error {
 	switch question {
 	case AskBytes:
 		offset := 0

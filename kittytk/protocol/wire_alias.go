@@ -21,6 +21,7 @@ type (
 	ValueKind       = wire.ValueKind
 	FlagState       = wire.FlagState
 	Event           = wire.Event
+	Answer          = wire.Answer
 	Reply           = wire.Reply
 	Scanner         = wire.Scanner
 	PropInfo        = wire.PropInfo
