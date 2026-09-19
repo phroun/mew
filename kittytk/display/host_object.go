@@ -29,11 +29,8 @@ package display
 //
 // # Asked for, or heard
 //
-// The two questions are ANSWERED: one `answer`, completing the question, carrying
-// both flags. They used to be answered with a host_state event, which meant a
-// client had to subscribe in order to hear its own answer, and which gave `event`
-// a third meaning beside the two it has -- a subscribed event, or an object saying
-// something about itself.
+// The two questions are ANSWERED: one `answer`, completing the question and
+// carrying both flags, with nothing subscribed to hear it.
 //
 // The relay is the other side of that line, and it is why relaying is a `do` and
 // not an ask. What comes back is ANOTHER application's speech: it arrives whenever
@@ -308,12 +305,10 @@ func init() {
 			// Both say all of it, so one round trip settles either question.
 			AskDark: protocol.NewAskDesc(
 				"Which way the terminal's theme is set. Answered by one answer carrying " +
-					"dark= and desktop= both.").
-				Answering(protocol.AnswerVerb),
+					"dark= and desktop= both."),
 			AskDesktop: protocol.NewAskDesc(
 				"Whether the desktop is showing. Answered by one answer carrying dark= " +
-					"and desktop= both.").
-				Answering(protocol.AnswerVerb),
+					"and desktop= both."),
 		},
 		Events: map[string]protocol.EventDesc{
 			EventRelay: protocol.NewEventDesc(

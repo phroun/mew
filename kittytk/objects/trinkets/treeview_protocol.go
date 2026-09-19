@@ -136,8 +136,7 @@ func init() {
 			AskAmendments: protocol.NewAskDesc(
 				"What this tree holds against its source: the edits a reader made, " +
 					"so they can be written somewhere that lasts. One answer each, " +
-					"and a completion carrying how many.").
-				Answering(protocol.AnswerVerb),
+					"and a completion carrying how many."),
 		},
 		Props: treeViewProps(),
 		Destroy: func(t any) error {

@@ -170,10 +170,8 @@ func itoa(v uint64) string {
 // Nothing else reads these back, so an app that means to turn one of them over
 // has to be told which way it is first.
 //
-// It is ANSWERED, and nothing is subscribed to here. The display used to reply to
-// these with a host_state event, which meant an app had to subscribe in order to
-// hear its own answer, and which spent `event` on a third meaning beside the two
-// it has -- something subscribed to, or an object reporting itself.
+// It is ANSWERED, and nothing is subscribed to anywhere below: asking is what
+// asked, so an answer has no subscription to pass.
 func TestTheDisplaySaysHowItStands(t *testing.T) {
 	conn := dialDesktop(t, "Asking App")
 

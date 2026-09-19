@@ -37,12 +37,11 @@ type EventInfo struct {
 	Fields []EventFieldDesc
 }
 
-// AskInfo describes one question a type answers.
+// CallInfo is one question a type answers or one action it performs.
 type CallInfo struct {
-	Name    string
-	Doc     string
-	Args    []EventFieldDesc
-	Answers []string
+	Name string
+	Doc  string
+	Args []EventFieldDesc
 }
 
 // AskInfo is a question a type answers; DoInfo is an action it performs. One
@@ -118,7 +117,6 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 					Doc:  stmtStr(st, "doc"),
 				}
 				if st.Verb == "ask" {
-					c.Answers = splitList(stmtStr(st, "answers"))
 					v.Types[i].Asks = append(v.Types[i].Asks, c)
 				} else {
 					v.Types[i].Does = append(v.Types[i].Does, c)

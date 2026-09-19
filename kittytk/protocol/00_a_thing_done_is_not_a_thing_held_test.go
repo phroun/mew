@@ -66,7 +66,7 @@ func init() {
 				Arg("window", "uint", "Which."),
 		},
 		Asks: map[string]AskDesc{
-			"count": NewAskDesc("How many.").Answering("counted"),
+			"count": NewAskDesc("How many."),
 		},
 	})
 	RegisterType("testidler", &TypeSpec{Virtual: true, New: func() any { return &idleThing{} }})
@@ -190,11 +190,30 @@ func TestDescribeCarriesTheActions(t *testing.T) {
 			t.Errorf("the describe stream has no %s", want)
 		}
 	}
-	// An action answers nothing, so it carries no answers= to mislead anyone.
-	for _, line := range strings.Split(enc, "\n") {
-		if strings.HasPrefix(line, "do of=") && strings.Contains(line, "answers=") {
-			t.Errorf("an action reports answers: %s", line)
+	// **A question and an action are the same line under a different verb.** Both
+	// declare a name, a doc and their arguments, and neither says what comes back:
+	// an `ask` is answered by `answer` and a `do` by nothing, and both of those are
+	// the language's rather than the question's. So the two lines here differ in
+	// their verb and in nothing else -- which is what lets one routine write both.
+	shapeOf := func(prefix string) string {
+		for _, line := range strings.Split(enc, "\n") {
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+			var names []string
+			for _, field := range strings.Fields(line)[1:] {
+				name, _, ok := strings.Cut(field, "=")
+				if ok {
+					names = append(names, name)
+				}
+			}
+			return strings.Join(names, ",")
 		}
+		t.Fatalf("the describe stream has no line beginning %q", prefix)
+		return ""
+	}
+	if ask, do := shapeOf(`ask of="testdoer" name="count"`), shapeOf(`do of="testdoer" name="tile"`); ask != do {
+		t.Errorf("a question carries %s and an action %s; the verb should be the only difference", ask, do)
 	}
 
 	// And it survives the round trip a client makes of it.

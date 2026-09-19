@@ -3066,7 +3066,6 @@ kt_vocab *kt_describe(kt_conn *c) {
                 memset(call, 0, sizeof *call);
                 call->name = strdup(stmt_str(st, "name"));
                 call->doc = strdup(stmt_str(st, "doc"));
-                call->answers = strdup(is_ask ? stmt_str(st, "answers") : "");
             }
         } else if (strcmp(st->verb, "askarg") == 0 || strcmp(st->verb, "doarg") == 0) {
             kt_type *t = type_named(v, stmt_str(st, "of"));
@@ -3127,7 +3126,7 @@ void kt_vocab_free(kt_vocab *v) {
                 kt_call *call = &lists[l][j];
                 for (int k = 0; k < call->nargs; k++) field_free(&call->args[k]);
                 free(call->args);
-                free(call->name); free(call->doc); free(call->answers);
+                free(call->name); free(call->doc);
             }
         free(t->asks); free(t->does);
         for (int j = 0; j < t->nevents; j++) {

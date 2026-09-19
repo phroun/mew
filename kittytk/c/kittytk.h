@@ -101,8 +101,11 @@ int kt_destroy(kt_conn *c, uint64_t id);
 int kt_do(kt_conn *c, uint64_t id, const char *action);
 
 /* Put a question to an object: kt_ask(c, id, "bytes offset=2048") sends
-   `ask <id> bytes offset=2048`. The answer arrives as the events the question
-   declares it answers with, so register for those (kt_on) before asking. */
+   `ask <id> bytes offset=2048`.
+
+   It carries NO correlation key, so the answer carries none either and nothing
+   here routes it -- which suits an asker that is not waiting, and nothing else.
+   kt_ask_for is the one to use to be told. */
 int kt_ask(kt_conn *c, uint64_t id, const char *question);
 
 /* --- the objects the connection is handed ------------------------------ */
@@ -649,13 +652,12 @@ typedef struct {
     char *doc;
 } kt_field;
 
-/* One question a type answers or one action it performs. They are the same
- * shape because they are the same declaration with a different verb in front
- * of it -- except that an action answers nothing, so `answers` is "". */
+/* One question a type answers or one action it performs. One shape, because
+ * they are the same declaration with a different verb in front of it -- the
+ * verb is the only difference there is. */
 typedef struct {
     char   *name;
     char   *doc;
-    char   *answers;  /* comma-separated event names; "" for an action */
     kt_field *args;
     int       nargs;
 } kt_call;

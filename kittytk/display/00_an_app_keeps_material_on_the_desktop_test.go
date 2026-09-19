@@ -15,6 +15,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -572,27 +574,24 @@ func TestTheStoreIsAddressedNotBuilt(t *testing.T) {
 		t.Errorf("the store does not describe what it holds; it describes %v", props)
 	}
 	// And what it can be ASKED, which is where a question belongs rather than
-	// among the properties -- and what that question is answered WITH, which is
-	// `answer` and not an event type a client would have to subscribe to.
+	// among the properties.
 	var asks []string
 	for _, a := range store.Asks {
 		asks = append(asks, a.Name)
-		if a.Name != "inventory" {
-			continue
-		}
-		if len(a.Answers) != 1 || a.Answers[0] != wire.AnswerVerb {
-			t.Errorf("the inventory is described as answering with %v", a.Answers)
-		}
 	}
 	if !contains(asks, "inventory") {
 		t.Errorf("the store answers no inventory question; it answers %v", asks)
 	}
-	// And the two event types nothing raises any more are gone from it, rather
-	// than left standing for a client to subscribe to and wait on for good.
+	// The events it describes are the ones it RAISES, and only those. A client
+	// subscribes from this list, so a name on it that nothing ever says is a
+	// subscription that waits for good.
+	var events []string
 	for _, ev := range store.Events {
-		if ev.Name == "store_done" || ev.Name == "store_data" {
-			t.Errorf("the store still describes %q, which nothing raises", ev.Name)
-		}
+		events = append(events, ev.Name)
+	}
+	sort.Strings(events)
+	if got := strings.Join(events, ","); got != "store_blob,store_error,store_gone" {
+		t.Errorf("the store describes %q", got)
 	}
 }
 

@@ -21,19 +21,16 @@ package display
 // takes is settled by whether anybody asked.
 //
 // An inventory and a chunk were ASKED FOR, so they come back as `answer`,
-// quoting the key the question carried. An `event` that responded to an ask
-// would be a third meaning for a verb that already has two -- a subscribed
-// event, or an object saying something about itself -- and it was one: before
-// this, asking what the store held sent a run of store_blob and a store_done,
-// which a client had to have subscribed to in advance in order to hear its own
-// answer. An inventory is now one answer per item and a completion carrying the
-// count; a chunk is a single answer that completes the question it answers.
+// quoting the key the question carried: one answer per item and a completion
+// carrying the count, and for a chunk a single answer that completes the
+// question. Nothing need have subscribed to hear either, because asking is what
+// asked.
 //
 // A change to a blob was not asked for. Writing one or appending to it makes the
 // store say what the blob NOW IS, with store_blob, because every change to a
 // blob is reported that way and that is the store's own business rather than a
 // reply to the statement that caused it. Dropping one says store_gone, and a
-// refusal on either path says store_error. Those three stay events, and a client
+// refusal on either path says store_error. Those three are events, and a client
 // subscribes to them as it does for any other object.
 //
 // A key beginning with the cache mark is discardable; that is the only
@@ -457,8 +454,7 @@ func init() {
 				"What the store holds: one answer per item, carrying blob=, key=, " +
 					"type=, size= and hash= as store_blob does, then a completion " +
 					"carrying count=. A store holding nothing answers the completion " +
-					"alone, which is an answer and not a refusal.").
-				Answering(protocol.AnswerVerb),
+					"alone, which is an answer and not a refusal."),
 		},
 		Events: map[string]protocol.EventDesc{
 			EventStoreBlob: protocol.NewEventDesc("One item, as the store now has it: what writing one or appending to it reports. An inventory says the same things, but it was asked for, so it comes back as an answer.").
@@ -538,8 +534,7 @@ func init() {
 					"offset= COMPLETES the question, carrying blob=, key=, type=, "+
 					"offset=, size=, data= and last=; reading the next chunk is a new "+
 					"question, asked from the offset this one reached.").
-				Arg("offset", "int", "Where to read from; 0 for the start.").
-				Answering(protocol.AnswerVerb),
+				Arg("offset", "int", "Where to read from; 0 for the start."),
 		},
 	})
 }

@@ -721,14 +721,12 @@ class ArgInfo:
 
 @dataclass
 class CallInfo:
-    """One question a type answers or one action it performs. They are the
-    same shape because they are the same declaration with a different verb in
-    front of it -- except that an action answers nothing, so its answers list
-    is always empty."""
+    """One question a type answers or one action it performs. One shape,
+    because they are the same declaration with a different verb in front of it
+    -- the verb is the only difference there is."""
     name: str
     doc: str = ""
     args: List[ArgInfo] = field(default_factory=list)
-    answers: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -828,11 +826,9 @@ def decode_vocabulary(lines: List[str]) -> Vocabulary:
                 into = calls(stmt, stmt.verb)
                 if into is None:
                     continue
-                answers = _stmt_str(stmt, "answers") if stmt.verb == "ask" else ""
                 into.append(CallInfo(
                     name=_stmt_str(stmt, "name"),
                     doc=_stmt_str(stmt, "doc"),
-                    answers=answers.split(",") if answers else [],
                 ))
             elif stmt.verb in ("askarg", "doarg"):
                 verb = "ask" if stmt.verb == "askarg" else "do"

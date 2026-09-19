@@ -90,8 +90,7 @@ func (p Property) OneOf(words ...string) Property {
 func (p Property) As(kind string) Property { p.Desc.Kind = kind; return p }
 
 // CallDesc is the queryable descriptor for one question an object answers or
-// one action it performs: what it means, what arguments it takes, and what it
-// answers with.
+// one action it performs: what it means and what arguments it takes.
 //
 // Both are declared beside the properties and events for the same reason they
 // are: one registration is the source of both behavior and introspection, so a
@@ -102,23 +101,21 @@ type CallDesc struct {
 	Doc string
 	// Args are the named arguments it takes, in the order worth reading.
 	Args []EventFieldDesc
-	// Answers names the events a question is answered with. An action has
-	// none: `do` expects nothing back, which is the whole of what separates
-	// it from `ask`. Events an action causes reach a client the way any other
-	// change does, through what it subscribed to.
-	Answers []string
 }
 
 // AskDesc is a question an object answers; DoDesc is an action it performs.
-// They are the same shape -- a name, arguments, and the events that come back
-// -- because they are the same statement with a different verb in front of it.
+// They are the same shape -- a name and arguments -- because they are the same
+// statement with a different verb in front of it.
+//
+// What comes back needs no describing. An `ask` is answered by `answer` and a
+// `do` is answered by nothing, and both are the language's, not the question's:
+// see wire/answer.go on the three pairs.
 type (
 	AskDesc = CallDesc
 	DoDesc  = CallDesc
 )
 
-// NewAskDesc builds an AskDesc from its description; add arguments with Arg and
-// the events it answers with using Answering.
+// NewAskDesc builds an AskDesc from its description; add arguments with Arg.
 func NewAskDesc(doc string) AskDesc { return CallDesc{Doc: doc} }
 
 // NewDoDesc builds a DoDesc the same way.
@@ -130,13 +127,6 @@ func (a CallDesc) Arg(name, kind, doc string) CallDesc {
 	args := make([]EventFieldDesc, len(a.Args), len(a.Args)+1)
 	copy(args, a.Args)
 	a.Args = append(args, EventFieldDesc{Name: name, Kind: kind, Doc: doc})
-	return a
-}
-
-// Answering names the events a question is answered with. It has no meaning on
-// an action, which answers nothing.
-func (a CallDesc) Answering(events ...string) CallDesc {
-	a.Answers = events
 	return a
 }
 
@@ -219,7 +209,7 @@ func sortedCallInfos(asks map[string]CallDesc) []AskInfo {
 	out := make([]AskInfo, 0, len(names))
 	for _, n := range names {
 		d := asks[n]
-		out = append(out, AskInfo{Name: n, Doc: d.Doc, Args: d.Args, Answers: d.Answers})
+		out = append(out, AskInfo{Name: n, Doc: d.Doc, Args: d.Args})
 	}
 	return out
 }
@@ -261,7 +251,7 @@ func DescribeVocabulary() *Vocabulary {
 //	propcommon name="enabled" kind=flag default="true" doc="..."
 //	proptype name="button" !virtual !hosted
 //	prop of="button" name="caption" kind=string default="" doc="..." enum="" members=""
-//	ask of="store" name="inventory" doc="..." answers="answer"
+//	ask of="store" name="inventory" doc="..."
 //	askarg of="blob" ask="bytes" name="offset" kind="int" doc="..."
 //	do of="blob" name="append" doc="..."
 //	doarg of="blob" do="append" name="bytes" kind="blob" doc="..."
@@ -274,9 +264,9 @@ func DescribeVocabulary() *Vocabulary {
 // comma-separated lists: enum= holds the allowed words of an enum, and
 // members= the types a collection accepts (empty means any trinket).
 // writeCallStmts renders a type's questions or actions: one `ask`/`do` line each
-// and an `askarg`/`doarg` line per named argument. The two read alike because
-// they are the same declaration under a different verb -- except that a `do`
-// carries no answers=, an action being a thing done rather than a thing asked.
+// and an `askarg`/`doarg` line per named argument. One routine for both, because
+// they are the same declaration under a different verb -- the verb is the only
+// difference there is.
 func writeCallStmts(sb *strings.Builder, verb, typeName string, calls []AskInfo) {
 	for _, c := range calls {
 		sb.WriteString(verb)
@@ -286,10 +276,6 @@ func writeCallStmts(sb *strings.Builder, verb, typeName string, calls []AskInfo)
 		sb.WriteString(Quote(c.Name))
 		sb.WriteString(" doc=")
 		sb.WriteString(Quote(c.Doc))
-		if verb == "ask" {
-			sb.WriteString(" answers=")
-			sb.WriteString(Quote(strings.Join(c.Answers, ",")))
-		}
 		sb.WriteByte('\n')
 		for _, f := range c.Args {
 			sb.WriteString(verb)
