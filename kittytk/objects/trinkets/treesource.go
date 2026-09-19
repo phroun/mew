@@ -221,6 +221,37 @@ func (t *TreeView) makeSource() *serval.TreeSource {
 	return src
 }
 
+// amendedOver is a record with what an amendment says about it written over the top.
+//
+// An ALTERATION names some members and the rest stand, which is what a cell edit is.
+// Anything else the amendment holds is a record entire -- a replacement or an
+// addition -- and stands alone.
+//
+// A removal is not here: a row taken out of a sequence is a row the next read will
+// not send, and hiding it from a flattening that still holds it would leave a gap in
+// the pre-order with a parent still counting it. Staleness is staleness, and this
+// corrects a record's CONTENTS without pretending to correct the shape.
+func amendedOver(fields serval.Record, held serval.Amendment) serval.Record {
+	if held.How != serval.Altered {
+		return held.Fields
+	}
+	out := make(serval.Record, len(fields), len(fields)+len(held.Fields))
+	copy(out, fields)
+	for _, m := range held.Fields {
+		replaced := false
+		for i, had := range out {
+			if had.Name == m.Name {
+				out[i], replaced = m, true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // treeKey is an item's identity as the made source states it.
 func treeKey(id core.ObjectID) *serval.Value { return serval.NewInt(int64(id)) }
 
@@ -490,6 +521,30 @@ func oneGeneration(src serval.Source) serval.TreeOptions {
 	}
 }
 
+// amendable is where an edit to a declared source's row is HELD: the nearest
+// `serval.AmendedSource` from the top, and nil where there is none.
+//
+// **The top, because that is the layer a reader is looking at.** A bundle is
+// assembled as an amendment over a composition of its includes, and the document's
+// own amendments are already in it -- so an edit made here lands in the same place
+// they did, and one thing has to be saved out rather than two.
+//
+// Nearest from the top is a type assertion and not a walk, because the two shapes
+// that reach a view put it there: a bundle hands one in, and a live source across a
+// connection is wrapped in one. A source that keeps its amendment further down
+// cannot be reached from here and is not amended -- which is reported rather than
+// hidden, see commitCellEdit.
+//
+// It is `source` and not `reading`: the grown tree over it is a FLATTENING, and a
+// flattening is not where a record lives. Amending a row means amending the record
+// the row was drawn from, which is the tree's child.
+func (t *TreeView) amendable() *serval.AmendedSource {
+	if a, ok := t.source.(*serval.AmendedSource); ok {
+		return a
+	}
+	return nil
+}
+
 // Reread says the declared source's answer has changed, so the view reads it
 // again.
 //
@@ -573,7 +628,30 @@ func (t *TreeView) learnRow(id *serval.Value, fields serval.Record,
 	}
 
 	kind := serval.Segment(fields.Get(names.Kind))
+	item.rowKind = kind
 	m := t.kinds[kind]
+
+	// **What the amendment holds wins over what the flattening said.**
+	//
+	// A tree flattens once and holds the rows; an edit made afterwards is held
+	// against the source UNDER that flattening, so the rows this is reading are a
+	// snapshot that predates it. Nothing is wrong with the snapshot -- it was true
+	// when it was taken -- and nothing has told the tree to walk again, deliberately:
+	// re-asking every level on every committed cell is a query per level, and for one
+	// flat level of a hundred thousand rows it is the whole body.
+	//
+	// So the snapshot is corrected here instead, which is the same move the amendment
+	// itself makes on its child: the later saying wins. It costs one map lookup per
+	// row and nothing at all for a source nobody has written in.
+	//
+	// The next real read needs none of this -- the amendment is below the tree and
+	// the records come out already corrected. This is only for the gap between an
+	// edit and whatever asks the question again.
+	if over := t.amendable(); over != nil {
+		if held, ok := over.Amendment(id); ok && held.Fields != nil {
+			fields = amendedOver(fields, held)
+		}
+	}
 
 	// **The segment this row's mark is filed under**, asked of the tree rather than
 	// guessed: a level with a standing is marked by its PATH and an adjacency list by

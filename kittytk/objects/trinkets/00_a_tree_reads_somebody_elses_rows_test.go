@@ -1003,3 +1003,192 @@ func TestAColumnMayBeCalledAfterOneOfTheTreesOwnFields(t *testing.T) {
 		}
 	}
 }
+
+// --- an edit to somebody else's row ---------------------------------------
+
+// onAmended is a view over a declared source with an amendment over it, which is the
+// shape a reader can write in: a bundle is assembled that way, and a live source
+// across a connection is wrapped that way.
+func onAmended(t *testing.T) (*TreeView, *serval.AmendedSource) {
+	t.Helper()
+	over := serval.NewAmendedSource(serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("name", "alpha"), serval.Named("kind", "Folder"),
+			serval.Named("rawsize", 40),
+		}),
+		serval.NewRow(serval.NewInt(2), serval.Record{
+			serval.Named("name", "beta"), serval.Named("kind", "Text"),
+			serval.Named("rawsize", 10),
+		}),
+	}))
+
+	tv := NewTreeView()
+	tv.AddColumn(&TreeColumn{ID: "kind", Caption: "Kind", Width: 10 * cell, Editable: true})
+	tv.SetEditable(true)
+	tv.SetKeyField("name")
+	tv.SetSource(over)
+	return tv, over
+}
+
+// **An edit to a declared source's row is HELD against that source**, so that the
+// value survives the next read.
+//
+// Without it the edit lasted until the next rebuild and no longer: the item a reader
+// typed into is a projection of a record, and the next read writes the record's
+// members back over it. The value was never anywhere but on screen.
+func TestAnEditToADeclaredRowIsHeldAgainstTheSource(t *testing.T) {
+	tv, over := onAmended(t)
+	row := tv.flatList[0]
+	if got := row.Value("kind"); got != "Folder" {
+		t.Fatalf("the cell reads %q before anything is edited", got)
+	}
+
+	tv.beginCellEdit(row, tv.columns[0])
+	tv.setCellValue(row, tv.columns[0], "Archive")
+	tv.amendCell(row, tv.columns[0], "Archive")
+	tv.endRowEdit(false) // the value is already written; this just dismisses
+
+	// The amendment is there, and it is an ALTERATION -- one member, nothing said
+	// about the others.
+	held := over.Amendments()
+	if len(held) != 1 {
+		t.Fatalf("the source holds %d amendments, want one", len(held))
+	}
+	if held[0].How != serval.Altered {
+		t.Errorf("it is held as %v, want altered", held[0].How)
+	}
+	if got := held[0].Fields.Get("kind"); !serval.Equal(got, serval.NewText("Archive")) {
+		t.Errorf("it holds %v", got)
+	}
+	if held[0].Fields.Has("name") {
+		t.Error("it holds a member nobody edited")
+	}
+
+	// And it survives a read, which is the whole point.
+	tv.rebuildFlatList()
+	if got := tv.flatList[0].Value("kind"); got != "Archive" {
+		t.Errorf("after reading again the cell reads %q, want the edit", got)
+	}
+	// The members nobody touched are still the source's.
+	if got := tv.flatList[0].Text; got != "alpha" {
+		t.Errorf("the caption reads %q; an alteration overwrote what it did not name", got)
+	}
+}
+
+// The KEY column amends the member the caption reads, which is the one thing a
+// column's `id` cannot name -- the key column has no id.
+func TestEditingTheKeyCellAmendsTheCaptionsMember(t *testing.T) {
+	tv, over := onAmended(t)
+	row := tv.flatList[0]
+
+	tv.setCellValue(row, treeKeyColumn, "renamed")
+	tv.amendCell(row, treeKeyColumn, "renamed")
+
+	held := over.Amendments()
+	if len(held) != 1 {
+		t.Fatalf("the source holds %d amendments, want one", len(held))
+	}
+	if got := held[0].Fields.Get("name"); !serval.Equal(got, serval.NewText("renamed")) {
+		t.Errorf("it holds %v, want the field SetKeyField named", got)
+	}
+}
+
+// Two edits to two columns of one row are two alterations of one record, and the
+// second must not lose the first -- which is what a reader tabbing across does.
+func TestTwoEditsToOneRowBothStick(t *testing.T) {
+	tv, over := onAmended(t)
+	row := tv.flatList[0]
+
+	tv.setCellValue(row, tv.columns[0], "Archive")
+	tv.amendCell(row, tv.columns[0], "Archive")
+	tv.setCellValue(row, treeKeyColumn, "renamed")
+	tv.amendCell(row, treeKeyColumn, "renamed")
+
+	if got := len(over.Amendments()); got != 1 {
+		t.Fatalf("the source holds %d amendments, want one per record", got)
+	}
+	tv.rebuildFlatList()
+	if got := tv.flatList[0].Text; got != "renamed" {
+		t.Errorf("the caption reads %q", got)
+	}
+	if got := tv.flatList[0].Value("kind"); got != "Archive" {
+		t.Errorf("the Kind cell reads %q; the second edit lost the first", got)
+	}
+}
+
+// **An edit does not move the row**, because an alteration cannot: the source placed
+// it and the alteration touches what it holds afterwards. So the row a reader is
+// typing in stays where it is, and the new position waits for the next question.
+func TestAnEditDoesNotMoveTheRowItIsIn(t *testing.T) {
+	tv, _ := onAmended(t)
+	tv.SetSorted(true, -1, false) // by the caption, so alpha then beta
+	if got := strings.Join(visualCaptions(tv), " "); got != "alpha beta" {
+		t.Fatalf("sorted, the tree reads %s", got)
+	}
+
+	row := tv.flatList[0]
+	tv.setCellValue(row, treeKeyColumn, "zulu") // would sort last
+	tv.amendCell(row, treeKeyColumn, "zulu")
+	tv.rebuildFlatList()
+
+	if got := strings.Join(visualCaptions(tv), " "); got != "zulu beta" {
+		t.Errorf("after the edit the tree reads %s, want the row left where it was", got)
+	}
+}
+
+// A tree reading its OWN items amends nothing: the item is the record there, and
+// setCellValue has already written it.
+func TestATreesOwnItemsAreNotAmended(t *testing.T) {
+	tv := NewTreeView()
+	tv.AddColumn(&TreeColumn{ID: "kind", Caption: "Kind", Width: 10 * cell, Editable: true})
+	item := NewTreeItem("its own")
+	item.SetValue("kind", "Folder")
+	tv.AddRootItem(item)
+
+	// Nothing to reach, and nothing tries: the guard is the source being nil.
+	tv.setCellValue(item, tv.columns[0], "Archive")
+	tv.amendCell(item, tv.columns[0], "Archive")
+	if tv.amendable() != nil {
+		t.Error("a tree over its own items found an amendment layer")
+	}
+	if got := item.Value("kind"); got != "Archive" {
+		t.Errorf("the cell reads %q", got)
+	}
+}
+
+// A declared source with no amendment layer to reach holds nothing, and the edit
+// shows without sticking. It is reported rather than hidden: `onCellEdited` fires
+// either way, and the row's key is on it.
+func TestADeclaredSourceWithNowhereToHoldAnEditSaysSo(t *testing.T) {
+	tv := NewTreeView()
+	tv.AddColumn(&TreeColumn{ID: "kind", Caption: "Kind", Width: 10 * cell, Editable: true})
+	tv.SetKeyField("name")
+	tv.SetSource(serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("name", "alpha"), serval.Named("kind", "Folder"),
+		}),
+	}))
+	if tv.amendable() != nil {
+		t.Fatal("a bare list source offered somewhere to hold an amendment")
+	}
+
+	var sawKey string
+	tv.SetOnCellEdited(func(item *TreeItem, _ *TreeColumn, _ string) {
+		sawKey = item.Key()
+	})
+	row := tv.flatList[0]
+	tv.beginCellEdit(row, tv.columns[0])
+	tv.editBox.SetText("Archive")
+	tv.commitCellEdit()
+
+	// The edit is reported WITH the record's identity, which is how a programmer
+	// knows which record it was: the item ID is this view's own invention.
+	if sawKey != serval.Key(serval.NewInt(1)) {
+		t.Errorf("the edit reported key %q, want the record's identity", sawKey)
+	}
+	// And it does not stick, which is honest: there was nowhere to hold it.
+	tv.rebuildFlatList()
+	if got := tv.flatList[0].Value("kind"); got != "Folder" {
+		t.Errorf("the cell reads %q; nothing held the edit, so the source's value stands", got)
+	}
+}

@@ -52,7 +52,8 @@ import (
 // appSources is what a connection keeps: the far ends it has stood up, by name.
 type appSources struct {
 	mu   sync.Mutex
-	held map[string]*source.ApplicationSource
+	held map[string]*serval.AmendedSource
+	ends map[string]*source.ApplicationSource
 }
 
 // appSource is the far end of one name on this connection, made if it is not
@@ -62,21 +63,41 @@ type appSources struct {
 // off. `source:papers` is how a statement says which namespace it means; `papers`
 // is what the application called it, and a query quoting the mark back names a
 // source the application has not got. See trinkets.LiveName.
-func (c *conn) appSource(name string) *source.ApplicationSource {
+func (c *conn) appSource(name string) *serval.AmendedSource {
 	c.sources.mu.Lock()
 	defer c.sources.mu.Unlock()
 	if src := c.sources.held[name]; src != nil {
 		return src
 	}
 	if c.sources.held == nil {
-		c.sources.held = map[string]*source.ApplicationSource{}
+		c.sources.held = map[string]*serval.AmendedSource{}
+		c.sources.ends = map[string]*source.ApplicationSource{}
 	}
 	// What it writes goes out on this connection, which is the whole of what
 	// makes it this application's end rather than another's.
-	src := source.NewApplicationSource(name, func(text string) error {
+	end := source.NewApplicationSource(name, func(text string) error {
 		c.send(text)
 		return nil
 	})
+	c.sources.ends[name] = end
+
+	// **Wrapped in an amendment, so a reader can write in it.** A trinket editing a
+	// cell holds the edit against the nearest amendment from the top -- see
+	// trinkets.TreeView.amendable -- and an application's records reach a view with
+	// nothing over them, so there would be nowhere to put one. The edit would show
+	// until the next read and then be gone.
+	//
+	// It is the display's optimistic layer and not the application's data: the app
+	// hears the edit as an event, with the record's key on it, and decides. An app
+	// that declines says `Stale` on that key and the existing told-never-decided path
+	// corrects the screen -- which is what keeps this honest rather than a lie.
+	// `Amendments` is how whatever holds it eventually saves it out.
+	//
+	// Wrapping costs nothing it had: the hint, the tree fields, the arrival notice and
+	// the count all pass through, and a census does while nobody has written in it.
+	// That is serval's `wrapping.go`, and it is why this is one line rather than a
+	// argument about what gets lost.
+	src := serval.NewAmendedSource(end)
 	c.sources.held[name] = src
 	return src
 }
@@ -134,9 +155,9 @@ func (s connSources) Source(name string) (serval.Source, bool) {
 // knows which queries are its own: the source itself, which already did.
 func (c *conn) inbound(batch []*protocol.Statement) []*protocol.Statement {
 	c.sources.mu.Lock()
-	live := make([]*source.ApplicationSource, 0, len(c.sources.held))
-	for _, src := range c.sources.held {
-		live = append(live, src)
+	live := make([]*source.ApplicationSource, 0, len(c.sources.ends))
+	for _, end := range c.sources.ends {
+		live = append(live, end)
 	}
 	c.sources.mu.Unlock()
 	if len(live) == 0 {

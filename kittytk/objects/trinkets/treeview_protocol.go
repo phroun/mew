@@ -54,6 +54,7 @@ func init() {
 			"edit": protocol.NewEventDesc("An in-place cell edit was committed.").
 				Field("trinket", "uint", "The tree's object ID.").
 				Field("item", "uint", "The edited item.").
+				Field("key", "string", "The edited RECORD's identity, for a declared source; empty for a tree's own items.").
 				Field("column", "int", "Index of the edited column.").
 				Field("value", "string", "The committed cell text."),
 		},
@@ -114,9 +115,19 @@ func init() {
 						break
 					}
 				}
+				// **The record's identity, not only the item's.** An item ID is
+				// minted here, by the view, for a row it drew -- it means nothing
+				// to the application that served the record, which knows its own
+				// records by key. Without this an application subscribing to edits
+				// could see that something was edited and not which thing, so the
+				// subscription was decorative.
+				//
+				// Empty for a tree reading its own items: there is no record
+				// underneath and the item ID is the whole of what identifies a row.
 				ctx.EmitEvent(protocol.NewEvent("edit").
 					WithUint("trinket", id).
 					WithUint("item", uint64(item.ID)).
+					WithString("key", item.Key()).
 					WithInt("column", colIdx).
 					WithString("value", value))
 			})

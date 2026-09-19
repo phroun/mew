@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"github.com/phroun/serval"
 	"strings"
 
 	"github.com/phroun/kittytk/core"
@@ -458,17 +459,74 @@ func (t *TreeView) commitCellEdit() {
 		return
 	}
 	t.setCellValue(t.editItem, t.editCol, v)
+	t.amendCell(t.editItem, t.editCol, v)
 	if t.onCellEdited != nil {
 		t.onCellEdited(t.editItem, t.editCol, v)
 	}
 	// Under an active visual sort the new value can move rows; the
 	// trinket re-sorts itself and the selection tracks the item.
-	if t.sorted {
+	//
+	// **Not for a DECLARED source.** There the sort is the source's, so saying it
+	// again rebuilds every live sequence -- which for a tree means walking it, which
+	// means a query per level. A hundred thousand rows would be re-read on every
+	// committed cell, and the row the reader is typing in would leap away to wherever
+	// its new value sorted. The amendment has already put the value where the next
+	// read will find it; where that read lands it is the reader's to ask for.
+	if t.sorted && t.source == nil {
 		t.resortKeepingSelection()
 	}
 	// An explicit edit is a user action ON this row: keep it in view
 	// unconditionally, even if the new value just sorted it far away.
 	t.ensureVisible(t.currentIndex)
+}
+
+// amendCell holds an edit to a DECLARED source's row against that source, so that
+// the value survives the next read.
+//
+// Without it an edit lasts until the next rebuild and no longer. The item a reader
+// typed into is a PROJECTION of a record -- `learnRow` makes it and writes the
+// record's members onto it -- so the next read overwrites what was typed with what
+// the source still says. The value was never anywhere but on screen.
+//
+// **It is an alteration and not a replacement**, because that is what a cell edit
+// is: one member changed, and nothing said about the others. A replacement is the
+// record entire, which would mean holding every member of every row on the chance
+// that one might be edited. An alteration also cannot move the record -- the child
+// placed it and this touches what it holds afterwards -- which is why the row does
+// not leap away while the reader is still in it.
+//
+// **The member amended is the one that was SHOWN**, because that is what was edited.
+// A column that separates what it sorts by from what it draws -- a size in bytes
+// under a "1.2 MB" caption -- has its drawn member altered and its sorting member
+// left alone, which is the caller's to reconcile: nothing here can turn "1.2 MB"
+// back into a number.
+//
+// Nothing happens for a tree reading its own items: the item IS the record there,
+// and `setCellValue` has already written it. Nothing happens either for a declared
+// source with no amendment layer to reach -- the edit shows and does not stick, and
+// `onCellEdited` is where a programmer finds out and decides what to do about it.
+func (t *TreeView) amendCell(item *TreeItem, col *TreeColumn, v string) {
+	if t.source == nil || item == nil || item.rowKey == nil {
+		return
+	}
+	over := t.amendable()
+	if over == nil {
+		return
+	}
+	field := t.cellOf(item.rowKind, colOrKey(col)).showField()
+	if field == "" {
+		return
+	}
+	over.Alter(item.rowKey, serval.Record{serval.Named(field, v)})
+}
+
+// colOrKey turns an edit-ring column into the one cellOf takes: nil for the key
+// column, which the ring names with a sentinel and the mapping names with nothing.
+func colOrKey(col *TreeColumn) *TreeColumn {
+	if col == treeKeyColumn {
+		return nil
+	}
+	return col
 }
 
 // endRowEdit dismisses the editor. commit=false is Escape: nothing is

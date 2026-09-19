@@ -58,6 +58,11 @@ type TreeItem struct {
 	// and never afterwards.
 	rowMark string
 
+	// rowKind is which KIND of row this is, as the tree said. It decides which
+	// mapping reads the record's members, so an edit needs it to know which member
+	// it is editing -- and like the mark, it is only in hand while the record is.
+	rowKind string
+
 	// Values holds this item's data-column cell text, keyed by
 	// TreeColumn.ID (see SetValue/Value in treeview_columns.go).
 	Values map[string]string
