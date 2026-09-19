@@ -105,14 +105,46 @@ func (c *conn) appSource(name string) *serval.AmendedSource {
 	// the count all pass through, and a census does while nobody has written in it.
 	// That is serval's `wrapping.go`, and it is why this is one line rather than a
 	// argument about what gets lost.
-	src := serval.NewAmendedSource(end)
+	//
+	// **And a cache UNDER it, which is what makes an answer that arrives late
+	// terminate.** An application answers after its read has returned, so the reader
+	// is told when records land and reads again -- that is `Arriving`, and it is the
+	// only way a source across a connection can be read at all. What stops the
+	// second read being a second QUESTION is the cache: it serves the scope from
+	// what the first answer filed, without touching the child, so nothing lands and
+	// nothing is told and the reader settles. With no cache in the chain the telling
+	// was a cycle -- read, answer, told, read -- turning over about twenty times a
+	// second for as long as the window was open.
+	//
+	// It goes under the amendment because the two hold different things. The cache
+	// holds the APPLICATION's records, which is what a notice from the application
+	// invalidates; the amendment holds the display's optimistic edits on top, which
+	// no notice touches. Values are held per source and order per sequence, so two
+	// views sorting one source differently still share every value between them.
+	//
+	// **It terminates while the answer FITS, and a view still asks for all of it.**
+	// `treesource.go` reads with a count of 1<<30 -- the whole sequence, every read --
+	// so the cache can only serve the second read where the whole sequence is inside
+	// its budget. Measured against the 64 MB default: twenty thousand rows of two
+	// fields settles at two reads, fifty thousand never settles and turns over at the
+	// speed of a full walk. The rest of the fix is the view asking for a window rather
+	// than for everything, which is what `everyTreeRow` is standing in for.
+	held := serval.NewCachedSource(end)
+	src := serval.NewAmendedSource(held)
 
-	// And the notice reaches it. A `stale` naming a record says the child's own
-	// version of it may have moved, which is exactly what this layer's shadow of it
-	// is -- so the shadow goes. A notice naming no record says so of every record,
-	// and there is no per-key shadow to drop for that; the re-read the source fires
-	// is what corrects it.
+	// And a notice reaches both, because they hold different things and each forgets
+	// what is its own to forget.
+	//
+	// The CACHE loses the records and, where a named field decides the sequence, the
+	// runs that placed them -- which is the whole of what invalidation costs and the
+	// reason `how=` travels. The AMENDMENT loses the shadow it kept of the child's
+	// own version of an amended record, so the next read asks again.
+	//
+	// A notice naming no record is every record of the source, which the cache takes
+	// as an extent of neither end; there is no per-key shadow to drop for that, so
+	// the amendment hears nothing and the re-read is what corrects it.
 	end.OnStale(func(n *wire.Stale) {
+		held.Stale(nil, n.Notice())
 		if n.ID != nil {
 			src.Stale(wire.AsData(n.ID))
 		}

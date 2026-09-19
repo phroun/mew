@@ -5,18 +5,17 @@ package display_test
 // The one thing an application says FIRST. Everything else it writes answers a
 // query the display put; this does not, because only the application knows its own
 // records changed and nothing on the display's end can find out. Invalidation is
-// told, never decided -- so what is tested here is that being told is ENOUGH: the
-// notice crosses, it reaches the source it names and no other, and the screen
-// follows.
+// told, never decided -- and both halves of that are here. Being told is ENOUGH:
+// the notice crosses, reaches the source it names and no other, and the screen
+// follows. And being told is NECESSARY: a settled view asks nothing, so a record
+// that changes with nobody saying so is a record the display goes on showing the
+// old version of.
 //
-// The other half of the rule -- that nothing happens until it is told -- cannot be
-// asserted from here yet, because a view over an application source re-reads
-// continuously: a scope completing fires the arrival notice, the reader reads
-// again, that read is another query, and with no cache in the chain to serve it
-// there is nothing to break the cycle. About twenty round trips a second, for as
-// long as the window is open. It is not this file's to fix, and what it costs here
-// is that "the display did not ask" is not a thing this level can observe. The
-// source package asserts it where it holds.
+// The second half is only observable because a cache sits under the application
+// source. Without one the telling was a cycle -- a scope completing fires the
+// arrival notice, the reader reads again, that read is another query -- turning
+// over about twenty times a second for as long as the window was open, and
+// picking up every change by accident. See appsources.go.
 
 import (
 	"path/filepath"
@@ -89,8 +88,34 @@ func waitForRow(t *testing.T, desktop *trinkets.Desktop, lv *trinkets.ListView, 
 	t.Fatalf("row %d never read as %q; the list shows %v", at, want, got)
 }
 
-// A record changes at the application, the application says so, and the row
-// follows -- with nothing on the display's end having asked.
+// settled waits for the display to stop asking, and says how many times it had
+// asked when it stopped.
+//
+// A view reads several times while it finds its size, and those reads are not
+// what this file is about. What matters is that it STOPS: an application source
+// answers after its read returns, so the reader is told and reads again, and it is
+// the cache under it that makes the second read an answer rather than a second
+// question.
+func settled(t *testing.T, rows *shifting) int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	was := -1
+	for time.Now().Before(deadline) {
+		now := rows.reads()
+		if now == was {
+			return now
+		}
+		was = now
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("the display never stopped asking; it is at %d reads and still climbing",
+		rows.reads())
+	return 0
+}
+
+// **Both halves of the rule, in order.** A record changes and nothing happens,
+// because nothing polls and nothing expires and the display cannot know. Then the
+// application says so, and that alone is enough.
 func TestARecordChangesAndTheDisplayIsTold(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 	desktop, _, stop := servingDesktop(t, sock)
@@ -118,8 +143,19 @@ w=new window title="Papers" width=320 height=200 children={
 	lv := waitForList(t, desktop, 5*time.Second)
 	waitForRow(t, desktop, lv, 1, "second")
 
-	// The application changes a record and says so, and that is all it takes.
+	// Nothing happens without a notice. The display has settled, so it is not
+	// asking, and a change nobody mentions does not reach the screen.
+	asked := settled(t, rows)
 	rows.set(1, "renamed")
+	time.Sleep(250 * time.Millisecond)
+	if got := listRows(desktop, lv); len(got) > 1 && got[1] != "second" {
+		t.Errorf("the row changed with nobody having said anything: %v", got)
+	}
+	if now := rows.reads(); now != asked {
+		t.Errorf("the display asked again unprompted: %d reads became %d", asked, now)
+	}
+
+	// And being told is all it takes.
 	if err := src.Stale(serval.NewInt(1), serval.Altered, "name"); err != nil {
 		t.Fatalf("saying so: %v", err)
 	}
@@ -208,5 +244,58 @@ w=new window title="Papers" width=320 height=200 children={
 	// request is the next thing the application asks going through.
 	if _, err := conn.Exec("describe"); err != nil {
 		t.Errorf("the connection did not survive a notice: %v", err)
+	}
+}
+
+// A view over an application source SETTLES, and that is what makes everything
+// above it true.
+//
+// An application answers after its read has returned, so the reader is told when
+// records land and reads again. Nothing about that is optional: it is the only way
+// a source across a connection can be read at all. What makes it terminate is the
+// cache under the source -- the second read is served from what the first answer
+// filed, so it touches no child, nothing lands, and nothing is told.
+//
+// Without it the telling was a cycle. This is the guard, and it is worth having as
+// a test of its own because the failure is silent: everything still works, the
+// screen is even more correct than it should be, and the only symptom is an
+// application being asked the same question forever.
+func TestAViewSettlesRatherThanAskingForever(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "display.sock")
+	desktop, _, stop := servingDesktop(t, sock)
+	defer stop()
+
+	conn, err := client.Dial(sock, "Settling App", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	rows := &shifting{rows: []string{"only"}}
+	if _, err := conn.ProvideSource("papers", rows.fill); err != nil {
+		t.Fatalf("providing: %v", err)
+	}
+	if _, err := conn.Build(`
+w=new window title="Papers" width=320 height=200 children={
+	lv=new listview source="source:papers" display="name"
+}
+`); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	lv := waitForList(t, desktop, 5*time.Second)
+	waitForRow(t, desktop, lv, 0, "only")
+
+	// It stops, and it stops SOON: a handful of reads while the view finds its
+	// size, not one per round trip for as long as the window is open.
+	asked := settled(t, rows)
+	if asked > 8 {
+		t.Errorf("the view asked %d times before settling", asked)
+	}
+
+	// And it stays settled. A second's worth of the old behaviour was about
+	// twenty more reads.
+	time.Sleep(time.Second)
+	if now := rows.reads(); now != asked {
+		t.Errorf("a settled view asked %d more times in a second", now-asked)
 	}
 }
