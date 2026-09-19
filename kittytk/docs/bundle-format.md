@@ -34,6 +34,14 @@ own: it says what to assemble, and the loader assembles it.
       # the alias, and which namespace is meant.
       drops: ( bundle: "drop-folder", want: ">= 0.1.0, optional" ),
       inbox: ( source: "mail.incoming" )
+    ),
+
+    # What its records ARE, for a reader that draws them (optional).
+    tree: (
+      parent:   ".up",       # the field holding a record's parent, by KEY
+      order:    ".rank",     # where a record stands among its siblings
+      label:    ".name",     # what a record is called
+      children: ".kids"      # how many children it has, where it knows
     )
   ),
 
@@ -154,6 +162,7 @@ named, one hop or several.
 | `includes` | a `ComposedSource`, every record under its include's name |
 | `_amendments` | an `AmendedSource` over the whole of that |
 | its own records | records of that amended layer, under keys of their own |
+| `tree` | a `serval.TreeHint` carried ON the source, for a reader to ask for |
 
 So a layer stack is a composition with an amendment over it. **Nothing shadows
 by position** — every included record keeps its include's name in front of its
@@ -162,6 +171,53 @@ and neither hides the other. What shadows is an amendment, naming one record.
 
 A bundle that includes nothing is its records and no more: no composition to
 merge, no amendment layer to carry.
+
+## What a tree hint says
+
+`_bundle.tree` is the author saying what shape the document's own records are. It
+is optional, and a document that says nothing is read as a flat list exactly as
+before.
+
+| member | |
+|---|---|
+| `parent` | the field holding a record's parent, by KEY — an adjacency list |
+| `location` | the field holding the container a record lives in — an address |
+| `root` | how the top level's container is spelled, for `location` |
+| `name` | a record's own segment (default: its key) |
+| `whole` | a record's own full address, where it carries one |
+| `delimiter` | what goes between segments |
+| `children` | how many children a record has, where it knows |
+| `order` | where a record stands among its SIBLINGS |
+| `label` | what a record is called |
+
+**Going down is `parent` or `location`, exactly one.** Those are the two shapes
+that make a level out of one equality, and a tree is built a level at a time.
+`whole` is not one of them: a record carrying its own full address knows where it
+*is* without anything having descended to it, but no equality turns a parent's
+address into its children's. It rides along with `parent` and is never a way down
+by itself.
+
+**The field names wear a dot**, for the same reason `display=` and `value=` do: a
+bundle is read under serval's `Whole`, so a record that is a list names its members
+`.name` and `.up`. A document of plain strings has `key` and `value` and no
+members, and then there is no dot to write.
+
+**It says what the records ARE and never what a reader does with them.** No
+column, no width, no alignment, no what-starts-expanded. A format that reached
+into those would be a format that lets a document lay out somebody else's window.
+It sits on the same line `_amendments` sits on: a bundle says what it *is* and what
+it changed about what it included, and nothing about who reads the result.
+
+An include's hint does not travel up. `objectLibrary` including `figaro` gets
+figaro's records under `figaro/…`, and a hint on figaro describes figaro's;
+merging them would mean one tree over records of two shapes, which is several node
+types over several sources, and that is not a thing a document can state without
+naming sources outside itself.
+
+A hint that cannot mean what it says — two ways down, a root with no container
+field — is a **report** like everything else short of an unmet mandatory include.
+The bundle loads, its records are all there, it reads as a flat list, and the load
+says why it is not a tree.
 
 ## Addressing a record
 

@@ -703,3 +703,99 @@ func TestASortedDeclaredSourceIsNotComparedTheViewsOwnWay(t *testing.T) {
 			tv.flatList[1].Text)
 	}
 }
+
+// --- growing a tree out of what a source says ----------------------------
+
+// **A source that SAYS its records are a hierarchy is grown into one**, and a
+// source that says nothing stays flat. Nothing is guessed: the source is asked.
+func TestAHintedSourceIsGrownIntoATree(t *testing.T) {
+	rows := []serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{serval.Named("name", "a parent")}),
+		serval.NewRow(serval.NewInt(2), serval.Record{
+			serval.Named("name", "a child"), serval.Named("up", 1),
+		}),
+	}
+	plain := serval.NewListSource(rows)
+
+	// Said nothing: one flat level, and every row a leaf. Asserted as STRUCTURE
+	// rather than as captions -- with no mapping declared the caption is serval's
+	// `value`, which these records have not got, so every caption is empty and
+	// comparing them would say nothing about the shape.
+	flat := NewTreeView()
+	flat.SetSource(plain)
+	if len(flat.flatList) != 2 {
+		t.Fatalf("a source that says nothing drew %d rows, want both, flat",
+			len(flat.flatList))
+	}
+	for i, item := range flat.flatList {
+		if !item.IsLeaf() {
+			t.Errorf("row %d draws a twisty over a source that said nothing", i)
+		}
+		if item.Level() != 0 {
+			t.Errorf("row %d stands at level %d, want the top", i, item.Level())
+		}
+	}
+
+	// Said so: a tree, with the caption coming from the hint's own label.
+	said := serval.NewListSource(rows)
+	said.SetTreeHint(serval.TreeHint{Parent: "up", Label: "name"})
+	tv := NewTreeView()
+	tv.SetSource(said)
+
+	if got, want := strings.Join(visualCaptions(tv), " "), "a parent"; got != want {
+		t.Fatalf("the grown tree reads\n  %s\nwant\n  %s", got, want)
+	}
+	if tv.flatList[0].IsLeaf() {
+		t.Error("the parent says it is a leaf")
+	}
+	tv.ExpandItem(tv.flatList[0])
+	if got, want := strings.Join(visualCaptions(tv), " "), "a parent a child"; got != want {
+		t.Errorf("opened, it reads\n  %s\nwant\n  %s", got, want)
+	}
+	// And what the caller handed in is what it reports, not the tree it grew.
+	if tv.Source() != serval.Source(said) {
+		t.Error("it reports a source the caller never handed it")
+	}
+}
+
+// **A hint that cannot mean what it says leaves the source FLAT.** It is a
+// description that turned out contradictory, and one flat level of real records
+// beats no rows at all.
+func TestAContradictoryHintLeavesTheSourceFlat(t *testing.T) {
+	src := serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{serval.Named("value", "a row")}),
+		serval.NewRow(serval.NewInt(2), serval.Record{serval.Named("value", "another")}),
+	})
+	// Two ways down, which is one too many.
+	src.SetTreeHint(serval.TreeHint{Parent: "up", Location: "where", Delimiter: "/"})
+
+	tv := NewTreeView()
+	tv.SetSource(src)
+	if got, want := strings.Join(visualCaptions(tv), " "), "a row another"; got != want {
+		t.Errorf("the tree reads\n  %s\nwant\n  %s -- both rows, flat", got, want)
+	}
+	for _, item := range tv.flatList {
+		if !item.IsLeaf() {
+			t.Errorf("%q draws a twisty over a hint nothing could use", item.Text)
+		}
+	}
+}
+
+// A mapping the CALLER declared beats the hint's label, which is the weakest rung:
+// those above it are the caller's and this one is the data's.
+func TestADeclaredCaptionBeatsTheHintsLabel(t *testing.T) {
+	src := serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("name", "what the data calls it"),
+			serval.Named("title", "what the caller asked for"),
+		}),
+	})
+	src.SetTreeHint(serval.TreeHint{Parent: "up", Label: "name"})
+
+	tv := NewTreeView()
+	tv.SetKindMap("", InOrder("title"))
+	tv.SetSource(src)
+	if got, want := tv.flatList[0].Text, "what the caller asked for"; got != want {
+		t.Errorf("the caption reads %q, want %q", got, want)
+	}
+}

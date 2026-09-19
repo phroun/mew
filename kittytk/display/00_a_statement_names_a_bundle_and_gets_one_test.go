@@ -204,3 +204,221 @@ func TestABundlesNamedMembersWearADot(t *testing.T) {
 		t.Errorf("row 1 means %v, want the weight 20", v)
 	}
 }
+
+// --- a bundle says what shape its records are ----------------------------
+
+// storeHolding is a store with one bundle in it, filed under its own key.
+func storeHolding(t *testing.T, key, text string) *appStore {
+	t.Helper()
+	s := shelves(t)
+	stock(t, s, key+"-1.0.0", text)
+	return s
+}
+
+// A bundle whose records are a hierarchy, saying so.
+//
+// **The field names wear a DOT**, because a bundle's records do: read under
+// serval's `Whole`, a record that is a list names its members `.name` and `.up`.
+// It is the same rule `display=` and `value=` follow on a list, and it is the one
+// thing about this that catches people.
+//
+// `up` is the parent's KEY, and a positional record's key is its index -- so
+// local's `.up: 0` puts it under usr, the first record of the document.
+const filesBundle = `(
+  _bundle: (
+    key: "files", version: "1.0.0",
+    tree: ( parent: ".up", order: ".rank", label: ".name", children: ".kids" )
+  ),
+  ( name: "usr",   rank: 2, kids: 1 ),
+  ( name: "etc",   rank: 1, kids: 0 ),
+  ( name: "local", up: 0, rank: 1, kids: 0 )
+)`
+
+// **A bundle can say what shape its own records are**, and the source it becomes
+// carries the saying -- so a reader given only the source can ask.
+func TestABundleSaysWhatShapeItsRecordsAre(t *testing.T) {
+	s := storeHolding(t, "files", filesBundle)
+	src, err := trinkets.LookupSourceOn(onStore(t, s), "bundle:files")
+	if err != nil {
+		t.Fatalf("loading it: %v", err)
+	}
+	hint, said := serval.TreeHintOf(src)
+	if !said {
+		t.Fatal("the bundle said what its records are, and the source it became did not")
+	}
+	if hint.Parent != ".up" || hint.Order != ".rank" ||
+		hint.Label != ".name" || hint.Children != ".kids" {
+		t.Errorf("it says %+v", hint)
+	}
+}
+
+// A bundle that says nothing about its shape says nothing, rather than an empty
+// hint that reads as one.
+func TestABundleThatSaysNothingSaysNothing(t *testing.T) {
+	s := storeHolding(t, "plain", `(_bundle: (key: "plain", version: "1.0.0"), ("a record"))`)
+	src, err := trinkets.LookupSourceOn(onStore(t, s), "bundle:plain")
+	if err != nil {
+		t.Fatalf("loading it: %v", err)
+	}
+	if _, said := serval.TreeHintOf(src); said {
+		t.Error("a bundle with no tree block says something about its shape")
+	}
+}
+
+// **A hint that cannot mean what it says is a REPORT, not a refusal.** The records
+// are all still there and the author's mistake is about their shape, so the bundle
+// loads, reads as a flat list, and says why it is not a tree. Refusing would lose
+// the records over a sentence about them.
+func TestAContradictoryHintIsReportedAndTheBundleLoads(t *testing.T) {
+	s := storeHolding(t, "muddle", `(
+  _bundle: (
+    key: "muddle", version: "1.0.0",
+    tree: ( parent: "up", location: "where", delimiter: "/" )
+  ),
+  ("a record")
+)`)
+	loaded, err := s.LoadBundle("muddle", "", nil)
+	if err != nil {
+		t.Fatalf("it was refused: %v", err)
+	}
+	if loaded.Source == nil {
+		t.Fatal("it loaded no source")
+	}
+	if _, said := serval.TreeHintOf(loaded.Source); said {
+		t.Error("a hint that cannot mean what it says was carried anyway")
+	}
+	if len(loaded.Trouble) == 0 {
+		t.Fatal("nothing was said about it")
+	}
+	if !strings.Contains(loaded.Trouble[0].Reason, "two ways down") {
+		t.Errorf("it says %q, want what is wrong with the hint", loaded.Trouble[0].Reason)
+	}
+}
+
+// **The whole path: a document says its records are a hierarchy, and a tree draws
+// one.** Nobody configured a tree anywhere -- no criterion, no node type, no
+// standing. The bundle said what its records ARE and the view grew the rest.
+//
+// The caption comes from the hint's `label`, which is the one word it says about
+// what a record is called, and no mapping is declared here either.
+func TestATreeGrowsItselfFromABundlesHint(t *testing.T) {
+	s := storeHolding(t, "files", filesBundle)
+	src, err := trinkets.LookupSourceOn(onStore(t, s), "bundle:files")
+	if err != nil {
+		t.Fatalf("loading it: %v", err)
+	}
+
+	tv := trinkets.NewTreeView()
+	tv.SetSource(src)
+
+	// `rank` orders the top level, so etc stands before usr.
+	if got, want := strings.Join(captionsOfTree(tv), " "), "etc usr"; got != want {
+		t.Fatalf("the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+	// And usr is not a leaf: the bundle said it has one child.
+	items := tv.RootItems()
+	if len(items) != 2 {
+		t.Fatalf("the tree has %d top rows", len(items))
+	}
+	usr := items[1]
+	if usr.Text != "usr" {
+		t.Fatalf("row 1 is %q", usr.Text)
+	}
+	if usr.IsLeaf() {
+		t.Error("usr says it is a leaf; the bundle said it has a child")
+	}
+	if items[0].IsLeaf() != true {
+		t.Error("etc says it has children; the bundle said it has none")
+	}
+
+	// Opening it reaches the child, which is what makes this a tree rather than a
+	// flat list with a twisty drawn on it.
+	tv.ExpandItem(usr)
+	if got, want := strings.Join(captionsOfTree(tv), " "), "etc usr local"; got != want {
+		t.Errorf("with usr open the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// And `Source` still answers what the caller handed in, rather than the tree the
+// view grew out of it -- a caller asking what it gave is asking about its own
+// source.
+func TestAGrownTreeStillReportsTheSourceItWasGiven(t *testing.T) {
+	s := storeHolding(t, "files", filesBundle)
+	src, err := trinkets.LookupSourceOn(onStore(t, s), "bundle:files")
+	if err != nil {
+		t.Fatalf("loading it: %v", err)
+	}
+	tv := trinkets.NewTreeView()
+	tv.SetSource(src)
+	if tv.Source() != src {
+		t.Error("it reports a source the caller never handed it")
+	}
+}
+
+// captionsOfTree is what a tree draws, in order.
+func captionsOfTree(tv *trinkets.TreeView) []string {
+	var out []string
+	var walk func(items []*trinkets.TreeItem)
+	walk = func(items []*trinkets.TreeItem) {
+		for _, it := range items {
+			out = append(out, it.Text)
+			if it.Expanded {
+				walk(it.Children)
+			}
+		}
+	}
+	walk(tv.RootItems())
+	return out
+}
+
+// **An empty block says nothing**, rather than an empty hint that reads as one and
+// then gets reported as contradictory. A member written and left blank is a member
+// somebody is still thinking about.
+func TestAnEmptyTreeBlockSaysNothing(t *testing.T) {
+	s := storeHolding(t, "blank", `(
+  _bundle: ( key: "blank", version: "1.0.0", tree: () ),
+  ("a record")
+)`)
+	loaded, err := s.LoadBundle("blank", "", nil)
+	if err != nil {
+		t.Fatalf("it was refused: %v", err)
+	}
+	if _, said := serval.TreeHintOf(loaded.Source); said {
+		t.Error("an empty block was heard as a hint")
+	}
+	if len(loaded.Trouble) != 0 {
+		t.Errorf("it complained: %v", loaded.Trouble)
+	}
+}
+
+// A bundle that INCLUDES something says its shape too. The hint belongs to the
+// assembled layer, which is what a reader is handed -- and a leaf bundle and a
+// composed one become different Go types, so one saying so proves nothing about
+// the other.
+func TestAComposedBundleSaysItsShapeToo(t *testing.T) {
+	s := shelves(t)
+	stock(t, s, "leaf-1.0.0", `(_bundle: (key: "leaf", version: "1.0.0"), ("a leaf record"))`)
+	stock(t, s, "over-1.0.0", `(
+  _bundle: (
+    key: "over", version: "1.0.0",
+    includes: ( leaf: ">= 1.0.0" ),
+    tree: ( parent: ".up", label: ".name" )
+  ),
+  ( name: "its own", up: 0 )
+)`)
+	loaded, err := s.LoadBundle("over", "", nil)
+	if err != nil {
+		t.Fatalf("loading it: %v", err)
+	}
+	if len(loaded.Trouble) != 0 {
+		t.Fatalf("it complained: %v", loaded.Trouble)
+	}
+	hint, said := serval.TreeHintOf(loaded.Source)
+	if !said {
+		t.Fatal("a bundle with includes said what its records are, and the layer it " +
+			"became did not carry it")
+	}
+	if hint.Parent != ".up" || hint.Label != ".name" {
+		t.Errorf("it says %+v", hint)
+	}
+}

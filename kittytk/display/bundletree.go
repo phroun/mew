@@ -8,12 +8,25 @@ package display
 //
 //	_bundle: (
 //	  key: "files", version: "1.0.0",
-//	  tree: ( parent: "up", order: "rank", label: "name", children: "kids" )
+//	  tree: ( parent: ".up", order: ".rank", label: ".name", children: ".kids" )
 //	)
 //
 // It is read straight into a `serval.TreeHint`, which is where what a hint MEANS
 // lives, and hung on the assembled source so that a reader given only the source
 // can ask. Nothing here interprets it.
+//
+// # The field names wear a dot, and this is where it bites
+//
+// A bundle is read under serval's `Whole`, so a record that is a LIST names its
+// members `.name`, `.up`, `.0`. A hint names FIELDS as serval will see them, dot
+// and all:
+//
+//	tree: ( parent: ".up", label: ".name" )
+//
+// It is the same rule `display=` and `value=` follow on a list, and taking the dot
+// off would be a second rule about one thing. A bundle whose records are not lists
+// -- a document of plain strings -- has `key` and `value` and no members, and then
+// there is no dot to write.
 //
 // # It says what the records ARE, never what a view does
 //

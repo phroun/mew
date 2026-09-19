@@ -136,10 +136,17 @@ type TreeView struct {
 	// Where the rows come from (see treesource.go). A tree given no source
 	// makes one out of its own items, so flatList is a window on a sequence
 	// either way rather than something the view walks for itself.
-	source  serval.Source // declared: what SetSource was given
-	made    *serval.TreeSource
-	set     serval.DataSet
-	restate bool
+	source serval.Source // declared: what SetSource was given
+	made   *serval.TreeSource
+	// grown is a tree built out of a declared source's own TREE HINT, where it
+	// said one and was not already a tree. What a sequence is stated over is this
+	// where it exists; `Source` still answers what the caller handed in.
+	grown *serval.TreeSource
+	// hintLabel is the field a hinted source said holds a record's own name,
+	// which is the caption's weakest rung.
+	hintLabel string
+	set       serval.DataSet
+	restate   bool
 	// byID leads a row's key back to the very item the caller handed in,
 	// because everything reading flatList compares pointers.
 	byID map[core.ObjectID]*TreeItem

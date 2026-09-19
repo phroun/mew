@@ -235,6 +235,10 @@ func (t *TreeView) cellOf(kind string, col *TreeColumn) CellMap {
 			return CellMap{Value: positionName(0)}
 		case m.Dotted:
 			return CellMap{Value: "." + captionMember}
+		case t.hintLabel != "":
+			// What a hinted SOURCE said its records are called. Weaker than every
+			// rung above, because those are the caller's and this is the data's.
+			return CellMap{Value: t.hintLabel}
 		}
 		return CellMap{Value: serval.ValueField}
 	}

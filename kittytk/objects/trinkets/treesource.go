@@ -64,7 +64,7 @@ const everyTreeRow = 1 << 30
 //
 // Nil where there is nothing to read, which is an empty tree and is ordinary.
 func (t *TreeView) sequence() serval.DataSet {
-	read := t.source
+	read := t.reading()
 	if read == nil {
 		if t.restate || t.made == nil {
 			t.closeSequence()
@@ -87,6 +87,21 @@ func (t *TreeView) sequence() serval.DataSet {
 		t.set = set
 	}
 	return t.set
+}
+
+// reading is the source a sequence is stated over: the tree GROWN from a hint
+// where there is one, and otherwise what SetSource was given.
+//
+// They differ because a source may describe its own records without being a tree
+// -- a bundle of files carrying a `parent` field is a flat list that says how to
+// go down it -- and the view is what turns the saying into a tree. `Source`
+// answers what the caller handed in either way, that being what the caller asked
+// about.
+func (t *TreeView) reading() serval.Source {
+	if t.grown != nil {
+		return t.grown
+	}
+	return t.source
 }
 
 // closeSequence lets the stated sequence go. The next read states it again.
@@ -207,7 +222,7 @@ func (t *TreeView) flatten() []*TreeItem {
 	// DECLARED source's rows have no items until this, so one is made per
 	// identity and kept, and the depth the tree reported is what its parentage is
 	// rebuilt from.
-	names, isTree := serval.TreeFieldsOf(t.source)
+	names, isTree := serval.TreeFieldsOf(t.reading())
 	items := make([]*TreeItem, 0, len(out.ids))
 	depth := make([]int, 0, len(out.ids))
 	for i, id := range out.ids {
@@ -267,11 +282,14 @@ func (t *TreeView) SetSource(src serval.Source) {
 	t.closeSequence()
 	t.source = src
 	t.made = nil
+	t.grown = nil
+	t.hintLabel = ""
 	t.fromSource = nil
 	t.fromTop = nil
 	t.restate = true
 	t.currentIndex = -1
 	t.scrollOffset = 0
+	t.growFromHint()
 	// Before the first read, so the rows arrive in the order the columns state
 	// rather than in the configuration's and then again in this one.
 	t.tellOrder()
@@ -280,7 +298,62 @@ func (t *TreeView) SetSource(src serval.Source) {
 }
 
 // Source is what this tree reads, and nil for one reading its own items.
+//
+// What the CALLER handed in, which is not always what a sequence is stated over:
+// a source that says its records are a hierarchy without being a tree is grown
+// into one here. See reading.
 func (t *TreeView) Source() serval.Source { return t.source }
+
+// growFromHint makes a tree out of a source that SAYS its records are one.
+//
+// **The source is asked, and nothing is guessed.** A flat source stays flat: this
+// does nothing at all unless the source implements serval's `Hinting` and says
+// something -- at which point the hint already knows what tree it describes, and
+// `Options` is it. Nothing here reads a field name or decides what a column means.
+//
+// A source that is ALREADY a tree is left alone: it has descended for itself, and
+// a hint on it would describe the records its levels are drawn from rather than
+// the flattening it answers.
+//
+// A hint that cannot mean what it says leaves the source flat. It is a
+// description that turned out contradictory, and one flat level of real records
+// beats no rows at all -- the same call a bundle load makes about a bad include.
+func (t *TreeView) growFromHint() {
+	if t.source == nil {
+		return
+	}
+	// An EQUIVALENT mutant today, and kept: a TreeSource does not embed
+	// serval's HintSaid, so it never says a hint and TreeHintOf would turn this
+	// away anyway. It is here because the REASON matters -- a tree has descended
+	// for itself, and a hint on it would describe the records its levels are drawn
+	// from rather than the flattening it answers -- and because the day something
+	// gives a TreeSource a hint, this is what stops it being grown twice.
+	if _, already := t.source.(*serval.TreeSource); already {
+		return
+	}
+	hint, said := serval.TreeHintOf(t.source)
+	if !said {
+		return
+	}
+	// Also EQUIVALENT today: a hint that fails Check yields the zero TreeOptions,
+	// and NewTreeSource refuses one for having no source -- so ignoring this error
+	// reaches the same nil by a longer road. Said here because the two refusals are
+	// about different things, and relying on the second to catch the first would be
+	// relying on an accident.
+	opt, err := hint.Options(t.source)
+	if err != nil {
+		return
+	}
+	grown, err := serval.NewTreeSource(opt)
+	if err != nil {
+		return
+	}
+	t.grown = grown
+	// The label is the hint's one word about what a record is CALLED, and the
+	// caption is where that goes. It is the weakest rung, so anything the caller
+	// declared still wins -- see cellOf.
+	t.hintLabel = hint.Label
+}
 
 // Reread says the declared source's answer has changed, so the view reads it
 // again.
@@ -498,7 +571,7 @@ func hangFrom(rows []*TreeItem, depth []int) []*TreeItem {
 // has no items to carry anything from, so the marks are the only authority --
 // which is the same mechanism said from the other side, not a second one.
 func (t *TreeView) marks() *serval.TreeSource {
-	if src, ok := t.source.(*serval.TreeSource); ok {
+	if src, ok := t.reading().(*serval.TreeSource); ok {
 		return src
 	}
 	return nil
