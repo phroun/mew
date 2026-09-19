@@ -37,6 +37,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -50,7 +51,18 @@ func main() {
 	a, err := start(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
-		fmt.Fprintln(os.Stderr, "start a desktop first: go run ./cmd/kittytk-tui (or -tags sdl ./cmd/kittytk-sdl)")
+		// **Which advice depends on which failure**, and the two want opposite
+		// things. Nothing answering means no desktop is up. A desktop that answered
+		// and then refused a property means it IS up and is a build that has not
+		// got it -- and telling somebody to start a desktop they are already
+		// connected to sends them the wrong way, which is what happened.
+		switch {
+		case errors.Is(err, errNoDisplay):
+			fmt.Fprintln(os.Stderr, "start a desktop first: go run ./cmd/kittytk-tui (or -tags sdl ./cmd/kittytk-sdl)")
+		default:
+			fmt.Fprintln(os.Stderr, "the desktop answered and refused this; if it refused a property,"+
+				" it is a build from before that property existed -- rebuild and restart it")
+		}
 		os.Exit(1)
 	}
 	defer a.conn.Close()
@@ -74,12 +86,16 @@ type app struct {
 	flat, deep int
 }
 
+// errNoDisplay marks the one failure whose remedy is starting a desktop. Every
+// other one here happened BECAUSE a desktop answered.
+var errNoDisplay = errors.New("no display service answered")
+
 // start is the whole of standing this application up, so that the live-session
 // test drives what the binary does rather than something like it.
 func start(path string) (*app, error) {
 	conn, err := client.Dial(path, "KittyTK Big Tree", nil)
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach display service at %s: %w", path, err)
+		return nil, fmt.Errorf("cannot reach display service at %s: %w: %w", path, errNoDisplay, err)
 	}
 
 	// Hosting the far ends. **Nothing goes out on the wire for this**: a source is
