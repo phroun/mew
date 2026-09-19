@@ -509,6 +509,57 @@ class Answer:
                 return a
         return None
 
+    # The readers, one per kind of thing an argument can be. Each answers None
+    # for an argument that is absent AND for one that is there in another kind,
+    # because an asker reading `size=` wants a size and "there is a size, but it
+    # is a word" is not one -- the same bargain an event's readers make, in the
+    # same words, so that moving a question off events does not change how its
+    # answer is read.
+
+    def uint(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.NUMBER \
+                or not a.value.is_int or a.value.number < 0:
+            return None
+        return int(a.value.number)
+
+    def int_(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.NUMBER \
+                or not a.value.is_int:
+            return None
+        return int(a.value.number)
+
+    def text(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.STRING:
+            return None
+        return a.value.str
+
+    def blob(self, name: str):
+        """The argument's bytes, for a value written with every byte outside
+        printable ASCII escaped -- a chunk of a blob, say.
+
+        latin-1 is what turns the string back into the bytes that were sent:
+        each \\xNN unescaped to one code point in 0..255, where utf-8 would
+        re-encode everything above 0x7f into two."""
+        s = self.text(name)
+        if s is None:
+            return None
+        return s.encode("latin-1", "replace")
+
+    def word(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.WORD:
+            return None
+        return a.value.word
+
+    def flag(self, name: str) -> FlagState:
+        a = self.arg(name)
+        if a is None or a.value is not None:
+            return FlagState.NONE
+        return a.flag
+
     def record(self) -> Tuple[Optional[Value], Fields, bool, bool]:
         """The record this answer carries, where it carries one: its identity,
         its fields, whether the record is WHOLE, and whether there was one.

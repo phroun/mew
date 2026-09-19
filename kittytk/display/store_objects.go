@@ -7,25 +7,34 @@ package display
 // the application's. An item on it is an object too. So nothing here needs a
 // verb of its own:
 //
-//	sub store store_blob store_done store_data store_gone store_error
+//	sub store store_blob store_gone store_error
 //	set store blobs={ new blob key="figaro" type=psl data="..." }
-//	ask store inventory                    what is in it
+//	q1=ask store inventory                 what is in it
 //	do <blob> append bytes="..."           add to the end, as a terminal is fed
 //	set <blob> data="..."                  replace
-//	ask <blob> bytes offset=2048           the chunk that starts there
+//	q2=ask <blob> bytes offset=2048         the chunk that starts there
 //	destroy <blob>                         drop it
 //
-// Every answer names the store as its source, so one subscription covers all of
-// them -- and the client subscribes to each event type it wants, as it does for
-// any other object.
+// # A question is answered, and a change is announced
 //
-// Asking to hear about the store is NOT asking what is in it. OnSubscribe would
-// have been the place to push an inventory, and a terminal does push its grid
-// size that way, but that works because it pushes one event OF THE TYPE being
-// subscribed to. An inventory is a run of store_blob ending in a store_done, and
-// the hook fires on the first subscription of the run -- before the client has
-// subscribed to the type that ends it, which would then be filtered out. So the
-// inventory is asked for: `ask store inventory`.
+// The two halves of that list travel by different verbs, and which one a thing
+// takes is settled by whether anybody asked.
+//
+// An inventory and a chunk were ASKED FOR, so they come back as `answer`,
+// quoting the key the question carried. An `event` that responded to an ask
+// would be a third meaning for a verb that already has two -- a subscribed
+// event, or an object saying something about itself -- and it was one: before
+// this, asking what the store held sent a run of store_blob and a store_done,
+// which a client had to have subscribed to in advance in order to hear its own
+// answer. An inventory is now one answer per item and a completion carrying the
+// count; a chunk is a single answer that completes the question it answers.
+//
+// A change to a blob was not asked for. Writing one or appending to it makes the
+// store say what the blob NOW IS, with store_blob, because every change to a
+// blob is reported that way and that is the store's own business rather than a
+// reply to the statement that caused it. Dropping one says store_gone, and a
+// refusal on either path says store_error. Those three stay events, and a client
+// subscribes to them as it does for any other object.
 //
 // A key beginning with the cache mark is discardable; that is the only
 // difference. See store.go.
@@ -39,9 +48,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// The events the store raises, all on the store itself so one subscription
-// hears everything.
-// The questions the store and its blobs answer.
+// The questions the store and its blobs answer, and the one thing a blob does.
+// Each is answered with `answer`, not with an event: see the file comment.
 const (
 	AskInventory = "inventory" // what the store holds
 	AskBytes     = "bytes"     // a blob's contents, a chunk at a time
@@ -49,10 +57,11 @@ const (
 	DoAppend = "append" // add to the end of a blob
 )
 
+// The events the store raises, all on the store itself so one subscription hears
+// everything. None of them answers a question: each is the store saying what has
+// happened to a blob, which nobody asked.
 const (
 	EventStoreBlob  = "store_blob"  // one blob: what it is and how big
-	EventStoreDone  = "store_done"  // the end of an inventory
-	EventStoreData  = "store_data"  // one chunk of an item being read back
 	EventStoreGone  = "store_gone"  // an item is no longer there
 	EventStoreError = "store_error" // what went wrong, and with which key
 )
@@ -82,10 +91,10 @@ func (s *storeObject) Set(name string, _ *protocol.Value, _ protocol.FlagState) 
 }
 
 // Ask answers a question put to the store.
-func (s *storeObject) Ask(question string, _ []*protocol.Arg, _ *protocol.Answers) error {
+func (s *storeObject) Ask(question string, _ []*protocol.Arg, out *protocol.Answers) error {
 	switch question {
 	case AskInventory:
-		s.sendInventory()
+		s.sendInventory(out)
 		return nil
 	}
 	return fmt.Errorf("a store answers no question called %q", question)
@@ -179,19 +188,42 @@ func (s *storeObject) forget(key string) {
 // sendInventory says what the store holds, one answer per item and one saying
 // that was all of them. Every item named gets a handle, so what the client is
 // told about it can also be addressed.
-func (s *storeObject) sendInventory() {
+func (s *storeObject) sendInventory(out *protocol.Answers) {
 	store, err := s.conn.appStore()
 	if err != nil {
-		s.failed("", err)
+		out.Fail("%s", err.Error())
 		return
 	}
 	items := store.list()
 	for _, it := range items {
 		if h := s.handleFor(it); h != nil {
-			s.itemChanged(h, it)
+			out.Send(itemArgs(h, it)...)
 		}
 	}
-	s.answer(protocol.NewEvent(EventStoreDone).WithInt("count", len(items)))
+	out.Done(protocol.Named("count", len(items)))
+}
+
+// itemArgs is what an item IS: the arguments an inventory answers with, and the
+// fields the store's own report of a change carries.
+//
+// One shape for both, because they say the same thing about the same item. What
+// differs is why it was said -- an inventory was asked for, a change was not -- and
+// that is what decides whether it travels as an answer or as an event.
+func itemArgs(h *blobHandle, it storeItem) []*protocol.Arg {
+	args := []*protocol.Arg{
+		{Name: "blob", Value: protocol.NewInt(int64(h.id))},
+		protocol.Named("key", it.key),
+		{Name: "type", Value: &protocol.Value{Kind: protocol.WordValue, Word: it.typ}},
+		{Name: "size", Value: protocol.NewInt(int64(it.size))},
+	}
+	// The hash is left out where there is none, which is what an item part way
+	// through being appended to has. Absent means "not settled", not "empty": an
+	// app reads it as nothing to compare against and carries on uploading, which is
+	// the safe way round.
+	if it.hash != "" {
+		args = append(args, protocol.Named("hash", it.hash))
+	}
+	return args
 }
 
 // itemChanged says what an item now is.
@@ -209,7 +241,7 @@ func (s *storeObject) itemChanged(h *blobHandle, it storeItem) {
 	if it.hash != "" {
 		ev = ev.WithString("hash", it.hash)
 	}
-	s.answer(ev)
+	s.announce(ev)
 }
 
 // failed says what was refused and why. A refusal is an answer rather than a
@@ -219,20 +251,20 @@ func (s *storeObject) failed(key string, err error) {
 	if key != "" {
 		ev = ev.WithString("key", key)
 	}
-	s.answer(ev.WithString("reason", err.Error()))
+	s.announce(ev.WithString("reason", err.Error()))
 }
 
-// answer names the store as the event's source and queues it to go out when the
-// batch that asked is done.
+// announce names the store as the event's source and queues it to go out when
+// the batch that provoked it is done.
 //
 // It is queued rather than emitted because `set` runs with emission SUPPRESSED
 // (D20: a property a client set does not come back to it as an event). That rule
 // is right for state -- a checkbox told to be checked must not echo a toggle --
 // and these are not echoes: they carry what the client cannot otherwise learn,
-// the id a blob is addressed by, its size, its bytes. So they wait for the
-// suppression to lift and go out ahead of the reply that ends the batch, the way
-// the describe verb's own output does.
-func (s *storeObject) answer(ev *protocol.Event) {
+// the id a blob is addressed by and its size. So they wait for the suppression to
+// lift and go out ahead of the reply that ends the batch, the way the describe
+// verb's own output does.
+func (s *storeObject) announce(ev *protocol.Event) {
 	s.conn.queueAnswer(ev.WithUint("store", s.id))
 }
 
@@ -298,29 +330,37 @@ func (h *blobHandle) write(what string, data []byte, extend bool) error {
 }
 
 // sendChunk answers with the slice of this item that starts at offset.
-func (h *blobHandle) sendChunk(offset int) error {
+func (h *blobHandle) sendChunk(offset int, out *protocol.Answers) error {
 	s, key, _, ok := h.held()
 	if !ok {
 		return fmt.Errorf("read: this item is not in a store yet")
 	}
 	store, err := s.conn.appStore()
 	if err != nil {
-		s.failed(key, err)
+		out.Fail("%s", err.Error())
 		return nil
 	}
 	data, it, last, err := store.read(key, int64(offset))
 	if err != nil {
-		s.failed(key, err)
+		out.Fail("%s", err.Error())
 		return nil
 	}
-	s.answer(protocol.NewEvent(EventStoreData).
-		WithUint("blob", h.id).
-		WithString("key", it.key).
-		WithWord("type", it.typ).
-		WithInt("offset", offset).
-		WithInt("size", int(it.size)).
-		WithBlob("data", data).
-		WithFlag("last", flagOf(last)))
+	// **The chunk COMPLETES the question, and the next offset is a new one.**
+	// A read asks for the slice that starts here; it is answered with that slice
+	// and nothing more. `last` says whether there is another to ask for, which is
+	// a fact about the item rather than about this answer.
+	args := []*protocol.Arg{
+		{Name: "blob", Value: protocol.NewInt(int64(h.id))},
+		protocol.Named("key", it.key),
+		{Name: "type", Value: &protocol.Value{Kind: protocol.WordValue, Word: it.typ}},
+		{Name: "offset", Value: protocol.NewInt(int64(offset))},
+		{Name: "size", Value: protocol.NewInt(int64(it.size))},
+		protocol.Blob("data", data),
+	}
+	if last {
+		args = append(args, &protocol.Arg{Name: "last", Flag: protocol.FlagTrue})
+	}
+	out.Done(args...)
 	return nil
 }
 
@@ -355,7 +395,7 @@ func blobArg(call, name string, args []*protocol.Arg) ([]byte, error) {
 }
 
 // Ask answers a question put to the blob.
-func (h *blobHandle) Ask(question string, args []*protocol.Arg, _ *protocol.Answers) error {
+func (h *blobHandle) Ask(question string, args []*protocol.Arg, out *protocol.Answers) error {
 	switch question {
 	case AskBytes:
 		offset := 0
@@ -364,7 +404,7 @@ func (h *blobHandle) Ask(question string, args []*protocol.Arg, _ *protocol.Answ
 				offset = int(a.Value.Int)
 			}
 		}
-		return h.sendChunk(offset)
+		return h.sendChunk(offset, out)
 	}
 	return fmt.Errorf("a blob answers no question called %q", question)
 }
@@ -386,7 +426,7 @@ func (h *blobHandle) destroy() error {
 		return nil
 	}
 	s.forget(key)
-	s.answer(protocol.NewEvent(EventStoreGone).
+	s.announce(protocol.NewEvent(EventStoreGone).
 		WithUint("blob", h.id).
 		WithString("key", key))
 	return nil
@@ -413,29 +453,21 @@ func init() {
 			}).Tip("Blobs written into the store.").Members("blob"),
 		},
 		Asks: map[string]protocol.AskDesc{
-			AskInventory: protocol.NewAskDesc("What the store holds.").
-				Answering(EventStoreBlob, EventStoreDone),
+			AskInventory: protocol.NewAskDesc(
+				"What the store holds: one answer per item, carrying blob=, key=, " +
+					"type=, size= and hash= as store_blob does, then a completion " +
+					"carrying count=. A store holding nothing answers the completion " +
+					"alone, which is an answer and not a refusal.").
+				Answering(protocol.AnswerVerb),
 		},
 		Events: map[string]protocol.EventDesc{
-			EventStoreBlob: protocol.NewEventDesc("One item: what an inventory lists, and what a write answers with.").
+			EventStoreBlob: protocol.NewEventDesc("One item, as the store now has it: what writing one or appending to it reports. An inventory says the same things, but it was asked for, so it comes back as an answer.").
 				Field("store", "uint", "The store the item is in.").
 				Field("blob", "uint", "The blob, addressable from here on.").
 				Field("key", "string", "What the app calls it. A leading # means the desktop may throw it away.").
 				Field("type", "enum", "txt, psl, bin, ini or conf.").
 				Field("size", "int", "Its size in bytes. This is the cursor of an upload in progress: how much has landed, and so where to carry on from.").
 				Field("hash", "string", "sha256 over the item's bytes, lowercase hex. Compare it against your own copy to decide whether to upload at all. Absent where the item has been appended to and not asked about since, which reads as nothing to compare rather than as empty. Hash WHAT YOU SEND: an app that rewrites line endings on the way out and hashes what it read will never match, and will upload every time."),
-			EventStoreDone: protocol.NewEventDesc("The end of an inventory: every item has been sent.").
-				Field("store", "uint", "The store the inventory is of.").
-				Field("count", "int", "How many items were listed."),
-			EventStoreData: protocol.NewEventDesc("One chunk of an item. Set read= again from the offset reached until the chunk marked last.").
-				Field("store", "uint", "The store the item is in.").
-				Field("blob", "uint", "The blob the chunk is of.").
-				Field("key", "string", "What the app calls it.").
-				Field("type", "enum", "txt, psl, bin, ini or conf.").
-				Field("offset", "int", "Where in the item this chunk starts.").
-				Field("size", "int", "The whole item's size in bytes.").
-				Field("data", "string", "The chunk's bytes, every one of them escaped that is not printable ASCII.").
-				Field("last", "flag", "Set on the chunk that ends the item."),
 			EventStoreGone: protocol.NewEventDesc("An item is no longer in the store: what destroying one answers with.").
 				Field("store", "uint", "The store it was in.").
 				Field("blob", "uint", "The blob that is gone.").
@@ -501,9 +533,13 @@ func init() {
 				Arg("bytes", "blob", "What to add, every byte outside printable ASCII escaped."),
 		},
 		Asks: map[string]protocol.AskDesc{
-			AskBytes: protocol.NewAskDesc("The blob's contents, one chunk at a time.").
+			AskBytes: protocol.NewAskDesc(
+				"The blob's contents, one chunk at a time. The chunk that starts at "+
+					"offset= COMPLETES the question, carrying blob=, key=, type=, "+
+					"offset=, size=, data= and last=; reading the next chunk is a new "+
+					"question, asked from the offset this one reached.").
 				Arg("offset", "int", "Where to read from; 0 for the start.").
-				Answering(EventStoreData),
+				Answering(protocol.AnswerVerb),
 		},
 	})
 }

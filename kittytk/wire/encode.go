@@ -75,6 +75,14 @@ func Val(v any) *Value {
 // Named is one named value, for building an event's fields or a record's.
 func Named(name string, v any) *Arg { return &Arg{Name: name, Value: Val(v)} }
 
+// Blob is one named argument carrying BYTES rather than text: every byte that is
+// not printable ASCII escaped on the way out, and read back by Event.Blob or by
+// whoever unescapes it. The same thing Event.WithBlob builds, for a caller putting
+// arguments together rather than an event.
+func Blob(name string, b []byte) *Arg {
+	return &Arg{Name: name, Value: &Value{Kind: StringValue, Str: string(b), Blob: true}}
+}
+
 // IsWord reports whether a string can be written as a bare word and read back
 // as the same one.
 //

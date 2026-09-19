@@ -3,8 +3,10 @@ package display_test
 // A query put to one application by another, carried by the display.
 //
 // The display has no orchestrated reason to open a query yet, and does not
-// need one to carry the question: `ask host relay` hands the statements over
-// and sends back whatever comes. So the whole reverse direction can be driven
+// need one to carry the question: `do host relay` hands the statements over
+// and sends back whatever comes, as `relay` events subscribed to beforehand --
+// another application's speech is not the answer to a question, arriving
+// whenever it speaks and with no last one. So the whole reverse direction can be driven
 // over a real connection -- an application serving, a display routing, a tool
 // asking -- before the piece that decides WHEN to ask exists.
 //
@@ -76,7 +78,7 @@ func relayed(t *testing.T, conn *client.Conn, text string) ([]string, error) {
 			once.Do(func() { close(done) })
 		}
 	})
-	if err := conn.Host().Ask("relay to=\"servingapp\" text=" + wire.Quote(text)); err != nil {
+	if err := conn.Relay("servingapp", text); err != nil {
 		return nil, err
 	}
 	select {
@@ -146,7 +148,7 @@ func TestARelayedRefusalComesBack(t *testing.T) {
 			once.Do(func() { close(seen) })
 		}
 	})
-	if err := tool.Host().Ask(`relay to="servingapp" text="q=new query source=\"ledgers\" count=1"`); err != nil {
+	if err := tool.Relay("servingapp", `q=new query source="ledgers" count=1`); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -174,7 +176,7 @@ func TestTheRelayIsShutUnlessTheDisplayOpensIt(t *testing.T) {
 	tool := dialSocket(t, sock, "asking tool")
 	defer tool.Close()
 
-	err := tool.Host().Ask(`relay to="servingapp" text="q=new query source=\"letters\" count=1"`)
+	err := tool.Relay("servingapp", `q=new query source="letters" count=1`)
 	if err == nil || !strings.Contains(err.Error(), "not open") {
 		t.Errorf("relaying with the relay shut read %v", err)
 	}
@@ -187,7 +189,7 @@ func TestRelayingToNobodyIsRefused(t *testing.T) {
 	tool := dialSocket(t, sock, "asking tool")
 	defer tool.Close()
 
-	err := tool.Host().Ask(`relay to="nobody" text="q=new query source=\"x\" count=1"`)
+	err := tool.Relay("nobody", `q=new query source="x" count=1`)
 	if err == nil || !strings.Contains(err.Error(), "nobody") {
 		t.Errorf("relaying to nobody read %v", err)
 	}
@@ -203,7 +205,7 @@ func TestTheDisplayRefusesTextThatIsNotTheLanguage(t *testing.T) {
 	tool := dialSocket(t, sock, "asking tool")
 	defer tool.Close()
 
-	err := tool.Host().Ask(`relay to="servingapp" text="q=new query source={ unterminated"`)
+	err := tool.Relay("servingapp", `q=new query source={ unterminated`)
 	if err == nil {
 		t.Error("text that will not parse was carried anyway")
 	}

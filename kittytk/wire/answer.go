@@ -198,3 +198,61 @@ func (a *Answer) Arg(name string) *Arg {
 	}
 	return nil
 }
+
+// The readers, one per kind of thing an argument can be. Each answers false for an
+// argument that is absent and for one that is there in another kind, because an
+// asker reading `size=` wants a size and "there is a size, but it is a word" is not
+// one -- the same bargain Event's readers make, in the same words, so that moving a
+// question off events does not change how its answer is read.
+
+// Uint reads a whole, non-negative number.
+func (a *Answer) Uint(name string) (uint64, bool) {
+	arg := a.Arg(name)
+	if arg == nil || arg.Value == nil || arg.Value.Kind != NumberValue ||
+		!arg.Value.IsInt || arg.Value.Int < 0 {
+		return 0, false
+	}
+	return uint64(arg.Value.Int), true
+}
+
+// Int reads a whole number.
+func (a *Answer) Int(name string) (int, bool) {
+	arg := a.Arg(name)
+	if arg == nil || arg.Value == nil || arg.Value.Kind != NumberValue || !arg.Value.IsInt {
+		return 0, false
+	}
+	return int(arg.Value.Int), true
+}
+
+// Text reads a string.
+func (a *Answer) Text(name string) (string, bool) {
+	arg := a.Arg(name)
+	if arg == nil || arg.Value == nil || arg.Value.Kind != StringValue {
+		return "", false
+	}
+	return arg.Value.Str, true
+}
+
+// Word reads an identifier or an enum's word.
+func (a *Answer) Word(name string) (string, bool) {
+	arg := a.Arg(name)
+	if arg == nil || arg.Value == nil || arg.Value.Kind != WordValue {
+		return "", false
+	}
+	return arg.Value.Word, true
+}
+
+// Flag reads a flag; FlagNone means the answer did not say either way.
+func (a *Answer) Flag(name string) FlagState {
+	arg := a.Arg(name)
+	if arg == nil || arg.Value != nil {
+		return FlagNone
+	}
+	return arg.Flag
+}
+
+// Blob reads bytes written with Blob, escaping and all.
+func (a *Answer) Blob(name string) ([]byte, bool) {
+	s, ok := a.Text(name)
+	return []byte(s), ok
+}

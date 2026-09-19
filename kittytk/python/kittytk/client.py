@@ -98,6 +98,17 @@ class Conn:
         self._inbound: "queue.Queue" = queue.Queue()
         self._pending_in: List = []
 
+        # What this connection is waiting to be ANSWERED, by correlation key,
+        # and the counter that mints the next one. The key is minted here and
+        # never written by a caller: it exists so two answers cannot be
+        # confused, which is a job for whoever is doing the confusing.
+        #
+        # On a queue and a thread of their own, for the reason events are: an
+        # answer's handler may write, and the reader has to stay free.
+        self._asked: Dict[str, Callable] = {}
+        self._asked_seq = 0
+        self._answers: "queue.Queue" = queue.Queue()
+
         self._closed_flag = False
         self.closed = threading.Event()  # set when the connection ends
 
@@ -119,6 +130,7 @@ class Conn:
     def _start(self):
         threading.Thread(target=self._read_loop, daemon=True).start()
         threading.Thread(target=self._event_loop, daemon=True).start()
+        threading.Thread(target=self._answer_loop, daemon=True).start()
         threading.Thread(target=self._inbound_loop, daemon=True).start()
 
     def _read_loop(self):
@@ -179,6 +191,15 @@ class Conn:
                         # handshake step -- the display says it whenever it has
                         # something to give.
                         self._hand_over(stmt)
+                    elif stmt.verb == _query.ANSWER_VERB:
+                        # What an `ask` is answered with, quoting the key the
+                        # question carried. Not an event: nothing had to have
+                        # subscribed, so there is no filter to pass and no
+                        # emission suppression to wait for.
+                        try:
+                            self._answers.put(_query.parse_answer(stmt.args))
+                        except Exception:  # noqa: BLE001
+                            pass
                     elif stmt.verb == "event":
                         # Two different lines start with this word: an event
                         # the display raised, and a describe stream's record of
@@ -200,6 +221,31 @@ class Conn:
             if ev is None:
                 return
             self.deliver(ev)
+
+    def _answer_loop(self):
+        while True:
+            ans = self._answers.get()
+            if ans is None:
+                return
+            self._deliver_answer(ans)
+
+    def _deliver_answer(self, ans):
+        """Route one answer to whoever asked, and let go when it ends.
+
+        An answer for a question nobody is waiting on is dropped. That is not a
+        failure: an asker may have given up, and an unkeyed answer belongs to a
+        question whose asker never wanted to be told."""
+        if not ans.to:
+            return
+        with self._lock:
+            fn = self._asked.get(ans.to)
+            # Forgotten BEFORE the handler runs, so a handler that asks the
+            # same question again cannot have its new registration dropped by
+            # this one ending.
+            if fn is not None and ans.complete:
+                del self._asked[ans.to]
+        if fn is not None:
+            fn(ans)
 
     def _inbound_loop(self):
         """The batches the display sent, in the order they arrived. On a thread
@@ -223,6 +269,7 @@ class Conn:
             pass
         self._replies.put(_CLOSED)   # unblock a waiting exec
         self._events.put(None)       # stop the event loop
+        self._answers.put(None)      # stop the answer loop
         self._inbound.put(None)      # stop the inbound loop
         self.closed.set()
 
@@ -326,8 +373,9 @@ class Conn:
         return Store(self, self.init("store"))
 
     def blob(self, oid: int) -> "Blob":
-        """One blob of the store, by the id an answer named it with. An app
-        never invents one: it learns ids from store_blob and store_data."""
+        """One blob of the store, by the id it was named with. An app never
+        invents one: it learns ids from an inventory's answers and from
+        store_blob events."""
         return Blob(self, oid)
 
     def host(self) -> "Handle":
@@ -335,14 +383,23 @@ class Conn:
         return Handle(self, self.init("host"))
 
     def on_store(self, event: str, fn: Callable[[Event], None]):
-        """Register a handler for one of the store's answers and open the flow
-        for it. Subscribing does not ask what is in the store -- Store.list
-        does that."""
+        """Register a handler for one of the store's events and open the flow
+        for it. Subscribing does not ask what is in the store: Store.list does
+        that, and is answered rather than heard, so an app after the inventory
+        need subscribe to nothing at all."""
         self.store().on(event, fn)
 
     def on_host(self, event: str, fn: Callable[[Event], None]):
         """Register a handler for what the display says about itself."""
         self.host().on(event, fn)
+
+    def relay(self, to: str, text: str):
+        """Carry statements to another connected application, by name. What that
+        application says back arrives as EVENT_RELAY -- so subscribe with
+        on_host first, or the first statements over will have nowhere to
+        land."""
+        self.host().do("%s to=%s text=%s" % (
+            DO_RELAY, protocol.quote(to), protocol.quote(text)))
 
     def set_app(self, props: str) -> Dict[str, int]:
         """Apply application-wide properties with the same syntax as any
@@ -437,6 +494,35 @@ class Conn:
 
     def ask(self, oid: int, question: str):
         self.exec("ask %d %s" % (oid, question))
+
+    def ask_for(self, target, question: str, fn: Callable):
+        """Put a question and call fn for each piece of the answer.
+
+        target is the id, or the name the display already knows the object by.
+        fn is called for every piece, in the order they arrive, and once more
+        for the one that completes -- which arrives whether or not anything came
+        before it, so a question that answered with nothing is told apart from
+        one still being worked on. A refusal arrives the same way, carrying
+        `error`: the question was put, so it has an answer.
+
+        It returns once the question has been SENT. Nothing here blocks for the
+        answer: a caller that wants to wait waits on something of its own inside
+        fn."""
+        if fn is None:
+            return self.ask(int(target), question)
+        with self._lock:
+            self._asked_seq += 1
+            key = "q%d" % self._asked_seq
+            self._asked[key] = fn
+        try:
+            self.exec("%s=ask %s %s" % (key, target, question))
+        except Exception:
+            # The question never went, so nothing will ever answer it. Letting
+            # go here is what keeps a failed ask from leaving a handler waiting
+            # for good.
+            with self._lock:
+                self._asked.pop(key, None)
+            raise
 
     def provide_source(self, name: str, fill) -> "Source":
         """Register a body of records this application can serve, and what
@@ -597,9 +683,17 @@ class Handle:
 
     def ask(self, question: str):
         """Put a question to the object: h.ask("bytes offset=2048") sends
-        `ask <id> bytes offset=2048`. The answer arrives as the events the
-        question declares it answers with, so register for those first."""
+        `ask <id> bytes offset=2048`.
+
+        It carries NO correlation key, so the answer carries none either and
+        nothing here routes it -- which suits an asker that is not waiting, and
+        nothing else. ask_for is the one to use to be told."""
         self._c.ask(self._id, question)
+
+    def ask_for(self, question: str, fn: Callable):
+        """Put a question and call fn with each piece of the answer, ending with
+        the one that completes. See Conn.ask_for."""
+        self._c.ask_for(self._id, question, fn)
 
     def destroy(self):
         self._c.exec("destroy %d" % self._id)
@@ -693,44 +787,58 @@ class Window(Handle):
 # name says how long the blob lives.
 CACHE_MARK = "#"
 
-# The events the store answers with. All of them name the store as their
-# source, so one subscription hears everything.
+# The events the store raises. All of them name the store as their source, so
+# one subscription hears everything. None of them answers a question: each is the
+# store saying what has happened to a blob, which nobody asked.
 STORE_BLOB = "store_blob"    # one blob: what it is and how big
-STORE_DONE = "store_done"    # the end of an inventory
-STORE_DATA = "store_data"    # one chunk of a blob being read back
 STORE_GONE = "store_gone"    # a blob is no longer there
 STORE_ERROR = "store_error"  # what went wrong, and with which key
 
-# What the display says about itself, and the questions it answers.
-HOST_STATE = "host_state"
+# The questions the display answers. Either is answered with one answer carrying
+# both flags, so one round trip settles it.
 ASK_DARK = "dark"
 ASK_DESKTOP = "desktop"
+
+# The display's debug relay: DO_RELAY carries statements to another connected
+# application, and EVENT_RELAY is one statement it said back. Subscribed to
+# rather than asked for, because it is that application's speech and there is no
+# last one to wait for.
+DO_RELAY = "relay"
+EVENT_RELAY = "relay"
 
 
 class Store(Handle):
     """The app's whole store on the desktop: a flat set of names, each holding
-    one blob. Every one of these SENDS; the answers arrive as events on the
-    store, because a blob comes back in pieces."""
+    one blob.
+
+    Two flows, and which one a thing takes is settled by whether anybody asked.
+    The inventory was ASKED FOR, so `list` takes a callback and is answered.
+    Writing a blob is not a question, so what the blob now is arrives as a
+    store_blob event, subscribed to with Conn.on_store."""
 
     def write(self, key: str, typ: str, data: bytes):
         """Put a blob in the store, replacing whatever the key held.
 
         A key is a NAME, not a path: no slashes, nothing that is only digits,
         nothing unprintable, and `#` only at the front. typ is one of txt, psl,
-        bin, ini or conf. The answer is a store_blob naming the id the blob can
-        be addressed by, which is how something larger than one statement is
-        continued -- see Blob.append."""
+        bin, ini or conf. The store then reports a store_blob naming the id the
+        blob can be addressed by, which is how something larger than one
+        statement is continued -- see Blob.append."""
         self.set("blobs={ new blob key=%s type=%s data=%s }" % (
             protocol.quote(key), typ, protocol.quote_blob(data)))
 
-    def list(self):
-        """Ask what the store holds: a store_blob per blob, then a store_done
-        saying how many there were."""
-        self.ask("inventory")
+    def list(self, fn: Callable):
+        """Ask what the store holds, calling fn for each blob and once more for
+        the completion, which carries count=.
+
+        The completion arrives whether or not a blob came before it, so a store
+        holding nothing is told apart from one still being listed -- and holding
+        nothing is an answer rather than a refusal."""
+        self.ask_for("inventory", fn)
 
 
 class Blob(Handle):
-    """One blob of the store, by the id an answer named it with."""
+    """One blob of the store, by the id it was named with."""
 
     def append(self, data: bytes):
         """Add to the end, as a terminal is fed. It is how something too large
@@ -741,11 +849,13 @@ class Blob(Handle):
         """Write the blob's whole contents again."""
         self.set("data=" + protocol.quote_blob(data))
 
-    def read(self, offset: int):
-        """Ask for the chunk that starts at offset. The answer says where it
-        starts and whether it is the last; ask again from the end of what
-        arrived until it is."""
-        self.ask("bytes offset=%d" % offset)
+    def read(self, offset: int, fn: Callable):
+        """Ask for the chunk that starts at offset, calling fn with it.
+
+        One chunk COMPLETES the question: it says where it starts and whether it
+        is the last, and reading on is a fresh read from the end of what
+        arrived."""
+        self.ask_for("bytes offset=%d" % offset, fn)
 
     def drop(self):
         """Take the blob out of the store, which is the whole of what it was."""

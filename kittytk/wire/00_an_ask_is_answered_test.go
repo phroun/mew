@@ -188,6 +188,96 @@ func TestTheEnvelopesNamesAreNotTheQuestionsToUse(t *testing.T) {
 	}
 }
 
+// The readers answer for an argument of the kind asked for, and for nothing else.
+//
+// **"It is there, in another kind" is not an answer.** An asker reading `size=`
+// wants a size, and a word where a number was expected is a question answered
+// wrongly rather than a number to be salvaged -- so each reader turns it away the
+// way an event's does, which is what lets a question move off events without its
+// answer being read differently.
+func TestAnAnswersArgumentsAreReadByKind(t *testing.T) {
+	got := answerOf(t, &Answer{
+		To: "a1",
+		Carries: []*Arg{
+			{Name: "size", Value: NewInt(1024)},
+			{Name: "under", Value: NewInt(-3)},
+			{Name: "key", Value: &Value{Kind: StringValue, Str: "notes"}},
+			{Name: "type", Value: &Value{Kind: WordValue, Word: "txt"}},
+			{Name: "last", Flag: FlagTrue},
+			{Name: "cached", Flag: FlagFalse},
+			Blob("data", []byte{0, 1, 0xff}),
+		},
+		Complete: true,
+	})
+
+	if v, ok := got.Int("size"); !ok || v != 1024 {
+		t.Errorf("size reads %d (%v)", v, ok)
+	}
+	if v, ok := got.Uint("size"); !ok || v != 1024 {
+		t.Errorf("size reads %d as unsigned (%v)", v, ok)
+	}
+	// A negative number is an Int and is NOT a Uint: a reader that took it would
+	// hand back an enormous count for a figure that was below zero.
+	if v, ok := got.Int("under"); !ok || v != -3 {
+		t.Errorf("under reads %d (%v)", v, ok)
+	}
+	if _, ok := got.Uint("under"); ok {
+		t.Error("a negative number was read as unsigned")
+	}
+	if v, ok := got.Text("key"); !ok || v != "notes" {
+		t.Errorf("key reads %q (%v)", v, ok)
+	}
+	if v, ok := got.Word("type"); !ok || v != "txt" {
+		t.Errorf("type reads %q (%v)", v, ok)
+	}
+	if got.Flag("last") != FlagTrue {
+		t.Errorf("last reads %v", got.Flag("last"))
+	}
+	// A NEGATED flag is not an asserted one, which is the whole reason a flag has
+	// three states rather than being present or absent.
+	if got.Flag("cached") != FlagFalse {
+		t.Errorf("a negated flag reads %v", got.Flag("cached"))
+	}
+	// Bytes come back as bytes, NULs and all.
+	if b, ok := got.Blob("data"); !ok || string(b) != string([]byte{0, 1, 0xff}) {
+		t.Errorf("data reads %v (%v)", b, ok)
+	}
+
+	// And each reader turns away the kinds that are not its own.
+	if _, ok := got.Int("key"); ok {
+		t.Error("a string was read as a number")
+	}
+	if _, ok := got.Text("type"); ok {
+		t.Error("a word was read as a string")
+	}
+	if _, ok := got.Word("key"); ok {
+		t.Error("a string was read as a word")
+	}
+	if _, ok := got.Text("last"); ok {
+		t.Error("a flag was read as a string")
+	}
+	if got.Flag("size") != FlagNone {
+		t.Error("an argument carrying a value was read as a flag")
+	}
+
+	// An argument the answer has not got reads as absent rather than as empty.
+	if _, ok := got.Text("hash"); ok {
+		t.Error("an absent argument read as a string")
+	}
+	if got.Flag("hash") != FlagNone {
+		t.Error("an absent flag did not read as unsaid")
+	}
+
+	// The envelope is not among them: `to` and `complete` are the wire's, so a
+	// question whose own vocabulary used those words could not be answered.
+	if _, ok := got.Word(ToArg); ok {
+		t.Error("the correlation key is readable as one of the question's arguments")
+	}
+	if got.Flag(ResultComplete) != FlagNone {
+		t.Error("the terminator is readable as one of the question's arguments")
+	}
+}
+
 // --- the shared corpus ----------------------------------------------------
 
 // testdata/answer.wire is the text three client libraries read. What is agreed

@@ -126,13 +126,25 @@ uint64_t kt_init(kt_conn *c, const char *name);
 uint64_t kt_store_id(kt_conn *c);
 uint64_t kt_host_id(kt_conn *c);
 
-/* --- the store --------------------------------------------------------- */
+/* --- the store ---------------------------------------------------------
+ *
+ * Two flows, and which one a thing takes is settled by whether anybody asked.
+ *
+ * The inventory and a blob's bytes were ASKED FOR, so they are ANSWERED: the
+ * two functions below take a kt_answer_cb, and nothing need be subscribed to
+ * hear them. A change to a blob was not asked for, so the store reports it as
+ * an event -- which is where the id to continue a large write with comes from. */
 
-/* The events the store answers with. All of them name the store as their
-   source, so one kt_on(c, kt_store_id(c), ...) per type hears everything. */
+/* One `answer` statement, and where one is delivered. Declared here because the
+   store's two questions take a callback; what an answer HOLDS is read through
+   the accessors further down, which need kt_value first. */
+typedef struct kt_answer kt_answer;
+typedef void (*kt_answer_cb)(const kt_answer *a, void *userdata);
+
+/* The events the store raises. All of them name the store as their source, so
+   one kt_on(c, kt_store_id(c), ...) per type hears everything. None of them
+   answers a question. */
 #define KT_STORE_BLOB  "store_blob"  /* one blob: what it is and how big */
-#define KT_STORE_DONE  "store_done"  /* the end of an inventory */
-#define KT_STORE_DATA  "store_data"  /* one chunk of a blob being read back */
 #define KT_STORE_GONE  "store_gone"  /* a blob is no longer there */
 #define KT_STORE_ERROR "store_error" /* what went wrong, and with which key */
 
@@ -141,22 +153,29 @@ uint64_t kt_host_id(kt_conn *c);
 #define KT_CACHE_MARK "#"
 
 /* Put a blob in the store under key, replacing whatever it held. type is one
-   of txt, psl, bin, ini or conf. The answer is a KT_STORE_BLOB naming the id
-   the blob can be addressed by, which is how something larger than one
+   of txt, psl, bin, ini or conf. The store then reports a KT_STORE_BLOB naming
+   the id the blob can be addressed by, which is how something larger than one
    statement is continued -- see kt_blob_append. */
 int kt_store_write(kt_conn *c, const char *key, const char *type,
                    const void *data, size_t n);
 
-/* Ask what the store holds: a KT_STORE_BLOB per blob, then a KT_STORE_DONE
-   saying how many there were. */
-int kt_store_list(kt_conn *c);
+/* Ask what the store holds: cb is called once per blob, carrying blob=, key=,
+   type=, size= and hash=, and once more for the completion, which carries
+   count=. The completion arrives even for a store holding nothing, which is an
+   answer and not a refusal. */
+int kt_store_list(kt_conn *c, kt_answer_cb cb, void *userdata);
 
 /* Add to the end of a blob, replace it whole, ask for the chunk starting at
-   offset, or take it out of the store. A blob id is learned from an answer;
-   an app never invents one. */
+   offset, or take it out of the store. A blob id is learned from an inventory's
+   answers or from a KT_STORE_BLOB; an app never invents one.
+
+   A read is answered ONCE, by the chunk that starts at offset: it carries
+   blob=, key=, type=, offset=, size=, data= and last=, and reading further on
+   is a fresh kt_blob_read from where this one reached. */
 int kt_blob_append(kt_conn *c, uint64_t blob, const void *data, size_t n);
 int kt_blob_replace(kt_conn *c, uint64_t blob, const void *data, size_t n);
-int kt_blob_read(kt_conn *c, uint64_t blob, long long offset);
+int kt_blob_read(kt_conn *c, uint64_t blob, long long offset,
+                 kt_answer_cb cb, void *userdata);
 int kt_blob_drop(kt_conn *c, uint64_t blob);
 
 /* --- serving a query --------------------------------------------------
@@ -219,11 +238,11 @@ typedef struct {
  * because asking IS the subscription.
  */
 
-/* One `answer` statement. Opaque, and read through the accessors below, the way
-   an event is -- so what a statement is made of stays this library's. */
-typedef struct kt_answer kt_answer;
+/* kt_answer is one `answer` statement, declared with the store above. Opaque,
+   and read through the accessors here, the way an event is -- so what a
+   statement is made of stays this library's.
 
-/* Which question this answers: the key the ask carried, or "" for an unkeyed
+   Which question this answers: the key the ask carried, or "" for an unkeyed
    one. */
 const char *kt_answer_to(const kt_answer *a);
 
@@ -239,12 +258,18 @@ int kt_answer_complete(const kt_answer *a);
 const char *kt_answer_error(const kt_answer *a);
 
 /* The question's own arguments, read the way an event's fields are. Each
-   returns 0 / NULL for an argument the answer has not got. */
+   returns 0 / NULL / KT_FLAG_NONE for an argument the answer has not got, and
+   for one that is there in another kind.
+
+   kt_answer_text_n is the one to use for BYTES: an answer carrying a blob's
+   contents carries the NULs among them, and the terminated form stops at the
+   first. */
 int kt_answer_uint(const kt_answer *a, const char *name, uint64_t *out);
 int kt_answer_int(const kt_answer *a, const char *name, long long *out);
 const char *kt_answer_text(const kt_answer *a, const char *name);
+const char *kt_answer_text_n(const kt_answer *a, const char *name, size_t *len);
 const char *kt_answer_word(const kt_answer *a, const char *name);
-int kt_answer_flag(const kt_answer *a, const char *name);
+kt_flag kt_answer_flag(const kt_answer *a, const char *name);
 
 /* The RECORD an answer carries, where it carries one: its members, and *n their
    count. NULL where the answer carries none, which is the ordinary case -- a
@@ -257,8 +282,6 @@ int kt_answer_flag(const kt_answer *a, const char *name);
  * The members are valid until the callback returns. A nested block among them is
  * not reported, a record of records being nothing this reads. */
 const kt_value *kt_answer_fields(const kt_answer *a, int *n, int *whole);
-
-typedef void (*kt_answer_cb)(const kt_answer *a, void *userdata);
 
 /* Put a question and call cb for each piece of the answer, ending with the one
    that completes. Returns 0 on success.

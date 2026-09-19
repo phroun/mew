@@ -75,3 +75,17 @@ var (
 	DecodeVocabulary   = wire.DecodeVocabulary
 	NewEventDispatcher = wire.NewEventDispatcher
 )
+
+// The argument constructors, for anything building a statement's arguments --
+// an answer's payload above all, which is named values and nothing else.
+var (
+	// Named is one named argument carrying a value of whatever Go type it is
+	// given, the way an event's fields are built.
+	Named = wire.Named
+
+	// NewInt is an integer value.
+	NewInt = wire.NewInt
+
+	// Blob is one named argument carrying bytes rather than text.
+	Blob = wire.Blob
+)

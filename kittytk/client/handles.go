@@ -48,8 +48,12 @@ func (h Handle) Destroy() error {
 }
 
 // Ask puts a question to the object: h.Ask("bytes offset=2048") sends
-// `ask <target> bytes offset=2048`. The answer arrives as the events the
-// question declares it answers with, so register for those before asking.
+// `ask <target> bytes offset=2048`.
+//
+// It carries NO correlation key, so the answer carries none either and nothing
+// here routes it -- which suits an asker that is not waiting, and nothing else.
+// AskFor is the one to use to be told: it mints a key and calls back with each
+// piece of the answer.
 func (h Handle) Ask(question string) error {
 	_, err := h.c.Exec(fmt.Sprintf("ask %s %s", h.addr(), question))
 	return err

@@ -90,7 +90,7 @@ func TestTheNamesAreThereBeforeAnythingIsSaid(t *testing.T) {
 	// Not one naming statement first.
 	for _, src := range []string{
 		`set app multiwindow contextonly`,
-		`sub store store_blob store_done`,
+		`sub store store_blob store_gone`,
 		`ask store inventory`,
 	} {
 		if _, err := conn.Exec(src); err != nil {
@@ -112,11 +112,15 @@ func TestTheStoreAnswersToItsName(t *testing.T) {
 	conn := dialDesktop(t, "Asking App")
 
 	done := make(chan int, 2)
-	conn.OnStore(client.StoreDone, func(ev *wire.Event) {
-		n, _ := ev.Int("count")
-		done <- n
+	// Store() is the handle the display knows by NAME, so the statement this sends
+	// is `q1=ask store inventory` -- the name where an id would otherwise be.
+	err := conn.Store().List(func(ans *wire.Answer) {
+		if ans.Complete {
+			n, _ := ans.Int("count")
+			done <- n
+		}
 	})
-	if _, err := conn.Exec("ask store inventory"); err != nil {
+	if err != nil {
 		t.Fatalf("ask store inventory: %v", err)
 	}
 	select {
@@ -174,15 +178,22 @@ func TestTheLibrarySaysTheNames(t *testing.T) {
 	if got := conn.Store().ID(); got != conn.StoreID() {
 		t.Errorf("the store handle carries id %d, want %d", got, conn.StoreID())
 	}
-	// Events still route by id, so a handler registered through the named
-	// handle hears what the store raises.
-	heard := make(chan struct{}, 2)
-	conn.Store().On(client.StoreDone, func(*wire.Event) { heard <- struct{}{} })
-	if err := conn.Store().List(); err != nil {
-		t.Fatalf("List: %v", err)
+	// Events still route by id, so a handler registered through the named handle
+	// hears what the store raises -- which is what it says about a blob, a write
+	// being no question and reporting itself.
+	heard := make(chan string, 2)
+	conn.Store().On(client.StoreBlob, func(ev *wire.Event) {
+		key, _ := ev.Text("key")
+		heard <- key
+	})
+	if err := conn.Store().Write("notes", "txt", []byte("hello")); err != nil {
+		t.Fatalf("Write: %v", err)
 	}
 	select {
-	case <-heard:
+	case key := <-heard:
+		if key != "notes" {
+			t.Errorf("the named handle heard about %q", key)
+		}
 	case <-time.After(5 * time.Second):
 		t.Error("the named handle heard nothing back")
 	}

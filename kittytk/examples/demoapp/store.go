@@ -3,11 +3,15 @@ package main
 // The demo's store: what it asks the desktop it has kept for it, and the sample
 // material it puts there.
 //
-// Subscribing opens the flow of answers; asking is what brings one. So the
-// demo subscribes, asks what it has, and the first thing the status bar says is
-// what last run left -- nothing, the first time. Then it writes the samples,
-// each write answering with what the item now is. Nothing here is UI: it is the
-// store seen from an app's end.
+// Two flows, and the demo uses both. Asking what the store holds is ANSWERED, so
+// the inventory arrives at the callback the ask carried and nothing need be
+// subscribed to hear it. Writing a blob is not a question, so what the blob now is
+// arrives as a store_blob event, which is subscribed to -- and that event is where
+// the id to continue a large write with comes from.
+//
+// So the demo subscribes for the changes, asks what it has, and the first thing the
+// status bar says is what last run left -- nothing, the first time. Then it writes
+// the samples. Nothing here is UI: it is the store seen from an app's end.
 //
 // A key beginning with `#` names something the desktop may throw away, so the
 // samples the demo could rebuild carry one and the rest do not.
@@ -21,6 +25,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/wire"
 )
 
 // sample is one thing the demo keeps: the key it calls it by, what it is, and
@@ -72,15 +77,47 @@ const storeChunk = 2048
 func (a *app) stockTheStore() {
 	a.shelf.reset("before")
 	a.watchStore()
-	if err := a.conn.Store().List(); err != nil {
+	if err := a.listStore(); err != nil {
 		return
 	}
 	go func() {
 		a.shelf.await()
 		a.shelf.reset("after")
 		a.writeSamples(samples())
-		_ = a.conn.Store().List()
+		_ = a.listStore()
 	}()
+}
+
+// listStore asks what the store holds and says so when the answer is complete.
+//
+// One answer per blob and then the completion, which carries the count -- and which
+// arrives even for a store holding nothing, so "empty" is something the demo can
+// say rather than something it waits for.
+func (a *app) listStore() error {
+	return a.conn.Store().List(func(ans *wire.Answer) {
+		if reason := ans.Error; reason != "" {
+			a.setStatus("Store: " + reason)
+			a.shelf.end()
+			return
+		}
+		if !ans.Complete {
+			key, _ := ans.Text("key")
+			typ, _ := ans.Word("type")
+			size, _ := ans.Int("size")
+			id, _ := ans.Uint("blob")
+			a.shelf.note(key, fmt.Sprintf("%s.%s %s", key, typ, byteCount(size)), id)
+			return
+		}
+		count, _ := ans.Int("count")
+		when, lines := a.shelf.take()
+		if count == 0 {
+			a.setStatus(fmt.Sprintf("Store (%s): empty", when))
+		} else {
+			a.setStatus(fmt.Sprintf("Store (%s): %d items -- %s",
+				when, count, strings.Join(lines, ", ")))
+		}
+		a.shelf.end()
+	})
 }
 
 // writeSamples puts each sample in the store, continuing the ones larger than a
@@ -147,8 +184,8 @@ func (r *storeReport) note(key, line string, id uint64) {
 	r.ids[key] = id
 }
 
-// waitFor is the id a blob is addressed by, once the answer to writing it has
-// arrived. A write SENDS: the id comes back as an answer, on the connection's own
+// waitFor is the id a blob is addressed by, once the store has reported writing it.
+// A write SENDS: the id comes back as a store_blob event, on the connection's own
 // event goroutine, so continuing a blob means waiting to be told what to
 // continue rather than asking straight away and finding nothing.
 func (r *storeReport) waitFor(key string) (uint64, bool) {
@@ -178,8 +215,8 @@ func (r *storeReport) take() (string, []string) {
 	return r.when, lines
 }
 
-// end and await let the writing wait for the listing that subscribing pushed,
-// so what the demo writes is not mixed into what it found.
+// end and await let the writing wait for the listing it asked for, so what the demo
+// writes is not mixed into what it found.
 func (r *storeReport) end() {
 	r.mu.Lock()
 	ended := r.ended
@@ -206,9 +243,10 @@ func (r *storeReport) await() {
 	}
 }
 
-// watchStore subscribes to the store's answers and says what they were. An app
-// that asks for nothing hears nothing, so this is what turns the store on -- and
-// subscribing is also what asks for the inventory.
+// watchStore subscribes to what the store REPORTS: a blob written or appended to,
+// one dropped, and anything refused. An app that asks for nothing hears nothing, so
+// this is what turns those on. The inventory is not among them -- that is asked for,
+// and answered: see listStore.
 func (a *app) watchStore() {
 	a.conn.OnStore(client.StoreBlob, func(ev *protocol.Event) {
 		key, _ := ev.Text("key")
@@ -216,17 +254,6 @@ func (a *app) watchStore() {
 		size, _ := ev.Int("size")
 		id, _ := ev.Uint("blob")
 		a.shelf.note(key, fmt.Sprintf("%s.%s %s", key, typ, byteCount(size)), id)
-	})
-	a.conn.OnStore(client.StoreDone, func(ev *protocol.Event) {
-		count, _ := ev.Int("count")
-		when, lines := a.shelf.take()
-		if count == 0 {
-			a.setStatus(fmt.Sprintf("Store (%s): empty", when))
-		} else {
-			a.setStatus(fmt.Sprintf("Store (%s): %d items -- %s",
-				when, count, strings.Join(lines, ", ")))
-		}
-		a.shelf.end()
 	})
 	a.conn.OnStore(client.StoreGone, func(ev *protocol.Event) {
 		key, _ := ev.Text("key")

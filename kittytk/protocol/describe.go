@@ -261,7 +261,7 @@ func DescribeVocabulary() *Vocabulary {
 //	propcommon name="enabled" kind=flag default="true" doc="..."
 //	proptype name="button" !virtual !hosted
 //	prop of="button" name="caption" kind=string default="" doc="..." enum="" members=""
-//	ask of="store" name="inventory" doc="..." answers="store_blob,store_done"
+//	ask of="store" name="inventory" doc="..." answers="answer"
 //	askarg of="blob" ask="bytes" name="offset" kind="int" doc="..."
 //	do of="blob" name="append" doc="..."
 //	doarg of="blob" do="append" name="bytes" kind="blob" doc="..."

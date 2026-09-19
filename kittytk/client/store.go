@@ -13,15 +13,27 @@ package client
 // and the protocol's own verbs do the work:
 //
 //	conn.OnStore(client.StoreBlob, func(ev *wire.Event) { ... })
-//	conn.Store().List()                          // ask store inventory
+//	conn.Store().List(take)                      // q1=ask store inventory
 //	conn.Store().Write("figaro", "psl", bundle)  // set store blobs={ new blob ... }
 //	conn.Blob(id).Append(more)                   // do <blob> append bytes="..."
-//	conn.Blob(id).Read(2048)                     // ask <blob> bytes offset=2048
+//	conn.Blob(id).Read(2048, take)               // q2=ask <blob> bytes offset=2048
 //	conn.Blob(id).Drop()                         // destroy <blob>
 //
-// Every one of these SENDS. The answers arrive as events on the store, because a
-// blob comes back in pieces and a call that returned one of them would have to
-// be made again for each.
+// Every one of these SENDS. Nothing blocks for what comes back.
+//
+// # What was asked for is answered; what changed is heard
+//
+// The two questions -- the inventory and a chunk -- take a callback, and what
+// comes back reaches it as `answer`, quoting the key the question carried. So two
+// reads outstanding at once are told apart, and a question that found nothing
+// still completes. An inventory arrives as one answer per blob and a completion
+// carrying count=; a chunk is a single answer that completes its question, and
+// the next chunk is a new question asked from the offset this one reached.
+//
+// The three EVENTS are the store reporting a change nobody asked for: store_blob
+// when a blob is written or appended to, store_gone when one is dropped,
+// store_error for a refusal on either path. Those are subscribed to, with
+// OnStore, the way any other object's events are.
 //
 // The desktop decides where any of it physically lives. An app names its
 // material and nothing else about it.
@@ -35,12 +47,11 @@ import (
 // CacheMark begins the key of a blob the desktop may throw away.
 const CacheMark = "#"
 
-// The events the store answers with. All of them name the store as their
-// source, so one subscription hears everything.
+// The events the store raises. All of them name the store as their source, so
+// one subscription hears everything. None of them answers a question: see the
+// file comment.
 const (
 	StoreBlob  = "store_blob"  // one blob: what it is and how big
-	StoreDone  = "store_done"  // the end of an inventory
-	StoreData  = "store_data"  // one chunk of a blob being read back
 	StoreGone  = "store_gone"  // a blob is no longer there
 	StoreError = "store_error" // what went wrong, and with which key
 )
@@ -55,16 +66,16 @@ func (c *Conn) StoreID() uint64 { return c.Init(wire.StoreName) }
 // Set and On reach it directly for anything this type does not wrap.
 func (c *Conn) Store() Store { return Store{c.Given(wire.StoreName)} }
 
-// Blob is one blob of the store by the id an answer named it with. An app never
-// invents one of these: it learns ids from store_blob and store_data events,
-// and a blob has no name of its own -- the store's keys name what is IN it,
-// not the handles it hands out for writing.
+// Blob is one blob of the store by the id it was named with. An app never
+// invents one of these: it learns ids from an inventory's answers and from
+// store_blob events, and a blob has no name of its own -- the store's keys name
+// what is IN it, not the handles it hands out for writing.
 func (c *Conn) Blob(id uint64) Blob { return Blob{Handle{c: c, id: id}} }
 
-// OnStore registers a handler for one of the store's answers and opens the flow
-// for it. Subscribing does not ask what is in the store -- List does that -- so
-// an app that wants the inventory subscribes to store_blob and store_done and
-// then asks.
+// OnStore registers a handler for one of the store's events and opens the flow
+// for it. Subscribing does not ask what is in the store: List does that, and is
+// answered rather than heard, so an app after the inventory need subscribe to
+// nothing at all.
 func (c *Conn) OnStore(event string, fn func(*wire.Event)) { c.Store().On(event, fn) }
 
 // Store is the app's whole store.
@@ -85,9 +96,13 @@ func (s Store) Write(key, typ string, data []byte) error {
 		wire.Quote(key), typ, wire.QuoteBlob(data)))
 }
 
-// List asks what the store holds: a store_blob per blob, then a store_done
-// saying how many there were.
-func (s Store) List() error { return s.Ask("inventory") }
+// List asks what the store holds, calling fn for each blob and once more for the
+// completion, which carries count=.
+//
+// The completion arrives whether or not a blob came before it, so a store holding
+// nothing is told apart from one still being listed -- and holding nothing is an
+// answer rather than a refusal.
+func (s Store) List(fn func(*wire.Answer)) error { return s.AskFor("inventory", fn) }
 
 // Blob is one blob of the store.
 type Blob struct{ Handle }
@@ -104,11 +119,12 @@ func (b Blob) Replace(data []byte) error {
 	return b.Set("data=" + wire.QuoteBlob(data))
 }
 
-// Read asks for the chunk of the blob that starts at offset. The answer says
-// where it starts and whether it is the last; ask again from the end of what
-// arrived until it is.
-func (b Blob) Read(offset int) error {
-	return b.Ask(fmt.Sprintf("bytes offset=%d", offset))
+// Read asks for the chunk of the blob that starts at offset, calling fn with it.
+//
+// One chunk COMPLETES the question: it says where it starts and whether it is the
+// last, and reading on is a fresh Read from the end of what arrived.
+func (b Blob) Read(offset int, fn func(*wire.Answer)) error {
+	return b.AskFor(fmt.Sprintf("bytes offset=%d", offset), fn)
 }
 
 // Drop takes the blob out of the store, which is the whole of what it was. It

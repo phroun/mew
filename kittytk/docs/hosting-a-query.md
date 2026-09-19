@@ -114,14 +114,18 @@ complete up to 7
 ```
 
 `-raw` prints the statements instead of the table. Under the tool it is one
-question on the display's own host object:
+action on the display's own host object, and a subscription for what comes
+back:
 
 ```
-ask host relay to="queryapp" text="<the file>"
+sub host relay
+do host relay to="queryapp" text="<the file>"
 ```
 
-and every statement the application says back arrives as a `relay` event
-carrying it. **The relay is shut unless the display opens it** -- an
+Every statement the application says back arrives as a `relay` event carrying
+it. **Subscribed to, and not asked for**: it is another application's speech,
+arriving whenever it speaks, with no last one to wait for -- which is exactly
+what an event is and what an answer is not. **The relay is shut unless the display opens it** -- an
 application that can relay can address another application's objects, which is
 the display's business and nobody else's. `KITTYTK_DEBUG_RELAY` opens it, or a
 host with a surface of its own calls `SetRelayEnabled`.

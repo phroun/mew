@@ -1,14 +1,17 @@
 // Command kittytk-queryrun puts a query from a file to a running application
 // and prints what comes back.
 //
-// It connects to a display like any other application, and asks the display to
-// carry the text to another one:
+// It connects to a display like any other application, subscribes to what the
+// display carries back, and tells it to carry the text to another one:
 //
-//	ask host relay to="queryapp" text="<the file>"
+//	sub host relay
+//	do host relay to="queryapp" text="<the file>"
 //
 // The display reads none of it. It hands the statements over as a batch and
 // sends back every statement that application says in answer, which is what
-// arrives here as `relay` events. So this is a wire tap with a file for input
+// arrives here as `relay` events. It is a subscription and not a question --
+// what comes back is another application's speech, arriving whenever it speaks
+// and with no last one to wait for. So this is a wire tap with a file for input
 // -- the display has no orchestrated reason to open a query yet, and does not
 // need one to carry the question.
 //
@@ -88,8 +91,7 @@ func main() {
 			lines <- s
 		}
 	})
-	if err := conn.Host().Ask(fmt.Sprintf("relay to=%s text=%s",
-		wire.Quote(*to), wire.Quote(query))); err != nil {
+	if err := conn.Relay(*to, query); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

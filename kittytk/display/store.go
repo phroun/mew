@@ -70,7 +70,8 @@ func storeTypeList() []string {
 // no key may be filed under it.
 const storeIndexName = "index"
 
-// storeChunk is how much of an item one store_data event carries. An app asking
+// storeChunk is how much of an item one answer to `ask <blob> bytes` carries. An
+// app asking
 // for something large gets it in pieces rather than one statement the size of
 // the file, so nothing on either side has to hold the whole of it to make
 // progress.

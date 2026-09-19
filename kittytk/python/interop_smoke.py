@@ -79,16 +79,16 @@ def main(sock: str) -> int:
               flush=True)
         return 1
 
-    # The display answers what it is asked.
+    # The display answers what it is asked -- as an answer, with nothing
+    # subscribed to hear it.
     said = threading.Event()
     dark = []
 
-    def on_host(ev):
-        dark.append(ev.flag("dark") == kittytk.FlagState.TRUE)
+    def on_host(ans):
+        dark.append(ans.flag("dark") == kittytk.FlagState.TRUE)
         said.set()
 
-    conn.on_host(kittytk.HOST_STATE, on_host)
-    conn.host().ask(kittytk.ASK_DARK)
+    conn.host().ask_for(kittytk.ASK_DARK, on_host)
     if not said.wait(5):
         print("FAIL ask host dark: no answer", flush=True)
         return 1
@@ -102,19 +102,28 @@ def main(sock: str) -> int:
     got_blob = threading.Event()
     read_done = threading.Event()
     listed = threading.Event()
+    count = []
 
+    # A write is no question, so the store REPORTS it -- which is where the id
+    # to append with comes from.
     def on_blob(ev):
         blob_id.append(ev.uint("blob"))
         got_blob.set()
 
-    def on_data(ev):
-        read_back.extend(ev.blob("data") or b"")
-        if ev.flag("last") == kittytk.FlagState.TRUE:
+    # A read is a question, answered ONCE by the chunk that starts where it was
+    # asked from.
+    def on_chunk(ans):
+        read_back.extend(ans.blob("data") or b"")
+        if ans.flag("last") == kittytk.FlagState.TRUE:
             read_done.set()
 
+    # And the inventory: one answer per blob, then the completion with count=.
+    def on_inventory(ans):
+        if ans.complete:
+            count.append(ans.int_("count"))
+            listed.set()
+
     conn.on_store(kittytk.STORE_BLOB, on_blob)
-    conn.on_store(kittytk.STORE_DATA, on_data)
-    conn.on_store(kittytk.STORE_DONE, lambda ev: listed.set())
 
     conn.store().write("py-interop", "bin", ramp[:256])
     if not got_blob.wait(5):
@@ -122,7 +131,7 @@ def main(sock: str) -> int:
         return 1
     blob = conn.blob(blob_id[0])
     blob.append(ramp[256:])
-    blob.read(0)
+    blob.read(0, on_chunk)
     if not read_done.wait(5):
         print("FAIL store read: never finished", flush=True)
         return 1
@@ -130,9 +139,13 @@ def main(sock: str) -> int:
         print("FAIL store read: %d bytes back, not the %d written"
               % (len(read_back), len(ramp)), flush=True)
         return 1
-    conn.store().list()
+    conn.store().list(on_inventory)
     if not listed.wait(5):
         print("FAIL store inventory: no answer", flush=True)
+        return 1
+    if count[0] != 1:
+        print("FAIL store inventory: %d blobs, want the 1 written" % count[0],
+              flush=True)
         return 1
     print("STORE ok bytes=%d" % len(read_back), flush=True)
 

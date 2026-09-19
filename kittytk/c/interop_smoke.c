@@ -18,14 +18,19 @@ static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 static int got_toggle = 0, got_command = 0;
 
-/* What the store and the display answered. The blob is written in two pieces
- * and read back whole, so a byte that did not survive the wire shows up as a
- * mismatch rather than as nothing. */
+/* What the store and the display said. The blob is written in two pieces and
+ * read back whole, so a byte that did not survive the wire shows up as a
+ * mismatch rather than as nothing.
+ *
+ * Two flows: the store REPORTS a write with a store_blob event, and ANSWERS the
+ * two questions -- the inventory and a read -- through a kt_answer_cb. */
 static pthread_mutex_t smu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t scv = PTHREAD_COND_INITIALIZER;
 static uint64_t blob_id = 0;
 static long long blob_size = 0;
-static int store_done = 0, read_done = 0, host_said = 0, host_dark = 0;
+static int listed = 0, read_done = 0, host_said = 0;
+static kt_flag host_dark = KT_FLAG_NONE;
+static long long store_count = 0;
 static unsigned char readback[1024];
 static size_t readback_n = 0;
 
@@ -37,30 +42,37 @@ static void on_store_blob(const kt_event *ev, void *ud) {
     pthread_cond_broadcast(&scv);
     pthread_mutex_unlock(&smu);
 }
-static void on_store_done(const kt_event *ev, void *ud) {
-    (void)ev; (void)ud;
+/* The inventory: one answer per blob, then the completion carrying count=. */
+static void on_inventory(const kt_answer *a, void *ud) {
+    (void)ud;
+    if (!kt_answer_complete(a)) return;
     pthread_mutex_lock(&smu);
-    store_done = 1;
+    kt_answer_int(a, "count", &store_count);
+    listed = 1;
     pthread_cond_broadcast(&scv);
     pthread_mutex_unlock(&smu);
 }
-static void on_store_data(const kt_event *ev, void *ud) {
+/* A read: ONE answer, the chunk that starts where it was asked from. */
+static void on_chunk(const kt_answer *a, void *ud) {
     (void)ud;
     size_t n = 0;
-    const char *data = kt_event_text_n(ev, "data", &n);
+    const char *data = kt_answer_text_n(a, "data", &n);
     pthread_mutex_lock(&smu);
     if (data && readback_n + n <= sizeof readback) {
         memcpy(readback + readback_n, data, n);
         readback_n += n;
     }
-    if (kt_event_flag(ev, "last") == KT_FLAG_TRUE) read_done = 1;
+    if (kt_answer_flag(a, "last") == KT_FLAG_TRUE) read_done = 1;
     pthread_cond_broadcast(&scv);
     pthread_mutex_unlock(&smu);
 }
-static void on_host_state(const kt_event *ev, void *ud) {
+/* How the display stands: one answer, carrying both flags. Each of the three
+ * states is kept apart -- asserted, negated, unsaid -- because a reader that
+ * only knew "present" could not tell a light theme from a dark one. */
+static void on_host_stands(const kt_answer *a, void *ud) {
     (void)ud;
     pthread_mutex_lock(&smu);
-    host_dark = kt_event_flag(ev, "dark") == KT_FLAG_TRUE;
+    host_dark = kt_answer_flag(a, "dark");
     host_said = 1;
     pthread_cond_broadcast(&scv);
     pthread_mutex_unlock(&smu);
@@ -159,19 +171,37 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* The display answers what it is asked. */
-    kt_on(c, kt_host_id(c), "host_state", on_host_state, NULL);
-    kt_ask(c, kt_host_id(c), "dark");
+    /* The display answers what it is asked -- as an answer, with nothing
+     * subscribed to hear it. */
+    kt_ask_for(c, kt_host_id(c), "dark", on_host_stands, NULL);
     if (!wait_for(&host_said)) { printf("FAIL ask host dark: no answer\n"); return 1; }
-    printf("ASK ok dark=%d\n", host_dark);
+    kt_flag was_dark = host_dark;
+    if (was_dark != KT_FLAG_TRUE && was_dark != KT_FLAG_FALSE) {
+        printf("FAIL ask host dark: the answer said nothing either way\n");
+        return 1;
+    }
+
+    /* Turned the other way and asked again: a NEGATED flag reads as negated, not
+     * merely as present. A reader that could not tell the two apart would report
+     * every theme as dark. */
+    kt_set(c, kt_host_id(c), was_dark == KT_FLAG_TRUE ? "!dark" : "dark");
+    pthread_mutex_lock(&smu);
+    host_said = 0;
+    pthread_mutex_unlock(&smu);
+    kt_ask_for(c, kt_host_id(c), "dark", on_host_stands, NULL);
+    if (!wait_for(&host_said)) { printf("FAIL ask host dark again: no answer\n"); return 1; }
+    if (host_dark == was_dark) {
+        printf("FAIL ask host dark: it reads %d either way round\n", (int)host_dark);
+        return 1;
+    }
+    kt_set(c, kt_host_id(c), was_dark == KT_FLAG_TRUE ? "dark" : "!dark");
+    printf("ASK ok dark=%d\n", (int)(was_dark == KT_FLAG_TRUE));
 
     /* The store: write a blob of every byte there is, in two pieces, and read
      * it back. Anything the wire mangled shows up as a mismatch. */
     unsigned char ramp[512];
     for (int i = 0; i < 512; i++) ramp[i] = (unsigned char)(i % 256);
     kt_on(c, kt_store_id(c), KT_STORE_BLOB, on_store_blob, NULL);
-    kt_on(c, kt_store_id(c), KT_STORE_DONE, on_store_done, NULL);
-    kt_on(c, kt_store_id(c), KT_STORE_DATA, on_store_data, NULL);
 
     kt_store_write(c, "c-interop", "bin", ramp, 256);
     pthread_mutex_lock(&smu);
@@ -185,14 +215,18 @@ int main(int argc, char **argv) {
     if (blob == 0) { printf("FAIL store write: no blob id\n"); return 1; }
 
     kt_blob_append(c, blob, ramp + 256, 256);
-    kt_blob_read(c, blob, 0);
+    kt_blob_read(c, blob, 0, on_chunk, NULL);
     if (!wait_for(&read_done)) { printf("FAIL store read: never finished\n"); return 1; }
     if (readback_n != 512 || memcmp(readback, ramp, 512) != 0) {
         printf("FAIL store read: %zu bytes back, not the 512 written\n", readback_n);
         return 1;
     }
-    kt_store_list(c);
-    if (!wait_for(&store_done)) { printf("FAIL store inventory: no answer\n"); return 1; }
+    kt_store_list(c, on_inventory, NULL);
+    if (!wait_for(&listed)) { printf("FAIL store inventory: no answer\n"); return 1; }
+    if (store_count != 1) {
+        printf("FAIL store inventory: %lld blobs, want the 1 written\n", store_count);
+        return 1;
+    }
     printf("STORE ok bytes=%zu\n", readback_n);
 
     /* The vocabulary says what a type does and answers, not just what it

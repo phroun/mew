@@ -89,6 +89,52 @@ class AnswerShapeTest(unittest.TestCase):
                 self.assertEqual(rid.number, 7)
                 self.assertEqual(fields.get("kind").str, "Archive")
 
+    def test_an_answers_arguments_are_read_by_kind(self):
+        """The readers answer for an argument of the kind asked for, and nothing
+        else.
+
+        "It is there, in another kind" is not an answer. An asker reading
+        `size=` wants a size, and a word where a number was expected is a
+        question answered wrongly rather than a number to salvage -- so each
+        reader turns it away the way an event's does, which is what lets a
+        question move off events without its answer being read differently."""
+        script = protocol.parse(
+            'answer to=q1 size=1024 under=-3 key="notes" type=txt last !cached '
+            r'data="\x00\x01\xff" complete')
+        a = query.parse_answer(script.statements[0].args)
+
+        self.assertEqual(a.int_("size"), 1024)
+        self.assertEqual(a.uint("size"), 1024)
+        # A negative number is an int and is NOT a uint: a reader that took it
+        # would hand back an enormous count for a figure below zero.
+        self.assertEqual(a.int_("under"), -3)
+        self.assertIsNone(a.uint("under"), "a negative number read as unsigned")
+        self.assertEqual(a.text("key"), "notes")
+        self.assertEqual(a.word("type"), "txt")
+        self.assertEqual(a.flag("last"), protocol.FlagState.TRUE)
+        # A NEGATED flag is not an asserted one, which is the whole reason a
+        # flag has three states rather than being present or absent.
+        self.assertEqual(a.flag("cached"), protocol.FlagState.FALSE)
+        # Bytes come back as bytes, NULs and all.
+        self.assertEqual(a.blob("data"), b"\x00\x01\xff")
+
+        # And each reader turns away the kinds that are not its own.
+        self.assertIsNone(a.int_("key"), "a string read as a number")
+        self.assertIsNone(a.text("type"), "a word read as a string")
+        self.assertIsNone(a.word("key"), "a string read as a word")
+        self.assertIsNone(a.text("last"), "a flag read as a string")
+        self.assertEqual(a.flag("size"), protocol.FlagState.NONE,
+                         "an argument carrying a value read as a flag")
+
+        # An argument the answer has not got reads as absent, not as empty.
+        self.assertIsNone(a.text("hash"))
+        self.assertEqual(a.flag("hash"), protocol.FlagState.NONE)
+
+        # The envelope is not among them: `to` and `complete` are the wire's, so
+        # a question whose own vocabulary used those words could not be answered.
+        self.assertIsNone(a.word(query.TO_ARG))
+        self.assertEqual(a.flag(query.RESULT_COMPLETE), protocol.FlagState.NONE)
+
     def test_an_answer_with_no_record_says_so(self):
         script = protocol.parse("answer to=q1 count=2 complete")
         a = query.parse_answer(script.statements[0].args)

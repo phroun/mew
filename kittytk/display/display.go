@@ -156,7 +156,7 @@ func isTruthy(s string) bool {
 // call SetRelayEnabled instead.
 const RelayEnv = "KITTYTK_DEBUG_RELAY"
 
-// SetRelayEnabled opens or closes the host's debug relay (`ask host relay`).
+// SetRelayEnabled opens or closes the host's debug relay (`do host relay`).
 // It is off until this is called: an application that can relay can address
 // another application's objects, which is the display's business and nobody
 // else's.

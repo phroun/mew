@@ -414,22 +414,28 @@ func (u *UI) ID(name string) uint64 { return u.ids[name] }
 // Has reports whether a name was surfaced.
 func (u *UI) Has(name string) bool { _, ok := u.ids[name]; return ok }
 
-// The event the display answers its questions with, and the questions it
-// answers. Nothing else reads these back, so an app that means to turn one of
-// them over asks first.
+// The questions the display answers. Nothing else reads these back, so an app
+// that means to turn one of them over asks first -- and either question is
+// answered with one answer carrying both, so one round trip settles it.
 const (
-	HostState = "host_state"
-
 	AskDark    = "dark"
 	AskDesktop = "desktop"
 
-	// The display's debug relay: statements put to another connected
-	// application, and one event per statement it says back. Off unless the
-	// display was started with it open.
-	AskRelay   = "relay"
+	// The display's debug relay: DoRelay carries statements to another connected
+	// application, and EventRelay is one statement it said back. Subscribed to
+	// rather than asked for, because it is that application's speech and there is
+	// no last one to wait for. Off unless the display was started with it open.
+	DoRelay    = "relay"
 	EventRelay = "relay"
 )
 
 // OnHost registers a handler for what the display says about itself and opens
 // the flow for it. Subscribing does not ask: see Handle.Ask.
 func (c *Conn) OnHost(event string, fn func(*wire.Event)) { c.Host().On(event, fn) }
+
+// Relay carries statements to another connected application, by name. What that
+// application says back arrives as EventRelay -- so subscribe with OnHost before
+// calling this, or the first statements over will have nowhere to land.
+func (c *Conn) Relay(to, text string) error {
+	return c.Host().Do(fmt.Sprintf("%s to=%s text=%s", DoRelay, wire.Quote(to), wire.Quote(text)))
+}

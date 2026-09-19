@@ -3204,13 +3204,20 @@ const char *kt_answer_text(const kt_answer *a, const char *name) {
     const kt_arg *f = ans_arg(a, name);
     return (f && f->has_value && f->kind == 2) ? f->sval : NULL;
 }
+const char *kt_answer_text_n(const kt_answer *a, const char *name, size_t *len) {
+    const kt_arg *f = ans_arg(a, name);
+    if (!f || !f->has_value || f->kind != 2) return NULL;
+    if (len) *len = f->slen;
+    return f->sval;
+}
 const char *kt_answer_word(const kt_answer *a, const char *name) {
     const kt_arg *f = ans_arg(a, name);
     return (f && f->has_value && f->kind == 3) ? f->sval : NULL;
 }
-int kt_answer_flag(const kt_answer *a, const char *name) {
+kt_flag kt_answer_flag(const kt_answer *a, const char *name) {
     const kt_arg *f = ans_arg(a, name);
-    return f && !f->has_value;
+    if (!f || f->has_value) return KT_FLAG_NONE;
+    return f->flag;
 }
 
 const kt_value *kt_answer_fields(const kt_answer *a, int *n, int *whole) {
@@ -3395,9 +3402,9 @@ int kt_store_write(kt_conn *c, const char *key, const char *type,
     return r;
 }
 
-int kt_store_list(kt_conn *c) {
+int kt_store_list(kt_conn *c, kt_answer_cb cb, void *userdata) {
     if (!c) return -1;
-    return kt_ask(c, kt_init(c, "store"), "inventory");
+    return kt_ask_for(c, kt_init(c, "store"), "inventory", cb, userdata);
 }
 
 int kt_blob_append(kt_conn *c, uint64_t blob, const void *data, size_t n) {
@@ -3420,10 +3427,11 @@ int kt_blob_replace(kt_conn *c, uint64_t blob, const void *data, size_t n) {
     return r;
 }
 
-int kt_blob_read(kt_conn *c, uint64_t blob, long long offset) {
+int kt_blob_read(kt_conn *c, uint64_t blob, long long offset,
+                 kt_answer_cb cb, void *userdata) {
     char q[48];
     snprintf(q, sizeof q, "bytes offset=%lld", offset);
-    return kt_ask(c, blob, q);
+    return kt_ask_for(c, blob, q, cb, userdata);
 }
 
 int kt_blob_drop(kt_conn *c, uint64_t blob) { return kt_destroy(c, blob); }

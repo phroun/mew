@@ -169,34 +169,41 @@ func itoa(v uint64) string {
 
 // Nothing else reads these back, so an app that means to turn one of them over
 // has to be told which way it is first.
+//
+// It is ANSWERED, and nothing is subscribed to here. The display used to reply to
+// these with a host_state event, which meant an app had to subscribe in order to
+// hear its own answer, and which spent `event` on a third meaning beside the two
+// it has -- something subscribed to, or an object reporting itself.
 func TestTheDisplaySaysHowItStands(t *testing.T) {
 	conn := dialDesktop(t, "Asking App")
 
-	said := make(chan *wire.Event, 8)
-	conn.OnHost(client.HostState, func(ev *wire.Event) { said <- ev })
-
-	answer := func(t *testing.T, what string) *wire.Event {
+	// ask puts one question and hands back the answer that completed it.
+	ask := func(t *testing.T, question string) *wire.Answer {
 		t.Helper()
+		said := make(chan *wire.Answer, 8)
+		if err := conn.Host().AskFor(question, func(a *wire.Answer) { said <- a }); err != nil {
+			t.Fatalf("ask host %s: %v", question, err)
+		}
 		select {
-		case ev := <-said:
-			return ev
+		case a := <-said:
+			if !a.Complete {
+				t.Fatalf("ask host %s was answered in pieces: %s", question, a.Encode())
+			}
+			if a.To == "" {
+				t.Errorf("the answer does not say which question it is answering")
+			}
+			return a
 		case <-time.After(5 * time.Second):
-			t.Fatalf("%s was never answered", what)
+			t.Fatalf("ask host %s was never answered", question)
 			return nil
 		}
 	}
 
-	// Every question is answered with the whole of it, and the answer names
-	// the display so one subscription hears it.
-	if err := conn.Host().Ask(client.AskDark); err != nil {
-		t.Fatalf("ask host dark: %v", err)
-	}
-	ev := answer(t, "ask host dark")
-	if id, _ := ev.Uint("host"); id != conn.HostID() {
-		t.Errorf("the answer came from %d, want %d", id, conn.HostID())
-	}
-	if ev.Flag("dark") == wire.FlagNone || ev.Flag("desktop") == wire.FlagNone {
-		t.Errorf("the answer said nothing: %s", ev.Encode())
+	// Either question is answered with the whole of how the display stands, so one
+	// round trip settles both.
+	a := ask(t, client.AskDark)
+	if a.Flag("dark") == wire.FlagNone || a.Flag("desktop") == wire.FlagNone {
+		t.Errorf("the answer said nothing: %s", a.Encode())
 	}
 
 	// What it says is what was set.
@@ -210,19 +217,13 @@ func TestTheDisplaySaysHowItStands(t *testing.T) {
 		if err := conn.Host().Set(c.set); err != nil {
 			t.Fatalf("set host %s: %v", c.set, err)
 		}
-		if err := conn.Host().Ask(client.AskDark); err != nil {
-			t.Fatalf("ask: %v", err)
-		}
-		if got := answer(t, "ask host dark").Flag("dark"); got != c.want {
+		if got := ask(t, client.AskDark).Flag("dark"); got != c.want {
 			t.Errorf("after set host %s the answer says dark=%v, want %v", c.set, got, c.want)
 		}
 	}
 
 	// Asking about the desktop is answered the same way.
-	if err := conn.Host().Ask(client.AskDesktop); err != nil {
-		t.Fatalf("ask host desktop: %v", err)
-	}
-	if answer(t, "ask host desktop").Flag("desktop") == wire.FlagNone {
+	if ask(t, client.AskDesktop).Flag("desktop") == wire.FlagNone {
 		t.Error("the answer said nothing about the desktop")
 	}
 
@@ -244,7 +245,7 @@ func TestDescribeReportsWhatEachTypeDoes(t *testing.T) {
 		t.Fatalf("describe: %v", err)
 	}
 	want := map[string][]string{
-		"host":    {"cascade", "copy", "cut", "paste", "rawkey", "selectall", "tile"},
+		"host":    {"cascade", "copy", "cut", "paste", "rawkey", "relay", "selectall", "tile"},
 		"mdipane": {"cascade", "minimize", "next", "prior", "remove", "restore", "tile"},
 		"blob":    {"append"},
 	}

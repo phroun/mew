@@ -351,15 +351,14 @@ func (a *app) wireMenus() {
 	// has to know which way it is set before it can turn it over: it asks, ticks
 	// itself from the answer, and keeps count from there.
 	dark := true
-	c.OnHost(client.HostState, func(ev *protocol.Event) {
-		dark = ev.Flag("dark") == protocol.FlagTrue
+	_ = c.Host().AskFor(client.AskDark, func(ans *protocol.Answer) {
+		dark = ans.Flag("dark") == protocol.FlagTrue
 		tick := "checked"
 		if !dark {
 			tick = "!checked"
 		}
 		_ = a.ui.Object("mdark").Set(tick)
 	})
-	_ = c.Host().Ask(client.AskDark)
 
 	c.OnCommand("demo.view.theme", func() {
 		dark = !dark

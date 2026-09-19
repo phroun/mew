@@ -12,19 +12,34 @@ package display
 //	set host !desktop                 hide it again    (mew's hide_desktop)
 //	set host desktopfont=tuesday      tuesday, or default
 //	set host status="Ready"           the desktop's status bar
-//	ask host dark / ask host desktop  which way either of those is set
+//	q=ask host dark / q=ask host desktop   which way either of those is set
 //
 // And the things it DOES, which hold no value afterwards to set or to ask for:
 //
 //	do host tile / do host cascade    arrange the desktop's windows
 //	do host rawkey                    pass the next key straight through
 //	do host cut / copy / paste / selectall
+//	do host relay to=... text=...     carry statements to another application
 //
 // The edit actions reach whatever has the focus, which may belong to another
 // app -- as the bare verbs they replace always did.
 //
 // Any app connected can set or do any of these. There is no surface to
 // configure who may, so it stays what the bare verbs already allowed.
+//
+// # Asked for, or heard
+//
+// The two questions are ANSWERED: one `answer`, completing the question, carrying
+// both flags. They used to be answered with a host_state event, which meant a
+// client had to subscribe in order to hear its own answer, and which gave `event`
+// a third meaning beside the two it has -- a subscribed event, or an object saying
+// something about itself.
+//
+// The relay is the other side of that line, and it is why relaying is a `do` and
+// not an ask. What comes back is ANOTHER application's speech: it arrives whenever
+// that application says something, there is no last one, and nothing ever
+// completes. That is a subscription, so it is spelled as one -- `sub host relay`,
+// and `do host relay` to start the statements crossing.
 
 import (
 	"fmt"
@@ -34,17 +49,11 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// The questions the display answers, and the events it answers them with.
+// The questions the display answers. Both are answered with `answer`, carrying
+// the whole of how the display stands: see the file comment.
 const (
 	AskDark    = "dark"    // is the terminal in the dark theme
 	AskDesktop = "desktop" // is the desktop showing
-
-	// AskRelay puts statements to another connected application and shows what
-	// comes back. A debug facility, off unless the display turns it on.
-	AskRelay = "relay"
-
-	EventHostState = "host_state" // how the display stands
-	EventRelay     = "relay"      // one statement another application said
 )
 
 // The things the display does. None of them is a value it then holds: there is
@@ -57,7 +66,17 @@ const (
 	DoCopy      = "copy"
 	DoPaste     = "paste"
 	DoSelectAll = "selectall"
+
+	// DoRelay starts statements crossing to another connected application. What
+	// that application says back arrives as EventRelay, which is subscribed to --
+	// it is that application's speech, with no end to wait for. A debug facility,
+	// off unless the display turns it on.
+	DoRelay = "relay"
 )
+
+// EventRelay is one statement a relayed-to application said. The only thing the
+// display raises, and it answers nothing: see the file comment.
+const EventRelay = "relay"
 
 // hostObject is a connection's handle on the display it is connected to. Like
 // the store, it is registered rather than built: `new host` is refused, and the
@@ -131,7 +150,7 @@ func (h *hostObject) Set(name string, v *protocol.Value, flag protocol.FlagState
 // Do performs one of the display's actions. Each reaches the desktop everyone
 // shares, and the edit actions reach whatever has the focus -- which may belong
 // to another app, the way the bare verbs they replace always did.
-func (h *hostObject) Do(action string, _ []*protocol.Arg) error {
+func (h *hostObject) Do(action string, args []*protocol.Arg) error {
 	d := h.conn.server.desktop
 	switch action {
 	case DoTile:
@@ -150,23 +169,25 @@ func (h *hostObject) Do(action string, _ []*protocol.Arg) error {
 	case DoCut, DoCopy, DoPaste, DoSelectAll:
 		editAction(d.FocusedTrinket(), action)
 		return nil
+	case DoRelay:
+		return h.relay(args)
 	}
 	return fmt.Errorf("the host does nothing called %q", action)
 }
 
 // Ask answers a question put to the display. Nothing else reads these back, so
 // an app that means to turn one of them over has to be told which way it is
-// first. Every question is answered with the same event, carrying all of it.
-// Ask still answers with events, which is the migration `answer` makes possible and
-// not part of adding it: this question's answers are a client's to read either way,
-// and changing both at once would leave nothing to compare against.
-func (h *hostObject) Ask(question string, args []*protocol.Arg, _ *protocol.Answers) error {
+// first.
+//
+// Either question is answered with the whole of how the display stands, in one
+// answer that completes it. There is little enough of it that splitting it would
+// cost a second round trip to learn the other half, and an application asking one
+// usually wants both.
+func (h *hostObject) Ask(question string, _ []*protocol.Arg, out *protocol.Answers) error {
 	switch question {
 	case AskDark, AskDesktop:
-		h.answer()
+		h.state(out)
 		return nil
-	case AskRelay:
-		return h.relay(args)
 	}
 	return fmt.Errorf("the host answers no question called %q", question)
 }
@@ -222,14 +243,16 @@ func (h *hostObject) relay(args []*protocol.Arg) error {
 	return nil
 }
 
-// answer says how the display stands, naming itself as the source so one
-// subscription hears it.
-func (h *hostObject) answer() {
+// state answers with how the display stands, and completes the question.
+//
+// No host= among the arguments: an answer quotes the question it is answering, so
+// there is nothing for the asker to look the display up by.
+func (h *hostObject) state(out *protocol.Answers) {
 	d := h.conn.server.desktop
-	h.conn.queueAnswer(protocol.NewEvent(EventHostState).
-		WithUint("host", h.id).
-		WithFlag("dark", flagOf(style.ActiveTermTheme() == style.TermThemeDark)).
-		WithFlag("desktop", flagOf(d.IsDesktopEnvironment())))
+	out.Done(
+		&protocol.Arg{Name: "dark", Flag: flagOf(style.ActiveTermTheme() == style.TermThemeDark)},
+		&protocol.Arg{Name: "desktop", Flag: flagOf(d.IsDesktopEnvironment())},
+	)
 }
 
 // hostObjectIDs numbers the host objects, one per connection, kept clear of
@@ -273,28 +296,30 @@ func init() {
 			DoCopy:      protocol.NewDoDesc("Copy, on whatever has the focus."),
 			DoPaste:     protocol.NewDoDesc("Paste, on whatever has the focus."),
 			DoSelectAll: protocol.NewDoDesc("Select all, on whatever has the focus."),
+			DoRelay: protocol.NewDoDesc(
+				"Debug: carry statements to another connected application. What it says "+
+					"back arrives as relay events, one per statement, for as long as it "+
+					"goes on saying anything -- so subscribe to relay first. Off unless "+
+					"the display opens it.").
+				Arg("to", "string", "The application to put them to, by name.").
+				Arg("text", "string", "The statements, in the wire language."),
 		},
 		Asks: map[string]protocol.AskDesc{
-			AskDark: protocol.NewAskDesc("Which way the terminal's theme is set.").
-				Answering(EventHostState),
-			AskDesktop: protocol.NewAskDesc("Whether the desktop is showing.").
-				Answering(EventHostState),
-			AskRelay: protocol.NewAskDesc(
-				"Debug: put statements to another connected application and show "+
-					"what it says back. Off unless the display opens it.").
-				Arg("to", "string", "The application to put them to, by name.").
-				Arg("text", "string", "The statements, in the wire language.").
-				Answering(EventRelay),
+			// Both say all of it, so one round trip settles either question.
+			AskDark: protocol.NewAskDesc(
+				"Which way the terminal's theme is set. Answered by one answer carrying " +
+					"dark= and desktop= both.").
+				Answering(protocol.AnswerVerb),
+			AskDesktop: protocol.NewAskDesc(
+				"Whether the desktop is showing. Answered by one answer carrying dark= " +
+					"and desktop= both.").
+				Answering(protocol.AnswerVerb),
 		},
 		Events: map[string]protocol.EventDesc{
-			EventHostState: protocol.NewEventDesc(
-				"How the display stands. Every question is answered with this, so one "+
-					"answer says all of it.").
-				Field("host", "uint", "The display answering.").
-				Field("dark", "flag", "The terminal's theme: asserted for dark, negated for light.").
-				Field("desktop", "flag", "Whether the desktop is showing."),
 			EventRelay: protocol.NewEventDesc(
-				"One statement a relayed-to application said back.").
+				"One statement a relayed-to application said back. Subscribed to rather "+
+					"than asked for: it is that application's speech, and there is no "+
+					"last one to wait for.").
 				Field("host", "uint", "The display carrying it.").
 				Field("from", "string", "The application that said it.").
 				Field("text", "string", "The statement, in the wire language."),

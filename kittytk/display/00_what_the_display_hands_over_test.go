@@ -74,15 +74,18 @@ func TestOneOfThemIsReachedByNameAlone(t *testing.T) {
 	if err := conn.Given(wire.HostName).Set("dark"); err != nil {
 		t.Errorf("set through the named handle: %v", err)
 	}
-	heard := make(chan struct{}, 2)
-	conn.Given(wire.StoreName).On(client.StoreDone, func(*wire.Event) { heard <- struct{}{} })
-	if err := conn.Given(wire.StoreName).Ask("inventory"); err != nil {
+	answered := make(chan *wire.Answer, 4)
+	err := conn.Given(wire.StoreName).AskFor("inventory", func(a *wire.Answer) { answered <- a })
+	if err != nil {
 		t.Fatalf("ask through the named handle: %v", err)
 	}
 	select {
-	case <-heard:
+	case a := <-answered:
+		if !a.Complete {
+			t.Errorf("a store holding nothing answered %s first", a.Encode())
+		}
 	case <-time.After(5 * time.Second):
-		t.Error("the named handle heard nothing back")
+		t.Error("the named handle was never answered")
 	}
 }
 
