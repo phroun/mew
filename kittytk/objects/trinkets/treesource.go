@@ -64,16 +64,20 @@ const everyTreeRow = 1 << 30
 //
 // Nil where there is nothing to read, which is an empty tree and is ordinary.
 func (t *TreeView) sequence() serval.DataSet {
-	if t.restate || t.made == nil {
-		t.closeSequence()
-		t.made = t.makeSource()
-		t.restate = false
+	read := t.source
+	if read == nil {
+		if t.restate || t.made == nil {
+			t.closeSequence()
+			t.made = t.makeSource()
+			t.restate = false
+		}
+		read = t.made
 	}
-	if t.made == nil {
+	if read == nil {
 		return nil
 	}
 	if t.set == nil {
-		set, err := t.made.Open(nil)
+		set, err := read.Open(nil)
 		if err != nil {
 			// A sequence that cannot be stated is a tree with no rows. There is
 			// nothing a tree can usefully do with the refusal, having been told
@@ -101,8 +105,13 @@ func (t *TreeView) closeSequence() {
 // is no moment a view can be sure it was told about. Until the source is the
 // authority and the items are a projection of it, the safe answer is to remake,
 // and the cost is the same order as the walk it replaces.
+//
+// A tree reading a DECLARED source does not care what its own items do, so
+// nothing is restated there.
 func (t *TreeView) touched() {
-	t.restate = true
+	if t.source == nil {
+		t.restate = true
+	}
 }
 
 // makeSource builds a tree out of the items this tree was given.
@@ -193,25 +202,44 @@ func (t *TreeView) flatten() []*TreeItem {
 	if err := set.Read(&serval.Scope{Count: everyTreeRow}, &out); err != nil {
 		return nil
 	}
+
+	// A MADE source's rows lead back to the items the caller handed in. A
+	// DECLARED source's rows have no items until this, so one is made per
+	// identity and kept, and the depth the tree reported is what its parentage is
+	// rebuilt from.
+	names, isTree := serval.TreeFieldsOf(t.source)
 	items := make([]*TreeItem, 0, len(out.ids))
-	for _, id := range out.ids {
-		if item := t.byID[core.ObjectID(id.Int)]; item != nil {
-			items = append(items, item)
+	depth := make([]int, 0, len(out.ids))
+	for i, id := range out.ids {
+		if t.source == nil {
+			if item := t.byID[core.ObjectID(id.Int)]; item != nil {
+				items = append(items, item)
+			}
+			continue
 		}
+		items = append(items, t.learnRow(id, out.fields[i], names, isTree))
+		depth = append(depth, wholeOf(out.fields[i].Get(names.Depth)))
+	}
+	if t.source != nil {
+		hangFrom(items, depth)
 	}
 	return items
 }
 
-// treeRows takes one flattened answer. Only the identities are wanted: what each
-// row HOLDS is on the item the key leads to, for as long as the tree is making
-// its own source.
+// treeRows takes one flattened answer: the identities, and what each row holds.
+//
+// A made source needs only the identities -- what its rows HOLD is on the items
+// the keys lead back to -- but a declared source's rows have nowhere else to be
+// read from, so both are kept and the made path simply ignores the fields.
 type treeRows struct {
-	ids []*serval.Value
+	ids    []*serval.Value
+	fields []serval.Record
 }
 
 func (r *treeRows) Ordered() {}
-func (r *treeRows) Record(id *serval.Value, _ serval.Record) error {
+func (r *treeRows) Record(id *serval.Value, f serval.Record) error {
 	r.ids = append(r.ids, id)
+	r.fields = append(r.fields, f)
 	return nil
 }
 func (r *treeRows) Subset(id *serval.Value, f serval.Record, _ serval.Totals) error {
@@ -221,3 +249,182 @@ func (r *treeRows) Done(serval.Complete) {}
 
 // objectIDOf turns a row's key back into the identity it was made from.
 func objectIDOf(id *serval.Value) core.ObjectID { return core.ObjectID(id.Int) }
+
+// --- a declared source --------------------------------------------------
+
+// SetSource declares where this tree's rows come from.
+//
+// It replaces whatever the tree was reading, its own items included, and drops
+// what it knew about where the rows were -- a different sequence puts them
+// somewhere else, and nothing it held about the old one says anything about the
+// new. Nil goes back to reading the items the tree was given.
+//
+// The source is a `TreeSource` wherever the rows are a hierarchy, and the rows
+// then carry their depth, their kind and how many children they have. A plain
+// source is read as one flat level, which is a tree of one generation and is
+// ordinary rather than an error.
+func (t *TreeView) SetSource(src serval.Source) {
+	t.closeSequence()
+	t.source = src
+	t.made = nil
+	t.fromSource = nil
+	t.restate = true
+	t.currentIndex = -1
+	t.scrollOffset = 0
+	t.rebuildFlatList()
+	t.Update()
+}
+
+// Source is what this tree reads, and nil for one reading its own items.
+func (t *TreeView) Source() serval.Source { return t.source }
+
+// learnRow is the item standing for one of a source's rows, made if it is not
+// made already and brought up to date either way.
+//
+// **The same row leads to the same pointer across a rebuild**, which is why this
+// keeps them by identity rather than making one per read. Everything that reads
+// flatList compares pointers -- selection restores itself by one, the row editor
+// holds one -- so a row that has not changed must not become a different object
+// because the tree was redrawn.
+//
+// What the row carries comes through the KIND's mapping, which is what lets one
+// tree draw a host, an application and a window in one set of columns.
+func (t *TreeView) learnRow(id *serval.Value, fields serval.Record,
+	names serval.TreeFields, isTree bool) *TreeItem {
+	key := serval.Key(id)
+	if t.fromSource == nil {
+		t.fromSource = map[string]*TreeItem{}
+	}
+	item := t.fromSource[key]
+	if item == nil {
+		item = &TreeItem{ID: core.NextObjectID(), Enabled: true, rowKey: id}
+		t.fromSource[key] = item
+	}
+
+	kind := serval.Segment(fields.Get(names.Kind))
+	m := t.kinds[kind]
+
+	item.Text = serval.Segment(fields.Get(t.cellOf(kind, nil).showField()))
+	if m.Icon != "" {
+		item.Icon = serval.Segment(fields.Get(m.Icon))
+	}
+	for _, col := range t.columns {
+		item.SetValue(col.ID, serval.Segment(fields.Get(t.cellOf(kind, col).showField())))
+	}
+
+	// The three things a tree knows and a record need not, as the source said
+	// them. Expanded and Kids are what the fourteen callers of IsLeaf and the
+	// readers of Expanded go on asking, so nothing else had to change.
+	//
+	// **A source that is not a tree says none of it**, and every row is then a
+	// leaf standing at the top -- which is a flat source read as a tree of one
+	// generation, and is ordinary. Asking the SOURCE rather than sniffing for a
+	// field is what keeps that apart from a tree whose row nobody could count.
+	if !isTree {
+		item.Expanded, item.Kids = false, 0
+		return item
+	}
+	switch serval.Segment(fields.Get(names.State)) {
+	case "open", "openAll":
+		item.Expanded = true
+	default:
+		item.Expanded = false
+	}
+	if n := fields.Get(names.Expandable); n == nil {
+		// Nobody could say, so draw the twisty and find out on opening.
+		item.Kids = -1
+	} else if n.IsInt {
+		item.Kids = int(n.Int)
+	} else {
+		item.Kids = int(n.Num)
+	}
+	return item
+}
+
+// wholeOf is a value as a whole number, and nought for anything that is not one.
+// A depth is a count and a count is an integer; a source that sent something else
+// has said nothing a depth can be read out of.
+func wholeOf(v *serval.Value) int {
+	switch {
+	case v == nil:
+		return 0
+	case v.IsInt:
+		return int(v.Int)
+	case v.Kind == serval.NumberValue:
+		return int(v.Num)
+	}
+	return 0
+}
+
+// hangFrom gives a source's rows the parentage their depth implies.
+//
+// The sequence arrives flat and in pre-order with a depth on every row, so the
+// parent of a row at depth d is the last row seen at d-1. Reconstructing it is
+// what lets `Level()` and the drawing that leans on it go on working unchanged --
+// seven places ask an item how deep it stands, and none of them had to learn
+// about a field.
+//
+// Only what is VISIBLE is hung: a collapsed node's children are not in the
+// sequence, so its Children slice is empty and `Kids` is what says it has any.
+func hangFrom(rows []*TreeItem, depth []int) {
+	var spine []*TreeItem
+	for i, item := range rows {
+		d := depth[i]
+		item.Children = nil
+		if d > 0 && d <= len(spine) {
+			item.Parent = spine[d-1]
+			item.Parent.Children = append(item.Parent.Children, item)
+		} else {
+			item.Parent = nil
+		}
+		if d < len(spine) {
+			spine = spine[:d]
+		}
+		spine = append(spine, item)
+	}
+}
+
+// marks is the expansion of a DECLARED tree source, and nil for anything else.
+//
+// A tree reading its own items has no need of it: the field is the authoring
+// surface there and makeSource carries it in. A tree reading a declared source
+// has no items to carry anything from, so the marks are the only authority --
+// which is the same mechanism said from the other side, not a second one.
+func (t *TreeView) marks() *serval.TreeSource {
+	if src, ok := t.source.(*serval.TreeSource); ok {
+		return src
+	}
+	return nil
+}
+
+// chainOf is an item's mark segments, from the root down to it.
+//
+// A descent has this in hand, having walked it; a view reaching in from the side
+// has to walk back UP for it, which is what the parentage rebuilt from the depth
+// is for.
+func (t *TreeView) chainOf(item *TreeItem) []string {
+	var up []string
+	for at := item; at != nil; at = at.Parent {
+		up = append(up, serval.Key(at.rowKey))
+	}
+	for i, j := 0, len(up)-1; i < j; i, j = i+1, j-1 {
+		up[i], up[j] = up[j], up[i]
+	}
+	return up
+}
+
+// tellMarks moves a declared source's mark for one item, and reports whether it
+// did -- so the caller falls back to the field where there is no source to tell.
+func (t *TreeView) tellMarks(item *TreeItem, open bool) bool {
+	src := t.marks()
+	if src == nil || item == nil || item.rowKey == nil {
+		return false
+	}
+	chain := t.chainOf(item)
+	if open {
+		src.Expand(chain...)
+	} else {
+		src.Collapse(chain...)
+	}
+	return true
+}

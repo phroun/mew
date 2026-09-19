@@ -173,6 +173,26 @@ A bundle record written `("some text")` is a list with one positional member, so
 what it shows is `.0` and not `value` — `value` being the whole of a record that
 is *not* a list. That catches people, this author included.
 
+### A tree says the same word
+
+```
+new treeview source="source:hosts.tree" showheader
+```
+
+**The nesting is the SOURCE's**, so the statement does not describe it. A
+`serval.TreeSource` answers its visible rows flat and in pre-order with a depth,
+a kind and a child count on each, and the view rebuilds the parentage from the
+depth — which is why `Level()`, `IsLeaf()` and `Expanded` go on being asked the
+same way over rows that were never written down. A source that is *not* a
+hierarchy is read as one flat level, which is a tree of one generation and is
+ordinary rather than an error.
+
+A tree has columns where a list has one field, and which of a kind's fields fills
+which column is `SetKindMap` — Go, for now. The wire language can say where the
+rows come from and not yet what each kind puts where, so a tree named from a
+statement gets the **identity** mapping: a column called `size` is the field
+`size`, and the caption is `value`. `treemap.go` is the rungs above that.
+
 ## The layer above
 
 A PSL document read here is flat: `_bundle` is a member like any other, and

@@ -36,6 +36,21 @@ type TreeItem struct {
 	Parent   *TreeItem
 	Children []*TreeItem
 
+	// Kids is how many children a SOURCE said this row has, for a row the tree
+	// did not make. Zero means nobody said, and then the children themselves
+	// answer -- which is what a tree of its own items has always done.
+	//
+	// It exists so that IsLeaf goes on being the one question fourteen places
+	// ask. A row out of a source has no Children slice while it is collapsed,
+	// so counting the slice would draw every closed node as a leaf; a row that
+	// nobody could count is negative, which draws the twisty and finds out on
+	// opening.
+	Kids int
+
+	// rowKey is the source's identity for a row that came from one, which is
+	// what a mark is keyed by. A made row has none: its key is its ObjectID.
+	rowKey *serval.Value
+
 	// Values holds this item's data-column cell text, keyed by
 	// TreeColumn.ID (see SetValue/Value in treeview_columns.go).
 	Values map[string]string
@@ -71,7 +86,15 @@ func (t *TreeItem) RemoveChild(child *TreeItem) {
 }
 
 // IsLeaf returns whether this item has no children.
+//
+// A row out of a SOURCE answers from Kids, because its Children slice holds only
+// what is visible and a collapsed node's is empty -- counting it would draw every
+// closed node as a leaf. A row the tree made itself, and a source's row nobody
+// could count, fall through to the slice, which is what this has always done.
 func (t *TreeItem) IsLeaf() bool {
+	if t.Kids != 0 {
+		return false
+	}
 	return len(t.Children) == 0
 }
 
@@ -98,12 +121,17 @@ type TreeView struct {
 	// Where the rows come from (see treesource.go). A tree given no source
 	// makes one out of its own items, so flatList is a window on a sequence
 	// either way rather than something the view walks for itself.
+	source  serval.Source // declared: what SetSource was given
 	made    *serval.TreeSource
 	set     serval.DataSet
 	restate bool
 	// byID leads a row's key back to the very item the caller handed in,
 	// because everything reading flatList compares pointers.
 	byID map[core.ObjectID]*TreeItem
+	// fromSource holds the items built out of a declared source's records,
+	// keyed by the row's own identity, so the same row leads to the same pointer
+	// across a rebuild.
+	fromSource map[string]*TreeItem
 	// kinds is what each kind of row puts in the columns (see treemap.go),
 	// keyed by the name its serval.NodeType is registered under. serval holds
 	// the types; the view holds the mapping, because serval must not learn what
@@ -493,7 +521,12 @@ func (t *TreeView) ExpandItem(item *TreeItem) {
 		selectedItem = t.flatList[t.currentIndex]
 	}
 
-	item.Expanded = true
+	// The marks where a source was declared, the field where the tree made its
+	// own -- one mechanism said from two sides, because a declared source has no
+	// items to carry a field in from.
+	if !t.tellMarks(item, true) {
+		item.Expanded = true
+	}
 	t.rebuildFlatList()
 
 	// Restore selection by finding the same item in new flat list
@@ -522,7 +555,9 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 		selectedItem = t.flatList[t.currentIndex]
 	}
 
-	item.Expanded = false
+	if !t.tellMarks(item, false) {
+		item.Expanded = false
+	}
 	t.rebuildFlatList()
 
 	// Restore selection by finding the same item in new flat list
@@ -576,7 +611,13 @@ func (t *TreeView) ExpandAll() {
 		selectedItem = t.flatList[t.currentIndex]
 	}
 
-	t.expandRecursive(t.rootItems)
+	// One mark for a declared source, which is the whole point of `openAll`
+	// being a state: expanding a million rows costs one entry.
+	if src := t.marks(); src != nil {
+		src.ExpandAll()
+	} else {
+		t.expandRecursive(t.rootItems)
+	}
 	t.rebuildFlatList()
 
 	// Restore selection by finding the same item
@@ -599,7 +640,11 @@ func (t *TreeView) CollapseAll() {
 		selectedItem = t.flatList[t.currentIndex]
 	}
 
-	t.collapseRecursive(t.rootItems)
+	if src := t.marks(); src != nil {
+		src.CollapseAll()
+	} else {
+		t.collapseRecursive(t.rootItems)
+	}
 	t.rebuildFlatList()
 
 	// Restore selection - if item is no longer visible, select first root

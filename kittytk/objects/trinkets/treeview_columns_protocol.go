@@ -407,6 +407,30 @@ func init() {
 // properties plus the multi-column surface.
 func treeViewProps() map[string]protocol.Property {
 	return map[string]protocol.Property{
+		// Where the rows come from, when they are not written down here.
+		//
+		// The same one word the list says, and it means the same thing: a
+		// `source:` name somebody registered, or a `bundle:` key -- the bare
+		// form being a bundle too. A source that is a hierarchy brings its own
+		// depth, kind and child counts with it, and a flat one reads as a tree
+		// of one generation, so the language does not need to say which.
+		"source": protocol.NewProperty("string", wprop("source",
+			func(ctx *protocol.BindContext, t *TreeView, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("source", v, f)
+				if err != nil {
+					return err
+				}
+				// Through the CONNECTION, because a store is per connection and
+				// the bundle two applications each call objectLibrary is two
+				// different bundles.
+				src, err := LookupSourceOn(ctx, s)
+				if err != nil {
+					return err
+				}
+				t.SetSource(src)
+				return nil
+			})).Tip("Where the rows come from: source:<name>, or a bundle key."),
+
 		"selected":     intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
 		"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth).Tip("Indent width per tree level."),
 

@@ -16,6 +16,16 @@ import (
 //	    new item caption="Roots"
 //	}
 //
+// Or the rows are NAMED, and the tree reads somebody else's, which is the same
+// one word a list says:
+//
+//	new treeview source="source:hosts.tree" showheader
+//	new treeview source="bundle:objectLibrary@2.1.0"
+//
+// A named source that is a hierarchy carries its own depth, kind and child
+// counts, so the nesting is the SOURCE's rather than the statement's; a flat one
+// reads as a tree of one generation.
+//
 // Items are first-class wire objects: each carries an ObjectID, and
 // correlation keys name them (`fruit=new item …` → `tree.fruit`, then
 // `set tree.fruit caption="…"`, `destroy tree.fruit`). Selection
