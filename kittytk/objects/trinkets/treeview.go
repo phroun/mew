@@ -147,6 +147,10 @@ type TreeView struct {
 	hintLabel string
 	set       serval.DataSet
 	restate   bool
+	// arrivals counts the sources this view has been pointed at, so a
+	// subscription taken against one it has left knows to do nothing. See
+	// arrival.go.
+	arrivals int
 	// byID leads a row's key back to the very item the caller handed in,
 	// because everything reading flatList compares pointers.
 	byID map[core.ObjectID]*TreeItem

@@ -32,6 +32,7 @@ type ApplicationSource struct {
 	mu      sync.Mutex
 	opening []*appScope // asked, in the order their replies are owed
 	byID    map[uint64]*appScope
+	tells   []func() // told when a scope's answer has landed
 }
 
 // NewApplicationSource is a source backed by the application's records under
@@ -364,6 +365,45 @@ func (q *appScope) finish(done serval.Complete) {
 	q.out.Done(done)
 	if id != 0 {
 		_ = q.set.src.send(fmt.Sprintf("destroy %d\nend\n", id))
+	}
+	// The sink is full, so whoever asked can read again. Said HERE and not per
+	// record: a hundred thousand records would be a hundred thousand notices and
+	// a hundred thousand re-reads, and a scope is what was asked for anyway --
+	// asked once and answered once.
+	q.set.src.arrived()
+}
+
+// WhenArrived adds something to be told once an answer has landed
+// (serval.Arriving).
+//
+// It ADDS rather than replaces, because two trinkets naming one source read one
+// object and both want telling.
+func (h *ApplicationSource) WhenArrived(tell func()) {
+	if tell == nil {
+		return
+	}
+	h.mu.Lock()
+	h.tells = append(h.tells, tell)
+	h.mu.Unlock()
+}
+
+// arrived says a scope's answer has landed.
+//
+// **On whatever thread the records came in on**, which is the connection's
+// reader. Nothing here knows what that means for whoever is listening: a view
+// posts the re-read to the thread that owns its state, and a test calls it where
+// it stands. See serval's arriving.go for why that is the reader's business.
+//
+// Told outside the lock, because what a listener does is its own -- a view that
+// re-reads will open a sequence on this very source, and holding the lock while
+// it did would be holding one lock and reaching for it again.
+func (h *ApplicationSource) arrived() {
+	h.mu.Lock()
+	tells := make([]func(), len(h.tells))
+	copy(tells, h.tells)
+	h.mu.Unlock()
+	for _, tell := range tells {
+		tell()
 	}
 }
 

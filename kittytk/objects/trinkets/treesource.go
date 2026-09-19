@@ -293,6 +293,10 @@ func (t *TreeView) SetSource(src serval.Source) {
 	// Before the first read, so the rows arrive in the order the columns state
 	// rather than in the configuration's and then again in this one.
 	t.tellOrder()
+	t.arrivals++
+	if src != nil {
+		hearArrivals(t, src, t.arrivals, func() int { return t.arrivals }, t.Reread)
+	}
 	t.rebuildFlatList()
 	t.Update()
 }

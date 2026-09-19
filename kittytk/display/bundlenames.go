@@ -34,12 +34,20 @@ func (c *conn) findSource(name string) (serval.Source, error) {
 		if src, err := trinkets.LookupSource(name); err == nil {
 			return src, nil
 		}
+		// **Under the name the APPLICATION serves it by**, which is the name with
+		// its namespace mark off. `source:papers` is how a statement says which
+		// namespace it means; `papers` is what the application called it, and a
+		// query quoting the mark back names a source the application has not got.
+		live, ok := trinkets.LiveName(name)
+		if !ok {
+			return nil, fmt.Errorf("source %q: nothing is registered under that name", name)
+		}
 		// **Nothing in this process stands for it, and this is a connection**, so
 		// it is this application's: an application hosts the far end of a name the
 		// display knows, and there is nothing else the name could mean here. A
 		// trinket with no connection still gets the refusal, which is where a
 		// misspelling is caught. See appsources.go.
-		return c.appSource(name), nil
+		return c.appSource(live), nil
 	}
 
 	// Asked for each time rather than held from the handshake, because renaming

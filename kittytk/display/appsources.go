@@ -55,6 +55,11 @@ type appSources struct {
 
 // appSource is the far end of one name on this connection, made if it is not
 // made already.
+//
+// **The name is the one the APPLICATION serves it by**, with the namespace mark
+// off. `source:papers` is how a statement says which namespace it means; `papers`
+// is what the application called it, and a query quoting the mark back names a
+// source the application has not got. See trinkets.LiveName.
 func (c *conn) appSource(name string) *source.ApplicationSource {
 	c.sources.mu.Lock()
 	defer c.sources.mu.Unlock()

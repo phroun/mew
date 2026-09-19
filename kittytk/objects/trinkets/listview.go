@@ -45,12 +45,16 @@ type ListView struct {
 	// is the one built out of those items. Two fields rather than one, because
 	// a made source assigned over the declared one would then look declared --
 	// and a list would stop noticing that its own items had changed.
-	source     serval.Source
-	made       serval.Source
-	set        serval.DataSet
-	spec       serval.Spec
-	bones      spine
-	restate    bool                 // a made source is out of date
+	source  serval.Source
+	made    serval.Source
+	set     serval.DataSet
+	spec    serval.Spec
+	bones   spine
+	restate bool // a made source is out of date
+	// arrivals counts the sources this view has been pointed at, so a
+	// subscription taken against one it has left knows to do nothing. See
+	// arrival.go.
+	arrivals   int
 	asks       asking               // which ask is current; see listdrag.go
 	fromSource map[string]*ListItem // rows a source named, by identity
 

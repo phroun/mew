@@ -53,23 +53,6 @@ func serveAll(f *client.Fill) {
 }
 
 func TestATrinketReadsItsApplicationsOwnRecords(t *testing.T) {
-	// SKIPPED until an application source can SAY an answer has landed.
-	//
-	// `appSet.Read` writes the query statement and returns -- "nothing is waited
-	// for" is the source's design, and the records arrive later on the
-	// connection's read thread through Inbound. Every view reads synchronously:
-	// state the sequence, read it, use what the sink got. So a view over an
-	// application source reads before the answer exists and nothing tells it to
-	// look again.
-	//
-	// That is the third join, and it is the same rule as everywhere else here:
-	// told, never decided. The source needs a notice when a scope's records land
-	// and the views need to re-read on it -- `TreeView.Reread` already exists for
-	// exactly this and the list wants the same verb. The two joins this file's
-	// other test covers are done: a name on a connection reaches that
-	// connection's application, and a registered name still beats it.
-	t.Skip("an application source cannot yet say that an answer arrived")
-
 	sock := filepath.Join(t.TempDir(), "display.sock")
 	desktop, srv, stop := servingDesktop(t, sock)
 	defer stop()
@@ -102,28 +85,11 @@ wlv=w.lv
 		t.Fatal("the list was not surfaced")
 	}
 
-	// The records arrive over the connection, so they are not there the instant
-	// the statement is taken. What is asserted is that they arrive at all.
-	var lv *trinkets.ListView
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		onUI(desktop, func() {
-			for _, a := range desktop.Applications() {
-				for _, w := range a.Windows() {
-					if got, ok := w.Content().(*trinkets.ListView); ok {
-						lv = got
-					}
-				}
-			}
-		})
-		if lv != nil && lv.Count() == len(servedRows()) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if lv == nil {
-		t.Fatal("no list on the desktop")
-	}
+	// **A list reads when it needs rows, not when it is pointed at a source.** So
+	// asking for one is what sends the query; the answer comes back over the
+	// connection afterwards, and the arrival notice is what makes the second ask
+	// find it. Polling here stands in for the frames a real display would draw.
+	lv := waitForList(t, desktop, 5*time.Second)
 	if got, want := lv.Count(), len(servedRows()); got != want {
 		t.Fatalf("the list holds %d rows, want the %d the application served", got, want)
 	}
@@ -144,23 +110,6 @@ wlv=w.lv
 // are one body whichever trinket is looking at them, and standing up a second far
 // end would pay twice for one answer.
 func TestTwoTrinketsNamingOneSourceShareIt(t *testing.T) {
-	// SKIPPED until an application source can SAY an answer has landed.
-	//
-	// `appSet.Read` writes the query statement and returns -- "nothing is waited
-	// for" is the source's design, and the records arrive later on the
-	// connection's read thread through Inbound. Every view reads synchronously:
-	// state the sequence, read it, use what the sink got. So a view over an
-	// application source reads before the answer exists and nothing tells it to
-	// look again.
-	//
-	// That is the third join, and it is the same rule as everywhere else here:
-	// told, never decided. The source needs a notice when a scope's records land
-	// and the views need to re-read on it -- `TreeView.Reread` already exists for
-	// exactly this and the list wants the same verb. The two joins this file's
-	// other test covers are done: a name on a connection reaches that
-	// connection's application, and a registered name still beats it.
-	t.Skip("an application source cannot yet say that an answer arrived")
-
 	sock := filepath.Join(t.TempDir(), "display.sock")
 	desktop, _, stop := servingDesktop(t, sock)
 	defer stop()
@@ -196,6 +145,7 @@ w=new window title="Two lists" width=320 height=240 children={
 						for _, kid := range p.Children() {
 							if lv, ok := kid.(*trinkets.ListView); ok {
 								lists = append(lists, lv)
+								lv.Item(0) // asking is what sends the query
 							}
 						}
 					}
@@ -254,26 +204,7 @@ w=new window title="Papers" width=320 height=200 children={
 		t.Fatalf("build: %v", err)
 	}
 
-	var lv *trinkets.ListView
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		onUI(desktop, func() {
-			for _, a := range desktop.Applications() {
-				for _, w := range a.Windows() {
-					if got, ok := w.Content().(*trinkets.ListView); ok {
-						lv = got
-					}
-				}
-			}
-		})
-		if lv != nil && lv.Count() > 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if lv == nil {
-		t.Fatal("no list on the desktop")
-	}
+	lv := waitForList(t, desktop, 3*time.Second)
 	onUI(desktop, func() {
 		if got := lv.Count(); got != 1 {
 			t.Fatalf("the list holds %d rows, want the one the display registered", got)
@@ -319,4 +250,37 @@ func servingDesktop(t *testing.T, sock string) (*trinkets.Desktop, *display.Serv
 			t.Error("the desktop did not exit")
 		}
 	}
+}
+
+// waitForList finds the list on the desktop and asks it for a row until it has
+// one.
+//
+// **Asking is what sends the query.** A list states its sequence when it is
+// pointed at a source and reads a window of it when something wants rows -- so a
+// test that only ever counts never asks the application anything. The second ask
+// is what the arrival notice makes find something.
+func waitForList(t *testing.T, desktop *trinkets.Desktop, within time.Duration) *trinkets.ListView {
+	t.Helper()
+	var lv *trinkets.ListView
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		onUI(desktop, func() {
+			for _, a := range desktop.Applications() {
+				for _, w := range a.Windows() {
+					if got, ok := w.Content().(*trinkets.ListView); ok {
+						lv = got
+						lv.Item(0)
+					}
+				}
+			}
+		})
+		if lv != nil && lv.Count() > 0 {
+			return lv
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lv == nil {
+		t.Fatal("no list on the desktop")
+	}
+	return lv
 }

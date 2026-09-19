@@ -63,6 +63,28 @@ func (l *ListView) SetSource(src serval.Source) {
 	l.bones = spine{}
 	l.setCurrent(-1, nil)
 	l.scrollOffset = 0
+	l.arrivals++
+	if src != nil {
+		hearArrivals(l, src, l.arrivals, func() int { return l.arrivals }, l.Reread)
+	}
+	l.Update()
+}
+
+// Reread says the source's answer has landed, so the list draws what it now has.
+//
+// **It does not forget what it holds, and that is the whole subtlety.** A list
+// streams: the sink handed to `Read` puts records into the spine as they arrive,
+// so by the time this is called the answer is already THERE. Forgetting would
+// throw away the very records the notice is about -- which is what it did, and
+// what left a list over an application source permanently empty.
+//
+// A tree is the other shape and wants the other thing: `flatten` reads a whole
+// sequence into a fresh slice, so its Reread really does read again. Two shapes,
+// two answers to one notice.
+func (l *ListView) Reread() {
+	if l.source == nil {
+		return
+	}
 	l.Update()
 }
 

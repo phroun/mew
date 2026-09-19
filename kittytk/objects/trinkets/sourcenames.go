@@ -138,6 +138,22 @@ func BundleName(name string) (key, version string, ok bool) {
 	return key, version, true
 }
 
+// LiveName reads a name as a LIVE source's: the name itself, with the `source:`
+// mark off where it wore one. False for a name that means a bundle instead.
+//
+// It is the other half of BundleName and it is exported for the same reason:
+// whoever turns a name into something is not always this package, and the two
+// kinds must be told apart by one reading rather than by each caller spelling the
+// mark out again.
+func LiveName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if live, ok := strings.CutPrefix(name, sourceMark); ok {
+		return live, live != ""
+	}
+	// No mark at all is a bundle's bare form, which is what BundleName takes.
+	return "", false
+}
+
 // LiveSources is every name registered in this process, as a map somebody else
 // can hold. A copy, so that registering later does not change one in flight.
 func LiveSources() map[string]serval.Source {
