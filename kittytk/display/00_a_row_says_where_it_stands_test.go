@@ -205,7 +205,7 @@ func TestRenamingAClientCarriesItsMaterialWithIt(t *testing.T) {
 	if got := hostSafe(known.all(), "sha256:aaa"); got != "new-name" {
 		t.Errorf("the client is filed under %q after the rename", got)
 	}
-	row := rowOf(v.tree.RootItems()[1])
+	row := v.rowOf(v.tree.RootItems()[1])
 	if row.hostSafe != "new-name" {
 		t.Errorf("the row still reads from %q", row.hostSafe)
 	}

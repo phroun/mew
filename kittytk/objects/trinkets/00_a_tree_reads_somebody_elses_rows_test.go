@@ -505,3 +505,115 @@ func TestATreeRefusesANameNothingStandsFor(t *testing.T) {
 		t.Fatal("the statement was taken, and nothing stands for that name")
 	}
 }
+
+// --- the columns order a declared tree's levels --------------------------
+
+// sized is a flat declared source with a `size` field, which is what a column
+// called `size` reads under the identity mapping -- so nothing is declared here and
+// the point is that nothing has to be.
+func sized(t *testing.T) *serval.TreeSource {
+	t.Helper()
+	rows := serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("value", "middling"), serval.Named("size", 20),
+			serval.Named("seq", 1),
+		}),
+		serval.NewRow(serval.NewInt(2), serval.Record{
+			serval.Named("value", "large"), serval.Named("size", 300),
+			serval.Named("seq", 2),
+		}),
+		serval.NewRow(serval.NewInt(3), serval.Record{
+			serval.Named("value", "small"), serval.Named("size", 4),
+			serval.Named("seq", 3),
+		}),
+	})
+	src, err := serval.NewTreeSource(serval.TreeOptions{
+		Source: rows,
+		Spec:   &serval.Spec{Sort: []serval.SortLevel{{Field: "seq"}}},
+		Types:  serval.NodeTypes{Default: &serval.NodeType{}},
+	})
+	if err != nil {
+		t.Fatalf("stating the tree: %v", err)
+	}
+	return src
+}
+
+// **A tree with NO mapping at all still has its columns translated**, the identity
+// rung being what a column and a field wanting the same name costs. So the default
+// kind is told whether or not anybody has declared one.
+func TestADeclaredTreeWithNoMappingStillSortsByAColumn(t *testing.T) {
+	tv := NewTreeView()
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
+	tv.SetSource(sized(t))
+
+	if got, want := strings.Join(visualCaptions(tv), " "),
+		"middling large small"; got != want {
+		t.Fatalf("unsorted the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+	tv.SetSorted(true, 0, false)
+	if got, want := strings.Join(visualCaptions(tv), " "),
+		"small middling large"; got != want {
+		t.Errorf("by size the tree reads\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// **A sort already in force reaches the source the moment it is given one.** The
+// rows arrive in the order the columns state rather than in the configuration's and
+// then again in this one, which a first draw in the wrong order would show.
+func TestASortAlreadySetReachesASourceGivenAfterwards(t *testing.T) {
+	tv := NewTreeView()
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
+	tv.SetSorted(true, 0, true)
+	tv.SetSource(sized(t))
+
+	if got, want := strings.Join(visualCaptions(tv), " "),
+		"large middling small"; got != want {
+		t.Errorf("the first draw reads\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// --- a row says whether it may be written in -----------------------------
+
+// **`ReadOnly` is per ROW and not per kind**, which is why the mapping names a
+// field rather than carrying a flag: two rows of one kind can differ about it.
+//
+// A row that says nothing is not held out. `undefined` is not a truth, and a source
+// that never heard of the field has held nothing out -- which is what every tree
+// before this one did.
+func TestARowSaysWhetherItMayBeWrittenIn(t *testing.T) {
+	rows := serval.NewListSource([]serval.Row{
+		serval.NewRow(serval.NewInt(1), serval.Record{
+			serval.Named("value", "the machine"), serval.Named("fixed", true),
+		}),
+		serval.NewRow(serval.NewInt(2), serval.Record{
+			serval.Named("value", "a client"), serval.Named("fixed", false),
+		}),
+		serval.NewRow(serval.NewInt(3), serval.Record{
+			serval.Named("value", "says nothing"),
+		}),
+		serval.NewRow(serval.NewInt(4), serval.Record{
+			serval.Named("value", "a word"), serval.Named("fixed", "yes"),
+		}),
+		serval.NewRow(serval.NewInt(5), serval.Record{
+			serval.Named("value", "a number"), serval.Named("fixed", 0),
+		}),
+	})
+	src, err := serval.NewTreeSource(serval.TreeOptions{
+		Source: rows,
+		Spec:   &serval.Spec{},
+		Types:  serval.NodeTypes{Default: &serval.NodeType{}},
+	})
+	if err != nil {
+		t.Fatalf("stating the tree: %v", err)
+	}
+	tv := NewTreeView()
+	tv.SetKindMap("", NodeMap{ReadOnly: "fixed"})
+	tv.SetSource(src)
+
+	for i, want := range []bool{true, false, false, true, false} {
+		if got := tv.flatList[i].ReadOnly; got != want {
+			t.Errorf("row %d (%s) says read-only=%v, want %v",
+				i, tv.flatList[i].Text, got, want)
+		}
+	}
+}

@@ -98,6 +98,21 @@ func (t *TreeItem) IsLeaf() bool {
 	return len(t.Children) == 0
 }
 
+// Key is the SOURCE's identity for this row, and empty for a row the tree made
+// itself.
+//
+// It is what an application hangs its own knowledge of a row off, where the rows
+// are a source's and the items were made to draw them: `Data` is the field for a
+// row the caller built, and a row it never built has nowhere to have been given
+// one. Keying a map by this instead says the same thing about a row that comes
+// and goes as a subtree closes and opens.
+func (t *TreeItem) Key() string {
+	if t.rowKey == nil {
+		return ""
+	}
+	return serval.Key(t.rowKey)
+}
+
 // Level returns the nesting level (0 for root items).
 func (t *TreeItem) Level() int {
 	level := 0
@@ -132,6 +147,11 @@ type TreeView struct {
 	// keyed by the row's own identity, so the same row leads to the same pointer
 	// across a rebuild.
 	fromSource map[string]*TreeItem
+
+	// fromTop is what stands at the top of a declared source, which is what
+	// RootItems answers while one is being read. Kept apart from rootItems,
+	// which is the caller's own list and is promised back.
+	fromTop []*TreeItem
 	// kinds is what each kind of row puts in the columns (see treemap.go),
 	// keyed by the name its serval.NodeType is registered under. serval holds
 	// the types; the view holds the mapping, because serval must not learn what
@@ -389,8 +409,16 @@ func (t *TreeView) Clear() {
 	t.Update()
 }
 
-// RootItems returns all root items.
+// RootItems returns all root items: the ones a tree was given, or what stands at
+// the top of a DECLARED source.
+//
+// The two are kept apart, so a tree handed a source and then handed nil gets its
+// own items back untouched. Which one this answers is which one the tree is
+// reading.
 func (t *TreeView) RootItems() []*TreeItem {
+	if t.source != nil {
+		return t.fromTop
+	}
 	return t.rootItems
 }
 

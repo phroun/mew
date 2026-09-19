@@ -170,6 +170,19 @@ type NodeMap struct {
 
 	// Icon is the field naming a registered icon, where a kind has one.
 	Icon string
+
+	// ReadOnly is the field saying this row is held out of the row editor,
+	// whatever its columns allow.
+	//
+	// It is here rather than being a property of the KIND because a kind is not
+	// always the answer: a list of clients is one kind of row, and the one
+	// standing for this host is the one row in it nobody may rename. What decides
+	// is the record, so the record is what says.
+	//
+	// A field a record has not got reads as `undefined`, which is not true -- so
+	// nothing declared means nothing held out, which is what a tree that never
+	// heard of this has always done.
+	ReadOnly string
 }
 
 // InOrder lines a source's fields up with the view's columns: the first names the
@@ -195,6 +208,9 @@ func (t *TreeView) SetKindMap(kind string, m NodeMap) {
 	}
 	t.kinds[kind] = m
 	t.touched()
+	// The mapping is what translates a column into this kind's fields, so a
+	// declared tree's order has to be said again in the new words.
+	t.tellOrder()
 	t.Update()
 }
 
@@ -240,7 +256,7 @@ func (t *TreeView) cellOf(kind string, col *TreeColumn) CellMap {
 	return CellMap{Value: col.ID}
 }
 
-// sortFields is the view's sort levels as serval's, for one kind.
+// sortFields is what a MADE source's levels are sorted by, for one kind.
 //
 // **`seq` goes last, always, and that is its real job.** It was a bridge while
 // the made source was not asked to sort; it is now what makes the sort STABLE,
@@ -248,8 +264,18 @@ func (t *TreeView) cellOf(kind string, col *TreeColumn) CellMap {
 // keep the order the application put them in. Unsorted, it is the whole order,
 // and a tree whose items were inserted rather than appended still draws them
 // where they were put.
+//
+// A DECLARED source has no `seq` to sort by and wants none: its rows stand in the
+// order its own source answers in, which serval settles by identity. So the
+// levels it is told are columnLevels alone.
 func (t *TreeView) sortFields(kind string) []serval.SortLevel {
-	out := make([]serval.SortLevel, 0, len(t.sortLevels)+1)
+	return append(t.columnLevels(kind), serval.SortLevel{Field: treeSeq})
+}
+
+// columnLevels is the view's sort levels as serval's, for one kind: what the
+// columns state, translated through that kind's mapping.
+func (t *TreeView) columnLevels(kind string) []serval.SortLevel {
+	out := make([]serval.SortLevel, 0, len(t.sortLevels))
 	if t.sorted {
 		for _, lv := range t.sortLevels {
 			// sortTarget resolves the PROXY, which is the view's own
@@ -271,7 +297,7 @@ func (t *TreeView) sortFields(kind string) []serval.SortLevel {
 			out = append(out, serval.SortLevel{Field: cell.sortField(), Level: level})
 		}
 	}
-	return append(out, serval.SortLevel{Field: treeSeq})
+	return out
 }
 
 // cells is what one item carries for the sort, under the field names this kind's

@@ -28,6 +28,7 @@ import (
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/serval"
 )
 
 // hostFingerprint reads this host's own identity without creating one. A
@@ -103,9 +104,10 @@ func storageWord(row connectionsRow) string { return storageSize(row.bytes) }
 // come after 10M, and two visits an hour apart would be one value. So each of
 // the shown columns hands its sorting to a hidden one holding what it was
 // abbreviated FROM -- the whole moment, and the byte count.
+//
+// The byte count has no word: it goes into its record as a NUMBER, that being
+// what it is, and numbers compare as numbers.
 func stampWord(row connectionsRow) string { return row.stamp }
-
-func bytesWord(row connectionsRow) string { return strconv.FormatInt(row.bytes, 10) }
 
 // seenWord is what the Last Seen column shows: the day, which is as fine as
 // anyone reads a list of clients by.
@@ -368,80 +370,6 @@ func connectionsShellScript() string {
 		"clearcache=w.root.bottom.actrow.clearcache\n"
 }
 
-// editableFlag is what a row says about being written in.
-func editableFlag(editable bool) string {
-	if editable {
-		return ""
-	}
-	return " !editable"
-}
-
-// connectionsItemsScript builds the rows, binding a surfaced name to each so
-// the cell values can be addressed against them.
-func connectionsItemsScript(rows []connectionsRow) string {
-	var sb strings.Builder
-	sb.WriteString("set tree items={\n")
-	for i, r := range rows {
-		// Only a client carries a nickname. This host is named by its
-		// certificate and an app by the name it connected under, so those rows
-		// are held out of the editor rather than taking a rename that is then
-		// quietly dropped.
-		fmt.Fprintf(&sb, "  r%d=new item%s caption=%s", i, editableFlag(r.identity != "" && !r.self), protocol.Quote(r.name))
-		if len(r.children) > 0 {
-			sb.WriteString(" expanded items={\n")
-			for j, c := range r.children {
-				fmt.Fprintf(&sb, "    r%dc%d=new item !editable caption=%s\n",
-					i, j, protocol.Quote(c.name))
-			}
-			sb.WriteString("  }")
-		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("}\n")
-	// Re-surface every row by its path: names bound inside a children block
-	// are not returned, and the cells below are keyed by item id.
-	for i, r := range rows {
-		fmt.Fprintf(&sb, "i%d=tree.r%d\n", i, i)
-		for j := range r.children {
-			fmt.Fprintf(&sb, "i%dc%d=tree.r%d.r%dc%d\n", i, j, i, i, j)
-		}
-	}
-	return sb.String()
-}
-
-// connectionsCellsScript fills every data column from the rows, addressing
-// each cell by the item id the items batch surfaced.
-func connectionsCellsScript(rows []connectionsRow, ids map[string]uint64) string {
-	var sb strings.Builder
-	for _, col := range []struct {
-		name  string
-		value func(connectionsRow) string
-	}{
-		{"seencol", seenWord},
-		{"storagecol", storageWord},
-		{"permcol", permWord},
-		{"col", identityWord},
-		{"stampcol", stampWord},
-		{"bytescol", bytesWord},
-	} {
-		fmt.Fprintf(&sb, "set %s children={\n", col.name)
-		for i, r := range rows {
-			if id, ok := ids[fmt.Sprintf("i%d", i)]; ok {
-				fmt.Fprintf(&sb, "  new cell item=%d value=%s\n",
-					id, protocol.Quote(col.value(r)))
-			}
-			for j, c := range r.children {
-				if id, ok := ids[fmt.Sprintf("i%dc%d", i, j)]; ok {
-					fmt.Fprintf(&sb, "  new cell item=%d value=%s\n",
-						id, protocol.Quote(col.value(c)))
-				}
-			}
-		}
-		sb.WriteString("}\n")
-	}
-	return sb.String()
-}
-
 // connectionsView is the window while it is open: the trinkets the pane writes
 // into, and the stores a choice in it rewrites.
 type connectionsView struct {
@@ -450,6 +378,15 @@ type connectionsView struct {
 	store *authStore
 	nicks *pairStore
 	known *knownStore
+
+	// The rows, and the sources the tree reads them through. The rows are the
+	// authority: a choice in the pane rewrites the store and then the row, and
+	// the records are restated from it -- see connectionsource.go.
+	rows  []connectionsRow
+	byKey map[string]*connectionsRow
+	peers *serval.ListSource
+	apps  *serval.ListSource
+	made  *serval.TreeSource
 
 	tree         *trinkets.TreeView
 	trusted      *trinkets.Checkbox // admit only clients already decided about
@@ -510,21 +447,12 @@ func (v *connectionsView) policyChosen(name string, on bool) {
 	v.d.RequestUpdate()
 }
 
-// rowOf is what a tree row stands for, hung on the item itself.
-func rowOf(item *trinkets.TreeItem) *connectionsRow {
-	if item == nil {
-		return nil
-	}
-	r, _ := item.Data.(*connectionsRow)
-	return r
-}
-
 // show writes the pane to match a row: what it is, where it stands, and
 // whether there is anything to be done to it. This host is us -- there is no
 // standing to grant ourselves and nothing to forget -- so only its identity is
 // shown.
 func (v *connectionsView) show(item *trinkets.TreeItem) {
-	row := rowOf(item)
+	row := v.rowOf(item)
 	v.answering = true
 	defer func() { v.answering = false }()
 
@@ -577,7 +505,7 @@ func standingOf(row connectionsRow) int {
 // cannot disagree about it.
 func (v *connectionsView) choose(at int) {
 	item := v.tree.CurrentItem()
-	row := rowOf(item)
+	row := v.rowOf(item)
 	if row == nil || row.self || at < 0 || at >= len(choiceRules) {
 		return
 	}
@@ -591,9 +519,10 @@ func (v *connectionsView) choose(at int) {
 	}
 	row.deny = rule == ruleDeny
 	row.allow = rule == ruleAllow
-	item.SetValue("permission", permWord(*row))
-	v.tree.Update()
-	v.d.RequestUpdate()
+	// The Permission cell is a field of this row's record, so restating the
+	// records is what puts the store's answer on screen -- the list and the pane
+	// cannot disagree about it because there is only one of it.
+	v.told()
 }
 
 // clearCurrentCache throws away what the current row has cached and puts the
@@ -601,29 +530,18 @@ func (v *connectionsView) choose(at int) {
 // app's cache goes, since a client's figure counts its apps.
 func (v *connectionsView) clearCurrentCache() {
 	item := v.tree.CurrentItem()
-	row := rowOf(item)
+	row := v.rowOf(item)
 	if row == nil || row.self || row.hostSafe == "" {
 		return
 	}
 	if err := clearCache(row.hostSafe, row.appSafe); err != nil {
 		return
 	}
-	showSize(item, row)
-	if parent := item.Parent; parent != nil {
-		if up := rowOf(parent); up != nil {
-			showSize(parent, up)
-		}
-	}
-	v.tree.Update()
-	v.d.RequestUpdate()
-}
-
-// showSize measures a row again and puts the figure in both the cell that shows
-// it and the hidden one it sorts by.
-func showSize(item *trinkets.TreeItem, row *connectionsRow) {
 	row.measure()
-	item.SetValue("storage", storageWord(*row))
-	item.SetValue("bytes", bytesWord(*row))
+	if up := v.rowOf(item.Parent); up != nil {
+		up.measure()
+	}
+	v.told()
 }
 
 // forgetCurrent drops the current row from the store and from the list. A
@@ -632,7 +550,7 @@ func showSize(item *trinkets.TreeItem, row *connectionsRow) {
 // client this desktop no longer knows.
 func (v *connectionsView) forgetCurrent() {
 	item := v.tree.CurrentItem()
-	row := rowOf(item)
+	row := v.rowOf(item)
 	if row == nil || row.self {
 		return
 	}
@@ -648,9 +566,41 @@ func (v *connectionsView) forgetCurrent() {
 		_ = v.known.forget(row.identity)
 		_ = v.nicks.set(row.identity, "")
 	}
-	v.tree.RemoveItem(item)
+	// The rows are the authority, so this is where a forgotten client goes --
+	// there is no item to remove, the items being made to draw what the rows say.
+	v.drop(row)
+	v.told()
 	v.show(v.tree.CurrentItem())
-	v.d.RequestUpdate()
+}
+
+// drop takes one row out of the list the source is stated over: a client with its
+// apps, or one app of a client.
+//
+// The index is rebuilt afterwards rather than patched, because it holds POINTERS
+// into the slice and a slice with an element taken out of it has moved every
+// pointer after that one.
+func (v *connectionsView) drop(row *connectionsRow) {
+	if row.app != "" {
+		up := v.byKey[serval.Key(serval.NewText(row.identity))]
+		if up == nil {
+			return
+		}
+		for i := range up.children {
+			if up.children[i].app == row.app {
+				up.children = append(up.children[:i], up.children[i+1:]...)
+				break
+			}
+		}
+		v.index()
+		return
+	}
+	for i := range v.rows {
+		if !v.rows[i].self && v.rows[i].identity == row.identity {
+			v.rows = append(v.rows[:i], v.rows[i+1:]...)
+			break
+		}
+	}
+	v.index()
 }
 
 // rename records the name a user typed over a row. Any row that is not a
@@ -662,7 +612,7 @@ func (v *connectionsView) forgetCurrent() {
 // leaving the folder would point every later read at a folder that is not
 // there, and the material would read as lost.
 func (v *connectionsView) rename(item *trinkets.TreeItem, value string) {
-	row := rowOf(item)
+	row := v.rowOf(item)
 	if row == nil || row.self || row.app != "" {
 		return
 	}
@@ -670,11 +620,13 @@ func (v *connectionsView) rename(item *trinkets.TreeItem, value string) {
 	_ = v.nicks.set(row.identity, nickname)
 	row.name = nickname
 	if row.name == "" {
+		// A name nobody typed reads as this, and the caption is a field of the
+		// row's record -- so putting it back is restating rather than writing
+		// over what the editor left on the item.
 		row.name = "(unnamed)"
-		item.Text = row.name
-		v.tree.Update()
 	}
 	v.refile(row, nickname)
+	v.told()
 }
 
 // refile moves a renamed client's folder to match the name it now has, and
@@ -755,23 +707,13 @@ func buildConnections(d *trinkets.Desktop, host connectionsHost, store *authStor
 		return nil, nil
 	}
 
-	rows := connectionsRows(store, nicks.all(), known.all())
-	items, err := protocol.Parse(connectionsItemsScript(rows))
-	if err != nil {
+	// The rows are a SOURCE and the tree reads them, so there is no second batch
+	// of protocol text filling cells against surfaced ids: a cell is a field of a
+	// record, read through the mapping. connectionsource.go is the whole of it.
+	if !v.readRows(connectionsRows(store, nicks.all(), known.all())) {
 		return nil, nil
 	}
-	itemReply, err := session.Execute(items, factory)
-	if err != nil {
-		return nil, nil
-	}
-	cells, err := protocol.Parse(connectionsCellsScript(rows, itemReply.IDs))
-	if err != nil {
-		return nil, nil
-	}
-	if _, err := session.Execute(cells, factory); err != nil {
-		return nil, nil
-	}
-	v.attach(rows)
+	v.index()
 
 	v.tree.SetOnCellEdited(func(item *trinkets.TreeItem, column *trinkets.TreeColumn, value string) {
 		// The nickname is the key column: the row's own caption. A key edit
@@ -817,25 +759,6 @@ func (v *connectionsView) complete() bool {
 		}
 	}
 	return true
-}
-
-// attach hangs each row on the tree item that draws it, so a click on a row
-// reaches the client it is about. The tree holds the items in the order the
-// script built them, which is the order of the rows they came from.
-func (v *connectionsView) attach(rows []connectionsRow) {
-	items := v.tree.RootItems()
-	for i := range rows {
-		if i >= len(items) {
-			return
-		}
-		row := &rows[i]
-		items[i].Data = row
-		for j := range row.children {
-			if j < len(items[i].Children) {
-				items[i].Children[j].Data = &row.children[j]
-			}
-		}
-	}
 }
 
 // sizeAndShow gives the window a size to exist at and puts it on the desktop,

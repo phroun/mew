@@ -221,7 +221,7 @@ func (t *TreeView) flatten() []*TreeItem {
 		depth = append(depth, wholeOf(out.fields[i].Get(names.Depth)))
 	}
 	if t.source != nil {
-		hangFrom(items, depth)
+		t.fromTop = hangFrom(items, depth)
 	}
 	return items
 }
@@ -268,15 +268,78 @@ func (t *TreeView) SetSource(src serval.Source) {
 	t.source = src
 	t.made = nil
 	t.fromSource = nil
+	t.fromTop = nil
 	t.restate = true
 	t.currentIndex = -1
 	t.scrollOffset = 0
+	// Before the first read, so the rows arrive in the order the columns state
+	// rather than in the configuration's and then again in this one.
+	t.tellOrder()
 	t.rebuildFlatList()
 	t.Update()
 }
 
 // Source is what this tree reads, and nil for one reading its own items.
 func (t *TreeView) Source() serval.Source { return t.source }
+
+// Reread says the declared source's answer has changed, so the view reads it
+// again.
+//
+// **The source is told, and then the view is told.** Two sayings at two doors,
+// which is the same shape a cache has: whoever changed the data says so to the
+// source it belongs to -- `ListSource.Restate` for a level's rows, then
+// `TreeSource.Stale` -- and this is the view hearing that the sequence it holds
+// answers differently now. Nothing here polls the source and nothing compares
+// anything: a view nobody tells draws what it drew.
+//
+// The sequence is not restated, so the items the rows lead to keep their
+// pointers -- selection and the row editor hold them. A caller who wants the
+// rows forgotten says SetSource again.
+//
+// It does nothing for a tree reading its own items, whose source is remade from
+// them on every rebuild anyway.
+func (t *TreeView) Reread() {
+	if t.source == nil {
+		return
+	}
+	t.rebuildFlatList()
+	t.Update()
+}
+
+// tellOrder hands a declared tree the order the columns state, translated into
+// each kind's own field names.
+//
+// **A tree sorts level by level**, so this is a sort per kind rather than one
+// sort -- which is what serval's `SortBy` takes, and what lets a host spell its
+// size `bytes` where a window spells it `size`. The mapping is what translates,
+// exactly as it does for a source made of the tree's own items; the difference is
+// only which end states the sequence.
+//
+// Every kind the view has a mapping for is named, and the default kind always --
+// it being the top level's, and a tree of one shape's only one. A kind the view
+// has never heard of keeps the order its configuration chose, there being nothing
+// to translate its columns with.
+func (t *TreeView) tellOrder() {
+	src := t.marks()
+	if src == nil {
+		return
+	}
+	// **With no sort in force the view says NOTHING**, and a tree keeps the order
+	// its configuration chose. Saying "no levels" is a different answer -- it means
+	// the order the source answers in -- and it would turn off an order the
+	// application stated, which is how a window reading in the order its store put
+	// the rows in came to read in identity order instead.
+	if !t.sorted {
+		src.SortBy(nil)
+		return
+	}
+	by := make(map[string][]serval.SortLevel, len(t.kinds)+1)
+	by[""] = t.columnLevels("")
+	for kind := range t.kinds {
+		by[kind] = t.columnLevels(kind)
+	}
+	src.SortBy(by)
+}
 
 // learnRow is the item standing for one of a source's rows, made if it is not
 // made already and brought up to date either way.
@@ -311,6 +374,9 @@ func (t *TreeView) learnRow(id *serval.Value, fields serval.Record,
 	for _, col := range t.columns {
 		item.SetValue(col.ID, serval.Segment(fields.Get(t.cellOf(kind, col).showField())))
 	}
+	if m.ReadOnly != "" {
+		item.ReadOnly = trueOf(fields.Get(m.ReadOnly))
+	}
 
 	// The three things a tree knows and a record need not, as the source said
 	// them. Expanded and Kids are what the fourteen callers of IsLeaf and the
@@ -341,6 +407,30 @@ func (t *TreeView) learnRow(id *serval.Value, fields serval.Record,
 	return item
 }
 
+// trueOf is a value read as a yes or a no.
+//
+// A boolean is the answer where there is one. Everything else is read the way a
+// record that carries a flag as a number or a word carries it -- nought and the
+// empty string being no -- because a source is under no obligation to have a
+// boolean type, and `psl.go` reads `1` out of a file as a number.
+//
+// **A field the record has not got is NO.** `undefined` is not a truth, and a
+// row saying nothing about being held out of the editor is not held out.
+func trueOf(v *serval.Value) bool {
+	switch {
+	case v == nil:
+		return false
+	case v.Kind == serval.BoolValue:
+		return v.Bool
+	case v.IsInt:
+		return v.Int != 0
+	case v.Kind == serval.NumberValue:
+		return v.Num != 0
+	}
+	s := serval.Segment(v)
+	return s != "" && s != "false" && s != "0"
+}
+
 // wholeOf is a value as a whole number, and nought for anything that is not one.
 // A depth is a count and a count is an integer; a source that sent something else
 // has said nothing a depth can be read out of.
@@ -366,8 +456,18 @@ func wholeOf(v *serval.Value) int {
 //
 // Only what is VISIBLE is hung: a collapsed node's children are not in the
 // sequence, so its Children slice is empty and `Kids` is what says it has any.
-func hangFrom(rows []*TreeItem, depth []int) {
-	var spine []*TreeItem
+//
+// The top level comes back, because that is what a declared tree's RootItems
+// answers -- one more projection of the source alongside `Parent` and `Children`,
+// and the same argument: a caller asking a tree for its root items is asking what
+// stands at the top, and a declared tree knows. Every one of them is in the
+// sequence, the top level being what a tree with nothing open still shows.
+//
+// **It is kept apart from `rootItems`, which is the caller's own list.** Writing
+// it there would destroy the items a tree was given, and `SetSource(nil)` promises
+// them back.
+func hangFrom(rows []*TreeItem, depth []int) []*TreeItem {
+	var spine, top []*TreeItem
 	for i, item := range rows {
 		d := depth[i]
 		item.Children = nil
@@ -376,12 +476,14 @@ func hangFrom(rows []*TreeItem, depth []int) {
 			item.Parent.Children = append(item.Parent.Children, item)
 		} else {
 			item.Parent = nil
+			top = append(top, item)
 		}
 		if d < len(spine) {
 			spine = spine[:d]
 		}
 		spine = append(spine, item)
 	}
+	return top
 }
 
 // marks is the expansion of a DECLARED tree source, and nil for anything else.

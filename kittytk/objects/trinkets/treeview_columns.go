@@ -393,6 +393,10 @@ func (t *TreeView) SetSorted(sorted bool, sortedBy int, descending bool) {
 // row; if the user had scrolled it out of view themselves, the
 // viewport stays where they put it.
 func (t *TreeView) resortKeepingSelection() {
+	// A declared tree sorts its own levels, so the order is TOLD rather than
+	// applied here -- this is the one funnel every sort and column change goes
+	// through, so it is the one place that has to say it.
+	t.tellOrder()
 	cur := t.CurrentItem()
 	wasVisible := cur != nil &&
 		t.currentIndex >= t.scrollOffset &&
