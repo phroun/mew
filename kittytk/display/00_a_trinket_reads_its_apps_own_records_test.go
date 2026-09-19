@@ -328,6 +328,20 @@ func serveTree(f *client.Fill) {
 // application's source is a source like any other, so a bundle wraps it exactly as
 // it wraps anything else.
 func TestABundleDeclaresTheShapeAndTheAppServesTheRecords(t *testing.T) {
+	// SKIPPED: the descent now WAITS for a level instead of hanging up on it, and
+	// waits off-thread so it cannot block the thread the answer needs -- but over a
+	// bundle wrapping an application source the wait does not end. Something
+	// between the composed layer and the far end never completes the sink.
+	//
+	// Where it is NOT: not naming, not liveness, not a thread, and not the
+	// open-read-close that used to hang up. `gathering.finished` shows the composed
+	// source handles a child finishing, so the stall is below that.
+	//
+	// Worth checking first: an `error` addressed to a query is not taken by
+	// `ApplicationSource.Inbound`, so a query that fails leaves its scope
+	// outstanding forever -- which would look exactly like this.
+	t.Skip("a level's sink is not completed through a bundle over an application source")
+
 	// SKIPPED on a deadlock that is the next thing to fix, and is worth stating
 	// exactly because it is not obvious.
 	//
@@ -347,24 +361,6 @@ func TestABundleDeclaresTheShapeAndTheAppServesTheRecords(t *testing.T) {
 	// knows which thread a notice arrives on and knows it must not be actioned
 	// there, which is an argument for it supplying the hop for the sources it
 	// builds -- revisiting part of the choice made in arrival.go.
-	// SKIPPED until a tree's descent can read a source that answers LATER, which
-	// is the one thing left and is well understood.
-	//
-	// `descent.level` opens a level, reads it and CLOSES it in one breath. A source
-	// with its records to hand has filled the sink by then; one across a connection
-	// has only sent the query, so the close hangs up before the answer arrives and
-	// every level comes back empty.
-	//
-	// Nothing about naming or liveness is involved: the far end exists the moment a
-	// name is used, the query goes out correctly, and the application answers it.
-	// The reader is simply not there any more when it does.
-	//
-	// What this is NOT, having been wrong about it twice: not a thread, and not a
-	// deadlock. An earlier version of this comment blamed the connection's read
-	// thread; the probe showed eight hundred thousand queries in twelve seconds,
-	// each one closed before it could be answered, which is neither.
-	t.Skip("a tree's descent closes each level before an async source can answer")
-
 	sock := filepath.Join(t.TempDir(), "display.sock")
 	desktop, _, stop := servingDesktop(t, sock)
 	defer stop()
