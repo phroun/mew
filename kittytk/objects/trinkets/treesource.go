@@ -416,6 +416,11 @@ func (t *TreeView) learnRow(id *serval.Value, fields serval.Record,
 //
 // **A field the record has not got is NO.** `undefined` is not a truth, and a
 // row saying nothing about being held out of the editor is not held out.
+//
+// The BoolValue case is an equivalent mutant and is kept anyway: dropping it
+// changes no answer, `serval.Segment` rendering a boolean as `true` or `false` and
+// the word fallback reading both. It is here to say the direct answer directly,
+// and to spare a format and a comparison where the value already is the answer.
 func trueOf(v *serval.Value) bool {
 	switch {
 	case v == nil:

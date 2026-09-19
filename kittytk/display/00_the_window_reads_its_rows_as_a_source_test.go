@@ -247,3 +247,90 @@ func TestTheStoresOrderIsWhatTheWindowReadsIn(t *testing.T) {
 			"them in, not their fingerprints'", got, want)
 	}
 }
+
+// **A row taken out of the MIDDLE moves every row after it.** The index holds
+// pointers into the slice the rows live in, so forgetting one has to rebuild it.
+//
+// What a stale pointer costs is not a wrong NAME -- it points at a copy of the
+// right row, which reads correctly -- it is a wrong WRITE. A standing chosen on
+// such a row is written to the copy, and the records are restated from the slice,
+// so the choice is quietly lost. That is what to assert.
+//
+// Forgetting the LAST row shows none of this, which is what both of the older
+// Forget tests do.
+func TestChoosingAfterForgettingFromTheMiddleStillTakes(t *testing.T) {
+	store := storeWith(t,
+		"allow client sha256:aaa",
+		"allow client sha256:bbb",
+		"allow client sha256:ccc",
+	)
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
+	if len(v.tree.RootItems()) != 4 {
+		t.Fatalf("the window reads %v, want this host and three clients", captionsOf(v))
+	}
+
+	// The middle one of the three, which is row 2 of four.
+	selectRow(t, v, 2, "")
+	if row := v.rowOf(v.tree.CurrentItem()); row == nil || row.identity != "sha256:bbb" {
+		t.Fatalf("row 2 is about %v", row)
+	}
+	v.forget.Click()
+
+	items := v.tree.RootItems()
+	if len(items) != 3 {
+		t.Fatalf("after forgetting one the window reads %v", captionsOf(v))
+	}
+	// The row that shifted up is the last client. Blocking it has to reach the
+	// row the records are restated from.
+	selectRow(t, v, 2, "")
+	last := v.rowOf(v.tree.CurrentItem())
+	if last == nil || last.identity != "sha256:ccc" {
+		t.Fatalf("the row that shifted up is about %v", last)
+	}
+	v.choose(0)
+
+	if got := v.tree.RootItems()[2].Value("permission"); got != hostChoices[0] {
+		t.Errorf("its Permission cell reads %q, want %q -- the choice was written "+
+			"to a copy the records are not restated from", got, hostChoices[0])
+	}
+	// And the store holds it, the cell and the store being the same fact said
+	// twice.
+	for _, e := range v.store.entries() {
+		if e.identity == "sha256:ccc" && !e.deny {
+			t.Error("the store does not hold the block that was just chosen")
+		}
+	}
+}
+
+// The same for an app, whose siblings live in their client's own slice.
+func TestChoosingAfterForgettingAnAppFromTheMiddleStillTakes(t *testing.T) {
+	store := storeWith(t,
+		"allow app sha256:aaa Alpha",
+		"allow app sha256:aaa Beta",
+		"allow app sha256:aaa Gamma",
+	)
+	v := paneFor(t, store, tempNicknames(t), tempKnown(t))
+	if got := len(v.tree.RootItems()[1].Children); got != 3 {
+		t.Fatalf("the client holds %d apps, want three", got)
+	}
+
+	selectRow(t, v, 1, "Beta")
+	v.forget.Click()
+
+	client := v.tree.RootItems()[1]
+	if len(client.Children) != 2 {
+		t.Fatalf("the client holds %d apps after one was forgotten", len(client.Children))
+	}
+	// Gamma shifted up into Beta's place in the slice.
+	selectRow(t, v, 1, "Gamma")
+	v.choose(0)
+
+	gamma := v.tree.RootItems()[1].Children[1]
+	if gamma.Text != "Gamma" {
+		t.Fatalf("the second app is %q", gamma.Text)
+	}
+	if got := gamma.Value("permission"); got != appChoices[0] {
+		t.Errorf("Gamma's Permission cell reads %q, want %q -- the choice was "+
+			"written to a copy the records are not restated from", got, appChoices[0])
+	}
+}
