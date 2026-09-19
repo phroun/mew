@@ -294,8 +294,12 @@ func (t *TreeView) SetSource(src serval.Source) {
 	// rather than in the configuration's and then again in this one.
 	t.tellOrder()
 	t.arrivals++
-	if src != nil {
-		hearArrivals(t, src, t.arrivals, func() int { return t.arrivals }, t.Reread)
+	// **The source that is READ**, which for a grown tree is the tree and not what
+	// it was grown from. A tree turns a level answering into a walk and a walk
+	// completing into news for its readers, so it is the tree's arrival a view
+	// wants: that is the moment the rows exist.
+	if read := t.reading(); read != nil {
+		hearArrivals(t, read, t.arrivals, func() int { return t.arrivals }, t.Reread)
 	}
 	t.rebuildFlatList()
 	t.Update()

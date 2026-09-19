@@ -304,15 +304,23 @@ func serveTree(f *client.Fill) {
 		{1, "local", int64(0), 0},
 		{2, "etc", nil, 0},
 	}
+	// **The filter is honoured**, which is the application's job and not the
+	// display's. A tree asks each level for the rows under one parent -- the top
+	// level being `eq up undefined` -- and an application that sent everything
+	// regardless would have every record land at every level.
 	for _, r := range rows {
-		fields := []*serval.Field{
+		fields := serval.Record{
 			serval.Named("name", r.name),
 			serval.Named("kids", r.kids),
 		}
 		if r.up != nil {
 			fields = append(fields, serval.Named("up", r.up))
 		}
-		if err := f.Record(serval.NewInt(r.key), fields...); err != nil {
+		key := serval.NewInt(r.key)
+		if !serval.Match(key, fields, f.Spec.Filter) {
+			continue
+		}
+		if err := f.Record(key, fields...); err != nil {
 			return
 		}
 	}
@@ -328,20 +336,6 @@ func serveTree(f *client.Fill) {
 // application's source is a source like any other, so a bundle wraps it exactly as
 // it wraps anything else.
 func TestABundleDeclaresTheShapeAndTheAppServesTheRecords(t *testing.T) {
-	// SKIPPED: the descent now WAITS for a level instead of hanging up on it, and
-	// waits off-thread so it cannot block the thread the answer needs -- but over a
-	// bundle wrapping an application source the wait does not end. Something
-	// between the composed layer and the far end never completes the sink.
-	//
-	// Where it is NOT: not naming, not liveness, not a thread, and not the
-	// open-read-close that used to hang up. `gathering.finished` shows the composed
-	// source handles a child finishing, so the stall is below that.
-	//
-	// Worth checking first: an `error` addressed to a query is not taken by
-	// `ApplicationSource.Inbound`, so a query that fails leaves its scope
-	// outstanding forever -- which would look exactly like this.
-	t.Skip("a level's sink is not completed through a bundle over an application source")
-
 	// SKIPPED on a deadlock that is the next thing to fix, and is worth stating
 	// exactly because it is not obvious.
 	//
