@@ -1046,3 +1046,126 @@ def encode_sort(levels: List[SortLevel]) -> str:
             s += " desc"
         parts.append(s)
     return "{ " + "; ".join(parts) + " }" if parts else "{}"
+
+
+# --- what a source says has stopped being true ---------------------------
+
+# STALE_VERB is the other direction from everything else an application says. A
+# `result` answers a question the display put; this is the application speaking
+# first, because only it knows its records changed and nothing on the other end
+# can find out. Invalidation is TOLD, never decided.
+#
+#     stale source="papers"                              nothing of it is trusted
+#     stale source="papers" id=42 how=removed            one record, and it has left
+#     stale source="papers" id=42 how=altered fields={ size }
+#     stale source="papers" how=altered fields={ size }  any record's size may have moved
+#
+# It is neither of the two verbs that would otherwise carry it. An `event`
+# belongs to a subscription or to an object reporting itself, and a source is
+# neither; an `answer` belongs to one question, and nobody asked.
+STALE_VERB = "stale"
+
+# SOURCE_ARG names which of the application's sources it is about. Required: an
+# application may serve several, and a notice that did not say which would be a
+# notice about all of them.
+SOURCE_ARG = "source"
+
+# HOW_ARG is which of the four things happened -- the same word an amendment is
+# held under, because they are the same four facts. What it COSTS is why it is
+# carried: a bare "forget this" throws away the one thing that settles whether
+# the order moved or only the values did.
+HOW_ARG = "how"
+
+# The four, in serval's order, so a word means the same thing in every client.
+CHANGE_ADDED = "added"
+CHANGE_REMOVED = "removed"
+CHANGE_REPLACED = "replaced"
+CHANGE_ALTERED = "altered"
+
+_CHANGES = (CHANGE_ADDED, CHANGE_REMOVED, CHANGE_REPLACED, CHANGE_ALTERED)
+
+
+@dataclasses.dataclass
+class Stale:
+    """One `stale` statement taken apart."""
+
+    # The name the application serves the records under.
+    source: str = ""
+
+    # The record it is about, and None for a notice about the whole source.
+    id: Optional[Value] = None
+
+    # Which of the four things happened. `replaced` where the statement did not
+    # say, that being the widest claim about one named record -- coarsening is
+    # always safe, and saying less than happened never is.
+    how: str = CHANGE_REPLACED
+
+    # The fields that may have moved, for an alteration. Empty says the source
+    # cannot tell, which is every field.
+    fields: List[str] = dataclasses.field(default_factory=list)
+
+    def args(self) -> List[Arg]:
+        """The notice as the arguments after the verb."""
+        out = [Arg(name=SOURCE_ARG, value=new_string(self.source))]
+        if self.id is not None:
+            out.append(Arg(name=ID_ARG, value=self.id))
+        out.append(Arg(name=HOW_ARG, value=new_word(self.how)))
+        if self.fields:
+            bag = Fields()
+            for f in self.fields:
+                bag.append(Arg(name=f, flag=FlagState.TRUE))
+            out.append(Arg(name=FIELDS_ARG, value=bag.block()))
+        return out
+
+
+def parse_stale(args: List[Arg]) -> Stale:
+    """A notice from a statement's arguments."""
+    out = Stale()
+    said = False
+    fields: Optional[Arg] = None
+    for a in args:
+        if a.name == SOURCE_ARG:
+            if a.value is None or a.value.kind != ValueKind.STRING:
+                raise QueryError(
+                    "%s: expected the name the application serves them under" % SOURCE_ARG)
+            out.source = a.value.str
+        elif a.name == ID_ARG:
+            if a.value is None:
+                raise QueryError("%s: expected a record's identity" % ID_ARG)
+            out.id = a.value
+        elif a.name == HOW_ARG:
+            if a.value is None or a.value.kind != ValueKind.WORD:
+                raise QueryError(
+                    "%s: expected one of added, removed, replaced, altered" % HOW_ARG)
+            if a.value.word not in _CHANGES:
+                raise QueryError("%s: %r is not one of added, removed, replaced, altered"
+                                 % (HOW_ARG, a.value.word))
+            out.how, said = a.value.word, True
+        elif a.name == FIELDS_ARG:
+            fields = a
+        else:
+            raise QueryError("%s: %s= is not one of its arguments" % (STALE_VERB, a.name))
+    if not out.source:
+        raise QueryError("%s: expected %s=" % (STALE_VERB, SOURCE_ARG))
+    # `fields=` only means anything on an alteration. On any other reason the
+    # values are gone entire, so a list of them contradicts the word beside it --
+    # and quietly dropping one half of a contradiction is how a source comes to
+    # believe it said something it did not.
+    if fields is not None:
+        if not said or out.how != CHANGE_ALTERED:
+            raise QueryError("%s: %s= names what an alteration touched, and this is %s"
+                             % (STALE_VERB, FIELDS_ARG, out.how))
+        for f in parse_fields(fields.value):
+            if not f.name:
+                raise QueryError("%s: a field is named, and %s carries one that is not"
+                                 % (FIELDS_ARG, FIELDS_ARG))
+            if f.value is not None:
+                raise QueryError("%s: %s names fields and not their values; %s carries one"
+                                 % (FIELDS_ARG, STALE_VERB, f.name))
+            out.fields.append(f.name)
+    return out
+
+
+def encode_stale(s: Stale) -> str:
+    """The notice as a statement."""
+    return " ".join([STALE_VERB] + [encode_arg(a) for a in s.args()])

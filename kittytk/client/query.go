@@ -78,6 +78,40 @@ func (s *Source) OnDropped(fn func(*Query)) {
 	s.mu.Unlock()
 }
 
+// Stale says something about these records has stopped being true.
+//
+// **The one thing an application says first.** Everything else it writes answers
+// a query the display put; only the application knows its own records moved, and
+// nothing on the display's end can find out. Invalidation is told, never decided
+// -- a display nobody tells goes on showing what it has.
+//
+// It causes forgetting rather than traffic: what is no longer true is let go of,
+// and whether a replacement is ever asked for is the display's decision. A row
+// scrolled out of view an hour ago may never be read again.
+//
+// Widening is free and narrowing is fatal. A nil key is every record of this
+// source, and an Altered naming no field is every field -- so a source that
+// cannot tell what moved says the wider thing and pays a refill. Saying less than
+// happened is a missed invalidation: silent, and permanent.
+func (s *Source) Stale(key *serval.Value, how serval.Change, fields ...string) error {
+	if s == nil || s.c == nil {
+		return fmt.Errorf("stale: this source is not on a connection")
+	}
+	// Refused here rather than written and refused at the far end, where the only
+	// thing that comes back is silence: a notice is not answered, so a source that
+	// wrote a contradiction would never learn it had.
+	if how != serval.Altered && len(fields) > 0 {
+		return fmt.Errorf("stale: fields name what an alteration touched, and this is %s", how)
+	}
+	s.c.send((&wire.Stale{
+		Source: s.name,
+		ID:     wire.AsWire(key),
+		How:    how,
+		Fields: fields,
+	}).Encode())
+	return nil
+}
+
 // OnStatement registers a handler for anything else the display addresses to
 // one of this source's queries: a question this library does not know, an
 // action, a property it does not read. The statement arrives as it parsed.

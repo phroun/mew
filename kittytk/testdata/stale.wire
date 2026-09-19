@@ -1,0 +1,114 @@
+# The corpus every implementation of a `stale` reads.
+#
+# A source saying what has stopped being true. Three client libraries take one
+# apart, and they have to arrive at the same structure from the same text or the
+# same notice means three things.
+#
+# Each case is two lines. The first is what arrived:
+#
+#   stale <the arguments after the verb>
+#
+# The second is what it has to come out as, written back from the structure:
+#
+#   want <the same thing, in canonical spelling>
+#   bad          (the text must be refused)
+#
+# `want` is the structure rendered again, so a part dropped on the way in is a
+# part missing on the way out -- and it is where the DEFAULTS show, an absent
+# `how=` coming back as the word it was read as.
+#
+# See wire/stale.go.
+
+# --- the whole source, which is the widest thing sayable ---
+#
+# No id=, so it is every record; no how=, which reads as `replaced`. Nothing of
+# this source is trusted, and the canonical form says the reason out loud rather
+# than leaving a reader to work out what silence meant.
+stale source="papers"
+want source="papers" how=replaced
+
+# --- one record, and the four reasons ---
+stale source="papers" id=42
+want source="papers" id=42 how=replaced
+
+stale source="papers" id=42 how=added
+want source="papers" id=42 how=added
+
+# A deletion is CHEAPER than a move: the record has left the sequence, so
+# everything between a run's ends is still there and the completeness claim
+# survives. Telling this apart from `replaced` is most of what the reason is for.
+stale source="papers" id=42 how=removed
+want source="papers" id=42 how=removed
+
+stale source="papers" id=42 how=replaced
+want source="papers" id=42 how=replaced
+
+stale source="papers" id=42 how=altered
+want source="papers" id=42 how=altered
+
+# --- an alteration names what it touched ---
+stale source="papers" id=42 how=altered fields={ size }
+want source="papers" id=42 how=altered fields={ size }
+
+stale source="papers" id=42 how=altered fields={ size; modified }
+want source="papers" id=42 how=altered fields={ size; modified }
+
+# The short spelling of a name list, the one a query's fields= already uses.
+stale source="papers" id=42 how=altered fields="size, modified"
+want source="papers" id=42 how=altered fields={ size; modified }
+
+# --- a field with no extent: the cheap case, not the weak one ---
+#
+# "Something about size moved and I cannot say where" costs the order nothing
+# wherever size decides nothing, and one field per record where it does. A
+# source able to say this is better off saying it than invalidating everything.
+stale source="papers" how=altered fields={ size }
+want source="papers" how=altered fields={ size }
+
+# --- an identity is whatever the source names records by ---
+stale source="papers" id="p-42" how=removed
+want source="papers" id="p-42" how=removed
+
+# --- what is refused ---
+
+# A notice that does not say which source is a notice about all of them, and an
+# application may serve several.
+stale id=42 how=removed
+bad
+stale how=altered fields={ size }
+bad
+
+# The source is a name, not a word or a number.
+stale source=papers
+bad
+stale source=7
+bad
+
+# One of the four, and nothing else. A word this does not produce is a word it
+# will not take.
+stale source="papers" id=42 how=changed
+bad
+stale source="papers" id=42 how="altered"
+bad
+stale source="papers" id=42 how
+bad
+
+# `fields=` only means anything on an alteration: on any other reason the values
+# are gone entire, so a list of them contradicts the word beside it. Quietly
+# dropping one half of a contradiction is how a source comes to believe it said
+# something it did not.
+stale source="papers" id=42 how=removed fields={ size }
+bad
+stale source="papers" id=42 fields={ size }
+bad
+
+# It names FIELDS, not their values. A value here would read as an assertion
+# about what the record now holds, which is the one thing a notice never makes.
+stale source="papers" id=42 how=altered fields={ size 1024 }
+bad
+
+# Nothing else is one of its arguments.
+stale source="papers" id=42 how=removed reason="deleted"
+bad
+stale source="papers" id=42 how=removed complete
+bad

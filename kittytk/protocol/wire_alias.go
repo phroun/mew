@@ -58,6 +58,11 @@ const (
 	// The verbs a query travels under, and the verb it is answered with.
 	QueryVerb  = wire.QueryVerb
 	ResultVerb = wire.ResultVerb
+
+	// PlaceVerb and StaleVerb are the other two things an application says
+	// rather than asks: where a record stands, and what has stopped being true.
+	PlaceVerb = wire.PlaceVerb
+	StaleVerb = wire.StaleVerb
 )
 
 // Language functions.

@@ -563,7 +563,7 @@ func (s *Server) serveConn(nc net.Conn) {
 		// something the display put to it, or produces the records a query
 		// asked for, those statements run against nothing and are answered by
 		// nothing -- they go to whoever is listening for them.
-		if answers(batch) {
+		if said(batch) {
 			c.relay(batch)
 			continue
 		}
@@ -577,24 +577,34 @@ func (s *Server) serveConn(nc net.Conn) {
 	}
 }
 
-// isAnswer reports whether a verb is something an application says back rather
-// than something it asks for.
-func isAnswer(verb string) bool {
+// isSaid reports whether a verb is something an application SAYS rather than
+// something it asks the display for.
+//
+// Most of these answer a question the display put -- a reply naming a query, the
+// results filling one, the places among them, an error refusing one. `stale` does
+// not: it is the application speaking first, because only it knows its records
+// moved. Both kinds are alike in the one way that matters here, which is that
+// neither runs against the display and neither is replied to.
+//
+// A verb missing from this list is read as a REQUEST, executed against the
+// session, and refused as an unknown verb -- which is what `place` and `stale`
+// both did before they were added.
+func isSaid(verb string) bool {
 	switch verb {
-	case "reply", "error", protocol.ResultVerb:
+	case "reply", "error", protocol.ResultVerb, protocol.PlaceVerb, protocol.StaleVerb:
 		return true
 	}
 	return false
 }
 
-// answers reports whether a whole batch is answering. One of those neither
-// runs nor is replied to; it goes to whoever put the question.
-func answers(batch []*protocol.Statement) bool {
+// said reports whether a whole batch is the application speaking. One of those
+// neither runs nor is replied to; it goes to whoever is listening for it.
+func said(batch []*protocol.Statement) bool {
 	if len(batch) == 0 {
 		return false
 	}
 	for _, stmt := range batch {
-		if !isAnswer(stmt.Verb) {
+		if !isSaid(stmt.Verb) {
 			return false
 		}
 	}
@@ -673,12 +683,12 @@ func readBatch(scanner *protocol.Scanner) ([]*protocol.Statement, error) {
 				}
 				return batch, nil
 			}
-			// An answer is not a batch and carries no terminator: a request is
-			// terminated by `end` and answered, and these are the answering.
-			// They arrive one at a time, the way events go the other way, so
-			// waiting for an `end` that is never coming would stop the
+			// What an application SAYS is not a batch and carries no terminator:
+			// a request is terminated by `end` and answered, and these are not
+			// requests. They arrive one at a time, the way events go the other
+			// way, so waiting for an `end` that is never coming would stop the
 			// connection dead.
-			if len(batch) == 0 && isAnswer(stmt.Verb) {
+			if len(batch) == 0 && isSaid(stmt.Verb) {
 				return []*protocol.Statement{stmt}, nil
 			}
 			batch = append(batch, stmt)

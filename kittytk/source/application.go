@@ -32,7 +32,8 @@ type ApplicationSource struct {
 	mu      sync.Mutex
 	opening []*appScope // asked, in the order their replies are owed
 	byID    map[uint64]*appScope
-	tells   []func() // told when a scope's answer has landed
+	tells   []func()            // told when a scope's answer has landed
+	onStale []func(*wire.Stale) // told when the application says something is no longer true
 
 	// firing and again coalesce the telling. A listener re-reads, a re-read asks
 	// a question, and a question that finishes at once would be told about while
@@ -195,8 +196,12 @@ func (h *ApplicationSource) forget(q *appScope) {
 // Inbound hands over one statement the application said, and reports whether
 // it was this source's.
 //
-// Two kinds arrive: the reply that names a sequence, and the results that fill
-// one. Anything else belongs to somebody else on the same connection.
+// Three kinds arrive. Two of them answer something this end asked: the reply
+// that names a sequence, and the results that fill one. The third was not asked
+// for at all -- a `stale` notice, the application speaking first, because only it
+// knows its records moved.
+//
+// Anything else belongs to somebody else on the same connection.
 func (h *ApplicationSource) Inbound(stmt *wire.Statement) bool {
 	switch stmt.Verb {
 	case "reply":
@@ -205,8 +210,62 @@ func (h *ApplicationSource) Inbound(stmt *wire.Statement) bool {
 		return h.result(stmt)
 	case wire.PlaceVerb:
 		return h.place(stmt)
+	case wire.StaleVerb:
+		return h.stale(stmt)
 	}
 	return false
+}
+
+// stale takes a notice about the records this source names.
+//
+// **Told, never decided.** Nothing here polls the application and nothing works
+// out for itself that a record has moved; the application says so, and what it
+// says is let go of. A notice for another source's name is not this one's, which
+// is what lets one connection serve several.
+//
+// What it costs here is a re-read, and that is the whole of it at this layer: an
+// ApplicationSource holds no records -- it asks for them and hands them on -- so
+// there is nothing of its own to forget. Whoever is reading is told an answer has
+// landed, reads again, and the screen corrects. A layer above that DOES hold
+// something hears the notice through OnStale and forgets what it should.
+//
+// Invalidation causes forgetting rather than traffic everywhere else here; this
+// is the one place it causes a read, because a view on screen is a standing
+// question and the records behind it just changed.
+func (h *ApplicationSource) stale(stmt *wire.Statement) bool {
+	n, err := wire.ParseStale(stmt.Args)
+	if err != nil || n.Source != h.name {
+		return false
+	}
+	h.mu.Lock()
+	told := h.onStale
+	h.mu.Unlock()
+	for _, tell := range told {
+		tell(n)
+	}
+	h.arrived()
+	return true
+}
+
+// OnStale adds something to be told when the application says records under this
+// name have stopped being true.
+//
+// It ADDS, for the reason WhenArrived does: several layers may be holding
+// something of one source, and each forgets what is its own to forget. The
+// notice is handed over whole rather than acted on here, because what it COSTS
+// depends on what the holder keeps -- a cache loses runs and values, an
+// amendment layer loses one shadow, and this source loses nothing at all.
+//
+// Called on whatever thread the notice arrived on, which is the connection's
+// reader. The same rule as WhenArrived: whoever cannot be touched from there is
+// the one that knows so.
+func (h *ApplicationSource) OnStale(tell func(*wire.Stale)) {
+	if tell == nil {
+		return
+	}
+	h.mu.Lock()
+	h.onStale = append(h.onStale, tell)
+	h.mu.Unlock()
 }
 
 // name1 takes the reply that names a query. Replies come back in the order the

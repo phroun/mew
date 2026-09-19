@@ -295,6 +295,53 @@ const kt_value *kt_answer_fields(const kt_answer *a, int *n, int *whole);
 int kt_ask_for(kt_conn *c, uint64_t id, const char *question,
                kt_answer_cb cb, void *userdata);
 
+/* --- what a source says has stopped being true ------------------------
+ *
+ * The other direction from everything else an application says. A result
+ * answers a question the display put; this is the application speaking first,
+ * because only it knows its records changed and nothing on the other end can
+ * find out. Invalidation is TOLD, never decided -- there is no poll here, no
+ * expiry and no generation compared.
+ *
+ *     stale source="papers"                              nothing of it is trusted
+ *     stale source="papers" id=42 how=removed            one record, and it has left
+ *     stale source="papers" id=42 how=altered fields={ size }
+ *     stale source="papers" how=altered fields={ size }  any record's size may have moved
+ *
+ * Widening is free and narrowing is fatal. A NULL id is every record of the
+ * source, and an alteration naming no field is every field -- so a source that
+ * cannot tell what moved says the wider thing and pays a refill. Saying less
+ * than happened is a missed invalidation: silent, and permanent. */
+
+/* The four things that can have happened, and what each costs. The same four an
+   amendment is held under, because they are the same four facts.
+
+   A removal is CHEAPER than a replacement and that is most of what the word is
+   for: a record that has left the sequence leaves everything between a run's
+   ends still there, so the completeness claim survives, while one that may have
+   moved takes the run with it. */
+typedef enum {
+    KT_CHANGE_ADDED = 0,   /* a record appeared; nothing is known of it */
+    KT_CHANGE_REMOVED,     /* it has left the sequence altogether */
+    KT_CHANGE_REPLACED,    /* it is still there and everything about it may differ */
+    KT_CHANGE_ALTERED      /* the named fields may have changed */
+} kt_change;
+
+/* The word for one of them, as the wire spells it. NULL for a value that is not
+   one of the four. */
+const char *kt_change_word(kt_change c);
+
+/* Say something about a source's records has stopped being true.
+
+   source is the name this application serves them under. id names one record,
+   or NULL for every record of the source. fields names what an alteration
+   touched, and is refused beside any other reason -- on those the values are
+   gone entire, so a list of them would contradict the word beside it.
+
+   Returns 0 on success. */
+int kt_source_stale(kt_conn *c, const char *source, const kt_value *id,
+                    kt_change how, const char *const *fields, int nfields);
+
 /* Value constructors, for building an answer. They copy nothing: the strings
    must outlive the call that carries them. */
 kt_value kt_vint(const char *name, long long v);

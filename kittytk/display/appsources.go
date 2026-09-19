@@ -46,6 +46,7 @@ import (
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/source"
+	"github.com/phroun/kittytk/wire"
 	"github.com/phroun/serval"
 )
 
@@ -88,16 +89,35 @@ func (c *conn) appSource(name string) *serval.AmendedSource {
 	// until the next read and then be gone.
 	//
 	// It is the display's optimistic layer and not the application's data: the app
-	// hears the edit as an event, with the record's key on it, and decides. An app
-	// that declines says `Stale` on that key and the existing told-never-decided path
-	// corrects the screen -- which is what keeps this honest rather than a lie.
-	// `Amendments` is how whatever holds it eventually saves it out.
+	// hears the edit as an event, with the record's key on it, and decides. What it
+	// says back is a `stale` notice on that key, which this layer takes to mean the
+	// child's own record may have moved under the amendment -- so the shadow it kept
+	// of it goes and the next read asks again. `Amendments` is how whatever holds the
+	// edit eventually saves it out.
+	//
+	// **The notice does not drop the edit.** An amendment stands until somebody says
+	// otherwise, and a source saying its own record changed is not that: the two are
+	// different claims about different layers, and a reader who edited a cell should
+	// not silently lose the edit because the row underneath it moved. Taking the edit
+	// back is `Forget`, and nothing on the wire says it yet.
 	//
 	// Wrapping costs nothing it had: the hint, the tree fields, the arrival notice and
 	// the count all pass through, and a census does while nobody has written in it.
 	// That is serval's `wrapping.go`, and it is why this is one line rather than a
 	// argument about what gets lost.
 	src := serval.NewAmendedSource(end)
+
+	// And the notice reaches it. A `stale` naming a record says the child's own
+	// version of it may have moved, which is exactly what this layer's shadow of it
+	// is -- so the shadow goes. A notice naming no record says so of every record,
+	// and there is no per-key shadow to drop for that; the re-read the source fires
+	// is what corrects it.
+	end.OnStale(func(n *wire.Stale) {
+		if n.ID != nil {
+			src.Stale(wire.AsData(n.ID))
+		}
+	})
+
 	c.sources.held[name] = src
 	return src
 }

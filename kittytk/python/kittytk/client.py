@@ -1044,13 +1044,42 @@ class Source:
         with self._lock:
             self._dropped = fn
 
+    def stale(self, key=None, how=_query.CHANGE_REPLACED, *fields):
+        """Say something about these records has stopped being true.
+
+        **The one thing an application says first.** Everything else it writes
+        answers a query the display put; only the application knows its own
+        records moved, and nothing on the display's end can find out.
+        Invalidation is told, never decided -- a display nobody tells goes on
+        showing what it has.
+
+        It causes forgetting rather than traffic: what is no longer true is let
+        go of, and whether a replacement is ever asked for is the display's
+        decision. A row scrolled out of view an hour ago may never be read
+        again.
+
+        Widening is free and narrowing is fatal. A key of None is every record
+        of this source, and an alteration naming no field is every field -- so
+        a source that cannot tell what moved says the wider thing and pays a
+        refill. Saying less than happened is a missed invalidation: silent, and
+        permanent."""
+        # Refused here rather than written and refused at the far end, where the
+        # only thing that comes back is silence: a notice is not answered, so a
+        # source that wrote a contradiction would never learn it had.
+        if how != _query.CHANGE_ALTERED and fields:
+            raise ValueError(
+                "stale: fields name what an alteration touched, and this is %s" % how)
+        self._conn.send(_query.encode_stale(_query.Stale(
+            source=self._name, id=key, how=how, fields=list(fields))))
+
     def on_statement(self, fn):
         """A handler for anything else the display addresses to one of this
         source's queries: a question this library does not know, an action, a
         property it does not read. The statement arrives as it parsed.
 
-        This is the seam a fuller library is built on. Coverage and
-        invalidation both travel this way and neither is implemented here."""
+        This is the seam a fuller library is built on. Coverage travels this way
+        and is not implemented here; invalidation has its own verb -- see
+        Source.stale."""
         with self._lock:
             self._other = fn
 

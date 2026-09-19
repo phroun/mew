@@ -3845,3 +3845,75 @@ void kt_close(kt_conn *c) {
     free(c->given);
     free(c);
 }
+
+/* --- what a source says has stopped being true ------------------------
+ *
+ * See the header. Two halves: writing one, which is what an application does,
+ * and reading one back, which is what stale_conformance.c checks against the
+ * corpus the other two clients answer. */
+
+const char *kt_change_word(kt_change c) {
+    switch (c) {
+    case KT_CHANGE_ADDED:    return "added";
+    case KT_CHANGE_REMOVED:  return "removed";
+    case KT_CHANGE_REPLACED: return "replaced";
+    case KT_CHANGE_ALTERED:  return "altered";
+    }
+    return NULL;
+}
+
+/* change_named reads one of the four words back.
+ *
+ * Written against kt_change_word rather than beside it, so the two cannot
+ * drift: a word that one does not produce is a word the other will not take. */
+static int change_named(const char *word, size_t n, kt_change *out) {
+    for (int c = KT_CHANGE_ADDED; c <= KT_CHANGE_ALTERED; c++) {
+        const char *w = kt_change_word((kt_change)c);
+        if (w && strlen(w) == n && memcmp(w, word, n) == 0) {
+            *out = (kt_change)c;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int kt_source_stale(kt_conn *c, const char *source, const kt_value *id,
+                    kt_change how, const char *const *fields, int nfields) {
+    if (!c || !source || !*source) return -1;
+    if (!kt_change_word(how)) return -1;
+    /* Refused here rather than written and refused at the far end, where the
+     * only thing that comes back is silence: a notice is not answered, so a
+     * source that wrote a contradiction would never learn it had. */
+    if (how != KT_CHANGE_ALTERED && nfields > 0) return -1;
+
+    kt_buf b;
+    memset(&b, 0, sizeof b);
+    buf_puts(&b, "stale source=");
+    char *q = kt_quote(source);
+    buf_puts(&b, q);
+    free(q);
+    if (id) {
+        buf_puts(&b, " id=");
+        enc_value(&b, id);
+    }
+    buf_puts(&b, " how=");
+    buf_puts(&b, kt_change_word(how));
+    if (nfields > 0) {
+        /* A bag of names and no values: the spelling a query's own fields= uses,
+         * because it is the same thing -- a list of field names. */
+        kt_value *named = calloc((size_t)nfields, sizeof *named);
+        for (int i = 0; i < nfields; i++) {
+            named[i].name = fields[i];
+            named[i].kind = KT_V_NONE;
+        }
+        kt_bag bag = { named, nfields };
+        buf_puts(&b, " fields=");
+        enc_bag(&b, &bag);
+        free(named);
+    }
+    char *line = buf_dup(&b);
+    free(b.p);
+    int rc = conn_send(c, line);
+    free(line);
+    return rc;
+}

@@ -26,6 +26,11 @@ that holds the records, so it serves it.
 That is what keeps a request for records off the event line, so nobody is
 tempted to hand-roll what the library already does for them.
 
+**And one statement that is in no pair at all.** `stale` is the application
+speaking first -- not answering anything, and not something anyone subscribed
+to -- because only it knows its own records moved and nothing on the display's
+end can find out. See *Saying what stopped being true*, below.
+
 ## Running one
 
 No display opens queries yet, so there is a stand-in that does — it listens,
@@ -129,6 +134,53 @@ what an event is and what an answer is not. **The relay is shut unless the displ
 application that can relay can address another application's objects, which is
 the display's business and nobody else's. `KITTYTK_DEBUG_RELAY` opens it, or a
 host with a surface of its own calls `SetRelayEnabled`.
+
+## Saying what stopped being true
+
+Everything above answers a question the display put. This is the one thing an
+application says on its own:
+
+```
+stale source="papers"                              nothing of it is trusted
+stale source="papers" id=42 how=removed            one record, and it has left
+stale source="papers" id=42 how=altered fields={ size }
+stale source="papers" how=altered fields={ size }  any record's size may have moved
+```
+
+**Invalidation is told, never decided.** There is no poll, nothing expires, and
+no generation is compared: a display nobody tells goes on showing what it has.
+And it causes *forgetting* rather than traffic -- whether a replacement is ever
+asked for is the display's decision, and a row scrolled out of view an hour ago
+may never be read again.
+
+`how=` is one of four words, and which one it is decides what the notice costs:
+
+| | the values | the order |
+|---|---|---|
+| `added` | nothing is known of it | the claim across that place is cut |
+| `removed` | forgotten | unlinked, **and the claim survives** |
+| `replaced` | forgotten | the run goes: it may have moved |
+| `altered`, naming fields | those fields forgotten | the run goes only where a named field decides the sequence |
+
+**A deletion is cheaper than a move**, and telling those two apart is most of
+what the word is for. A record that has *left* the sequence leaves everything
+between a run's ends still there, so the completeness claim holds; one that may
+have *moved* takes the run with it.
+
+**Coarsening is safe and narrowing never is.** No `id=` is every record of the
+source; no `fields=` on an alteration is every field; an absent `how=` reads as
+`replaced`. A source that cannot tell what moved says the wider thing and pays a
+refill. Saying less than actually changed is a missed invalidation: silent, and
+permanent.
+
+`fields=` beside any reason but an alteration is refused rather than half-read --
+on the others the values are gone entire, so a list of them contradicts the word
+next to it.
+
+What it does **not** carry yet is an extent, `between these two records`. A
+stretch means nothing without an order, and the thing that holds one has no name
+on the wire yet, so a notice is about records rather than about anyone's order.
+`live-data-negotiation.md` is the plan for the rest.
 
 ## What an author writes
 
