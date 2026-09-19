@@ -60,10 +60,11 @@ a data engine.
 - **Mutation-sweep new logic.** Change a condition, drop a line, invert a
   comparison, and check a test dies. A surviving mutant is either a test gap or
   an equivalent mutant — say which, rather than leaving it unexplained.
-- **A wire grammar change is four things**, not one: Go, C, Python, and
-  `kittytk/testdata/query.wire`, the corpus all three answer. The corpus covers
-  specs and scopes; result statements are covered by the `wire/` tests and the
-  three conformance harnesses.
+- **A wire grammar change is four things**, not one: Go, C, Python, and the
+  corpus all three answer. There are two corpora now: `query.wire` covers specs
+  and scopes, `answer.wire` covers what an `ask` is answered with. Result
+  statements are covered by the `wire/` tests and the three conformance
+  harnesses instead.
 - Go, C and Python conformance runs are driven from Go: `go test ./c/...` and
   `go test ./python/...` inside `kittytk/`, plus
   `python3 -m unittest discover -s tests` in `kittytk/python/`.

@@ -8,6 +8,9 @@ package wire
 // thing that decided its spelling.
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/phroun/serval"
@@ -184,3 +187,90 @@ func TestTheEnvelopesNamesAreNotTheQuestionsToUse(t *testing.T) {
 		}
 	}
 }
+
+// --- the shared corpus ----------------------------------------------------
+
+// testdata/answer.wire is the text three client libraries read. What is agreed
+// there is the ENVELOPE -- which question, whether this is the last piece, whether
+// it is a refusal -- and that the payload survives untouched and in order, since no
+// implementation reads it.
+//
+// The Go side answers it here; `c/interop` and `python/tests` answer the same file.
+func TestTheAnswerCorpusIsAnswered(t *testing.T) {
+	path := filepath.Join("..", "testdata", "answer.wire")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var in string
+	var line int
+	for i, raw := range strings.Split(string(data), "\n") {
+		text := strings.TrimSpace(raw)
+		if text == "" || strings.HasPrefix(text, "#") {
+			continue
+		}
+		verb, rest, _ := strings.Cut(text, " ")
+		switch verb {
+		case AnswerVerb:
+			if in != "" {
+				t.Fatalf("%s:%d: a case with no answer", path, line)
+			}
+			in, line = text, i+1
+		case "want", "bad":
+			if in == "" {
+				t.Fatalf("%s:%d: an answer with no case", path, i+1)
+			}
+			got, err := answerFrom(in)
+			if verb == "bad" {
+				if err == nil {
+					t.Errorf("%s:%d: %s was read as an answer", path, line, in)
+				}
+				in = ""
+				continue
+			}
+			if err != nil {
+				t.Errorf("%s:%d: %s: %v", path, line, in, err)
+				in = ""
+				continue
+			}
+			// Written back from the structure, so a part dropped on the way in is a
+			// part missing on the way out.
+			var sb strings.Builder
+			for i, arg := range got.Args() {
+				if i > 0 {
+					sb.WriteByte(' ')
+				}
+				sb.WriteString(EncodeArg(arg))
+			}
+			if sb.String() != rest {
+				t.Errorf("%s:%d: %s\n  reads back as %s\n  want          %s",
+					path, line, in, sb.String(), rest)
+			}
+			in = ""
+		default:
+			t.Fatalf("%s:%d: %q is not a corpus line", path, i+1, verb)
+		}
+	}
+	if in != "" {
+		t.Fatalf("%s:%d: a case with no answer", path, line)
+	}
+}
+
+// answerFrom parses one corpus line.
+func answerFrom(text string) (*Answer, error) {
+	script, err := Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	if len(script.Statements) != 1 {
+		return nil, errCorpus
+	}
+	return ParseAnswer(script.Statements[0].Args)
+}
+
+var errCorpus = errAnswerCorpus{}
+
+type errAnswerCorpus struct{}
+
+func (errAnswerCorpus) Error() string { return "not one statement" }

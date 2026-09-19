@@ -1662,6 +1662,13 @@ typedef struct {
     void *ud;
 } kt_handler;
 
+/* One question waiting to be answered. */
+typedef struct {
+    char *key;
+    kt_answer_cb cb;
+    void *ud;
+} kt_asked;
+
 /* A body of records this application can serve, and what answers a scope of
  * it. A name, not an object: nothing about registering one crosses the wire. */
 struct kt_source {
@@ -1734,6 +1741,12 @@ struct kt_conn {
 
     kt_mutex hmu;
     kt_handler *handlers; int nh, caph;
+
+    /* Questions asked and not yet answered, by the correlation key minted for
+     * each. Guarded by hmu, the same lock the handlers are under: both are
+     * written by whoever asks and read by the reader thread. */
+    kt_asked *asked; int nasked, capasked;
+    unsigned long asked_seq;
     kt_pair *subs; int nsubs, capsubs;
     char **subtypes;
 
@@ -1935,6 +1948,10 @@ static void enqueue_event(kt_conn *c, const char *text) {
     kt_cond_signal(&c->ecv);
     kt_mutex_unlock(&c->emu);
 }
+
+/* Declared here because the reader routes answers and the routing is written
+ * beside kt_ask_for, where what it is for can be read. */
+static void dispatch_answer(kt_conn *c, kt_stmt *st);
 
 static void dispatch_event(kt_conn *c, kt_stmt *st) {
     if (st->n < 1) return;
@@ -2826,6 +2843,11 @@ static void *read_loop(void *arg) {
              * object under a name already in hand. Not only a handshake step
              * -- the display says it whenever it has something to give. */
             hand_over(c, st);
+        } else if (strcmp(st->verb, "answer") == 0) {
+            /* An answer to a question this application asked. Not an event and
+             * not a reply: it is correlated to the ask that wanted it, and
+             * routed here because routing is all it needs. */
+            dispatch_answer(c, st);
         } else if (strcmp(st->verb, "event") == 0 && st->n > 0
                    && !st->args[0].has_value) {
             /* Two different lines start with this word: an event the display
@@ -3137,6 +3159,213 @@ int kt_ask(kt_conn *c, uint64_t id, const char *question) {
     int r = kt_exec(c, src);
     free(src);
     return r;
+}
+
+/* --- being answered --------------------------------------------------- */
+
+/* An answer as the callback sees it. The statement's own arguments are pointed
+ * at rather than copied: they are valid for as long as the callback runs, which
+ * is the same promise an event makes. */
+struct kt_answer {
+    const char *to;
+    const kt_arg *carries; int ncarries;
+    int complete;
+    const char *error;
+    const kt_arg *record;   /* the `record=` or `fields=` block, or NULL */
+    int whole;
+    kt_value *members; int nmembers;
+};
+
+const char *kt_answer_to(const kt_answer *a) { return a && a->to ? a->to : ""; }
+int kt_answer_complete(const kt_answer *a) { return a ? a->complete : 0; }
+const char *kt_answer_error(const kt_answer *a) { return a ? a->error : NULL; }
+
+static const kt_arg *ans_arg(const kt_answer *a, const char *name) {
+    if (!a || !name) return NULL;
+    for (int i = 0; i < a->ncarries; i++)
+        if (a->carries[i].name && strcmp(a->carries[i].name, name) == 0)
+            return &a->carries[i];
+    return NULL;
+}
+
+int kt_answer_uint(const kt_answer *a, const char *name, uint64_t *out) {
+    const kt_arg *f = ans_arg(a, name);
+    if (!f || !f->has_value || f->kind != 0 || f->ival < 0) return 0;
+    if (out) *out = (uint64_t)f->ival;
+    return 1;
+}
+int kt_answer_int(const kt_answer *a, const char *name, long long *out) {
+    const kt_arg *f = ans_arg(a, name);
+    if (!f || !f->has_value || f->kind != 0) return 0;
+    if (out) *out = f->ival;
+    return 1;
+}
+const char *kt_answer_text(const kt_answer *a, const char *name) {
+    const kt_arg *f = ans_arg(a, name);
+    return (f && f->has_value && f->kind == 2) ? f->sval : NULL;
+}
+const char *kt_answer_word(const kt_answer *a, const char *name) {
+    const kt_arg *f = ans_arg(a, name);
+    return (f && f->has_value && f->kind == 3) ? f->sval : NULL;
+}
+int kt_answer_flag(const kt_answer *a, const char *name) {
+    const kt_arg *f = ans_arg(a, name);
+    return f && !f->has_value;
+}
+
+const kt_value *kt_answer_fields(const kt_answer *a, int *n, int *whole) {
+    if (!a || !a->record) {
+        if (n) *n = 0;
+        if (whole) *whole = 0;
+        return NULL;
+    }
+    if (n) *n = a->nmembers;
+    if (whole) *whole = a->whole;
+    return a->members;
+}
+
+/* members flattens a record's block into the public value shape.
+ *
+ * A member with no value of its own is KT_V_NONE, which is how a bare name in a
+ * field bag reads. A nested block is left out: a record of records is nothing
+ * this reads, and reporting one as a value with nothing in it would be worse
+ * than not reporting it. */
+static kt_value *members_of(const kt_arg *rec, int *count) {
+    *count = 0;
+    if (!rec || !rec->block) return NULL;
+    kt_script *b = rec->block;
+    kt_value *out = calloc(b->n ? b->n : 1, sizeof(kt_value));
+    for (int i = 0; i < b->n; i++) {
+        kt_stmt *st = &b->stmts[i];
+        if (!st->verb || !*st->verb) continue;
+        kt_value *v = &out[*count];
+        v->name = st->verb;
+        if (st->n == 0) { v->kind = KT_V_NONE; (*count)++; continue; }
+        kt_arg *a = &st->args[0];
+        if (!a->has_value) { v->kind = KT_V_NONE; (*count)++; continue; }
+        switch (a->kind) {
+        case 0: v->kind = KT_V_INT;    v->ival = a->ival; break;
+        case 1: v->kind = KT_V_FLOAT;  v->fval = a->fval; break;
+        case 2: v->kind = KT_V_STRING; v->sval = a->sval; v->slen = a->slen; break;
+        case 3: v->kind = KT_V_WORD;   v->sval = a->sval; v->slen = a->slen; break;
+        default: continue; /* a block: not read, and not reported as empty */
+        }
+        (*count)++;
+    }
+    return out;
+}
+
+int kt_ask_for(kt_conn *c, uint64_t id, const char *question,
+               kt_answer_cb cb, void *userdata) {
+    if (!c || !question) return -1;
+    if (!cb) return kt_ask(c, id, question);
+
+    /* A name and not a number, because a statement's key is a name -- the same
+     * mechanism `w=new window` uses -- and a bare number after `answer` would be
+     * read as one of the question's own arguments. */
+    char key[32];
+    kt_mutex_lock(&c->hmu);
+    snprintf(key, sizeof key, "q%lu", ++c->asked_seq);
+    if (c->nasked == c->capasked) {
+        c->capasked = c->capasked ? c->capasked * 2 : 4;
+        c->asked = realloc(c->asked, c->capasked * sizeof(kt_asked));
+    }
+    c->asked[c->nasked].key = strdup(key);
+    c->asked[c->nasked].cb = cb;
+    c->asked[c->nasked].ud = userdata;
+    c->nasked++;
+    kt_mutex_unlock(&c->hmu);
+
+    char *src = malloc(strlen(question) + strlen(key) + 40);
+    sprintf(src, "%s=ask %llu %s", key, (unsigned long long)id, question);
+    int r = kt_exec(c, src);
+    free(src);
+    if (r != 0) {
+        /* The question never went, so nothing will ever answer it. Letting go
+         * here is what keeps a failed ask from waiting for good. */
+        kt_mutex_lock(&c->hmu);
+        for (int i = 0; i < c->nasked; i++)
+            if (strcmp(c->asked[i].key, key) == 0) {
+                free(c->asked[i].key);
+                c->asked[i] = c->asked[--c->nasked];
+                break;
+            }
+        kt_mutex_unlock(&c->hmu);
+    }
+    return r;
+}
+
+/* dispatch_answer routes one `answer` statement to whoever asked.
+ *
+ * An answer for a question nobody is waiting on is dropped. That is not a
+ * failure: an asker may have given up, and an unkeyed answer belongs to a
+ * question whose asker never wanted to be told. */
+/* answer_of takes a statement apart into the struct a callback sees.
+ *
+ * `carries` is the caller's buffer, big enough for the statement's arguments --
+ * the question's own are pointed at rather than copied, being valid for as long as
+ * the statement is.
+ *
+ * Returns 0 for a statement that is not an answer: a reserved argument carrying
+ * the wrong kind of thing, which would mean two different things by one name. */
+static int answer_of(kt_stmt *st, kt_answer *out, kt_arg *carries) {
+    memset(out, 0, sizeof *out);
+    int ncarries = 0;
+
+    for (int i = 0; i < st->n; i++) {
+        kt_arg *a = &st->args[i];
+        if (a->name && strcmp(a->name, "to") == 0) {
+            if (!a->has_value || a->kind != 3) return 0;
+            out->to = a->sval;
+        } else if (a->name && strcmp(a->name, "complete") == 0) {
+            if (a->has_value) return 0;
+            out->complete = 1;
+        } else if (a->name && strcmp(a->name, "error") == 0) {
+            if (!a->has_value || a->kind != 2) return 0;
+            out->error = a->sval;
+        } else {
+            if (a->name && a->has_value && a->kind == 4) {
+                /* The record, entire or in part, said by which name carries it. */
+                if (strcmp(a->name, "record") == 0) { out->record = a; out->whole = 1; }
+                else if (strcmp(a->name, "fields") == 0) { out->record = a; }
+            }
+            carries[ncarries++] = *a;
+        }
+    }
+    out->carries = carries;
+    out->ncarries = ncarries;
+    return 1;
+}
+
+static void dispatch_answer(kt_conn *c, kt_stmt *st) {
+    kt_answer ans;
+    kt_arg *carries = malloc(sizeof(kt_arg) * (st->n ? st->n : 1));
+    if (!answer_of(st, &ans, carries) || !ans.to) { free(carries); return; }
+
+    kt_answer_cb cb = NULL;
+    void *ud = NULL;
+    kt_mutex_lock(&c->hmu);
+    for (int i = 0; i < c->nasked; i++)
+        if (strcmp(c->asked[i].key, ans.to) == 0) {
+            cb = c->asked[i].cb;
+            ud = c->asked[i].ud;
+            /* Forgotten BEFORE the callback runs, so a callback that asks the
+             * same question again cannot have its new registration dropped by
+             * this one ending. */
+            if (ans.complete) {
+                free(c->asked[i].key);
+                c->asked[i] = c->asked[--c->nasked];
+            }
+            break;
+        }
+    kt_mutex_unlock(&c->hmu);
+
+    if (cb) {
+        ans.members = members_of(ans.record, &ans.nmembers);
+        cb(&ans, ud);
+        free(ans.members);
+    }
+    free(carries);
 }
 
 int kt_do(kt_conn *c, uint64_t id, const char *action) {

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .protocol import (
     Arg,
@@ -28,6 +28,7 @@ from .protocol import (
     Statement,
     Value,
     ValueKind,
+    encode_arg,
     encode_statement,
     encode_value,
     new_int,
@@ -56,6 +57,31 @@ RESULT_VERB = "result"    # `result 9 id=42 record={ ... }`
 # nothing to negotiate and nothing it can be misled about, because it never saw
 # them.
 PLACE_VERB = "place"      # `place 9 id=42 fields={ name "x" }`
+
+# ANSWER_VERB is what an `ask` is answered with: the third pair, and the one
+# that was missing until the amendments a tree holds needed asking for.
+#
+# The correlation key was already in the language -- every statement may carry
+# one, the way `w=new window` does -- so the question side needs no new
+# grammar. An ask that carried one is answered quoting it back, so an
+# application with two questions outstanding can tell the answers apart:
+#
+#     q1=ask tree amendments
+#     -> answer to=q1 id=1 how=altered fields={ kind "Archive" }
+#        answer to=q1 complete count=1
+#
+# TO_ARG is named rather than bare, which is where a result puts its query id.
+# A query id is a NUMBER and cannot be mistaken for anything else in the
+# statement; a correlation key is a name, and `answer complete` would read the
+# terminator as the question it was answering.
+#
+# Reserved, so a question's own vocabulary may not use it. Every other argument
+# on an answer belongs to whatever was asked -- the envelope is the wire's and
+# the payload is the question's, because a result has a fixed shape (a query
+# answers with records) while an ask answers with whatever was asked.
+ANSWER_VERB = "answer"    # `answer to=q1 id=1 how=altered fields={ ... }`
+
+TO_ARG = "to"
 
 # ID_ARG carries a record's identity, beside its fields rather than among them.
 #
@@ -436,6 +462,105 @@ class Result:
             if c.error:
                 out.append(Arg(name=ERROR_ARG, value=new_string(c.error)))
         return out
+
+
+@dataclasses.dataclass
+class Answer:
+    """One `answer` statement taken apart.
+
+    Both the payload and the terminator can ride one statement, as they can on a
+    result, so an answer of one piece crosses as a single line."""
+
+    # The correlation key of the question, and empty for one that carried none.
+    to: str = ""
+
+    # What the answer holds, in the question's own words, with the envelope's own
+    # arguments taken out. Empty for a statement carrying only a terminator.
+    carries: List[Arg] = dataclasses.field(default_factory=list)
+
+    # Whether this is the last answer for that question. An asker holding
+    # anything for it lets go when this arrives, whether or not anything came.
+    complete: bool = False
+
+    # Why the question was refused, and empty where it was not. A refusal is
+    # still an answer: the question was put, so it has one, and an asker must
+    # not wait forever because the answer happened to be no.
+    error: str = ""
+
+    def args(self) -> List[Arg]:
+        """The answer as the arguments after the verb: the envelope first, so a
+        reader scanning the head of a statement finds the correlation before the
+        payload it belongs to, and the terminator last, where a result's is."""
+        out: List[Arg] = []
+        if self.to:
+            out.append(Arg(name=TO_ARG, value=new_word(self.to)))
+        out.extend(self.carries)
+        if self.complete:
+            out.append(Arg(name=RESULT_COMPLETE, flag=FlagState.TRUE))
+        if self.error:
+            out.append(Arg(name=ERROR_ARG, value=new_string(self.error)))
+        return out
+
+    def arg(self, name: str) -> Optional[Arg]:
+        """One of the answer's own arguments by name, and None for one it has
+        not got -- which is not the same as one carrying nothing."""
+        for a in self.carries:
+            if a.name == name:
+                return a
+        return None
+
+    def record(self) -> Tuple[Optional[Value], Fields, bool, bool]:
+        """The record this answer carries, where it carries one: its identity,
+        its fields, whether the record is WHOLE, and whether there was one.
+
+        The same two spellings a result uses -- `record=` is every member,
+        `fields=` is some of them -- so a record's identity has one spelling in
+        the language rather than one per verb."""
+        rid: Optional[Value] = None
+        fields = Fields()
+        whole = False
+        got = False
+        for a in self.carries:
+            if a.name == ID_ARG:
+                rid = a.value
+            elif a.name == RECORD_ARG:
+                fields, whole, got = parse_fields(a.value), True, True
+            elif a.name == FIELDS_ARG:
+                fields, got = parse_fields(a.value), True
+        return rid, fields, whole, got
+
+
+def parse_answer(args: List[Arg]) -> Answer:
+    """An answer from a statement's arguments.
+
+    The question's own arguments are kept and not read: whoever asked knows what
+    the answer to that question looks like, and a middle that had to know too
+    would need teaching about every question ever added."""
+    out = Answer()
+    for a in args:
+        if a.name == TO_ARG:
+            if a.value is None or a.value.kind != ValueKind.WORD:
+                raise QueryError("%s: expected the key the ask was given" % TO_ARG)
+            out.to = a.value.word
+        elif a.name == RESULT_COMPLETE:
+            if a.value is not None or a.flag != FlagState.TRUE:
+                raise QueryError("%s: takes no value" % RESULT_COMPLETE)
+            out.complete = True
+        elif a.name == ERROR_ARG:
+            if a.value is None or a.value.kind != ValueKind.STRING:
+                raise QueryError("%s: expected a reason" % ERROR_ARG)
+            out.error = a.value.str
+        else:
+            out.carries.append(a)
+    return out
+
+
+def encode_answer(a: Answer) -> str:
+    """The answer as a statement, the way an event is encoded."""
+    parts = [ANSWER_VERB]
+    for arg in a.args():
+        parts.append(encode_arg(arg))
+    return " ".join(parts)
 
 
 def parse_fields(v: Optional[Value]) -> Fields:

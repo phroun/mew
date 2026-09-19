@@ -205,6 +205,70 @@ typedef struct {
     size_t      slen;
 } kt_value;
 
+/* --- and being answered ------------------------------------------------
+ *
+ * kt_ask leaves the answer to whatever events the question declared. This is the
+ * other way: the question carries a correlation key, the answers quote it back,
+ * and an application with two questions outstanding can tell them apart.
+ *
+ *     q1=ask <tree> amendments
+ *     -> answer to=q1 id=1 how=altered fields={ kind "Archive" }
+ *        answer to=q1 complete count=1
+ *
+ * An answer is not an event: nothing has to have subscribed to receive one,
+ * because asking IS the subscription.
+ */
+
+/* One `answer` statement. Opaque, and read through the accessors below, the way
+   an event is -- so what a statement is made of stays this library's. */
+typedef struct kt_answer kt_answer;
+
+/* Which question this answers: the key the ask carried, or "" for an unkeyed
+   one. */
+const char *kt_answer_to(const kt_answer *a);
+
+/* Whether this is the LAST answer for that question.
+   It arrives whether or not anything came before it: a question that answered
+   with nothing has still been answered, which is a different fact from one still
+   being worked on, and the only thing that tells them apart. */
+int kt_answer_complete(const kt_answer *a);
+
+/* Why the question was refused, or NULL where it was not. A refusal is still an
+   answer and it completes: the question was put, so it has one, and an asker
+   must not wait forever because the answer happened to be no. */
+const char *kt_answer_error(const kt_answer *a);
+
+/* The question's own arguments, read the way an event's fields are. Each
+   returns 0 / NULL for an argument the answer has not got. */
+int kt_answer_uint(const kt_answer *a, const char *name, uint64_t *out);
+int kt_answer_int(const kt_answer *a, const char *name, long long *out);
+const char *kt_answer_text(const kt_answer *a, const char *name);
+const char *kt_answer_word(const kt_answer *a, const char *name);
+int kt_answer_flag(const kt_answer *a, const char *name);
+
+/* The RECORD an answer carries, where it carries one: its members, and *n their
+   count. NULL where the answer carries none, which is the ordinary case -- a
+   question answering with something other than records.
+ *
+ * `whole` is set where the answer said `record=` rather than `fields=`: every
+ * member the record has, against some of them. A caller writing these out has to
+ * know which it is holding.
+ *
+ * The members are valid until the callback returns. A nested block among them is
+ * not reported, a record of records being nothing this reads. */
+const kt_value *kt_answer_fields(const kt_answer *a, int *n, int *whole);
+
+typedef void (*kt_answer_cb)(const kt_answer *a, void *userdata);
+
+/* Put a question and call cb for each piece of the answer, ending with the one
+   that completes. Returns 0 on success.
+
+   The correlation key is minted here and never written by a caller: it exists so
+   two answers cannot be confused, which is a job for whoever is doing the
+   confusing. */
+int kt_ask_for(kt_conn *c, uint64_t id, const char *question,
+               kt_answer_cb cb, void *userdata);
+
 /* Value constructors, for building an answer. They copy nothing: the strings
    must outlive the call that carries them. */
 kt_value kt_vint(const char *name, long long v);
