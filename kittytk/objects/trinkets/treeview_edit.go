@@ -480,6 +480,46 @@ func (t *TreeView) commitCellEdit() {
 	t.ensureVisible(t.currentIndex)
 }
 
+// WriteCell writes a value into one cell the way a committed edit does: onto the
+// item, held against the source where there is one to hold it, and reported.
+//
+// **The same path and not a shortcut beside it.** An application setting a cell has
+// exactly the reasons a reader does for wanting it to stick, and a second way in
+// would be a second place for the amendment to be forgotten. `columnID` empty is the
+// key column, which has no id of its own.
+//
+// False for a column this tree has not got, and for a value that is already there --
+// nothing is amended and nothing is reported for a write that changes nothing, the
+// same as a committed edit whose value did not move.
+func (t *TreeView) WriteCell(item *TreeItem, columnID, value string) bool {
+	if item == nil {
+		return false
+	}
+	col := treeKeyColumn
+	if columnID != "" {
+		col = nil
+		for _, c := range t.columns {
+			if c.ID == columnID {
+				col = c
+				break
+			}
+		}
+		if col == nil {
+			return false
+		}
+	}
+	if t.cellValue(item, col) == value {
+		return false
+	}
+	t.setCellValue(item, col, value)
+	t.amendCell(item, col, value)
+	if t.onCellEdited != nil {
+		t.onCellEdited(item, col, value)
+	}
+	t.Update()
+	return true
+}
+
 // amendCell holds an edit to a DECLARED source's row against that source, so that
 // the value survives the next read.
 //

@@ -40,6 +40,10 @@ const (
 	FlagFalse         = wire.FlagFalse
 	FlagIndeterminate = wire.FlagIndeterminate
 
+	// AnswerVerb is what an ask is answered with, for a type declaring that its
+	// question answers rather than raising events.
+	AnswerVerb = wire.AnswerVerb
+
 	WordValue   = wire.WordValue
 	NumberValue = wire.NumberValue
 	StringValue = wire.StringValue

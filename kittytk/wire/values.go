@@ -136,3 +136,8 @@ func asScript(r serval.Record) *Script {
 // two ends.
 func AsData(v *Value) *serval.Value { return asData(v) }
 func AsWire(v *serval.Value) *Value { return asWire(v) }
+
+// RecordBlock is a record as the block that carries it, for a caller building the
+// arguments of a statement rather than encoding a whole one. EncodeRecord is the same
+// thing rendered to text.
+func RecordBlock(r serval.Record) *Script { return asScript(r) }
