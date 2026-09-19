@@ -145,8 +145,12 @@ type TreeView struct {
 	// hintLabel is the field a hinted source said holds a record's own name,
 	// which is the caption's weakest rung.
 	hintLabel string
-	set       serval.DataSet
-	restate   bool
+	// saidHint is a shape somebody TOLD this view its source's records are, for a
+	// source that cannot say for itself -- one across a connection. See
+	// SetTreeHint.
+	saidHint serval.TreeHint
+	set      serval.DataSet
+	restate  bool
 	// arrivals counts the sources this view has been pointed at, so a
 	// subscription taken against one it has left knows to do nothing. See
 	// arrival.go.

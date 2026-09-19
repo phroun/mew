@@ -33,6 +33,12 @@ type ApplicationSource struct {
 	opening []*appScope // asked, in the order their replies are owed
 	byID    map[uint64]*appScope
 	tells   []func() // told when a scope's answer has landed
+
+	// firing and again coalesce the telling. A listener re-reads, a re-read asks
+	// a question, and a question that finishes at once would be told about while
+	// the first telling was still on the stack. See arrived.
+	firing bool
+	again  bool
 }
 
 // NewApplicationSource is a source backed by the application's records under
@@ -397,14 +403,41 @@ func (h *ApplicationSource) WhenArrived(tell func()) {
 // Told outside the lock, because what a listener does is its own -- a view that
 // re-reads will open a sequence on this very source, and holding the lock while
 // it did would be holding one lock and reaching for it again.
+//
+// **A notice arriving while listeners are still being told is one more ROUND, not
+// a nested one.** A listener re-reads; a re-read asks a question; a question that
+// finishes at once -- one that failed, or one a cache answered -- lands before the
+// first telling has returned. Nested, that is unbounded recursion: it overflowed
+// the stack the first time a tree read a bundle over one of these, because the
+// re-read opened another sequence while the first Open was still on the way in.
+//
+// So the second arrival is remembered and told after the first round finishes,
+// which also collapses a burst of them into one. What a reader wants is to know
+// there is something new, and being told twice about two things is no better than
+// being told once.
 func (h *ApplicationSource) arrived() {
 	h.mu.Lock()
-	tells := make([]func(), len(h.tells))
-	copy(tells, h.tells)
-	h.mu.Unlock()
-	for _, tell := range tells {
-		tell()
+	if h.firing {
+		h.again = true
+		h.mu.Unlock()
+		return
 	}
+	h.firing = true
+	for {
+		tells := make([]func(), len(h.tells))
+		copy(tells, h.tells)
+		h.mu.Unlock()
+		for _, tell := range tells {
+			tell()
+		}
+		h.mu.Lock()
+		if !h.again {
+			break
+		}
+		h.again = false
+	}
+	h.firing = false
+	h.mu.Unlock()
 }
 
 // Statements reads a run of wire text and hands each statement to Inbound,

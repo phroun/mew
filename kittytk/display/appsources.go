@@ -43,8 +43,10 @@ package display
 import (
 	"sync"
 
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/source"
+	"github.com/phroun/serval"
 )
 
 // appSources is what a connection keeps: the far ends it has stood up, by name.
@@ -77,6 +79,49 @@ func (c *conn) appSource(name string) *source.ApplicationSource {
 	})
 	c.sources.held[name] = src
 	return src
+}
+
+// withAppSources is the process registry plus this connection's far ends, which is
+// what a BUNDLE's includes are resolved against.
+//
+// **A bundle can reference a live source, and an application's is a live source.**
+//
+//	includes: ( rows: ( source: "papers" ) )
+//	tree:     ( parent: "up", label: "name" )
+//
+// That is the whole answer to how a wire application gets a HIERARCHY over its own
+// records: the document says what shape they are -- which is #55's hint, about the
+// records and not about any view -- and references the application for the records
+// themselves. No new property, no new statement, and nothing that lets a document
+// lay out somebody else's window.
+//
+// The connection's own win where a name is in both, for the same reason findSource
+// prefers the registry the other way about: there, a registered name is the
+// display's own and more specific than "ask the app"; here, the caller has already
+// resolved which namespace it meant, and a bundle loaded on this connection is
+// reading this connection's world.
+func (c *conn) withAppSources() SourceSet { return connSources{c} }
+
+// connSources answers for a live name the way this connection does: the process
+// registry first, and then the application.
+//
+// **It stands the far end UP when asked**, which is why a map would not do. A
+// bundle's include is what asks, and it asks in the middle of a load -- before
+// anything has named `source:papers` for itself, so before there is anything in a
+// map to find.
+//
+// A name nothing registered is taken to be the application's, which is the same
+// call findSource makes and carries the same cost: a misspelling in a document
+// becomes a query the application never answers rather than a refusal. The
+// alternative is asking the application whether it serves a name, and a load
+// cannot wait for an answer.
+type connSources struct{ c *conn }
+
+func (s connSources) Source(name string) (serval.Source, bool) {
+	if src, held := Sources(trinkets.LiveSources()).Source(name); held {
+		return src, true
+	}
+	return s.c.appSource(name), true
 }
 
 // inbound offers an application's answers to the sources that asked for them,

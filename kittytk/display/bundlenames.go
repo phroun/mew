@@ -58,7 +58,9 @@ func (c *conn) findSource(name string) (serval.Source, error) {
 		return nil, fmt.Errorf("bundle %q: %w", key, err)
 	}
 
-	loaded, err := store.LoadBundle(key, version, Sources(trinkets.LiveSources()))
+	// The process registry AND this connection's far ends, so a bundle can
+	// reference the application's own records -- see withAppSources.
+	loaded, err := store.LoadBundle(key, version, c.withAppSources())
 	if err != nil {
 		return nil, fmt.Errorf("bundle %q: %w", key, err)
 	}

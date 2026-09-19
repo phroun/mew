@@ -77,19 +77,38 @@ type Loaded struct {
 // of loading and settled again, possibly differently, at the next.
 type loader struct {
 	store   *appStore
-	live    Sources
+	live    SourceSet
 	built   map[string]serval.Source // by selector, which is what sharing is by
 	open    map[string]bool          // the bundles above this one, for cycles
 	trouble []Trouble
+}
+
+// A SourceSet is where a bundle's live includes are looked up.
+//
+// **It ANSWERS for a name rather than holding one**, which a plain map cannot. A
+// connection can stand up the far end of a name its application hosts, and it can
+// only do that when somebody asks -- a bundle's include being exactly that
+// somebody, and the ask arriving in the middle of a load rather than before it.
+type SourceSet interface {
+	// Source is what a name stands for here, and false for one that stands for
+	// nothing.
+	Source(name string) (serval.Source, bool)
 }
 
 // Sources are live sources registered by name, for an include to reach with
 // `source:`. They are the caller's, made before the load and outliving it.
 type Sources map[string]serval.Source
 
+// Source is what a name stands for in this set (SourceSet). A map answers only
+// for what it holds, which is every caller that knows its names up front.
+func (s Sources) Source(name string) (serval.Source, bool) {
+	src, held := s[name]
+	return src, held && src != nil
+}
+
 // LoadBundle builds a source out of the bundle a store holds under a key and a
 // version, following what it includes.
-func (s *appStore) LoadBundle(key, version string, live Sources) (*Loaded, error) {
+func (s *appStore) LoadBundle(key, version string, live SourceSet) (*Loaded, error) {
 	l := &loader{
 		store: s,
 		live:  live,
@@ -114,7 +133,10 @@ func (l *loader) build(w want) (serval.Source, error) {
 		// A registered source is already a source. There is nothing to read,
 		// nothing to assemble, and no ring to close: it was made before this
 		// load began.
-		src, held := l.live[w.key]
+		if l.live == nil {
+			return nil, fmt.Errorf("nothing is registered as a source called %q", w.key)
+		}
+		src, held := l.live.Source(w.key)
 		if !held || src == nil {
 			return nil, fmt.Errorf("nothing is registered as a source called %q", w.key)
 		}

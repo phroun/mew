@@ -308,6 +308,40 @@ func (t *TreeView) SetSource(src serval.Source) {
 // into one here. See reading.
 func (t *TreeView) Source() serval.Source { return t.source }
 
+// SetTreeHint says what shape the source's records are, for a source that cannot
+// say for itself.
+//
+// **Two places a hint can come from, and this is the second.** A bundle says it in
+// its own document and the source carries it; a source across a connection has
+// nowhere to carry one, so whoever pointed the view at it is who knows. That is
+// the VIEW being configured -- which is what a statement in the wire language is
+// for -- rather than a document reaching into somebody else's window.
+//
+// Said here it WINS over anything the source says, because it is the more specific
+// of the two: a caller who names a shape has looked at the records, and a source's
+// own hint is a default for readers who have not.
+//
+// A zero hint takes it back off, and the source's own is heard again.
+func (t *TreeView) SetTreeHint(hint serval.TreeHint) {
+	t.saidHint = hint
+	if t.source == nil {
+		return
+	}
+	// The tree is grown from the source again, because which hint is in force has
+	// changed and the grown tree is what that hint built.
+	t.closeSequence()
+	t.grown = nil
+	t.hintLabel = ""
+	t.growFromHint()
+	t.tellOrder()
+	t.rebuildFlatList()
+	t.Update()
+}
+
+// TreeHint is the shape this view was told its source's records are, and the zero
+// hint where nobody told it.
+func (t *TreeView) TreeHint() serval.TreeHint { return t.saidHint }
+
 // growFromHint makes a tree out of a source that SAYS its records are one.
 //
 // **The source is asked, and nothing is guessed.** A flat source stays flat: this
@@ -335,7 +369,11 @@ func (t *TreeView) growFromHint() {
 	if _, already := t.source.(*serval.TreeSource); already {
 		return
 	}
-	hint, said := serval.TreeHintOf(t.source)
+	// What the view was TOLD beats what the source says: see SetTreeHint.
+	hint, said := t.saidHint, !t.saidHint.Nothing()
+	if !said {
+		hint, said = serval.TreeHintOf(t.source)
+	}
 	if !said {
 		return
 	}
