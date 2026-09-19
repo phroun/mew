@@ -3213,6 +3213,25 @@ func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 		if !ok || local.X < clip.X || local.X >= clip.X+clip.Width {
 			continue
 		}
+		// **The cell being EDITED says nothing.** A note over the open editor
+		// competes with the editor's own selection -- the pointer is in there
+		// dragging through the text, and a panel arriving under it is in the way of
+		// the very thing the hand is doing. Nothing else about the tree changes: a
+		// note over any other cell is as useful while an editor is up as it was
+		// before, which is why this is the edited CELL and not the whole trinket.
+		//
+		// Asked with the same predicate the editor places itself by, because the two
+		// must not disagree about which cell is which -- the key column being the nil
+		// span on one side and a sentinel on the other is exactly where they would.
+		//
+		// `rowEditing` is an EQUIVALENT mutant today and is kept: `endRowEdit` nils
+		// the item and the column, and no row is nil, so the identity check already
+		// fails on its own with nothing open. It is here because it is the state's own
+		// name -- "while an editor is up" is the condition, and leaning on two other
+		// fields being nilled to express it would be leaning on housekeeping.
+		if t.rowEditing && item == t.editItem && spanMatchesCol(sp, t.editCol) {
+			return "", core.UnitRect{}, false
+		}
 		text := item.Text
 		if sp.col != nil {
 			text = item.Value(sp.col.ID)
