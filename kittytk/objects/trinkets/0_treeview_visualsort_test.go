@@ -9,9 +9,10 @@ import (
 
 // visualCaptions returns the flattened row captions in display order.
 func visualCaptions(tv *TreeView) []string {
-	out := make([]string, len(tv.flatList))
-	for i, it := range tv.flatList {
-		out[i] = it.Text
+	n := tv.rowCount()
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = tv.drawRow(i).Text
 	}
 	return out
 }

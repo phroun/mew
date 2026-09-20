@@ -204,7 +204,7 @@ func TestTreeSpacePopsTargetedCombo(t *testing.T) {
 	alpha := tv2.RootItems()[0]
 	alpha.AddChild(NewTreeItem("a1"))
 	alpha.Expanded = true
-	tv2.rebuildFlatList()
+	tv2.moved()
 	tv2.SetCurrentIndex(0)
 	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if tv2.rowEditing {
@@ -450,7 +450,7 @@ func TestTreeKeyBlankCaptionEditZone(t *testing.T) {
 	blank := NewTreeItem("")
 	blank.SetValue("size", "1 KB")
 	tv.AddRootItem(blank)
-	tv.rebuildFlatList()
+	tv.moved()
 	tv.SetCurrentItem(blank)
 	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
 	lay := tv.columnLayout()

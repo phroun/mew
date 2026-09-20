@@ -60,7 +60,7 @@ func noteOn(t *testing.T, tree *TreeView, id string) (string, bool) {
 	}
 	metrics := tree.EffectiveCellMetrics()
 	// Well inside the cell's text, which for the key column is past the apparatus.
-	x := sp.x + tree.cellTextInset(sp, tree.flatList[0]) + 2
+	x := sp.x + tree.cellTextInset(sp, tree.rowAt(0)) + 2
 	text, _, got := tree.TooltipAt(core.UnitPoint{
 		X: x, Y: tree.headerHeight() + metrics.UnitsPerCellHeight/2,
 	})
@@ -131,7 +131,7 @@ func TestAnotherRowsCellInTheEditedColumnStillSpeaks(t *testing.T) {
 	other.SetValue("kind", "another kind name far too long for sixty units")
 	other.SetValue("tags", "another tag list far too long for sixty units")
 	tree.AddRootItem(other)
-	tree.rebuildFlatList()
+	tree.moved()
 
 	tree.beginCellEdit(item, tree.columns[0])
 

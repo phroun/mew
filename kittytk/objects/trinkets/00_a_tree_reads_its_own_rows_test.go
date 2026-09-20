@@ -19,9 +19,10 @@ import (
 // rowsOf is the flattened list as `text/depth`, which is what a reader of a tree
 // actually sees.
 func rowsOf(tv *TreeView) string {
-	out := make([]string, len(tv.flatList))
-	for i, it := range tv.flatList {
-		out[i] = fmt.Sprintf("%s/%d", it.Text, it.Level())
+	n := tv.rowCount()
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = fmt.Sprintf("%s/%d", tv.drawRow(i).Text, tv.drawRow(i).Level())
 	}
 	return strings.Join(out, " ")
 }
@@ -50,7 +51,7 @@ func kinTree() (*TreeView, map[string]*TreeItem) {
 	beta := mk("beta", alpha)
 	mk("delta", beta)
 	mk("gamma", nil)
-	tv.rebuildFlatList()
+	tv.moved()
 	return tv, by
 }
 
@@ -67,39 +68,39 @@ func TestATreeStartsAtItsRoots(t *testing.T) {
 func TestTheExpandedFieldStillMeansWhatItMeant(t *testing.T) {
 	tv, by := kinTree()
 	by["alpha"].Expanded = true
-	tv.rebuildFlatList()
+	tv.moved()
 	if got, want := rowsOf(tv), "alpha/0 beta/1 gamma/0"; got != want {
 		t.Errorf("with alpha expanded the tree reads\n  %s\nwant\n  %s", got, want)
 	}
 
 	by["beta"].Expanded = true
-	tv.rebuildFlatList()
+	tv.moved()
 	if got, want := rowsOf(tv), "alpha/0 beta/1 delta/2 gamma/0"; got != want {
 		t.Errorf("with both expanded the tree reads\n  %s\nwant\n  %s", got, want)
 	}
 }
 
 // **The rows that come back are the very items the caller handed in.**
-// Everything reading flatList compares POINTERS -- selection restores itself by
+// Everything reading a row compares POINTERS -- selection restores itself by
 // pointer, the row editor holds one, the columns paint from one -- so a row that
 // crossed a data layer as a record has to lead back to the same item.
 func TestTheRowsAreTheCallersOwnItems(t *testing.T) {
 	tv, by := kinTree()
 	by["alpha"].Expanded = true
-	tv.rebuildFlatList()
+	tv.moved()
 
-	if tv.flatList[0] != by["alpha"] {
+	if tv.rowAt(0) != by["alpha"] {
 		t.Error("the first row is not the item that was added")
 	}
-	if tv.flatList[1] != by["beta"] {
+	if tv.rowAt(1) != by["beta"] {
 		t.Error("the child row is not the item that was added")
 	}
 	// And the data hung off it survives, which is what an application uses the
 	// tree for at all.
 	by["beta"].Data = "something of the application's"
-	tv.rebuildFlatList()
-	if tv.flatList[1].Data != "something of the application's" {
-		t.Errorf("the row's Data is %v", tv.flatList[1].Data)
+	tv.moved()
+	if tv.rowAt(1).Data != "something of the application's" {
+		t.Errorf("the row's Data is %v", tv.rowAt(1).Data)
 	}
 }
 
@@ -111,7 +112,7 @@ func TestEachLevelKeepsTheTreesOwnSortOrder(t *testing.T) {
 	tv.SetSortLevels(SortLevel{By: 0})
 	before := visualCaptions(tv)
 
-	tv.rebuildFlatList()
+	tv.moved()
 	if after := visualCaptions(tv); !sameRun(before, after) {
 		t.Errorf("rebuilding reordered the rows:\n  %v\n  %v", before, after)
 	}
@@ -150,7 +151,7 @@ func sameRun(a, b []string) bool {
 func TestALeafDoesNotExpand(t *testing.T) {
 	tv, by := kinTree()
 	by["gamma"].Expanded = true // a leaf, so this says nothing
-	tv.rebuildFlatList()
+	tv.moved()
 	if got, want := rowsOf(tv), "alpha/0 gamma/0"; got != want {
 		t.Errorf("the tree reads\n  %s\nwant\n  %s", got, want)
 	}
@@ -173,7 +174,7 @@ func TestTheVisibleRowsAreACountableSequence(t *testing.T) {
 
 	by["alpha"].Expanded = true
 	by["beta"].Expanded = true
-	tv.rebuildFlatList()
+	tv.moved()
 	if got := serval.CountOf(tv.sequence()); got != serval.Exactly(4) {
 		t.Errorf("expanded it counts %v, want four", got)
 	}
@@ -185,7 +186,7 @@ func TestAScopeReadsTheTreeFromAPosition(t *testing.T) {
 	tv, by := kinTree()
 	by["alpha"].Expanded = true
 	by["beta"].Expanded = true
-	tv.rebuildFlatList()
+	tv.moved()
 
 	var out treeRows
 	if err := tv.sequence().Read(&serval.Scope{From: 2, Count: 2}, &out); err != nil {
@@ -204,9 +205,9 @@ func TestAScopeReadsTheTreeFromAPosition(t *testing.T) {
 // and is what every reader here treats it as.
 func TestAnEmptyTreeIsOrdinary(t *testing.T) {
 	tv := NewTreeView()
-	tv.rebuildFlatList()
-	if len(tv.flatList) != 0 {
-		t.Errorf("an empty tree drew %d rows", len(tv.flatList))
+	tv.moved()
+	if tv.rowCount() != 0 {
+		t.Errorf("an empty tree drew %d rows", tv.rowCount())
 	}
 	if got := serval.CountOf(tv.sequence()); got != serval.Exactly(0) {
 		t.Errorf("it counts %v rows", got)

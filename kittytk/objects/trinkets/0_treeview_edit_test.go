@@ -190,7 +190,7 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 	child.SetValue("size", "9 KB")
 	child.SetValue("kind", "File")
 	parent.AddChild(child)
-	tv.rebuildFlatList()
+	tv.moved()
 	tv.SetCurrentItem(child) // level 1
 	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
 
@@ -360,7 +360,7 @@ func TestTreeShiftArrowsExpandCollapse(t *testing.T) {
 	tv := newEditableTree()
 	alpha := tv.RootItems()[0]
 	alpha.AddChild(NewTreeItem("a1"))
-	tv.rebuildFlatList()
+	tv.moved()
 	tv.SetCurrentIndex(0)
 
 	// Plain Right rotates the target and must NOT expand the folder.

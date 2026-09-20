@@ -611,7 +611,7 @@ func (t *TreeView) stepEditColumn(delta int) {
 func (t *TreeView) stepEditRow(delta int) {
 	col := t.editCol
 	t.endRowEdit(true)
-	if ni := t.CurrentIndex() + delta; ni >= 0 && ni < len(t.flatList) {
+	if ni := t.CurrentIndex() + delta; ni >= 0 && ni < t.rowCount() {
 		t.SetCurrentIndex(ni)
 	}
 	// A row that is not written in ends the walk rather than opening an
@@ -744,12 +744,9 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 	if !t.rowEditing || t.editCol == nil || t.editItem == nil {
 		return core.UnitRect{}, false
 	}
-	idx := -1
-	for i, it := range t.flatList {
-		if it == t.editItem {
-			idx = i
-			break
-		}
+	idx, ok := t.positionOf(t.editItem)
+	if !ok {
+		idx = -1
 	}
 	row := idx - t.scrollOffset
 	if idx < 0 || row < 0 || row >= t.visibleCount() {
@@ -963,10 +960,10 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 	}
 	metrics := t.EffectiveCellMetrics()
 	row := t.scrollOffset + int((event.Y-headerH)/metrics.UnitsPerCellHeight)
-	if row != t.currentIndex || row < 0 || row >= len(t.flatList) {
+	if row != t.currentIndex || row < 0 || row >= t.rowCount() {
 		return
 	}
-	item := t.flatList[row]
+	item := t.rowAt(row)
 	col := t.editableColumnAt(event.X, item)
 	if col == nil {
 		return

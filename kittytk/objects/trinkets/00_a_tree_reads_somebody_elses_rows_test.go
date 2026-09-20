@@ -88,7 +88,7 @@ func TestADeclaredSourceDrawsItsTopLevel(t *testing.T) {
 // every closed node as a leaf -- which is what `Kids` is for.
 func TestACollapsedSourceRowIsNotALeaf(t *testing.T) {
 	tv, _ := onHosts(t)
-	kestrel, merlin := tv.flatList[0], tv.flatList[1]
+	kestrel, merlin := tv.rowAt(0), tv.rowAt(1)
 
 	if len(kestrel.Children) != 0 {
 		t.Errorf("a collapsed row holds %d children", len(kestrel.Children))
@@ -112,29 +112,29 @@ func TestACollapsedSourceRowIsNotALeaf(t *testing.T) {
 func TestDepthComesBackAsRealParentage(t *testing.T) {
 	tv, src := onHosts(t)
 	src.ExpandAll()
-	tv.rebuildFlatList()
+	tv.moved()
 
 	if got, want := strings.Join(visualCaptions(tv), " "),
 		"kestrel a browser an editor merlin"; got != want {
 		t.Fatalf("expanded, the tree reads\n  %s\nwant\n  %s", got, want)
 	}
 	for i, want := range []int{0, 1, 1, 0} {
-		if got := tv.flatList[i].Level(); got != want {
+		if got := tv.rowAt(i).Level(); got != want {
 			t.Errorf("row %d (%s) stands at level %d, want %d",
-				i, tv.flatList[i].Text, got, want)
+				i, tv.rowAt(i).Text, got, want)
 		}
 	}
 	// The parentage is real, not just the number: a child's Parent is the row
 	// above it that it belongs to, and that row holds it.
-	if tv.flatList[1].Parent != tv.flatList[0] {
+	if tv.rowAt(1).Parent != tv.rowAt(0) {
 		t.Error("the application's parent is not the host it is on")
 	}
-	if len(tv.flatList[0].Children) != 2 {
+	if len(tv.rowAt(0).Children) != 2 {
 		t.Errorf("the host holds %d visible children, want two",
-			len(tv.flatList[0].Children))
+			len(tv.rowAt(0).Children))
 	}
 	// And a top-level row has no parent, whatever came before it.
-	if tv.flatList[3].Parent != nil {
+	if tv.rowAt(3).Parent != nil {
 		t.Error("the second host has a parent")
 	}
 }
@@ -145,35 +145,35 @@ func TestDepthComesBackAsRealParentage(t *testing.T) {
 func TestEachKindFillsTheColumnsFromItsOwnFields(t *testing.T) {
 	tv, src := onHosts(t)
 	src.ExpandAll()
-	tv.rebuildFlatList()
+	tv.moved()
 
-	if got := tv.flatList[0].Value("size"); got != "" {
+	if got := tv.rowAt(0).Value("size"); got != "" {
 		t.Errorf("the host's size cell holds %q, want nothing -- it has no size", got)
 	}
-	if got := tv.flatList[1].Value("size"); got != "2048" {
+	if got := tv.rowAt(1).Value("size"); got != "2048" {
 		t.Errorf("the application's size cell holds %q, want its bytes", got)
 	}
 }
 
 // **The same row leads to the same pointer across a rebuild**, because everything
-// reading flatList compares them -- selection restores itself by one and the row
+// reading a row compares them -- selection restores itself by one and the row
 // editor holds one.
 func TestARowKeepsItsPointerAcrossARebuild(t *testing.T) {
 	tv, src := onHosts(t)
-	was := tv.flatList[0]
+	was := tv.rowAt(0)
 
 	src.ExpandAll()
-	tv.rebuildFlatList()
+	tv.moved()
 
-	if tv.flatList[0] != was {
+	if tv.rowAt(0) != was {
 		t.Error("the host became a different object when the tree was redrawn")
 	}
 	// And the application data an app hung off it survives, which is what an
 	// application uses the tree for at all.
 	was.Data = "the application's own"
-	tv.rebuildFlatList()
-	if tv.flatList[0].Data != "the application's own" {
-		t.Errorf("the row's Data is %v", tv.flatList[0].Data)
+	tv.moved()
+	if tv.rowAt(0).Data != "the application's own" {
+		t.Errorf("the row's Data is %v", tv.rowAt(0).Data)
 	}
 }
 
@@ -183,7 +183,7 @@ func TestARowKeepsItsPointerAcrossARebuild(t *testing.T) {
 // items to carry a field in from. One mechanism said from the other side.
 func TestExpandingADeclaredRowMovesAMark(t *testing.T) {
 	tv, src := onHosts(t)
-	kestrel := tv.flatList[0]
+	kestrel := tv.rowAt(0)
 
 	tv.ExpandItem(kestrel)
 	if got, want := strings.Join(visualCaptions(tv), " "),
@@ -194,11 +194,11 @@ func TestExpandingADeclaredRowMovesAMark(t *testing.T) {
 		t.Errorf("one node opened holds %d marks, want one", held)
 	}
 	// The state came back off the row, not out of a field the view set.
-	if !tv.flatList[0].Expanded {
+	if !tv.rowAt(0).Expanded {
 		t.Error("the expanded row does not say it is expanded")
 	}
 
-	tv.CollapseItem(tv.flatList[0])
+	tv.CollapseItem(tv.rowAt(0))
 	if got, want := strings.Join(visualCaptions(tv), " "), "kestrel merlin"; got != want {
 		t.Errorf("after collapsing, the tree reads\n  %s\nwant\n  %s", got, want)
 	}
@@ -263,7 +263,8 @@ func TestAPlainSourceIsOneFlatLevel(t *testing.T) {
 	}
 	// Every row is a leaf and stands at the top: nothing said otherwise, and a
 	// flat source has nothing to say.
-	for i, item := range tv.flatList {
+	for i := 0; i < tv.rowCount(); i++ {
+		item := tv.drawRow(i)
 		if !item.IsLeaf() || item.Level() != 0 {
 			t.Errorf("row %d is a leaf=%v at level %d", i, item.IsLeaf(), item.Level())
 		}
@@ -369,29 +370,29 @@ func onDeep(t *testing.T) (*TreeView, *serval.TreeSource) {
 func TestParentageIsRightWhereTheDepthFallsAndRises(t *testing.T) {
 	tv, src := onDeep(t)
 	src.ExpandAll()
-	tv.rebuildFlatList()
+	tv.moved()
 
 	if got, want := strings.Join(visualCaptions(tv), " "),
 		"kestrel a browser a tab an editor a buffer"; got != want {
 		t.Fatalf("expanded, the tree reads\n  %s\nwant\n  %s", got, want)
 	}
 	for i, want := range []int{0, 1, 2, 1, 2} {
-		if got := tv.flatList[i].Level(); got != want {
+		if got := tv.rowAt(i).Level(); got != want {
 			t.Errorf("row %d (%s) stands at level %d, want %d",
-				i, tv.flatList[i].Text, got, want)
+				i, tv.rowAt(i).Text, got, want)
 		}
 	}
 	// The buffer belongs to the EDITOR, which is the row at depth 1 that came
 	// after a deeper one. A spine that did not unwind would hang it off the
 	// browser -- the stale entry still standing at that depth.
-	buffer, editor, browser := tv.flatList[4], tv.flatList[3], tv.flatList[1]
+	buffer, editor, browser := tv.rowAt(4), tv.rowAt(3), tv.rowAt(1)
 	if buffer.Parent != editor {
 		t.Errorf("the buffer hangs off %v, want the editor", buffer.Parent)
 	}
 	if buffer.Parent == browser {
 		t.Error("the buffer hangs off the browser: the spine did not unwind")
 	}
-	if len(browser.Children) != 1 || browser.Children[0] != tv.flatList[2] {
+	if len(browser.Children) != 1 || browser.Children[0] != tv.rowAt(2) {
 		t.Errorf("the browser holds %d children, want just its tab", len(browser.Children))
 	}
 }
@@ -401,9 +402,9 @@ func TestParentageIsRightWhereTheDepthFallsAndRises(t *testing.T) {
 // stopped at the row itself, or came back reversed, would name a different node.
 func TestExpandingADeeperRowNamesTheWholeChain(t *testing.T) {
 	tv, _ := onDeep(t)
-	tv.ExpandItem(tv.flatList[0]) // kestrel, so the applications show
+	tv.ExpandItem(tv.rowAt(0)) // kestrel, so the applications show
 
-	browser := tv.flatList[1]
+	browser := tv.rowAt(1)
 	if browser.Text != "a browser" {
 		t.Fatalf("row 1 is %q", browser.Text)
 	}
@@ -426,7 +427,7 @@ func TestExpandingADeeperRowNamesTheWholeChain(t *testing.T) {
 	}
 	// The EDITOR is still closed, which is what a chain naming the wrong node
 	// would have got wrong.
-	if tv.flatList[3].Expanded {
+	if tv.rowAt(3).Expanded {
 		t.Error("the editor opened too: the chain named the wrong node")
 	}
 }
@@ -482,11 +483,11 @@ tv=new treeview source="source:tree.wire"
 		t.Fatalf("the tree reads\n  %s\nwant\n  %s", got, want)
 	}
 	// The source counted, so the twisty is live before anything opens.
-	if tv.flatList[0].IsLeaf() {
+	if tv.rowAt(0).IsLeaf() {
 		t.Error("the host with an application says it is a leaf")
 	}
 	src.ExpandAll()
-	tv.rebuildFlatList()
+	tv.moved()
 	if got, want := strings.Join(visualCaptions(tv), " "),
 		"kestrel a browser"; got != want {
 		t.Errorf("expanded, the tree reads\n  %s\nwant\n  %s", got, want)
@@ -611,9 +612,9 @@ func TestARowSaysWhetherItMayBeWrittenIn(t *testing.T) {
 	tv.SetSource(src)
 
 	for i, want := range []bool{true, false, false, true, false} {
-		if got := tv.flatList[i].ReadOnly; got != want {
+		if got := tv.rowAt(i).ReadOnly; got != want {
 			t.Errorf("row %d (%s) says read-only=%v, want %v",
-				i, tv.flatList[i].Text, got, want)
+				i, tv.rowAt(i).Text, got, want)
 		}
 	}
 }
@@ -652,7 +653,7 @@ func TestADeclaredSourcesSiblingsAreNotSortedTwice(t *testing.T) {
 	}
 	// And the tree lines agree with the rows, rather than with a second comparison
 	// that would have made item10 the first of the two.
-	first, second := tv.flatList[0], tv.flatList[1]
+	first, second := tv.rowAt(0), tv.rowAt(1)
 	if !tv.hasNextVisualSibling(first) {
 		t.Errorf("%q draws as the last of its run; it is the first", first.Text)
 	}
@@ -694,13 +695,13 @@ func TestASortedDeclaredSourceIsNotComparedTheViewsOwnWay(t *testing.T) {
 	}
 	// The elbow has to follow the rows. Folding would make item10 the first of
 	// the two and put the last-of-run mark on item2.
-	if !tv.hasNextVisualSibling(tv.flatList[0]) {
+	if !tv.hasNextVisualSibling(tv.rowAt(0)) {
 		t.Errorf("%q draws as the last of its run; it is the first",
-			tv.flatList[0].Text)
+			tv.rowAt(0).Text)
 	}
-	if tv.hasNextVisualSibling(tv.flatList[1]) {
+	if tv.hasNextVisualSibling(tv.rowAt(1)) {
 		t.Errorf("%q draws as having a sibling after it; it is the last",
-			tv.flatList[1].Text)
+			tv.rowAt(1).Text)
 	}
 }
 
@@ -723,11 +724,12 @@ func TestAHintedSourceIsGrownIntoATree(t *testing.T) {
 	// comparing them would say nothing about the shape.
 	flat := NewTreeView()
 	flat.SetSource(plain)
-	if len(flat.flatList) != 2 {
+	if flat.rowCount() != 2 {
 		t.Fatalf("a source that says nothing drew %d rows, want both, flat",
-			len(flat.flatList))
+			flat.rowCount())
 	}
-	for i, item := range flat.flatList {
+	for i := 0; i < flat.rowCount(); i++ {
+		item := flat.drawRow(i)
 		if !item.IsLeaf() {
 			t.Errorf("row %d draws a twisty over a source that said nothing", i)
 		}
@@ -745,10 +747,10 @@ func TestAHintedSourceIsGrownIntoATree(t *testing.T) {
 	if got, want := strings.Join(visualCaptions(tv), " "), "a parent"; got != want {
 		t.Fatalf("the grown tree reads\n  %s\nwant\n  %s", got, want)
 	}
-	if tv.flatList[0].IsLeaf() {
+	if tv.rowAt(0).IsLeaf() {
 		t.Error("the parent says it is a leaf")
 	}
-	tv.ExpandItem(tv.flatList[0])
+	tv.ExpandItem(tv.rowAt(0))
 	if got, want := strings.Join(visualCaptions(tv), " "), "a parent a child"; got != want {
 		t.Errorf("opened, it reads\n  %s\nwant\n  %s", got, want)
 	}
@@ -780,7 +782,8 @@ func TestAContradictoryHintLeavesTheSourceFlat(t *testing.T) {
 	if got, want := strings.Join(visualCaptions(tv), " "), "a row another"; got != want {
 		t.Errorf("the tree reads\n  %s\nwant\n  %s -- both rows, flat", got, want)
 	}
-	for _, item := range tv.flatList {
+	for i := 0; i < tv.rowCount(); i++ {
+		item := tv.drawRow(i)
 		if !item.IsLeaf() {
 			t.Errorf("%q draws a twisty over a hint nothing could use", item.Text)
 		}
@@ -809,7 +812,7 @@ func TestADeclaredCaptionBeatsTheHintsLabel(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetKindMap("", InOrder("title"))
 	tv.SetSource(src)
-	if got, want := tv.flatList[0].Text, "what the caller asked for"; got != want {
+	if got, want := tv.rowAt(0).Text, "what the caller asked for"; got != want {
 		t.Errorf("the caption reads %q, want %q", got, want)
 	}
 }
@@ -830,7 +833,7 @@ func TestTheKeyColumnReadsTheFieldItWasTold(t *testing.T) {
 
 	tv := NewTreeView()
 	tv.SetSource(src)
-	if got, want := tv.flatList[0].Text, "something else"; got != want {
+	if got, want := tv.rowAt(0).Text, "something else"; got != want {
 		t.Fatalf("with nothing said the caption reads %q, want the identity rung's %q", got, want)
 	}
 
@@ -838,7 +841,7 @@ func TestTheKeyColumnReadsTheFieldItWasTold(t *testing.T) {
 	if got, want := tv.KeyField(), "name"; got != want {
 		t.Errorf("the key field reads %q, want %q", got, want)
 	}
-	if got, want := tv.flatList[0].Text, "what it is called"; got != want {
+	if got, want := tv.rowAt(0).Text, "what it is called"; got != want {
 		t.Errorf("the caption reads %q, want %q", got, want)
 	}
 
@@ -846,7 +849,7 @@ func TestTheKeyColumnReadsTheFieldItWasTold(t *testing.T) {
 	// same order every other rung above the label keeps.
 	src.SetTreeHint(serval.TreeHint{Parent: "up", Label: "value"})
 	tv.SetSource(src)
-	if got, want := tv.flatList[0].Text, "what it is called"; got != want {
+	if got, want := tv.rowAt(0).Text, "what it is called"; got != want {
 		t.Errorf("with a hint in play the caption reads %q, want the caller's %q", got, want)
 	}
 }
@@ -937,17 +940,17 @@ func TestALocationDescendedRowExpandsByItsPath(t *testing.T) {
 		t.Errorf("after expanding, the tree reads\n  %s\nwant\n  %s", got, want)
 	}
 	// And the chain is the PATH and not the key, which is the fact underneath.
-	if got, want := tv.chainOf(tv.flatList[0]), []string{"volume"}; len(got) != 1 || got[0] != want[0] {
+	if got, want := tv.chainOf(tv.rowAt(0)), []string{"volume"}; len(got) != 1 || got[0] != want[0] {
 		t.Errorf("the chain is %q, want %q -- the segment the walk used", got, want)
 	}
 
 	// Two levels down, so the chain is more than one segment and each one is a whole
 	// path rather than a step.
-	tv.ExpandItem(tv.flatList[1])
+	tv.ExpandItem(tv.rowAt(1))
 	if got, want := strings.Join(visualCaptions(tv), " "), "volume group file.txt"; got != want {
 		t.Errorf("two levels down, the tree reads\n  %s\nwant\n  %s", got, want)
 	}
-	if got := tv.chainOf(tv.flatList[1]); len(got) != 2 || got[0] != "volume" || got[1] != "volume/group" {
+	if got := tv.chainOf(tv.rowAt(1)); len(got) != 2 || got[0] != "volume" || got[1] != "volume/group" {
 		t.Errorf("the deeper chain is %q, want each ancestor's whole path", got)
 	}
 }
@@ -956,7 +959,7 @@ func TestALocationDescendedRowExpandsByItsPath(t *testing.T) {
 // same fact and is what every tree did before a standing existed.
 func TestAnAdjacencyDescendedRowExpandsByItsKey(t *testing.T) {
 	tv, _ := onHosts(t)
-	kestrel := tv.flatList[0]
+	kestrel := tv.rowAt(0)
 	want := serval.Key(serval.NewInt(1))
 	if got := tv.chainOf(kestrel); len(got) != 1 || got[0] != want {
 		t.Errorf("the chain is %q, want the record's identity %q", got, want)
@@ -981,7 +984,7 @@ func TestAnAdjacencyDescendedRowExpandsByItsKey(t *testing.T) {
 // one shape that is the empty string. Nothing failed anywhere.
 func TestAColumnMayBeCalledAfterOneOfTheTreesOwnFields(t *testing.T) {
 	tv := onFolders(t)
-	if got, want := tv.flatList[0].Value("kind"), "Folder"; got != want {
+	if got, want := tv.rowAt(0).Value("kind"), "Folder"; got != want {
 		t.Errorf("the Kind column reads %q, want the record's own %q", got, want)
 	}
 
@@ -998,7 +1001,7 @@ func TestAColumnMayBeCalledAfterOneOfTheTreesOwnFields(t *testing.T) {
 		tv.AddColumn(NewTreeColumn(name, name, 10*cell))
 		tv.SetKeyField("label")
 		tv.SetSource(src)
-		if got, want := tv.flatList[0].Value(name), "the record's own"; got != want {
+		if got, want := tv.rowAt(0).Value(name), "the record's own"; got != want {
 			t.Errorf("a column called %q reads %q, want %q", name, got, want)
 		}
 	}
@@ -1038,7 +1041,7 @@ func onAmended(t *testing.T) (*TreeView, *serval.AmendedSource) {
 // members back over it. The value was never anywhere but on screen.
 func TestAnEditToADeclaredRowIsHeldAgainstTheSource(t *testing.T) {
 	tv, over := onAmended(t)
-	row := tv.flatList[0]
+	row := tv.rowAt(0)
 	if got := row.Value("kind"); got != "Folder" {
 		t.Fatalf("the cell reads %q before anything is edited", got)
 	}
@@ -1065,12 +1068,12 @@ func TestAnEditToADeclaredRowIsHeldAgainstTheSource(t *testing.T) {
 	}
 
 	// And it survives a read, which is the whole point.
-	tv.rebuildFlatList()
-	if got := tv.flatList[0].Value("kind"); got != "Archive" {
+	tv.moved()
+	if got := tv.rowAt(0).Value("kind"); got != "Archive" {
 		t.Errorf("after reading again the cell reads %q, want the edit", got)
 	}
 	// The members nobody touched are still the source's.
-	if got := tv.flatList[0].Text; got != "alpha" {
+	if got := tv.rowAt(0).Text; got != "alpha" {
 		t.Errorf("the caption reads %q; an alteration overwrote what it did not name", got)
 	}
 }
@@ -1079,7 +1082,7 @@ func TestAnEditToADeclaredRowIsHeldAgainstTheSource(t *testing.T) {
 // column's `id` cannot name -- the key column has no id.
 func TestEditingTheKeyCellAmendsTheCaptionsMember(t *testing.T) {
 	tv, over := onAmended(t)
-	row := tv.flatList[0]
+	row := tv.rowAt(0)
 
 	tv.setCellValue(row, treeKeyColumn, "renamed")
 	tv.amendCell(row, treeKeyColumn, "renamed")
@@ -1097,7 +1100,7 @@ func TestEditingTheKeyCellAmendsTheCaptionsMember(t *testing.T) {
 // second must not lose the first -- which is what a reader tabbing across does.
 func TestTwoEditsToOneRowBothStick(t *testing.T) {
 	tv, over := onAmended(t)
-	row := tv.flatList[0]
+	row := tv.rowAt(0)
 
 	tv.setCellValue(row, tv.columns[0], "Archive")
 	tv.amendCell(row, tv.columns[0], "Archive")
@@ -1107,11 +1110,11 @@ func TestTwoEditsToOneRowBothStick(t *testing.T) {
 	if got := len(over.Amendments()); got != 1 {
 		t.Fatalf("the source holds %d amendments, want one per record", got)
 	}
-	tv.rebuildFlatList()
-	if got := tv.flatList[0].Text; got != "renamed" {
+	tv.moved()
+	if got := tv.rowAt(0).Text; got != "renamed" {
 		t.Errorf("the caption reads %q", got)
 	}
-	if got := tv.flatList[0].Value("kind"); got != "Archive" {
+	if got := tv.rowAt(0).Value("kind"); got != "Archive" {
 		t.Errorf("the Kind cell reads %q; the second edit lost the first", got)
 	}
 }
@@ -1126,10 +1129,10 @@ func TestAnEditDoesNotMoveTheRowItIsIn(t *testing.T) {
 		t.Fatalf("sorted, the tree reads %s", got)
 	}
 
-	row := tv.flatList[0]
+	row := tv.rowAt(0)
 	tv.setCellValue(row, treeKeyColumn, "zulu") // would sort last
 	tv.amendCell(row, treeKeyColumn, "zulu")
-	tv.rebuildFlatList()
+	tv.moved()
 
 	if got := strings.Join(visualCaptions(tv), " "); got != "zulu beta" {
 		t.Errorf("after the edit the tree reads %s, want the row left where it was", got)
@@ -1176,7 +1179,7 @@ func TestADeclaredSourceWithNowhereToHoldAnEditSaysSo(t *testing.T) {
 	tv.SetOnCellEdited(func(item *TreeItem, _ *TreeColumn, _ string) {
 		sawKey = item.Key()
 	})
-	row := tv.flatList[0]
+	row := tv.rowAt(0)
 	tv.beginCellEdit(row, tv.columns[0])
 	tv.editBox.SetText("Archive")
 	tv.commitCellEdit()
@@ -1187,8 +1190,8 @@ func TestADeclaredSourceWithNowhereToHoldAnEditSaysSo(t *testing.T) {
 		t.Errorf("the edit reported key %q, want the record's identity", sawKey)
 	}
 	// And it does not stick, which is honest: there was nowhere to hold it.
-	tv.rebuildFlatList()
-	if got := tv.flatList[0].Value("kind"); got != "Folder" {
+	tv.moved()
+	if got := tv.rowAt(0).Value("kind"); got != "Folder" {
 		t.Errorf("the cell reads %q; nothing held the edit, so the source's value stands", got)
 	}
 }

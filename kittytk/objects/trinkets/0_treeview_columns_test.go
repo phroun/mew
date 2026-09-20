@@ -732,7 +732,7 @@ func TestTreeLinePrefix(t *testing.T) {
 	// The elbow follows the VISUAL (sorted) order, not declaration
 	// order: descending by name flips c1/c2.
 	tv.SetSorted(true, -1, true)
-	tv.rebuildFlatList()
+	tv.moved()
 	if got := string(tv.treeLinePrefix(c1)); got != "└─" {
 		t.Errorf("sorted prefix(c1) = %q, want └─", got)
 	}

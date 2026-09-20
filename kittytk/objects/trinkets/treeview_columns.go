@@ -401,7 +401,7 @@ func (t *TreeView) resortKeepingSelection() {
 	wasVisible := cur != nil &&
 		t.currentIndex >= t.scrollOffset &&
 		t.currentIndex < t.scrollOffset+t.visibleCount()
-	t.rebuildFlatList()
+	t.moved()
 	if cur != nil {
 		t.restoreSelectionByItem(cur)
 		if wasVisible {
@@ -756,8 +756,16 @@ func (t *TreeView) treeLinePrefix(item *TreeItem) []rune {
 	}
 	// chain[k] is the ancestor-or-self at level k+1: its connector
 	// state fills chunk k (columns [k*indentWidth, (k+1)*indentWidth)).
+	//
+	// **A chunk the view has no ancestor for stays blank**, and that is not a
+	// failure. A connector says something about rows OTHER than this one -- whether
+	// an ancestor has more siblings below -- so a view holding a window cannot draw
+	// one for an ancestor above the window without fetching back what it windowed
+	// away to answer a question about a line. The indent is still exactly right,
+	// the depth being the source's own word, and the lines fill in as the rows
+	// above arrive.
 	chain := make([]*TreeItem, level)
-	for n, k := item, level-1; k >= 0; n, k = n.Parent, k-1 {
+	for n, k := item, level-1; k >= 0 && n != nil; n, k = n.Parent, k-1 {
 		chain[k] = n
 	}
 	// The elbow opens towards the caption, which is the way the tree reads.
@@ -766,6 +774,9 @@ func (t *TreeView) treeLinePrefix(item *TreeItem) []rune {
 		tee, elbow = '┤', '┘'
 	}
 	for k, n := range chain {
+		if n == nil {
+			continue
+		}
 		at := k * t.indentWidth
 		if k == level-1 {
 			if t.hasNextVisualSibling(n) {
@@ -1300,7 +1311,16 @@ func (t *TreeView) neededWidth(col *TreeColumn) core.Unit {
 		maxW += t.arrowRoom("▲")
 	}
 	host := t.treeHostColumn() == col // carries expander + indent
-	for _, it := range t.flatList {
+	// **The rows the view HOLDS, which is what there is to measure.** A blank row
+	// has no text in it, so it can widen no column, and a view that measured the
+	// whole sequence would have to read the whole sequence to do it -- which is the
+	// one thing a window exists not to do. A column therefore fits what the reader
+	// has seen, and grows as further rows arrive.
+	for _, at := range t.held() {
+		it := t.rowAt(at)
+		if it == nil {
+			continue
+		}
 		w := font.MeasureTextIn(col.displayValue(it.Value(col.ID)), metrics)
 		if host {
 			w += core.Unit(it.Level()*t.indentWidth+1+treeLeftPadCells) * cw
@@ -1502,7 +1522,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	// the footer scrollbar instead of leaving that space blank (the bar
 	// overlays it). It never joins visibleCount, so the scrolling math
 	// does not treat the clipped row as visible.
-	if p.Graphical() && t.scrollOffset+visibleCount < len(t.flatList) &&
+	if p.Graphical() && t.scrollOffset+visibleCount < t.rowCount() &&
 		lay.headerH+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
 		rows++
 	}
@@ -1513,12 +1533,16 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	fadeL := make([]style.Color, 0, rows)
 	fadeR := make([]style.Color, 0, rows)
 	rowBands := make([]style.Color, 0, rows) // full-row band bg (vertical fades)
+	// Asked once: rowCount makes sure the window is there, and asking it per row
+	// would run the spine's scan down the whole viewport for an answer that cannot
+	// change while this paint is being drawn.
+	drawn := t.rowCount()
 	for i := 0; i < rows; i++ {
 		itemIndex := t.scrollOffset + i
-		if itemIndex >= len(t.flatList) {
+		if itemIndex >= drawn {
 			break
 		}
-		item := t.flatList[itemIndex]
+		item := t.drawRow(itemIndex)
 		itemY := lay.headerH + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// While the internal focus sits in the header (bar or drilled
@@ -1739,7 +1763,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	if t.footerHeight() > 0 {
 		t.paintHScrollbar(p, lay)
 	}
-	if len(t.flatList) > visibleCount {
+	if t.rowCount() > visibleCount {
 		t.paintScrollbar(p, visibleCount)
 	}
 }
@@ -1829,7 +1853,7 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 		return
 	}
 	visibleCount := t.visibleCount()
-	maxScroll := len(t.flatList) - visibleCount
+	maxScroll := t.rowCount() - visibleCount
 	showTop := t.scrollOffset > 0
 	showBottom := maxScroll > 0 && t.scrollOffset < maxScroll
 	if !showTop && !showBottom {
@@ -3202,10 +3226,13 @@ func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 	}
 	visible := int((local.Y - headerH) / rowH)
 	at := t.scrollOffset + visible
-	if at < 0 || at >= len(t.flatList) {
+	if at < 0 || at >= t.rowCount() {
 		return "", core.UnitRect{}, false
 	}
-	item := t.flatList[at]
+	item := t.rowAt(at)
+	if item == nil {
+		return "", core.UnitRect{}, false // a blank has nothing to say about itself
+	}
 
 	lay := t.columnLayout()
 	for _, sp := range lay.spans {

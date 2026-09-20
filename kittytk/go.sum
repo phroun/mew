@@ -110,6 +110,8 @@ github.com/phroun/serval v0.1.1-alpha.0.20260919232315-994d58b5f50b h1:Ue4e+XwMu
 github.com/phroun/serval v0.1.1-alpha.0.20260919232315-994d58b5f50b/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
 github.com/phroun/serval v0.1.1-alpha.0.20260919232450-85965af9949d h1:SmGpptAl9RiYcpk66NsUFG5X5b5KweJcoQHgj3mCKv4=
 github.com/phroun/serval v0.1.1-alpha.0.20260919232450-85965af9949d/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
+github.com/phroun/serval v0.1.1-alpha.0.20260920034023-b7e148d077b1 h1:08b5EW4SCorKVjMrY/ycFHOKqm0PdRcwCYVZ1W6Zdys=
+github.com/phroun/serval v0.1.1-alpha.0.20260920034023-b7e148d077b1/go.mod h1:lPhd0OWZQ34Bfer4fZNJhEgXMtPDahLL3azfHV8bkqE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c/go.mod h1:cNQ3dwVJtS5Hmnjxy6AgTPd0Inb3pW05ftPSX7NZO7Q=
 github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef h1:Ch6Q+AZUxDBCVqdkI8FSpFyZDtCVBc2VmejdNrm5rRQ=

@@ -141,7 +141,7 @@ func (it *wireItem) refresh() {
 	if it.view != nil {
 		// Structure or expansion changed: the flattened row list must
 		// be rebuilt before the next paint or index-based selection.
-		it.view.rebuildFlatList()
+		it.view.moved()
 		it.view.Update()
 	}
 }

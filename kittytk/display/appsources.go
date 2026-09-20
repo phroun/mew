@@ -122,13 +122,14 @@ func (c *conn) appSource(name string) *serval.AmendedSource {
 	// no notice touches. Values are held per source and order per sequence, so two
 	// views sorting one source differently still share every value between them.
 	//
-	// **It terminates while the answer FITS, and a view still asks for all of it.**
-	// `treesource.go` reads with a count of 1<<30 -- the whole sequence, every read --
-	// so the cache can only serve the second read where the whole sequence is inside
-	// its budget. Measured against the 64 MB default: twenty thousand rows of two
-	// fields settles at two reads, fifty thousand never settles and turns over at the
-	// speed of a full walk. The rest of the fix is the view asking for a window rather
-	// than for everything, which is what `everyTreeRow` is standing in for.
+	// **And it terminates whatever the size, now that a view asks for a WINDOW.** It
+	// used to terminate only while the answer fitted: `treesource.go` read with a count
+	// of 1<<30 -- the whole sequence, every read -- so the cache could serve the second
+	// read only where the whole sequence was inside its budget. Measured against the
+	// 64 MB default, twenty thousand rows of two fields settled at two reads and fifty
+	// thousand never settled, turning over at the speed of a full walk. A view now asks
+	// for the rows it is looking at, and a screenful fits whatever the body behind it
+	// is.
 	held := serval.NewCachedSource(end)
 	src := serval.NewAmendedSource(held)
 

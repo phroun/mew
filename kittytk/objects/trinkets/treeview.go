@@ -63,6 +63,18 @@ type TreeItem struct {
 	// it is editing -- and like the mark, it is only in hand while the record is.
 	rowKind string
 
+	// rowDepth is how deep the source said this row stands, and rowChain the mark
+	// segments from the root down to it.
+	//
+	// **Both used to be worked out and neither can be, for a WINDOW.** The depth
+	// became parentage and the chain walked back up it, which works for a view
+	// holding the whole pre-order -- every ancestor is above its descendant -- and
+	// is exactly what a view holding rows forty to eighty declined to hold. So both
+	// are read off the row, where the walk that knew them wrote them down. See
+	// serval's TreeFields.Chain.
+	rowDepth int
+	rowChain []string
+
 	// Values holds this item's data-column cell text, keyed by
 	// TreeColumn.ID (see SetValue/Value in treeview_columns.go).
 	Values map[string]string
@@ -126,7 +138,16 @@ func (t *TreeItem) Key() string {
 }
 
 // Level returns the nesting level (0 for root items).
+//
+// **A row out of a SOURCE answers from what the source said**, and a row the tree
+// made itself from its parentage. The same split `IsLeaf` makes, and for the same
+// reason: a view holding a window of a tree holds no ancestor of the rows at the
+// top of it, so walking up would report the window's edge as the top of the tree
+// and draw a row forty deep flush against the margin.
 func (t *TreeItem) Level() int {
+	if t.rowKey != nil {
+		return t.rowDepth
+	}
 	level := 0
 	for p := t.Parent; p != nil; p = p.Parent {
 		level++
@@ -141,13 +162,21 @@ type TreeView struct {
 	core.AccessibleTrinket
 
 	rootItems    []*TreeItem
-	flatList     []*TreeItem // Flattened list of visible items
 	currentIndex int
 	scrollOffset int
 
+	// bones is what the view knows about where its rows are: a few runs of
+	// identities and depths anchored by position, plus how long the sequence is.
+	// It is a WINDOW and never a log -- see spine.go -- which is what lets a tree
+	// of a hundred thousand rows be read forty at a time.
+	bones spine
+	// asks numbers the stretches this view has asked for, so an answer for
+	// somewhere the reader has since left can be recognised and dropped.
+	asks asking
+
 	// Where the rows come from (see treesource.go). A tree given no source
-	// makes one out of its own items, so flatList is a window on a sequence
-	// either way rather than something the view walks for itself.
+	// makes one out of its own items, so the rows are read out of a sequence
+	// either way rather than walked for by the view.
 	source serval.Source // declared: what SetSource was given
 	made   *serval.TreeSource
 	// grown is a tree built out of a declared source's own TREE HINT, where it
@@ -168,7 +197,7 @@ type TreeView struct {
 	// arrival.go.
 	arrivals int
 	// byID leads a row's key back to the very item the caller handed in,
-	// because everything reading flatList compares pointers.
+	// because everything reading a row compares pointers.
 	byID map[core.ObjectID]*TreeItem
 	// fromSource holds the items built out of a declared source's records,
 	// keyed by the row's own identity, so the same row leads to the same pointer
@@ -387,8 +416,8 @@ func (t *TreeView) DirectionChanged() {
 func (t *TreeView) AddRootItem(item *TreeItem) {
 	item.Parent = nil
 	t.rootItems = append(t.rootItems, item)
-	t.rebuildFlatList()
-	if t.currentIndex < 0 && len(t.flatList) > 0 {
+	t.moved()
+	if t.currentIndex < 0 && t.rowCount() > 0 {
 		t.SetCurrentIndex(0)
 	}
 	t.Update()
@@ -402,9 +431,9 @@ func (t *TreeView) RemoveRootItem(item *TreeItem) {
 			break
 		}
 	}
-	t.rebuildFlatList()
-	if t.currentIndex >= len(t.flatList) {
-		t.currentIndex = len(t.flatList) - 1
+	t.moved()
+	if t.currentIndex >= t.rowCount() {
+		t.currentIndex = t.rowCount() - 1
 	}
 	t.Update()
 }
@@ -420,9 +449,9 @@ func (t *TreeView) RemoveItem(item *TreeItem) {
 		return
 	}
 	item.Parent.RemoveChild(item)
-	t.rebuildFlatList()
-	if t.currentIndex >= len(t.flatList) {
-		t.currentIndex = len(t.flatList) - 1
+	t.moved()
+	if t.currentIndex >= t.rowCount() {
+		t.currentIndex = t.rowCount() - 1
 	}
 	t.Update()
 }
@@ -430,7 +459,7 @@ func (t *TreeView) RemoveItem(item *TreeItem) {
 // Clear removes all items.
 func (t *TreeView) Clear() {
 	t.rootItems = nil
-	t.flatList = nil
+	t.bones = spine{}
 	t.currentIndex = -1
 	t.scrollOffset = 0
 	t.Update()
@@ -451,20 +480,36 @@ func (t *TreeView) RootItems() []*TreeItem {
 
 // CurrentItem returns the currently focused item.
 func (t *TreeView) CurrentItem() *TreeItem {
-	if t.currentIndex < 0 || t.currentIndex >= len(t.flatList) {
+	if t.currentIndex < 0 || t.currentIndex >= t.rowCount() {
 		return nil
 	}
-	return t.flatList[t.currentIndex]
+	return t.rowAt(t.currentIndex)
 }
 
 // SetCurrentItem sets the current item.
+//
+// An item the view is not HOLDING cannot be found, which is a row somebody
+// scrolled past rather than a row that is not there. Where it is a source's row
+// the spine knows it by identity, and that is asked first -- so naming a row keeps
+// working for as far as the view remembers, rather than only for what is on
+// screen.
 func (t *TreeView) SetCurrentItem(item *TreeItem) {
-	for i, flatItem := range t.flatList {
-		if flatItem == item {
-			t.SetCurrentIndex(i)
-			return
-		}
+	if at, ok := t.positionOf(item); ok {
+		t.SetCurrentIndex(at)
 	}
+}
+
+// positionOf is where an item stands, and false for one outside what the view
+// holds.
+func (t *TreeView) positionOf(item *TreeItem) (int, bool) {
+	if item == nil {
+		return 0, false
+	}
+	if item.rowKey != nil {
+		return t.bones.posOf(item.rowKey)
+	}
+	// A made row's identity is its ObjectID, which is what makeSource keyed it by.
+	return t.bones.posOf(treeKey(item.ID))
 }
 
 // CurrentIndex returns the current index in the flat list.
@@ -474,7 +519,7 @@ func (t *TreeView) CurrentIndex() int {
 
 // SetCurrentIndex sets the current index.
 func (t *TreeView) SetCurrentIndex(index int) {
-	if index < -1 || index >= len(t.flatList) {
+	if index < -1 || index >= t.rowCount() {
 		return
 	}
 	if t.currentIndex == index {
@@ -492,7 +537,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	if sp, ok := t.treeHostSpan(); ok && index >= 0 {
 		metrics := t.EffectiveCellMetrics()
 		cw := metrics.UnitsPerCellWidth
-		item := t.flatList[index]
+		item := t.drawRow(index)
 
 		// What has to be in view is the row's own content: one column of
 		// indent still showing, then the expander and the caption behind
@@ -518,9 +563,9 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	}
 
 	// Announce selection change for accessibility
-	if index >= 0 && index < len(t.flatList) {
+	if index >= 0 && index < t.rowCount() {
 		if am := core.FindAccessibilityManager(t); am != nil {
-			item := t.flatList[index]
+			item := t.drawRow(index)
 			state := ""
 			if !item.IsLeaf() {
 				if item.Expanded {
@@ -533,8 +578,12 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		}
 	}
 
+	// A blank row names nothing, so a handler expecting a row is told nothing
+	// rather than told about a placeholder. resolve tells it when the record lands.
 	if t.onCurrentChanged != nil && index >= 0 {
-		t.onCurrentChanged(t.flatList[index])
+		if item := t.rowAt(index); item != nil {
+			t.onCurrentChanged(item)
+		}
 	}
 }
 
@@ -565,6 +614,16 @@ func (t *TreeView) expandOrDescend(current *TreeItem) bool {
 }
 
 // ExpandItem expands an item to show its children.
+//
+// **What it costs is a SHIFT and not an invalidation.** Every level of a tree is a
+// data set of its own, so opening a node makes no record untrue and reorders
+// nothing: it changes which levels the walk visits, and so where the rows below
+// this one stand. `opened` moves what the view holds by that much where it can say
+// how much, and forgets from here DOWN where it cannot -- nothing above this row
+// moved, whatever happens beneath it.
+//
+// Which is also why the twisty flips and the blank rows appear at once, before any
+// answer: laying out `Kids` rows the instant the mark moves IS the shift.
 func (t *TreeView) ExpandItem(item *TreeItem) {
 	if item.IsLeaf() || item.Expanded {
 		return
@@ -572,17 +631,26 @@ func (t *TreeView) ExpandItem(item *TreeItem) {
 
 	// Save currently selected item
 	var selectedItem *TreeItem
-	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
-		selectedItem = t.flatList[t.currentIndex]
+	if t.currentIndex >= 0 && t.currentIndex < t.rowCount() {
+		selectedItem = t.rowAt(t.currentIndex)
 	}
+	at, known := t.positionOf(item)
 
 	// The marks where a source was declared, the field where the tree made its
 	// own -- one mechanism said from two sides, because a declared source has no
 	// items to carry a field in from.
 	if !t.tellMarks(item, true) {
 		item.Expanded = true
+		t.moved() // the items themselves changed, so the made source is remade
+	} else if known {
+		t.opened(at, item)
+		t.window(t.scrollOffset, t.reach())
+		t.clampScrollOffset()
+	} else {
+		// A row the view is not holding: there is no position to shift from, so
+		// there is nothing to keep.
+		t.moved()
 	}
-	t.rebuildFlatList()
 
 	// Restore selection by finding the same item in new flat list
 	t.restoreSelectionByItem(selectedItem)
@@ -606,14 +674,24 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 
 	// Save currently selected item
 	var selectedItem *TreeItem
-	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
-		selectedItem = t.flatList[t.currentIndex]
+	if t.currentIndex >= 0 && t.currentIndex < t.rowCount() {
+		selectedItem = t.rowAt(t.currentIndex)
 	}
+	at, known := t.positionOf(item)
 
 	if !t.tellMarks(item, false) {
 		item.Expanded = false
+		t.moved()
+	} else if known {
+		// Closing is the same move the other way about, and it is EXACT wherever
+		// the view holds the end of the subtree -- the rows going are the ones in
+		// hand. See closing.
+		t.closed(at)
+		t.window(t.scrollOffset, t.reach())
+		t.clampScrollOffset()
+	} else {
+		t.moved()
 	}
-	t.rebuildFlatList()
 
 	// Restore selection by finding the same item in new flat list
 	// If selected item is no longer visible (was in collapsed subtree),
@@ -637,16 +715,12 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 // restoreSelectionByItem finds the given item in the flat list and selects it.
 // Returns true if the item was found and selected, false otherwise.
 func (t *TreeView) restoreSelectionByItem(item *TreeItem) bool {
-	if item == nil {
+	at, ok := t.positionOf(item)
+	if !ok {
 		return false
 	}
-	for i, flatItem := range t.flatList {
-		if flatItem == item {
-			t.currentIndex = i
-			return true
-		}
-	}
-	return false
+	t.currentIndex = at
+	return true
 }
 
 // ToggleItem toggles the expanded state of an item.
@@ -662,8 +736,8 @@ func (t *TreeView) ToggleItem(item *TreeItem) {
 func (t *TreeView) ExpandAll() {
 	// Save currently selected item
 	var selectedItem *TreeItem
-	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
-		selectedItem = t.flatList[t.currentIndex]
+	if t.currentIndex >= 0 && t.currentIndex < t.rowCount() {
+		selectedItem = t.rowAt(t.currentIndex)
 	}
 
 	// One mark for a declared source, which is the whole point of `openAll`
@@ -673,7 +747,7 @@ func (t *TreeView) ExpandAll() {
 	} else {
 		t.expandRecursive(t.rootItems)
 	}
-	t.rebuildFlatList()
+	t.moved()
 
 	// Restore selection by finding the same item
 	t.restoreSelectionByItem(selectedItem)
@@ -691,8 +765,8 @@ func (t *TreeView) expandRecursive(items []*TreeItem) {
 func (t *TreeView) CollapseAll() {
 	// Save currently selected item
 	var selectedItem *TreeItem
-	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
-		selectedItem = t.flatList[t.currentIndex]
+	if t.currentIndex >= 0 && t.currentIndex < t.rowCount() {
+		selectedItem = t.rowAt(t.currentIndex)
 	}
 
 	if src := t.marks(); src != nil {
@@ -700,10 +774,10 @@ func (t *TreeView) CollapseAll() {
 	} else {
 		t.collapseRecursive(t.rootItems)
 	}
-	t.rebuildFlatList()
+	t.moved()
 
 	// Restore selection - if item is no longer visible, select first root
-	if !t.restoreSelectionByItem(selectedItem) && len(t.flatList) > 0 {
+	if !t.restoreSelectionByItem(selectedItem) && t.rowCount() > 0 {
 		t.currentIndex = 0
 	}
 	t.Update()
@@ -742,19 +816,6 @@ func (t *TreeView) SetOnItemCollapsed(handler func(item *TreeItem)) {
 	t.onItemCollapsed = handler
 }
 
-// rebuildFlatList rebuilds the flattened list of visible items.
-//
-// It reads the visible rows out of a sequence rather than walking the items --
-// see treesource.go. What the walk used to work out for itself, a TreeSource now
-// answers: which rows show, in what order, and how deep each one stands.
-func (t *TreeView) rebuildFlatList() {
-	t.touched()
-	t.flatList = t.flatten()
-
-	// Clamp scroll offset to valid range after list size changes
-	t.clampScrollOffset()
-}
-
 // SetBounds resizes the tree and re-clamps its scroll state (the
 // embedded base cannot dispatch HandleResize to us - the ScrollArea
 // override pattern).
@@ -782,13 +843,13 @@ func (t *TreeView) HandleResize(oldSize, newSize core.UnitSize) {
 
 // clampScrollOffset ensures scrollOffset is within valid bounds.
 func (t *TreeView) clampScrollOffset() {
-	if len(t.flatList) == 0 {
+	if t.rowCount() == 0 {
 		t.scrollOffset = 0
 		return
 	}
 
 	visibleCount := t.visibleCount()
-	maxScroll := len(t.flatList) - visibleCount
+	maxScroll := t.rowCount() - visibleCount
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -848,8 +909,12 @@ func (t *TreeView) Paint(p *core.Painter) {
 
 	// GUI: paint one extra partial row into any leftover strip rather
 	// than leaving it blank (never counted as visible for scrolling).
+	// Asked once: rowCount makes sure the window is there, and asking it per row
+	// would run the spine's scan down the whole viewport for an answer that cannot
+	// change while this paint is being drawn.
+	drawn := t.rowCount()
 	rows := visibleCount
-	if p.Graphical() && t.scrollOffset+visibleCount < len(t.flatList) &&
+	if p.Graphical() && t.scrollOffset+visibleCount < drawn &&
 		core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
 		rows++
 	}
@@ -857,11 +922,11 @@ func (t *TreeView) Paint(p *core.Painter) {
 	// Draw items
 	for i := 0; i < rows; i++ {
 		itemIndex := t.scrollOffset + i
-		if itemIndex >= len(t.flatList) {
+		if itemIndex >= drawn {
 			break
 		}
 
-		item := t.flatList[itemIndex]
+		item := t.drawRow(itemIndex)
 		itemY := core.Unit(i) * metrics.UnitsPerCellHeight
 
 		// Determine style
@@ -902,7 +967,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 	}
 
 	// Draw scrollbar if needed
-	if len(t.flatList) > visibleCount {
+	if t.rowCount() > visibleCount {
 		t.paintScrollbar(p, visibleCount)
 	}
 }
@@ -945,7 +1010,7 @@ func (t *TreeView) treeHostSpan() (colSpan, bool) {
 // under the bar.
 func (t *TreeView) rowSpan() colSpan {
 	w := t.Bounds().Width
-	if len(t.flatList) > t.visibleCount() {
+	if t.rowCount() > t.visibleCount() {
 		w -= t.EffectiveCellMetrics().UnitsPerCellWidth
 	}
 	if w < 0 {
@@ -974,7 +1039,7 @@ func (t *TreeView) onLane(x core.Unit) bool {
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
-	totalItems := len(t.flatList)
+	totalItems := t.rowCount()
 
 	scrollbarX = t.laneX()
 	trackHeight = visibleCount
@@ -1021,7 +1086,7 @@ func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 func (t *TreeView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
 	metrics := t.EffectiveCellMetrics()
 	trackU = float64(core.Unit(visibleCount) * metrics.UnitsPerCellHeight)
-	totalItems := len(t.flatList)
+	totalItems := t.rowCount()
 	if totalItems <= visibleCount || visibleCount <= 0 {
 		return trackU, trackU, 0
 	}
@@ -1147,23 +1212,23 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
-		if t.currentIndex < len(t.flatList)-1 {
+		if t.currentIndex < t.rowCount()-1 {
 			t.SetCurrentIndex(t.currentIndex + 1)
 		}
 		return true
 
 	case core.CmdTrinketScrollDown:
 		// Jump by 5 items, scrolling to maintain relative position
-		if t.currentIndex < len(t.flatList)-1 {
+		if t.currentIndex < t.rowCount()-1 {
 			delta := 5
 			newIndex := t.currentIndex + delta
-			if newIndex >= len(t.flatList) {
-				newIndex = len(t.flatList) - 1
+			if newIndex >= t.rowCount() {
+				newIndex = t.rowCount() - 1
 			}
 			actualDelta := newIndex - t.currentIndex
 			// Scroll by same amount to maintain relative position
 			visibleCount := t.visibleCount()
-			maxScroll := len(t.flatList) - visibleCount
+			maxScroll := t.rowCount() - visibleCount
 			if maxScroll < 0 {
 				maxScroll = 0
 			}
@@ -1234,14 +1299,14 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return t.expandOrDescend(current)
 
 	case core.CmdTrinketBeg:
-		if len(t.flatList) > 0 {
+		if t.rowCount() > 0 {
 			t.SetCurrentIndex(0)
 		}
 		return true
 
 	case core.CmdTrinketEnd:
-		if len(t.flatList) > 0 {
-			t.SetCurrentIndex(len(t.flatList) - 1)
+		if t.rowCount() > 0 {
+			t.SetCurrentIndex(t.rowCount() - 1)
 		}
 		return true
 
@@ -1261,8 +1326,8 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		metrics := t.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
 		newIndex := t.currentIndex + pageSize
-		if newIndex >= len(t.flatList) {
-			newIndex = len(t.flatList) - 1
+		if newIndex >= t.rowCount() {
+			newIndex = t.rowCount() - 1
 		}
 		t.SetCurrentIndex(newIndex)
 		return true
@@ -1387,7 +1452,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Check if click is on scrollbar
 	_, thumbStart, thumbHeight, _ := t.scrollbarGeometry(t.visibleCount())
-	if t.onLane(event.X) && len(t.flatList) > t.visibleCount() {
+	if t.onLane(event.X) && t.rowCount() > t.visibleCount() {
 		clickedRow := int(contentY / metrics.UnitsPerCellHeight)
 
 		// Pixel surfaces anchor the drag to the grab point within
@@ -1432,7 +1497,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		} else {
 			// Page down
-			maxScroll := len(t.flatList) - visibleCount
+			maxScroll := t.rowCount() - visibleCount
 			t.scrollOffset += visibleCount
 			if t.scrollOffset > maxScroll {
 				t.scrollOffset = maxScroll
@@ -1452,8 +1517,14 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	clickedIndex := t.scrollOffset + clickedRow
 
 	// Only process if click is on a valid item
-	if event.X >= 0 && event.X < bounds.Width && contentY >= 0 && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
-		item := t.flatList[clickedIndex]
+	if event.X >= 0 && event.X < bounds.Width && contentY >= 0 && clickedIndex >= 0 && clickedIndex < t.rowCount() {
+		item := t.rowAt(clickedIndex)
+		if item == nil {
+			// A blank: the view knows a row stands here and nothing else, so there
+			// is nothing to select, expand or hand to a handler. The answer will
+			// arrive and the next click will land on a row.
+			return true
+		}
 
 		// Check if clicked on expand/collapse indicator. In the
 		// multi-column presentation the tree lives in its host span -
@@ -1525,7 +1596,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 // vertical scrollbar thumb.
 func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
 	visibleCount := t.visibleCount()
-	if len(t.flatList) <= visibleCount {
+	if t.rowCount() <= visibleCount {
 		return false
 	}
 	bounds := t.Bounds()
@@ -1612,7 +1683,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 				newPos = scrollable
 			}
 			t.scrollbarThumbPos = newPos
-			maxScroll := len(t.flatList) - visibleCount
+			maxScroll := t.rowCount() - visibleCount
 			newOffset := 0
 			if scrollable > 0 && maxScroll > 0 {
 				newOffset = int(newPos*float64(maxScroll)/scrollable + 0.5)
@@ -1627,7 +1698,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		rowDelta := currentRow - t.scrollbarDragStart
 
 		visibleCount := t.visibleCount()
-		totalItems := len(t.flatList)
+		totalItems := t.rowCount()
 		maxScroll := totalItems - visibleCount
 
 		if maxScroll > 0 {
@@ -1667,8 +1738,8 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Clamp to valid range
 	if index < 0 {
 		index = 0
-	} else if index >= len(t.flatList) {
-		index = len(t.flatList) - 1
+	} else if index >= t.rowCount() {
+		index = t.rowCount() - 1
 	}
 
 	if index >= 0 {
@@ -1679,7 +1750,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// cells (non-editable cells keep the previous target). It
 		// never auto-enters edit mode: armClickEdit's slop check
 		// rejects a moved release, combo cells included.
-		if col := t.editableColumnAt(event.X, t.flatList[index]); col != nil {
+		if col := t.editableColumnAt(event.X, t.rowAt(index)); col != nil {
 			t.editLastCol = col
 		}
 	}
@@ -1727,7 +1798,7 @@ func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if t.rowEditing && t.editCombo != nil && t.editCombo.IsOpen() {
 		return true
 	}
-	if len(t.flatList) == 0 {
+	if t.rowCount() == 0 {
 		return false
 	}
 
@@ -1739,7 +1810,7 @@ func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	}
 
 	visibleCount := t.visibleCount()
-	maxScroll := len(t.flatList) - visibleCount
+	maxScroll := t.rowCount() - visibleCount
 	if maxScroll <= 0 {
 		return false
 	}
@@ -1772,7 +1843,7 @@ func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 // HandleFocusIn is called when focus is gained.
 func (t *TreeView) HandleFocusIn() {
 	// Auto-select first item if nothing is selected
-	if t.currentIndex < 0 && len(t.flatList) > 0 {
+	if t.currentIndex < 0 && t.rowCount() > 0 {
 		t.SetCurrentIndex(0)
 	}
 	// With a header, focus lands on the header BAR first (one stop);
@@ -1803,10 +1874,10 @@ func (t *TreeView) HandleFocusOut() {
 func (t *TreeView) AccessibleInfo() core.AccessibleInfo {
 	info := t.AccessibleTrinket.AccessibleInfo()
 	info.Role = core.RoleTree
-	info.SetSize = len(t.flatList)
+	info.SetSize = t.rowCount()
 
-	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
-		item := t.flatList[t.currentIndex]
+	if t.currentIndex >= 0 && t.currentIndex < t.rowCount() {
+		item := t.drawRow(t.currentIndex)
 		info.PositionInSet = t.currentIndex + 1
 		info.Value = item.Text
 		info.Level = item.Level() + 1

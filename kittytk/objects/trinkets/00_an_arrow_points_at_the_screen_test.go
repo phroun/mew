@@ -22,7 +22,7 @@ func TestAnArrowOpensTheWayTheTreeGrows(t *testing.T) {
 		tv := nestedTree(t, tc.dir, false)
 		root := tv.rootItems[0]
 		root.Expanded = false
-		tv.rebuildFlatList()
+		tv.moved()
 		tv.SetCurrentIndex(0)
 
 		key := func(k string) { tv.HandleKeyPress(core.KeyPressEvent{Key: k}) }
@@ -63,7 +63,7 @@ func TestTheShiftedArrowsTurnOverTheSameWay(t *testing.T) {
 		tv := nestedTree(t, tc.dir, false)
 		root := tv.rootItems[0]
 		root.Expanded = false
-		tv.rebuildFlatList()
+		tv.moved()
 		tv.SetCurrentIndex(0)
 
 		key := func(k string) {

@@ -78,9 +78,9 @@ func (l *ListView) SetSource(src serval.Source) {
 // throw away the very records the notice is about -- which is what it did, and
 // what left a list over an application source permanently empty.
 //
-// A tree is the other shape and wants the other thing: `flatten` reads a whole
-// sequence into a fresh slice, so its Reread really does read again. Two shapes,
-// two answers to one notice.
+// A tree is now the same shape: it too streams a window into a spine, so its
+// Reread does not forget either. It used to read the whole flattening into a fresh
+// slice, which is what made the two answers to one notice different.
 func (l *ListView) Reread() {
 	if l.source == nil {
 		return
@@ -219,8 +219,11 @@ func (l *ListView) spineHolds(at, n int) bool {
 // smooth: what a list needs first is where the rows are and not what they hold,
 // so an identity is enough to lay a row out and the values fill it in behind.
 type rowSink struct {
-	list     *ListView
-	ids      []*serval.Value
+	list *ListView
+	// A list's rows all stand at the same level, so every one of these carries a
+	// depth of nought. The spine takes them anyway because a TREE's flattening is
+	// a sequence like any other and has something to say there. See spine.go.
+	rows     []named
 	begin    serval.RecordCount
 	done     serval.Complete
 	expected int    // where the list asked from, and so where it expects the answer
@@ -267,7 +270,7 @@ func (s *rowSink) Done(c serval.Complete) {
 }
 
 func (s *rowSink) take(id *serval.Value, fields serval.Record) {
-	s.ids = append(s.ids, id)
+	s.rows = append(s.rows, named{id: id})
 	s.list.learnRow(id, fields)
 }
 
@@ -304,8 +307,8 @@ func (s *rowSink) settle() {
 	if !first.Exact {
 		first = serval.Exactly(s.expected)
 	}
-	if first.Exact && len(s.ids) > 0 {
-		l.bones.place(first.N, s.ids)
+	if first.Exact && len(s.rows) > 0 {
+		l.bones.place(first.N, s.rows)
 	}
 	l.resolve()
 	if s.done.Stop != "" || s.done.Error != "" {

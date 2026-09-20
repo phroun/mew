@@ -244,7 +244,7 @@ func TestUnsortedTheOrderIsTheApplicationsOwn(t *testing.T) {
 	// disagree. Nothing but `seq` can tell them apart.
 	third := NewTreeItem("put at the front")
 	tv.rootItems = append([]*TreeItem{third}, tv.rootItems...)
-	tv.rebuildFlatList()
+	tv.moved()
 
 	if got, want := strings.Join(visualCaptions(tv), " "),
 		"put at the front added first added second"; got != want {
@@ -265,8 +265,8 @@ func TestAColumnThatMatchesNothingIsEmpty(t *testing.T) {
 
 	// The mapping points the Size column at a field the made rows do not carry,
 	// so the cell is empty -- and the tree still draws.
-	if len(tv.flatList) != 1 || tv.flatList[0] != it {
-		t.Fatalf("the tree drew %d rows", len(tv.flatList))
+	if tv.rowCount() != 1 || tv.rowAt(0) != it {
+		t.Fatalf("the tree drew %d rows", tv.rowCount())
 	}
 	var out treeRows
 	if err := tv.sequence().Read(&serval.Scope{Count: 10}, &out); err != nil {
@@ -330,7 +330,26 @@ func TestAMadeRowsCaptionIsUnderTheSameName(t *testing.T) {
 	}
 }
 
-// captionRows keeps the fields as well as the identities, which treeRows does not.
+// treeRows takes a whole flattening, which is what a test wants and no longer
+// what a VIEW wants: a view reads a window and streams it into its spine, so
+// there is nothing shaped like this in the tree any more. See treeSink.
+type treeRows struct {
+	ids    []*serval.Value
+	fields []serval.Record
+}
+
+func (r *treeRows) Ordered() {}
+func (r *treeRows) Record(id *serval.Value, f serval.Record) error {
+	r.ids = append(r.ids, id)
+	r.fields = append(r.fields, f)
+	return nil
+}
+func (r *treeRows) Subset(id *serval.Value, f serval.Record, _ serval.Totals) error {
+	return r.Record(id, f)
+}
+func (r *treeRows) Done(serval.Complete) {}
+
+// captionRows keeps only the fields, where a test has no use for the identities.
 type captionRows struct {
 	fields []serval.Record
 }

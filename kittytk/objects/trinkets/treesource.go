@@ -24,7 +24,7 @@ package trinkets
 // an ObjectID from the moment it is made. So a row's key is that, and the same
 // item keeps the same key across an expand, a collapse, a sort and an insert --
 // which is what lets the flattened sequence be turned back into the very
-// POINTERS the tree was given, so that everything reading flatList goes on
+// POINTERS the tree was given, so that everything reading a row goes on
 // comparing pointers as it always has.
 //
 // # The source sorts, through the mapping
@@ -55,10 +55,10 @@ const (
 	treeSeq    = "seq"    // where it stands among its siblings
 )
 
-// treeFields is where a tree's OWN five fields go, moved out of the data's way.
+// treeFields is where a tree's OWN six fields go, moved out of the data's way.
 //
-// A flattening carries a depth, a path, a child count, a mark state and a kind, and
-// serval writes them into each row -- **dropping the record's own field of that
+// A flattening carries a depth, a path, a child count, a mark state, a kind and the
+// chain of mark segments down to the row, and serval writes them into each row -- **dropping the record's own field of that
 // name**, because a view cannot draw without them. That is deliberate and
 // documented there, and the conclusion drawn from it is that the names are the
 // caller's to move. This is the caller.
@@ -81,6 +81,7 @@ var treeFields = serval.TreeFields{
 	Expandable: "tree:expandable",
 	State:      "tree:state",
 	Kind:       "tree:kind",
+	Chain:      "tree:chain",
 }
 
 // TreeFieldNames is where a tree's own fields go, for anybody building a
@@ -93,10 +94,231 @@ var treeFields = serval.TreeFields{
 // a column on the way in.
 func TreeFieldNames() serval.TreeFields { return treeFields }
 
-// everyTreeRow is the count a whole flattened tree is read with. The made
-// source holds its records, so this is a ceiling against a source that would
-// answer forever rather than a window.
+// treeReach is how many screenfuls a tree reads: the rows on show, and one
+// either side, so a wheel notch or a page key is answered out of what is held
+// rather than by another question.
+const treeReach = 3
+
+// everyTreeRow is the count a WHOLE flattening is read with -- a ceiling against
+// a source that would answer forever, rather than a window.
 const everyTreeRow = 1 << 30
+
+// reach is how many rows this view asks for.
+//
+// **A tree of its OWN items reads all of them, and that is a window declined
+// rather than a window forgotten.** A made source's rows are built out of the very
+// items this view is holding -- makeSource walks them on every rebuild -- so
+// reading a window of them saves no memory, no decoding and no round trip, and
+// costs a question every time the reader scrolls. It also keeps two answers a
+// whole sequence gives and a window cannot: an exact count without a walk to earn
+// it, and a position for any item, which is what a resort following its selection
+// needs.
+//
+// The cost a window exists to avoid is somewhere else entirely: a DECLARED source,
+// whose records have to be fetched, and whose hundred thousand rows were being
+// answered in full to fill forty lines -- and, past the cache's budget, answered
+// again and again because the walk never settled.
+//
+// **The floor for a declared source is what the spine will KEEP.** Bounds arrive
+// after construction and plenty of callers read rows before they do -- a bundle
+// load, a window laying itself out, a test -- so a view whose height is not known
+// yet has to ask for something, and answering "no rows" would be reporting the
+// layout rather than the data. Asking for as much as it is willing to hold is the
+// one figure that needs no second justification.
+func (t *TreeView) reach() int {
+	if t.source == nil {
+		return everyTreeRow
+	}
+	if n := t.visibleCount() * treeReach; n > 0 {
+		return n
+	}
+	return spineKept
+}
+
+// window makes sure the spine can name the rows from a position on, asking the
+// sequence about the ones it cannot.
+//
+// It asks for the stretch WHOLE rather than for the gaps in it, for the same
+// reason a list does: a window is a screenful, the answer is one question, and
+// three questions to fill three holes cost three times as much as one for all of
+// it.
+//
+// **This is what `everyTreeRow` used to be.** A view read the whole flattening
+// on every rebuild, which for a hundred thousand rows across a connection is the
+// whole body answered to fill forty lines -- and, past the cache's budget, a walk
+// that never settled. serval's flattening takes the scope as a budget and asks
+// each level for no more than the walk still needs, so a window here is a window
+// all the way down.
+func (t *TreeView) window(at, n int) {
+	if n <= 0 {
+		return
+	}
+	if at < 0 {
+		at = 0
+	}
+	if t.spineHolds(at, n) {
+		return
+	}
+	set := t.sequence()
+	if set == nil {
+		return
+	}
+
+	// From a position, because that is what a view has: it knows which rows are
+	// on screen and need not know any identity to ask for them. Where the row
+	// just before the stretch is one the spine names, `after` says the same thing
+	// and says it better -- a record is exact where a position is best effort.
+	scope := &serval.Scope{Count: n}
+	if before, ok := t.bones.idAt(at - 1); ok && at > 0 {
+		scope.After = before
+	} else {
+		scope.From = at
+	}
+	if err := set.Read(scope, &treeSink{tree: t, expected: at, asked: t.asks}); err != nil {
+		return
+	}
+}
+
+// ask asks for a stretch, superseding whatever was asked before.
+//
+// The count does not move where the stretch is one the view already holds: there
+// is nothing outstanding, so nothing to supersede, and bumping it would discard
+// an answer still on its way to somewhere the reader has NOT left.
+func (t *TreeView) ask(at, n int) {
+	if t.spineHolds(at, n) {
+		return
+	}
+	t.asks++
+	t.window(at, n)
+}
+
+// current reports whether an answer is still the one being waited for.
+func (t *TreeView) current(a asking) bool { return a == t.asks }
+
+// spineHolds reports whether every row of a stretch is already named.
+func (t *TreeView) spineHolds(at, n int) bool {
+	for i := 0; i < n; i++ {
+		if _, ok := t.bones.idAt(at + i); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// rowCount is how many rows the tree draws.
+//
+// **The viewport is asked for first, and that is not laziness dressed up.** A
+// list's source counts without being read -- a ListSource knows how many rows it
+// holds -- but a tree's count IS the walk: a flattening that has not happened has
+// counted nothing, so a view that read the count before asking for a window would
+// be told nought rows for ever and never ask.
+//
+// What comes back may be a floor. A walk that stopped where its budget ran out
+// knows there may be more and says so, which is what makes the thumb shrink as
+// the reader scrolls rather than lie about where the end is.
+func (t *TreeView) rowCount() int {
+	set := t.sequence()
+	if set == nil {
+		return 0
+	}
+	t.ask(t.scrollOffset, t.reach())
+	t.bones.learn(serval.Complete{Total: serval.CountOf(set)})
+	return t.bones.rows()
+}
+
+// rowAt is the item standing at a position, and nil for a row that is BLANK --
+// one the view knows is there and knows nothing else about yet.
+//
+// Blank is ordinary. It is what every row is between the moment a thumb moves and
+// the moment the answer arrives, and drawing one is drawing an empty row rather
+// than drawing nothing.
+func (t *TreeView) rowAt(at int) *TreeItem {
+	id, ok := t.bones.idAt(at)
+	if !ok {
+		return nil
+	}
+	// A DECLARED source's rows lead to the items learnRow made for them; a made
+	// source's lead back to the very items the caller handed in.
+	if t.source != nil {
+		return t.fromSource[serval.Key(id)]
+	}
+	if id.IsInt {
+		return t.byID[objectIDOf(id)]
+	}
+	return nil
+}
+
+// Count is how many rows the tree draws.
+//
+// **It may be a FLOOR, and that is the honest answer rather than a shortcoming.**
+// A tree's count is its walk, so a view that has read a window of a declared
+// source has been told "at least this many" -- and a thumb drawn against a floor
+// shrinks as the reader scrolls rather than lying about where the end is. Length
+// says which of the two it is.
+func (t *TreeView) Count() int { return t.rowCount() }
+
+// Length is how long the sequence is, and how well that is known.
+//
+// Three answers, and they are three different things rather than three guesses.
+// Exactly is a sequence walked to its end. AtLeast is a floor -- part of one seen
+// is at least that many. Unknown is a sequence nobody has read at all.
+func (t *TreeView) Length() serval.RecordCount {
+	t.rowCount() // which is what learns it
+	return t.bones.length()
+}
+
+// Item is the row at a position, and nil for one off either end.
+//
+// Nil is also what a BLANK row answers -- one the view knows is there and knows
+// nothing else about yet, which is every row of a windowed tree until the answer
+// arrives. Asking for one asks the source about it, so a caller drawing rows
+// should ask for the stretch it wants rather than one row at a time.
+func (t *TreeView) Item(at int) *TreeItem {
+	if at < 0 || at >= t.Count() {
+		return nil
+	}
+	t.window(at, 1)
+	return t.rowAt(at)
+}
+
+// blankTreeRow is what a row the view cannot name yet is drawn as: a place with no
+// words in it.
+//
+// Enabled, because a row nobody has described is not a row somebody has described
+// as unavailable. A leaf standing at the top, because a twisty or an indent on a row
+// nothing is known about would be a claim about a shape nobody has seen.
+var blankTreeRow = &TreeItem{Enabled: true}
+
+// drawRow is the item to PAINT at a position: the row where there is one, and a
+// blank where the view knows a row stands and knows nothing else about it.
+//
+// It is kept apart from rowAt, which tells the truth. Everything that DECIDES
+// something -- a click, an edit, a selection -- has to be able to tell a row from a
+// blank, and everything that DRAWS has to put something in the line either way.
+func (t *TreeView) drawRow(at int) *TreeItem {
+	if item := t.rowAt(at); item != nil {
+		return item
+	}
+	return blankTreeRow
+}
+
+// held is every row the view can name, in position order, with where each one
+// stands.
+//
+// What a walk over the whole flattening used to be. A caller that wants to look
+// at every row -- measuring a column, searching for a caption -- can look only at
+// the rows the view HOLDS, because the rest are blanks and a blank has nothing to
+// measure. A caller that needs them all has to ask for them all, and saying so
+// here is what stops one quietly reading a window and calling it the sequence.
+func (t *TreeView) held() []int {
+	out := make([]int, 0, t.bones.held())
+	for _, r := range t.bones.runs {
+		for i := range r.rows {
+			out = append(out, r.at+i)
+		}
+	}
+	return out
+}
 
 // sequence is the stated sequence, made and opened if it is not already.
 //
@@ -281,66 +503,152 @@ func (t *TreeView) seedMarks(src *serval.TreeSource) {
 	walk(t.rootItems, nil)
 }
 
-// flatten is the visible rows, read out of the sequence and turned back into the
-// tree's own item pointers.
+// A treeSink is one window of the flattening arriving.
 //
-// The pointers matter: everything that reads flatList compares them, selection
-// included, so a row that came back as a record has to lead to the very item the
-// caller handed in. The key is what does that, which is why it is the item's own
-// ObjectID rather than a position.
-func (t *TreeView) flatten() []*TreeItem {
-	set := t.sequence()
-	if set == nil {
-		return nil
-	}
-	var out treeRows
-	if err := set.Read(&serval.Scope{Count: everyTreeRow}, &out); err != nil {
-		return nil
-	}
-
-	// A MADE source's rows lead back to the items the caller handed in. A
-	// DECLARED source's rows have no items until this, so one is made per
-	// identity and kept, and the depth the tree reported is what its parentage is
-	// rebuilt from.
-	names, isTree := serval.TreeFieldsOf(t.reading())
-	items := make([]*TreeItem, 0, len(out.ids))
-	depth := make([]int, 0, len(out.ids))
-	for i, id := range out.ids {
-		if t.source == nil {
-			if item := t.byID[core.ObjectID(id.Int)]; item != nil {
-				items = append(items, item)
-			}
-			continue
-		}
-		items = append(items, t.learnRow(id, out.fields[i], names, isTree))
-		depth = append(depth, wholeOf(out.fields[i].Get(names.Depth)))
-	}
-	if t.source != nil {
-		t.fromTop = hangFrom(items, depth)
-	}
-	return items
+// It takes PLACES as well as records, which is what lets a drag stay smooth: what
+// a view needs first is where the rows are and not what they hold, so an identity
+// and a depth are enough to lay a row out and the values fill it in behind.
+type treeSink struct {
+	tree     *TreeView
+	rows     []named
+	begin    serval.RecordCount
+	done     serval.Complete
+	expected int    // where the view asked from, and so where it expects the answer
+	asked    asking // which ask this answers, so a stale one can be dropped
 }
 
-// treeRows takes one flattened answer: the identities, and what each row holds.
-//
-// A made source needs only the identities -- what its rows HOLD is on the items
-// the keys lead back to -- but a declared source's rows have nowhere else to be
-// read from, so both are kept and the made path simply ignores the fields.
-type treeRows struct {
-	ids    []*serval.Value
-	fields []serval.Record
-}
+func (s *treeSink) Ordered() {}
 
-func (r *treeRows) Ordered() {}
-func (r *treeRows) Record(id *serval.Value, f serval.Record) error {
-	r.ids = append(r.ids, id)
-	r.fields = append(r.fields, f)
+func (s *treeSink) Record(id *serval.Value, fields serval.Record) error {
+	s.take(id, fields)
 	return nil
 }
-func (r *treeRows) Subset(id *serval.Value, f serval.Record, _ serval.Totals) error {
-	return r.Record(id, f)
+
+func (s *treeSink) Subset(id *serval.Value, fields serval.Record, _ serval.Totals) error {
+	s.take(id, fields)
+	return nil
 }
-func (r *treeRows) Done(serval.Complete) {}
+
+// Place is a row named and not yet filled in. One row arrives as exactly one of
+// Place, Record or Subset, so this counts towards the run like the others and
+// never doubles it.
+func (s *treeSink) Place(id *serval.Value, fields serval.Record) error {
+	s.take(id, fields)
+	return nil
+}
+
+// Placed says the order is settled, which is when a view can lay out rows it has
+// no values for and be sure nothing will turn up between two it already holds.
+func (s *treeSink) Placed(c serval.Complete) { s.begin = c.First }
+
+// Done ends the answer, which is when what arrived is written down.
+//
+// For a tree over records in hand that is inside the Read that asked; for one
+// whose levels have to be fetched it is whenever they arrive, and the view
+// repaints because rows that were blank are not any more.
+func (s *treeSink) Done(c serval.Complete) {
+	s.done = c
+	s.settle()
+	s.tree.Update()
+}
+
+// take learns one row: the item it leads to, and where it stands.
+//
+// **A MADE source's rows lead back to the items the caller handed in** -- what
+// they hold is already on those items, so the record's fields are read for the
+// depth and nothing else. A DECLARED source's rows have no items until learnRow
+// makes them.
+func (s *treeSink) take(id *serval.Value, fields serval.Record) {
+	t := s.tree
+	names, isTree := serval.TreeFieldsOf(t.reading())
+	if t.source != nil {
+		t.learnRow(id, fields, names, isTree)
+	}
+	s.rows = append(s.rows, named{id: id, deep: wholeOf(fields.Get(names.Depth))})
+}
+
+// settle writes what arrived into the spine.
+//
+// Where the answer says it began, that is where the run goes -- it is the source
+// speaking about its own sequence, and it outranks anything the view worked out.
+// Where it says NOTHING, the view uses what it expected, which is not a guess: it
+// chose the place it asked from. What is never done is writing a run at a position
+// nobody vouched for.
+func (s *treeSink) settle() {
+	t := s.tree
+	t.bones.learn(s.done)
+	if !t.current(s.asked) {
+		// An answer for somewhere the reader has since left. Writing it down would
+		// leave the spine holding where the reader was passing through rather than
+		// where it is.
+		return
+	}
+	first := s.done.First
+	if !first.Exact {
+		first = s.begin
+	}
+	if !first.Exact {
+		first = serval.Exactly(s.expected)
+	}
+	if first.Exact && len(s.rows) > 0 {
+		t.bones.place(first.N, s.rows)
+	}
+	t.hang()
+}
+
+// hang gives the rows the view HOLDS the parentage their depths imply.
+//
+// The rule is the one a whole flattening used -- the parent of a row at depth d is
+// the last row seen at d-1 -- applied to the runs the spine holds rather than to a
+// sequence read entire. Two things follow, and both are honest rather than
+// regrettable.
+//
+// **A row whose parent is above the window has no parent here.** The view is not
+// holding it, so there is nothing to point at. `Level()` answers from the depth
+// the source SAID rather than from a walk up, which is why the indent is still
+// right where the parentage stops -- and it is why serval puts a depth on every
+// row.
+//
+// **And the top of a run is a place the ancestry is unknown**, not a place the
+// rows are roots. A gap in the spine is a gap in what can be reconstructed, so the
+// stack starts empty at each run and the first rows of a scrolled window hang off
+// nothing until the rows above them arrive.
+//
+// `fromTop` is the depth-nought rows held, which is what RootItems answers for a
+// declared source: a caller asking a tree what stands at the top is asking about
+// the sequence, and a view holding a window of the middle of one truthfully has
+// none of it.
+func (t *TreeView) hang() {
+	if t.source == nil {
+		return // a made source's parentage is the caller's own and is not rebuilt
+	}
+	t.fromTop = nil
+	for _, r := range t.bones.runs {
+		var above []*TreeItem
+		for i := range r.rows {
+			item := t.rowAt(r.at + i)
+			if item == nil {
+				above = nil
+				continue
+			}
+			d := r.rows[i].deep
+			item.Children = nil
+			if d > 0 && d <= len(above) {
+				item.Parent = above[d-1]
+				item.Parent.Children = append(item.Parent.Children, item)
+			} else {
+				item.Parent = nil
+				if d == 0 {
+					t.fromTop = append(t.fromTop, item)
+				}
+			}
+			if d < len(above) {
+				above = above[:d]
+			}
+			above = append(above, item)
+		}
+	}
+}
 
 // objectIDOf turns a row's key back into the identity it was made from.
 func objectIDOf(id *serval.Value) core.ObjectID { return core.ObjectID(id.Int) }
@@ -367,6 +675,13 @@ func (t *TreeView) SetSource(src serval.Source) {
 	t.fromSource = nil
 	t.fromTop = nil
 	t.restate = true
+	// **And what the old sequence taught it.** A length only ever replaces one
+	// that says less, which is right within one sequence and wrong across a change
+	// of them: a count earned by walking a small source to its end would then
+	// outrank the floor a window of a hundred thousand honestly reports, and the
+	// view would draw a thumb for fifteen rows over a body it had barely started.
+	t.bones = spine{}
+	t.asks++
 	t.currentIndex = -1
 	t.scrollOffset = 0
 	t.growFromHint()
@@ -381,7 +696,7 @@ func (t *TreeView) SetSource(src serval.Source) {
 	if read := t.reading(); read != nil {
 		hearArrivals(t, read, t.arrivals, func() int { return t.arrivals }, t.Reread)
 	}
-	t.rebuildFlatList()
+	t.moved()
 	t.Update()
 }
 
@@ -416,9 +731,10 @@ func (t *TreeView) SetTreeHint(hint serval.TreeHint) {
 	t.closeSequence()
 	t.grown = nil
 	t.hintLabel = ""
+	t.bones = spine{} // a different shape over the same records is a different sequence
 	t.growFromHint()
 	t.tellOrder()
-	t.rebuildFlatList()
+	t.moved()
 	t.Update()
 }
 
@@ -565,7 +881,7 @@ func (t *TreeView) Reread() {
 	if t.source == nil {
 		return
 	}
-	t.rebuildFlatList()
+	t.moved()
 	t.Update()
 }
 
@@ -661,6 +977,15 @@ func (t *TreeView) learnRow(id *serval.Value, fields serval.Record,
 		item.rowMark = serval.Segment(fields.Get(names.Path))
 	}
 
+	// **How deep it stands and what its chain is, as the source said them.** Both
+	// used to be worked out here: the depth turned into parentage and the chain
+	// walked back up it. Neither works for a WINDOW -- a view holding rows forty to
+	// eighty holds no ancestor of any of them -- so both are read from the row,
+	// which is where the walk that knew them wrote them down. See serval's
+	// TreeFields.Chain.
+	item.rowDepth = wholeOf(fields.Get(names.Depth))
+	item.rowChain = chainSegments(fields.Get(names.Chain))
+
 	item.Text = serval.Segment(fields.Get(t.cellOf(kind, nil).showField()))
 	if m.Icon != "" {
 		item.Icon = serval.Segment(fields.Get(m.Icon))
@@ -745,44 +1070,21 @@ func wholeOf(v *serval.Value) int {
 	return 0
 }
 
-// hangFrom gives a source's rows the parentage their depth implies.
+// chainSegments is a chain value as the marks take it: the positional members of
+// the list serval wrote, in order.
 //
-// The sequence arrives flat and in pre-order with a depth on every row, so the
-// parent of a row at depth d is the last row seen at d-1. Reconstructing it is
-// what lets `Level()` and the drawing that leans on it go on working unchanged --
-// seven places ask an item how deep it stands, and none of them had to learn
-// about a field.
-//
-// Only what is VISIBLE is hung: a collapsed node's children are not in the
-// sequence, so its Children slice is empty and `Kids` is what says it has any.
-//
-// The top level comes back, because that is what a declared tree's RootItems
-// answers -- one more projection of the source alongside `Parent` and `Children`,
-// and the same argument: a caller asking a tree for its root items is asking what
-// stands at the top, and a declared tree knows. Every one of them is in the
-// sequence, the top level being what a tree with nothing open still shows.
-//
-// **It is kept apart from `rootItems`, which is the caller's own list.** Writing
-// it there would destroy the items a tree was given, and `SetSource(nil)` promises
-// them back.
-func hangFrom(rows []*TreeItem, depth []int) []*TreeItem {
-	var spine, top []*TreeItem
-	for i, item := range rows {
-		d := depth[i]
-		item.Children = nil
-		if d > 0 && d <= len(spine) {
-			item.Parent = spine[d-1]
-			item.Parent.Children = append(item.Parent.Children, item)
-		} else {
-			item.Parent = nil
-			top = append(top, item)
-		}
-		if d < len(spine) {
-			spine = spine[:d]
-		}
-		spine = append(spine, item)
+// Nil for a row that carries none, which is a source that is not a tree -- and a
+// nil chain tells the marks nothing, which is right, there being no node for it
+// to name.
+func chainSegments(v *serval.Value) []string {
+	if v == nil || v.Kind != serval.ListValue {
+		return nil
 	}
-	return top
+	out := make([]string, len(v.List))
+	for i, m := range v.List {
+		out[i] = serval.Segment(m.Value)
+	}
+	return out
 }
 
 // marks is the expansion of a DECLARED tree source, and nil for anything else.
@@ -800,26 +1102,22 @@ func (t *TreeView) marks() *serval.TreeSource {
 
 // chainOf is an item's mark segments, from the root down to it.
 //
-// A descent has this in hand, having walked it; a view reaching in from the side
-// has to walk back UP for it, which is what the parentage rebuilt from the depth
-// is for.
+// **The row carries it, and it had to start carrying it.** This walked back up
+// `Parent` before, which works for a view holding the whole pre-order and cannot
+// work for one holding a window: everything above the window is exactly what the
+// view declined to hold, so a row forty deep in a scrolled tree had a chain of one
+// segment and clicking its twisty opened a node that is not there. Nothing
+// reported that, the marks having no opinion about a chain nobody walked.
 //
 // **A segment is what the WALK spells, and that is not always the identity.** A
 // level with a standing is marked by its path, so a chain of identities names a
-// node that is not there -- which opens nothing and says nothing, the marks having
-// no opinion about a chain nobody walked. `rowMark` is what the row was learned
-// under, and asking the tree at that moment is what keeps the two spellings
-// together.
-func (t *TreeView) chainOf(item *TreeItem) []string {
-	var up []string
-	for at := item; at != nil; at = at.Parent {
-		up = append(up, at.rowMark)
-	}
-	for i, j := 0, len(up)-1; i < j; i, j = i+1, j-1 {
-		up[i], up[j] = up[j], up[i]
-	}
-	return up
-}
+// node that is not there. serval spells it and the row carries it, which is the
+// only way the two spellings cannot drift apart.
+//
+// Empty for a row out of a source that is not a tree, and for one the tree made
+// itself -- neither has a mark to move, the field being the authoring surface
+// there. See tellMarks.
+func (t *TreeView) chainOf(item *TreeItem) []string { return item.rowChain }
 
 // tellMarks moves a declared source's mark for one item, and reports whether it
 // did -- so the caller falls back to the field where there is no source to tell.
@@ -829,10 +1127,148 @@ func (t *TreeView) tellMarks(item *TreeItem, open bool) bool {
 		return false
 	}
 	chain := t.chainOf(item)
+	if len(chain) == 0 {
+		return false
+	}
 	if open {
 		src.Expand(chain...)
 	} else {
 		src.Collapse(chain...)
 	}
 	return true
+}
+
+// --- what a node opening and closing actually costs ----------------------
+//
+// **Nothing goes stale.** Every level of a tree is a data set of its own, opened
+// with its own descriptor -- `eq parent <this row>` -- and cached on its own. So a
+// node opening makes no record anywhere untrue and reorders no level: the whole
+// sequence of each data set is exactly what it was. What changes is which levels
+// the walk visits, and therefore what POSITION each row below the mark stands at.
+// Above the mark, nothing moves at all.
+//
+// So the question is never whether to invalidate. It is whether the view can say
+// how far the rows below the mark moved. Where it can, it shifts and keeps
+// everything -- the rows on screen stay where they are, the twisty flips at once,
+// and the blanks fill in behind. Where it cannot, it forgets from the mark DOWN,
+// which costs a re-ask and not a re-fetch: the levels' caches still hold every
+// record either way.
+
+// opening is how many rows appear when this row opens, and -1 where nobody can
+// say.
+//
+// **`Kids` is exact for the ordinary click.** serval counts a row's children out
+// of one census per node type -- not one question per twisty -- and puts the figure
+// on the row, so the delta for "open this node, its children arrive closed" is in
+// hand before the question is asked.
+//
+// Two cases cannot be counted, and both are unknown rather than wrong:
+//
+//	Kids < 0        nobody could count, which serval says as an undefined
+//	                `tree:expandable` and the view draws as a live twisty
+//	openAll above   the children inherit it, so opening this row reveals a whole
+//	                SUBTREE -- and a subtree's size is not free: a census answers
+//	                one level, and summing deeper levels needs the walk that has
+//	                not happened. Kids is then a floor and a floor will not do,
+//	                a shift by too little putting every row below in the wrong
+//	                place.
+//
+// It is asked AFTER the mark has moved, because that is when the marks can say
+// which of the two states this row ended up in: `Open` governs exactly one level,
+// and `OpenAll` is the one that resumes beneath.
+func (t *TreeView) opening(item *TreeItem) int {
+	if item == nil || item.Kids < 0 {
+		return -1
+	}
+	src := t.marks()
+	if src == nil {
+		return -1
+	}
+	chain := t.chainOf(item)
+	if len(chain) == 0 {
+		return -1
+	}
+	if src.Marks().Mark(chain...) != serval.Open {
+		return -1
+	}
+	return item.Kids
+}
+
+// closing is how many rows go when the row at a position closes, and -1 where the
+// view does not hold enough to say.
+//
+// The rows going are the ones under it in the flattening, which run from the next
+// position to the first row standing no deeper than it does. That is a scan over
+// what the spine holds, and it is exact whenever the end of the subtree is in hand
+// -- which for a node the reader just clicked on usually means the rows on screen.
+//
+// **A subtree running past what is held is unknown, and the end of the SEQUENCE is
+// only an answer where the count is exact.** A floor says there may be more below,
+// and rows nobody has counted are rows that may be part of this subtree.
+func (t *TreeView) closing(at int) int {
+	deep, ok := t.bones.deepAt(at)
+	if !ok {
+		return -1
+	}
+	for i := at + 1; ; i++ {
+		if d, held := t.bones.deepAt(i); held {
+			if d <= deep {
+				return i - at - 1
+			}
+			continue
+		}
+		// Off the end of a sequence somebody counted: everything below is the
+		// subtree. Off the end of what is HELD, or of a floor: unknown.
+		if length := t.bones.length(); length.Exact && i >= length.N {
+			return i - at - 1
+		}
+		return -1
+	}
+}
+
+// opened says the row at a position has been opened, and moves what the view
+// holds rather than forgetting it.
+//
+// This is #60 and #64 in one move, because they were one move: laying the blank
+// rows out the instant the twisty flips IS the shift, done before the records
+// arrive. A reader clicking a folder sees it open at once, with as many empty rows
+// under it as it has children, and the captions land when the answer does.
+func (t *TreeView) opened(at int, item *TreeItem) {
+	if n := t.opening(item); n > 0 {
+		t.bones.grew(at+1, n)
+		return
+	}
+	// Nobody could say how many, so what is below the mark is what is no longer
+	// known -- and what is above it never moved.
+	t.bones.forgetFrom(at + 1)
+}
+
+// closed says the row at a position has been closed, and takes the rows under it
+// out.
+func (t *TreeView) closed(at int) {
+	switch n := t.closing(at); {
+	case n > 0:
+		t.bones.shrank(at+1, n)
+	case n == 0:
+		// Nothing was showing under it, so nothing moved.
+	default:
+		t.bones.forgetFrom(at + 1)
+	}
+}
+
+// moved says the sequence has changed in a way the view cannot describe -- an item
+// added, a row taken out, the sort restated -- so every position it holds is
+// suspect and the window is asked for again.
+//
+// **It is the answer of last resort and not the ordinary one.** A node opening and
+// closing is described, and goes through `opened` and `closed` instead; going
+// through here would throw away the rows on screen to learn what the view already
+// knew. What survives either way is how long the sequence is, until something says
+// otherwise.
+func (t *TreeView) moved() {
+	t.touched()
+	t.asks++
+	t.bones.forget()
+	t.clampScrollOffset()
+	t.window(t.scrollOffset, t.reach())
 }

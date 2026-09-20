@@ -216,7 +216,7 @@ func (t *TreeView) SetKindMap(kind string, m NodeMap) {
 	// and values having nowhere else to come from. A repaint would reach this
 	// anyway; saying it here is what makes the mapping take effect at the moment it
 	// is declared rather than at the next frame.
-	t.rebuildFlatList()
+	t.moved()
 	t.Update()
 }
 

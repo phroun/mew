@@ -105,27 +105,39 @@ func theTree(t *testing.T, desktop *trinkets.Desktop) *trinkets.TreeView {
 	return found
 }
 
-// topRows waits for the tree's top level to hold what is wanted, and hands back
-// what it holds.
+// topRows waits for the tree's top level to hold at least what is wanted, and
+// hands back what it holds.
 //
 // **Waiting rather than asking once**, because a tree over an application's records
 // walks on a thread of its own and tells when it is done: the rows exist at the
 // moment the walk finishes, which is not the moment the source was named. Polling
 // here stands in for the frames a real display would draw.
+//
+// **At least, because a view holds a WINDOW.** It used to be exactly, and asking
+// for exactly a hundred thousand is asking for the thing this app exists to stop:
+// the whole body answered to fill forty lines. What a caller can ask of the top
+// level is that the rows it is looking at are there; how many there are in total is
+// `Length`, and for a windowed read it is a floor.
 func topRows(t *testing.T, desktop *trinkets.Desktop, tv *trinkets.TreeView, want int) []*trinkets.TreeItem {
 	t.Helper()
 	var items []*trinkets.TreeItem
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		onUI(desktop, func() { items = tv.RootItems() })
-		if len(items) == want {
+		if len(items) >= want {
 			return items
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("the tree's top level holds %d rows, want %d", len(items), want)
+	t.Fatalf("the tree's top level holds %d rows, want at least %d", len(items), want)
 	return nil
 }
+
+// aWindow is what a caller may expect a view to be holding: something rather than
+// nothing. How MUCH is the view's business and depends on how tall it is, so the
+// claims below are about the shape of the answer -- a window, and a floor -- rather
+// than about a figure that would make this a test of the layout.
+const aWindow = 1
 
 func TestBigTreeRunsOverTheService(t *testing.T) {
 	sock, desktop, stop := startService(t)
@@ -171,8 +183,22 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 	if err := a.point("source:flat", "one flat level", a.flat); err != nil {
 		t.Fatalf("naming the flat source: %v", err)
 	}
-	flat := topRows(t, desktop, tv, flatRows)
+	flat := topRows(t, desktop, tv, aWindow)
 	onUI(desktop, func() {
+		// **A window, and a floor for how long the sequence is.** This is the whole
+		// of #64 said in two assertions: the view holds a screenful and not a
+		// hundred thousand, and it knows there is more below without having walked
+		// to it.
+		if n := len(flat); n > flatRows/100 {
+			t.Errorf("the view is holding %d rows of a body of %d; it is meant to hold"+
+				" a window of it", n, flatRows)
+		}
+		if got := tv.Length(); got.Exact {
+			t.Errorf("the flat level's length reads %v; a walk that stopped at its"+
+				" budget cannot count what it never reached", got)
+		} else if got.N != len(flat) {
+			t.Errorf("it holds %d rows and floors the sequence at %d", len(flat), got.N)
+		}
 		if flat[0].Text != "item 000000" {
 			t.Errorf("the first flat row shows %q, want the first record's name", flat[0].Text)
 		}
@@ -193,8 +219,8 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 	// order, so the display believes it and does not sort them either.
 	onUI(desktop, func() { tv.SetSorted(true, -1, true) })
 	waitFor(t, desktop, 10*time.Second, func() bool {
-		rows := tv.RootItems()
-		return len(rows) == flatRows && rows[0].Text == "item 099999"
+		first := tv.Item(0)
+		return first != nil && first.Text == "item 099999"
 	}, "the flat level sorted by name, descending")
 
 	// Put it back the way the window declared it, because **a sort survives a change
@@ -202,8 +228,8 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 	// reads the deep body in the order its containers are named.
 	onUI(desktop, func() { tv.SetSorted(true, -1, false) })
 	waitFor(t, desktop, 10*time.Second, func() bool {
-		rows := tv.RootItems()
-		return len(rows) == flatRows && rows[0].Text == "item 000000"
+		first := tv.Item(0)
+		return first != nil && first.Text == "item 000000"
 	}, "the flat level sorted by name, ascending again")
 
 	// --- a hundred thousand over three levels -----------------------------
@@ -214,7 +240,7 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 	if err := a.point("bundle:deeptree", "a three-level hierarchy", a.deep); err != nil {
 		t.Fatalf("naming the bundle: %v", err)
 	}
-	deep := topRows(t, desktop, tv, deepDirs)
+	deep := topRows(t, desktop, tv, aWindow)
 	onUI(desktop, func() {
 		if deep[0].Text != "volume 000" {
 			t.Errorf("the first deep row shows %q, want the first container", deep[0].Text)
@@ -233,8 +259,24 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 	onUI(desktop, func() { tv.ExpandItem(deep[0]) })
 	waitFor(t, desktop, 20*time.Second, func() bool {
 		top := tv.RootItems()
-		return len(top) == deepDirs && len(top[0].Children) == deepSubs
+		return len(top) > 0 && len(top[0].Children) == deepSubs
 	}, "the first container's children")
+
+	// **And the row below the one that opened moved by exactly the children.** The
+	// second container stood at position 1 and now stands at deepSubs+1, because a
+	// node opening is a SHIFT and not an invalidation: every level of the tree is a
+	// data set of its own, so no record went stale and nothing was re-asked -- only
+	// the positions below the mark moved, by a figure the view had in hand.
+	onUI(desktop, func() {
+		if at := tv.Item(deepSubs + 1); at == nil || at.Text != "volume 001" {
+			got := "a blank"
+			if at != nil {
+				got = at.Text
+			}
+			t.Errorf("row %d shows %s, want the second container shifted down by its"+
+				" sibling's children", deepSubs+1, got)
+		}
+	})
 }
 
 // waitFor polls a condition on the thread that owns the trinkets, because a tree

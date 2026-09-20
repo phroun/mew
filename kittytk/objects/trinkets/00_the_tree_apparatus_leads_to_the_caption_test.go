@@ -105,7 +105,7 @@ func TestTheCollapsedArrowPointsAlongTheTree(t *testing.T) {
 	} {
 		tv := nestedTree(t, tc.dir, false)
 		tv.rootItems[0].Expanded = false
-		tv.rebuildFlatList()
+		tv.moved()
 		ink := newInk(t)
 		tv.Paint(core.NewPainter(ink))
 
