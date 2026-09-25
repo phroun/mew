@@ -161,9 +161,26 @@ type TreeView struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	rootItems    []*TreeItem
+	rootItems []*TreeItem
+	// currentIndex is WHERE the chosen row stands, and -1 for a row the view
+	// cannot place -- which is a row scrolled past, or one a reorder moved outside
+	// the window, and is not the same as nothing being chosen. See chosen.
 	currentIndex int
 	scrollOffset int
+
+	// chosen is the row the reader chose, as an IDENTITY.
+	//
+	// **Which is what a selection IS, and what an index only stands for.** An index
+	// is a fact about the window: a resort moves the row, a node opening above it
+	// moves the row, and scrolling away stops the view holding it at all -- and an
+	// index kept as the authority quietly named a different row after any of the
+	// three. The identity survives all of them, and `resolve` puts the index back
+	// whenever the row is somewhere the spine can find it.
+	//
+	// Nil for nothing chosen, and nil for a BLANK: a row the view knows is there
+	// and knows nothing else about has no identity to hold, so choosing one chooses
+	// its place and the identity arrives with the record.
+	chosen *serval.Value
 
 	// bones is what the view knows about where its rows are: a few runs of
 	// identities and depths anchored by position, plus how long the sequence is.
@@ -480,10 +497,23 @@ func (t *TreeView) RootItems() []*TreeItem {
 
 // CurrentItem returns the currently focused item.
 func (t *TreeView) CurrentItem() *TreeItem {
-	if t.currentIndex < 0 || t.currentIndex >= t.rowCount() {
+	if t.currentIndex >= 0 && t.currentIndex < t.rowCount() {
+		return t.rowAt(t.currentIndex)
+	}
+	// **A row the view cannot place is still the row that was chosen**, and the item
+	// is what every caller here holds -- a handler, the row editor, a selection
+	// restored after a resort. Answering nil because the position is unknown would
+	// report a scroll as a deselection.
+	if t.chosen == nil {
 		return nil
 	}
-	return t.rowAt(t.currentIndex)
+	if t.source != nil {
+		return t.fromSource[serval.Key(t.chosen)]
+	}
+	if t.chosen.IsInt {
+		return t.byID[objectIDOf(t.chosen)]
+	}
+	return nil
 }
 
 // SetCurrentItem sets the current item.
@@ -512,7 +542,13 @@ func (t *TreeView) positionOf(item *TreeItem) (int, bool) {
 	return t.bones.posOf(treeKey(item.ID))
 }
 
-// CurrentIndex returns the current index in the flat list.
+// CurrentIndex is where the chosen row stands, and -1 for one the view cannot
+// place.
+//
+// **-1 does not mean nothing is chosen.** A row scrolled past, or moved outside the
+// window by a reorder, is still chosen and is still what CurrentItem answers; what
+// is not known is where it stands. A caller that wants to know whether anything is
+// chosen asks CurrentItem.
 func (t *TreeView) CurrentIndex() int {
 	return t.currentIndex
 }
@@ -527,6 +563,14 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	}
 
 	t.currentIndex = index
+	// The identity is the authority, so it is taken at the same moment. A blank has
+	// none to take, and resolve fills it in when the record arrives.
+	t.chosen = nil
+	if index >= 0 {
+		if id, held := t.bones.idAt(index); held {
+			t.chosen = id
+		}
+	}
 	t.ensureVisible(index)
 	t.Update()
 
@@ -644,7 +688,7 @@ func (t *TreeView) ExpandItem(item *TreeItem) {
 		t.moved() // the items themselves changed, so the made source is remade
 	} else if known {
 		t.opened(at, item)
-		t.window(t.scrollOffset, t.reach())
+		t.window(t.asking())
 		t.clampScrollOffset()
 	} else {
 		// A row the view is not holding: there is no position to shift from, so
@@ -687,7 +731,7 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 		// the view holds the end of the subtree -- the rows going are the ones in
 		// hand. See closing.
 		t.closed(at)
-		t.window(t.scrollOffset, t.reach())
+		t.window(t.asking())
 		t.clampScrollOffset()
 	} else {
 		t.moved()
@@ -712,15 +756,77 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 	}
 }
 
-// restoreSelectionByItem finds the given item in the flat list and selects it.
-// Returns true if the item was found and selected, false otherwise.
+// restoreSelectionByItem chooses the given item and reports whether the view could
+// say where it stands.
+//
+// **It chooses either way.** A row a reorder moved outside the window is still the
+// row the reader chose, and forgetting it because the view cannot currently place it
+// would lose a selection to a scroll. False says the index is unknown, not that the
+// selection is gone -- so a caller with a fallback row still has one, and one
+// without simply waits for resolve.
 func (t *TreeView) restoreSelectionByItem(item *TreeItem) bool {
+	if item == nil {
+		return false
+	}
+	t.chosen = identityOf(item)
 	at, ok := t.positionOf(item)
 	if !ok {
+		t.currentIndex = -1
 		return false
 	}
 	t.currentIndex = at
 	return true
+}
+
+// resolve puts the index back where the chosen row has turned up again.
+//
+// Called when a window lands, which is the moment the answer to "where is it now"
+// can have changed. A row that is still nowhere the spine can find leaves the index
+// at -1 and the selection where it was: held, and waiting.
+func (t *TreeView) resolve() {
+	if t.chosen == nil {
+		return
+	}
+	if at, held := t.bones.posOf(t.chosen); held {
+		t.currentIndex = at
+		return
+	}
+	t.currentIndex = -1
+}
+
+// identityOf is a row's identity: the source's where it came from one, and the
+// item's own ObjectID for a row the tree made -- which is what makeSource keyed it
+// by, so one question answers both shapes.
+func identityOf(item *TreeItem) *serval.Value {
+	if item == nil {
+		return nil
+	}
+	if item.rowKey != nil {
+		return item.rowKey
+	}
+	return treeKey(item.ID)
+}
+
+// movingFrom is the position a movement key starts from.
+//
+// **Three states here and not two**, which is the whole reason the identity is kept
+// apart from the index.
+//
+//	placed        start from where it stands
+//	chosen, not   still a selection, so a movement key cannot treat it as none --
+//	placed        and the only honest position for it is where the reader is
+//	              LOOKING. Starting from nought would answer a press of Down by
+//	              jumping to the top of the sequence.
+//	nothing       before the first row, so Down chooses the first one, which is
+//	chosen        what it has always done.
+func (t *TreeView) movingFrom() int {
+	switch {
+	case t.currentIndex >= 0:
+		return t.currentIndex
+	case t.chosen != nil:
+		return t.scrollOffset
+	}
+	return -1
 }
 
 // ToggleItem toggles the expanded state of an item.
@@ -1184,23 +1290,27 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	}
 
 	current := t.CurrentItem()
+	// Where a movement starts, which is not always where the selection is: a row the
+	// view cannot place still needs Down to mean the row below the reader. See
+	// movingFrom.
+	from := t.movingFrom()
 
 	switch cmd {
 	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
-		if t.currentIndex > 0 {
-			t.SetCurrentIndex(t.currentIndex - 1)
+		if from > 0 {
+			t.SetCurrentIndex(from - 1)
 		}
 		return true
 
 	case core.CmdTrinketScrollUp:
 		// Jump by 5 items, scrolling to maintain relative position
-		if t.currentIndex > 0 {
+		if from > 0 {
 			delta := 5
-			newIndex := t.currentIndex - delta
+			newIndex := from - delta
 			if newIndex < 0 {
 				newIndex = 0
 			}
-			actualDelta := t.currentIndex - newIndex
+			actualDelta := from - newIndex
 			// Scroll by same amount to maintain relative position
 			newScroll := t.scrollOffset - actualDelta
 			if newScroll < 0 {
@@ -1212,20 +1322,20 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
-		if t.currentIndex < t.rowCount()-1 {
-			t.SetCurrentIndex(t.currentIndex + 1)
+		if from < t.rowCount()-1 {
+			t.SetCurrentIndex(from + 1)
 		}
 		return true
 
 	case core.CmdTrinketScrollDown:
 		// Jump by 5 items, scrolling to maintain relative position
-		if t.currentIndex < t.rowCount()-1 {
+		if from < t.rowCount()-1 {
 			delta := 5
-			newIndex := t.currentIndex + delta
+			newIndex := from + delta
 			if newIndex >= t.rowCount() {
 				newIndex = t.rowCount() - 1
 			}
-			actualDelta := newIndex - t.currentIndex
+			actualDelta := newIndex - from
 			// Scroll by same amount to maintain relative position
 			visibleCount := t.visibleCount()
 			maxScroll := t.rowCount() - visibleCount
@@ -1314,7 +1424,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		bounds := t.Bounds()
 		metrics := t.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
-		newIndex := t.currentIndex - pageSize
+		newIndex := t.movingFrom() - pageSize
 		if newIndex < 0 {
 			newIndex = 0
 		}
@@ -1325,7 +1435,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		bounds := t.Bounds()
 		metrics := t.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
-		newIndex := t.currentIndex + pageSize
+		newIndex := t.movingFrom() + pageSize
 		if newIndex >= t.rowCount() {
 			newIndex = t.rowCount() - 1
 		}

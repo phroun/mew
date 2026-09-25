@@ -135,6 +135,35 @@ func (t *TreeView) reach() int {
 	return spineKept
 }
 
+// asking is the stretch this view wants: where to ask from, and how many.
+//
+// **A whole-sequence read starts at the TOP.** That is what reading the whole
+// sequence means -- a view of its own items holds every one of them -- and asking
+// for all of them FROM where the reader happens to be standing left everything
+// above the viewport a blank, which is how a selection scrolled past came back
+// unplaceable over a source that holds all its rows.
+//
+// **And a window starts a screenful ABOVE the reader**, not at it. `treeReach` says
+// the rows on show and one either side, and asking from the scroll offset only ever
+// bought the screenful below: scrolling back one line was a fresh question every
+// time, for rows the view had been holding a moment earlier.
+// The whole-read branch is an EQUIVALENT mutant today, and kept: a screenful of
+// `everyTreeRow` is three hundred million rows, so the arithmetic below clamps to
+// nought for any scroll offset anybody could reach. It says the intent directly
+// rather than resting on that, and it is what stops a smaller ceiling than
+// `everyTreeRow` quietly windowing a source that is meant to be read whole.
+func (t *TreeView) asking() (int, int) {
+	n := t.reach()
+	if n >= everyTreeRow {
+		return 0, n
+	}
+	at := t.scrollOffset - n/treeReach
+	if at < 0 {
+		at = 0
+	}
+	return at, n
+}
+
 // window makes sure the spine can name the rows from a position on, asking the
 // sequence about the ones it cannot.
 //
@@ -221,7 +250,7 @@ func (t *TreeView) rowCount() int {
 	if set == nil {
 		return 0
 	}
-	t.ask(t.scrollOffset, t.reach())
+	t.ask(t.asking())
 	t.bones.learn(serval.Complete{Total: serval.CountOf(set)})
 	return t.bones.rows()
 }
@@ -267,14 +296,24 @@ func (t *TreeView) Length() serval.RecordCount {
 	return t.bones.length()
 }
 
-// Item is the row at a position, and nil for one off either end.
+// Item is the row at a position, and nil for one off the beginning.
 //
 // Nil is also what a BLANK row answers -- one the view knows is there and knows
 // nothing else about yet, which is every row of a windowed tree until the answer
 // arrives. Asking for one asks the source about it, so a caller drawing rows
 // should ask for the stretch it wants rather than one row at a time.
+//
+// **It will ask past the floor, and that is the point.** A tree's length is a floor
+// until the walk reaches the end, so refusing a position past it made a windowed
+// tree unjumpable: the view would not ask, though serval answers -- a scope's From
+// IS the walk's budget, so asking for row nine hundred walks to row nine hundred and
+// says so. The floor bounds what a THUMB can express, which is `clampScrollOffset`'s
+// business; it is not a bound on what a caller may ask about.
+//
+// The cost is the walk down to the position, paid on a deliberate act. A position
+// past the end of the sequence answers a blank, the walk having run out of tree.
 func (t *TreeView) Item(at int) *TreeItem {
-	if at < 0 || at >= t.Count() {
+	if at < 0 {
 		return nil
 	}
 	t.window(at, 1)
@@ -594,6 +633,9 @@ func (s *treeSink) settle() {
 		t.bones.place(first.N, s.rows)
 	}
 	t.hang()
+	// A row the view could not place may be placeable now, this being the moment the
+	// answer to "where is it" can have changed.
+	t.resolve()
 }
 
 // hang gives the rows the view HOLDS the parentage their depths imply.
@@ -1270,5 +1312,5 @@ func (t *TreeView) moved() {
 	t.asks++
 	t.bones.forget()
 	t.clampScrollOffset()
-	t.window(t.scrollOffset, t.reach())
+	t.window(t.asking())
 }

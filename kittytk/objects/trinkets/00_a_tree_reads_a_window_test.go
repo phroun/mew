@@ -496,3 +496,207 @@ func TestASubtreeRunningPastWhatIsCountedCannotBeClosedExactly(t *testing.T) {
 		t.Errorf("it says %d rows stand under a row it has never heard of", got)
 	}
 }
+
+// --- what a selection is ------------------------------------------------
+//
+// An IDENTITY, and the index only stands for it. Three things move a row out from
+// under an index -- a resort, a node opening above it, and scrolling far enough that
+// the view stops holding it -- and an index kept as the authority quietly named a
+// different row after any of them.
+
+// **A resort does not lose the selection**, even when it moves the row outside the
+// window. The index goes; the selection does not.
+func TestAResortKeepsTheSelectionOutsideTheWindow(t *testing.T) {
+	tv := windowed(t, 8)
+	tv.SetSource(manyRows(400))
+	tv.SetKindMap("", InOrder("name"))
+
+	chosen := tv.Item(0)
+	if chosen == nil {
+		t.Fatal("no first row")
+	}
+	tv.SetCurrentIndex(0)
+	if tv.CurrentItem() != chosen {
+		t.Fatalf("choosing row 0 chose %q", caption(tv.CurrentItem()))
+	}
+
+	// Reversed: the first row becomes the last, which is far outside the window.
+	tv.SetSorted(true, -1, true)
+
+	if at, held := tv.positionOf(chosen); held {
+		t.Fatalf("the row is still at %d, so this proves nothing", at)
+	}
+	if tv.CurrentIndex() != -1 {
+		t.Errorf("it claims the selection stands at %d, and it cannot place it",
+			tv.CurrentIndex())
+	}
+	if got := tv.CurrentItem(); got != chosen {
+		t.Errorf("the selection reads %q, want the row that was chosen",
+			caption(got))
+	}
+}
+
+// And it comes back the moment the row does, which is `resolve` running when a
+// window lands rather than anything asking.
+func TestAnUnplacedSelectionResolvesWhenItsRowReturns(t *testing.T) {
+	tv := windowed(t, 8)
+	tv.SetSource(manyRows(400))
+
+	chosen := tv.Item(0)
+	tv.SetCurrentIndex(0)
+
+	// Away, so the view stops holding it.
+	scrollTo(t, tv, 380)
+	tv.bones.forget()
+	tv.scrollOffset = 380
+	tv.Count()
+	if tv.CurrentIndex() != -1 {
+		t.Fatalf("it still places the selection at %d", tv.CurrentIndex())
+	}
+	if tv.CurrentItem() != chosen {
+		t.Fatal("it lost the selection on the way")
+	}
+
+	// And back.
+	tv.scrollOffset = 0
+	tv.Count()
+	if got := tv.CurrentIndex(); got != 0 {
+		t.Errorf("with the row back in the window it stands at %d, want 0", got)
+	}
+}
+
+// **Nothing chosen and chosen-but-unplaced are different states**, and a movement
+// key has to tell them apart: Down from nothing chooses the FIRST row, and Down from
+// an unplaced selection moves from where the reader is looking.
+func TestAMovementKeyTellsUnchosenFromUnplaced(t *testing.T) {
+	tv := windowed(t, 8)
+	tv.SetSource(manyRows(400))
+
+	// Nothing chosen: before the first row, so Down lands on it.
+	if got := tv.movingFrom(); got != -1 {
+		t.Errorf("with nothing chosen a movement starts from %d, want before the"+
+			" first row", got)
+	}
+
+	// Chosen, then scrolled away from.
+	tv.SetCurrentIndex(0)
+	tv.bones.forget()
+	tv.scrollOffset = 200
+	tv.Count()
+	if tv.CurrentIndex() != -1 {
+		t.Fatalf("it still places the selection at %d", tv.CurrentIndex())
+	}
+	if got := tv.movingFrom(); got != 200 {
+		t.Errorf("with the selection unplaced a movement starts from %d, want where"+
+			" the reader is looking", got)
+	}
+}
+
+// **A window holds a screenful either side of the reader**, which is what treeReach
+// says and what asking from the scroll offset alone did not do: scrolling back one
+// line was a fresh question for rows the view had been holding a moment earlier.
+func TestAWindowHoldsRowsAboveTheReaderToo(t *testing.T) {
+	tv := windowed(t, 8)
+	tv.SetSource(manyRows(400))
+	scrollTo(t, tv, 200)
+
+	at, n := tv.asking()
+	if at >= tv.scrollOffset {
+		t.Errorf("it asks from %d with the reader at %d, so nothing above is held",
+			at, tv.scrollOffset)
+	}
+	if _, held := tv.bones.idAt(tv.scrollOffset - 1); !held {
+		t.Errorf("the row just above the reader is blank; the window is %d from %d",
+			n, at)
+	}
+}
+
+// A view reading its OWN items holds all of them, wherever the reader stands -- so
+// asking for the whole sequence starts at the top rather than at the viewport.
+func TestAWholeReadStartsAtTheTop(t *testing.T) {
+	tv := NewTreeView()
+	for i := 0; i < 40; i++ {
+		tv.AddRootItem(NewTreeItem(fmt.Sprintf("item%02d", i)))
+	}
+	tv.SetBounds(core.UnitRect{Width: 60 * cell, Height: 8 * cell})
+
+	tv.scrollOffset = 30
+	tv.Count()
+	if at, _ := tv.asking(); at != 0 {
+		t.Errorf("a whole read asks from %d, want the top", at)
+	}
+	if got := tv.rowAt(0); got == nil {
+		t.Error("the first row is blank over a source that holds every row")
+	}
+	if n := tv.bones.held(); n != 40 {
+		t.Errorf("it holds %d of its own forty items", n)
+	}
+}
+
+// **Item will ask past the floor.** A tree's length is a floor until the walk
+// reaches the end, and refusing a position past it made a windowed tree unjumpable
+// -- though serval answers, a scope's From being the walk's own budget.
+func TestItemAsksPastTheFloor(t *testing.T) {
+	tv := windowed(t, 10)
+	tv.SetSource(manyRows(5000))
+
+	floor := tv.Length()
+	if floor.Exact {
+		t.Fatalf("the length reads %v; this needs a floor", floor)
+	}
+	if floor.N > 900 {
+		t.Fatalf("the floor is already %v, so 900 is not past it", floor)
+	}
+
+	if got := tv.Item(900); got == nil || got.Text != "row00900" {
+		t.Errorf("row 900 reads %q, and it is past the floor", caption(got))
+	}
+	if now := tv.Length(); now.N <= floor.N {
+		t.Errorf("the floor stayed at %v after walking to row 900", now)
+	}
+
+	// Past the END of the sequence is a blank, the walk having run out of tree.
+	if got := tv.Item(999999); got != nil {
+		t.Errorf("row 999999 reads %q over a body of five thousand", got.Text)
+	}
+	// And before the beginning is still nothing.
+	if got := tv.Item(-1); got != nil {
+		t.Errorf("row -1 reads %q", got.Text)
+	}
+}
+
+// Collapsing a node the selection was INSIDE moves the selection to the node, and
+// the identity follows the index there.
+//
+// It is the one place a row is chosen that the reader did not choose: the row they
+// did choose has just stopped being in the sequence, and the node they closed is the
+// nearest thing to where they were. The identity has to follow, or the next window
+// landing would resolve against the row that went and unplace a selection that is
+// perfectly well placed.
+func TestCollapsingOntoTheNodeMovesTheIdentityToo(t *testing.T) {
+	tv := windowed(t, 40)
+	tv.SetSource(kinWindow(t, 6, 4))
+
+	folder := tv.Item(0)
+	tv.ExpandItem(folder)
+	kid := tv.Item(2)
+	if kid == nil || kid.Level() != 1 {
+		t.Fatalf("row 2 reads %q at level %d, want a child", caption(kid), kid.Level())
+	}
+	tv.SetCurrentIndex(2)
+
+	tv.CollapseItem(folder)
+
+	if got := tv.CurrentItem(); got != folder {
+		t.Errorf("after closing the folder the selection reads %q, want the folder",
+			caption(got))
+	}
+	if got := tv.CurrentIndex(); got != 0 {
+		t.Errorf("it stands at %d, want the folder's own position", got)
+	}
+	// And a window landing does not undo it, which is what a stale identity would do.
+	tv.window(tv.asking())
+	if got := tv.CurrentIndex(); got != 0 {
+		t.Errorf("a window landing moved it to %d", got)
+	}
+}
