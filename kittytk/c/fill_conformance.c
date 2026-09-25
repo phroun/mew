@@ -273,9 +273,80 @@ static void say(const char *text) {
     free(src);
 }
 
+/* settle waits long enough for something that was going to happen to have
+   happened, which is only ever sound for asserting that NOTHING did: too short a
+   sleep leaves such a check weak and can never make it wrong. Anything asserting
+   that something DID happen waits for the thing itself -- see waited and reached.
+*/
 static void settle(void) {
     struct timespec ts = {0, 50000000};
     nanosleep(&ts, NULL);
+}
+
+/* told sends one statement from the display and waits for the line it is answered
+   with to reach the log, handing back where the log stood before it.
+   
+   **The log growing is the synchronisation point, and content is not.** Every batch
+   is answered by exactly one line -- a `reply` or an `error` -- before any records
+   follow, so one more entry in the log is that batch having been answered.
+   
+   Waiting for particular TEXT instead is unsound wherever the text repeats. A bare
+   statement is answered with a bare `reply`, so two of them in a row produce two
+   identical lines: a wait for "reply" matches the first and leaves the snapshot in
+   the middle, which is how a check that the refusal LEADS came to read the previous
+   batch's reply. Only text carrying a query's own id is safe that way, which is what
+   `waited` is for.
+   
+   For a batch that opens a QUERY the answer is a reply and then records, and `ask`
+   is the one that waits for all of it. */
+static int told(const char *text) {
+    int n = sent_count();
+    say(text);
+    for (int i = 0; i < 4000 && sent_count() == n; i++) {
+        struct timespec ts = {0, 1000000};
+        nanosleep(&ts, NULL);
+    }
+    return n;
+}
+
+/* waited is everything the application has sent since the nth batch, once `want`
+   appears in it.
+   
+   It is for a multi-line answer, where the log growing says only that the reply has
+   landed. What it is given has to be text that cannot repeat -- a query's own id
+   makes it so -- because a wait satisfied by an EARLIER line is no wait at all.
+   
+   **Nothing the application does orders this log.** It is filled by the display's
+   own reader thread, so a callback firing says the application has been told and
+   says nothing about the batch that went out BEFORE it having been read off the
+   socket yet -- and `run_batch` sends the reply first, deliberately, then calls the
+   handler. A fixed sleep in between was long enough on an idle machine and short on
+   a loaded one, and the check that followed then read a log with the previous
+   batch's reply still arriving at the front of it.
+   
+   It is the shape `ask` already has, for the same reason, said once and reusable.
+   It returns what there is on timing out rather than looping for ever, so a check
+   that was going to fail fails with the log in front of it. */
+static char *waited(int n, const char *want) {
+    for (int i = 0; i < 4000; i++) {
+        char *so_far = since(n);
+        if (strstr(so_far, want)) return so_far;
+        free(so_far);
+        struct timespec ts = {0, 1000000};
+        nanosleep(&ts, NULL);
+    }
+    return since(n);
+}
+
+/* reached waits for a count the application keeps to get where it is going.
+   
+   The application's own side of the same problem: a handler runs on the inbound
+   thread, and the main thread has nothing to synchronise on but the count itself. */
+static void reached(const volatile int *count, int want) {
+    for (int i = 0; i < 4000 && *count < want; i++) {
+        struct timespec ts = {0, 1000000};
+        nanosleep(&ts, NULL);
+    }
 }
 
 /* ask sends one statement from the display and waits for the whole answer to
@@ -386,8 +457,7 @@ int main(void) {
     free(answer);
 
     /* And a query cannot be restated: it is the sequence it was opened with. */
-    n = sent_count();
-    ask("set 1 sort={ name }\nend", n);
+    n = told("set 1 sort={ name }\nend");
     answer = since(n);
     expect(!!strstr(answer, "error"), "a restatement was refused");
     free(answer);
@@ -395,8 +465,8 @@ int main(void) {
     /* Anything this library does not understand reaches the application
        whole, so what it does not implement is still reachable. */
     kt_source_on_statement(source, on_statement, NULL);
-    say("do 1 cover handle=3 from={ key 1 } to={ key 200 }\nend");
-    for (int i = 0; i < 2000 && !*other_text; i++) {
+    told("do 1 cover handle=3 from={ key 1 } to={ key 200 }\nend");
+    for (int i = 0; i < 4000 && !*other_text; i++) {
         struct timespec ts = {0, 1000000};
         nanosleep(&ts, NULL);
     }
@@ -406,15 +476,15 @@ int main(void) {
     /* Letting the query go is how the application learns it may drop the
        records it was holding for it. */
     kt_source_on_dropped(source, on_dropped, NULL);
-    say("destroy 1\nend");
-    for (int i = 0; i < 2000 && !dropped_told; i++) {
-        struct timespec t = {0, 1000000};
-        nanosleep(&t, NULL);
-    }
+    told("destroy 1\nend");
+    reached(&dropped_told, 1);
     expect(dropped_told == 1, "the application was told the query was let go");
-    n = sent_count();
-    say("destroy 1\nend");
-    settle();
+
+    /* And the second destroy's refusal is the WHOLE of what went out for it, which
+       is only true if the first one's reply is already in the log. The callback above
+       does not say that -- the reply goes out before the handler runs, and the log is
+       the display thread's -- so `told` is what orders the two. */
+    n = told("destroy 1\nend");
     char *after = since(n);
     expect(strstr(after, "error text=") == after && strstr(after, "no query of mine") != NULL,
            "a query that was let go was still known");
@@ -428,7 +498,9 @@ int main(void) {
     kt_mutex_unlock(&conn->hmu);
     ask("q=new query source=\"files\" count=5\n"
         "r=new query source=\"files\" after=4 count=10\nend", n);
-    settle();
+    /* `ask` returns on the first ` complete` it sees, and this batch holds two
+       queries -- so the second may still be being served. */
+    reached(&served_windows, 2);
     expect(served_windows == 2, "each scope is a query of its own");
 
     /* The least an implementation can do: ignore every hint, send everything,
@@ -458,7 +530,6 @@ int main(void) {
        terminator. */
     n = sent_count();
     q = serve(fill_places, "count=10");
-    answer = since(n + 1);
     snprintf(tmp, sizeof tmp,
              "place %llu ordered id=17 fields={ name \"src/parser.go\" }\n"
              "place %llu id=42 fields={}\n"
@@ -468,6 +539,12 @@ int main(void) {
              "complete exhausted total=2 exact",
              (unsigned long long)q, (unsigned long long)q, (unsigned long long)q,
              (unsigned long long)q, (unsigned long long)q);
+    /* **Two streams, so two terminators, and `serve` waited for the FIRST.** `ask`
+       stops at a ` complete` because that is what ends an answer -- and an answer
+       carrying places ends twice, the place stream before the result stream. So the
+       results may still be crossing, and this waits for the last line of its own
+       expectation rather than for a word that has already gone by. */
+    answer = waited(n + 1, "total=2 exact");
     expect_str(answer, tmp, "places lead, the order settles, the total ends");
     free(answer);
 
@@ -509,10 +586,10 @@ int main(void) {
     /* An answer ends once: one ending, one message, and the sink is gone. */
     n = sent_count();
     q = serve(fill_ends_once, "count=1");
-    settle();
+    reached(&ended_once, 1);
     expect(ended_once == 1, "the handler ran");
-    char *once = since(n + 1);
     snprintf(tmp, sizeof tmp, "result %llu complete exhausted", (unsigned long long)q);
+    char *once = waited(n + 1, tmp);
     expect_str(once, tmp, "one ending is the whole answer");
     free(once);
 
@@ -544,9 +621,7 @@ int main(void) {
 
     /* A source this application does not serve is refused, and the refusal is
        what the batch is answered with. */
-    n = sent_count();
-    say("q=new query source=\"ledgers\" count=1\nend");
-    settle();
+    n = told("q=new query source=\"ledgers\" count=1\nend");
     char *refusal = since(n);
     expect(strstr(refusal, "error text=") == refusal && strstr(refusal, "ledgers") != NULL,
            "an unknown source is refused");
