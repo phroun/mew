@@ -212,6 +212,18 @@ static void fill_refuses(kt_query *q, const kt_qscope *req, kt_fill *sink, void 
     kt_fill_fail(sink, "no records past \"build.sh\"");
 }
 
+/* An application that HONOURS a position: it says where it began, which is the one
+   thing it has to say to be taken at its word. A naive one says nothing and is read
+   as having started at the beginning, so `first` is what tells the two apart. */
+static void fill_from(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
+    (void)q; (void)ud;
+    kt_fill_first(sink, req->from);
+    kt_fill_ordered(sink);
+    kt_value f = kt_vstr("name", "src/window.go");
+    kt_fill_record(sink, kt_vint("", 42), &f, 1);
+    kt_fill_exhausted(sink);
+}
+
 static void fill_ends_once(kt_query *q, const kt_qscope *req, kt_fill *sink, void *ud) {
     (void)q; (void)req; (void)ud;
     kt_fill_exhausted(sink);
@@ -617,6 +629,32 @@ int main(void) {
     expect(strstr(answer, "complete exhausted") != NULL, "the terminator rides on the last");
     snprintf(tmp, sizeof tmp, "result %llu ordered id=0 ", (unsigned long long)q);
     expect(strncmp(answer, tmp, strlen(tmp)) == 0, "the declaration of order leads");
+    free(answer);
+
+    /* **Where an answer BEGAN, which is what answers `from`.** A scope carrying a
+       position asks to begin NEAR somewhere, and an application walking its own body
+       may honour that not at all -- so one that DOES says where it began, and one
+       that does not says nothing and is read as having started at the beginning.
+
+       It has no weak form, unlike a count: either the position is here or nothing
+       is, so there is no `exact` beside it. */
+    n = sent_count();
+    q = serve(fill_from, "count=1 from=900");
+    snprintf(tmp, sizeof tmp,
+             "result %llu ordered id=42 record={ name \"src/window.go\" } "
+             "complete exhausted first=900", (unsigned long long)q);
+    answer = waited(n + 1, "first=");
+    expect_str(answer, tmp, "an answer says where it began");
+    free(answer);
+
+    /* And nought crosses, being a position like any other: it is what an
+       application says when it honoured the request and the request was the top,
+       which is a different claim from having said nothing at all. */
+    n = sent_count();
+    q = serve(fill_from, "count=1 from=0");
+    answer = waited(n + 1, "complete");
+    expect(strstr(answer, "first=0") != NULL,
+           "a position of nought is still said");
     free(answer);
 
     /* A source this application does not serve is refused, and the refusal is

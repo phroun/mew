@@ -403,6 +403,7 @@ type Fill struct {
 	ordered bool
 	waiting *wire.Result // the last record, held so the end can ride on it
 	total   serval.RecordCount
+	first   serval.RecordCount
 	closed  bool
 
 	// extend is the display saying it will hold the places it is sent, so a
@@ -515,6 +516,34 @@ func (f *Fill) Placed(stop serval.Stop, watermark any) error {
 // Optional, and about the sequence rather than this scope of it: how many came
 // back is something whoever asked can count. Say it where you know it cheaply
 // and say nothing where you do not -- an unknown figure crosses as no figure.
+// First says where in the sequence this answer BEGAN: the position of its first
+// record, counted in the sequence's own order however the scope walked it.
+//
+//	f.First(900)   // it starts at the nine hundredth record
+//
+// **It is what answers `From`.** A scope carrying a position asks to begin NEAR
+// somewhere, and a source honours that as well as it can -- which for an application
+// walking its own body may be not at all, there being no index into a sequence the
+// display named. Saying where the answer actually began is what turns "as well as it
+// can" into something a reader can use: it places the records where they really are
+// and asks again from what it learned.
+//
+// **Silence means the beginning**, for a scope that asked for a position. That is
+// what a source which ignored it did, and it is the only reading that cannot
+// misplace a record -- so an application that HONOURS `From` is the one with
+// something to say here, and a naive one has nothing to do. Answering from the top
+// and sending more records than were wanted is slower and is never wrong.
+//
+// There is nothing to say for a scope that named `After` instead: the record it
+// starts past is the position, said better.
+func (f *Fill) First(at int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.closed {
+		f.first = serval.Exactly(at)
+	}
+}
+
 func (f *Fill) Total(n serval.RecordCount) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -767,6 +796,7 @@ func (f *Fill) finish(done *serval.Complete) error {
 		end = &wire.Result{Ordered: f.ordered && f.records == 0}
 	}
 	done.Total = f.total
+	done.First = f.first
 	end.Complete = done
 	stmt := f.result(end.Args()...)
 	if f.buf.Len() > 0 {

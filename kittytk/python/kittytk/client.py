@@ -1200,6 +1200,7 @@ class Fill:
         self._ordered = False
         self._waiting = None  # the last record, held so the end can ride on it
         self._total = (0, False)  # how many the sequence has, and whether exact
+        self._first = None        # where this answer began, where it says
         # The display said it will HOLD the places it is sent, so a result may
         # leave out what its place already carried -- and _placed is what each
         # of them did carry. Nothing an author writes changes: they place what
@@ -1292,6 +1293,31 @@ class Fill:
         if watermark is not None:
             done.watermark = protocol.val(watermark)
         self._placing(_query.Result(place=True, complete=done))
+
+    def first(self, at: int):
+        """Say where in the sequence this answer BEGAN: the position of its first
+        record, counted in the sequence's own order however the scope walked it.
+
+            f.first(900)   # it starts at the nine hundredth record
+
+        **It is what answers `from`.** A scope carrying a position asks to begin
+        NEAR somewhere, and a source honours that as well as it can -- which for
+        an application walking its own body may be not at all, there being no
+        index into a sequence the display named. Saying where the answer actually
+        began is what turns "as well as it can" into something a reader can use.
+
+        **Silence means the beginning**, for a scope that asked for a position:
+        that is what a source which ignored it did, and it is the only reading
+        that cannot misplace a record. So an application that HONOURS `from` is
+        the one with something to say here, and a naive one has nothing to do --
+        answering from the top and sending more records than were wanted is
+        slower and is never wrong.
+
+        There is nothing to say for a scope that named `after` instead: the
+        record it starts past is the position, said better."""
+        with self._lock:
+            if not self._closed:
+                self._first = at
 
     def total(self, n: int, exact: bool = False):
         """Say how many records the whole SEQUENCE has, which rides out on
@@ -1473,6 +1499,7 @@ class Fill:
             if end is None:
                 end = _query.Result(ordered=self._ordered and self._records == 0)
             done.total, done.exact = self._total
+            done.first = self._first
             end.complete = done
             self._buf.append(self._result(*end.args()))
             self._closed = True

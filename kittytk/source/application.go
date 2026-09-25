@@ -146,6 +146,26 @@ type appScope struct {
 	extend bool
 	held   map[string]serval.Record
 
+	// from is the position this scope asked to begin at, and `said` whether the
+	// answer stated where it actually began.
+	//
+	// **An application need not honour `from`, and a naive one will not.** It is a
+	// position in a sequence, and an application walking its own body has no index
+	// into one -- so answering from the top and sending more records than were asked
+	// for is the ordinary thing, and it is slower rather than wrong.
+	//
+	// It is only not wrong if this end says where the records really are. Silence
+	// about `first` used to leave the reader its own arithmetic, which for a scope
+	// that asked for a position means believing the position was honoured: the
+	// hundredth record of a naive answer was placed at the nine hundredth row, and
+	// nothing said so. So for a scope carrying `from`, silence is read as the
+	// answer having begun at the BEGINNING, which is what a source that ignored the
+	// position did.
+	//
+	// An application that HONOURS it says `first`, which is the one thing it has to
+	// say to be believed. See client.Fill.First.
+	from int
+
 	mu   sync.Mutex
 	id   uint64
 	done bool
@@ -166,7 +186,7 @@ func (s *appSet) Read(sc *serval.Scope, out serval.Sink) error {
 		return fmt.Errorf("this data set has been closed")
 	}
 	_, places := out.(serval.Placing)
-	q := &appScope{set: s, out: out, extend: places}
+	q := &appScope{set: s, out: out, extend: places, from: sc.From}
 	if places {
 		q.held = map[string]serval.Record{}
 	}
@@ -479,6 +499,14 @@ func (q *appScope) finishWith(done serval.Complete, answered bool) {
 	q.done = true
 	id := q.id
 	q.mu.Unlock()
+
+	// **Where the answer began, where the answer did not say and the scope asked for
+	// a place.** A source that ignored the position started at the beginning, and
+	// saying so is what keeps its records from being placed where they were asked for
+	// rather than where they are. See appScope.from.
+	if q.from != 0 && !done.First.Exact && done.Error == "" {
+		done.First = serval.Exactly(0)
+	}
 
 	// What the answer said about the SEQUENCE, kept on the sequence -- so a reader
 	// that never asked for a scope can still be told how long it is. See appSet.total.

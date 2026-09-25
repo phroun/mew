@@ -413,6 +413,7 @@ const kt_value *kt_bag_get(const kt_bag *b, const char *name);
    `total=20 exact` says twenty is all there are. It rides a completion, being a
    fact about the order rather than about any record. A figure of nothing is not
    written; `total=0 exact` is a sequence counted and found empty, and is. */
+#define KT_FIRST_ARG "first"
 #define KT_TOTAL_ARG "total"
 #define KT_EXACT_ARG "exact"
 
@@ -592,6 +593,27 @@ int kt_fill_placed(kt_fill *f, const char *stop, kt_value watermark);
    back is something whoever asked can count. Say it where you know it cheaply
    and say nothing where you do not. */
 void kt_fill_total(kt_fill *f, int n, int exact);
+
+/* Say where in the sequence this answer BEGAN: the position of its first record,
+   counted in the sequence's own order however the scope walked it.
+
+       kt_fill_first(f, 900);   -- it starts at the nine hundredth record
+
+   **It is what answers `from`.** A scope carrying a position asks to begin NEAR
+   somewhere, and a source honours that as well as it can -- which for an
+   application walking its own body may be not at all, there being no index into a
+   sequence the display named. Saying where the answer actually began is what turns
+   "as well as it can" into something a reader can use.
+
+   **Silence means the beginning**, for a scope that asked for a position: that is
+   what a source which ignored it did, and it is the only reading that cannot
+   misplace a record. So an application that HONOURS `from` is the one with
+   something to say here, and a naive one has nothing to do -- answering from the
+   top and sending more records than were wanted is slower and is never wrong.
+
+   There is nothing to say for a scope that named `after` instead: the record it
+   starts past is the position, said better. */
+void kt_fill_first(kt_fill *f, int at);
 
 int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n,
                    int named, int ordered);

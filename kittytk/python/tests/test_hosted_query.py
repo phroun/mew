@@ -172,6 +172,41 @@ class ServingAQueryTest(unittest.TestCase):
                          'result 1 id=42 record={ name "src/window.go"; size 2048 }'
                          ' complete exhausted total=2 exact')
 
+    def test_an_answer_says_where_it_began(self):
+        # **`first` is what answers `from`.** A scope carrying a position asks to
+        # begin NEAR somewhere, and an application walking its own body may honour
+        # that not at all -- so an application that DOES honour it says where it
+        # began, and one that does not says nothing and is read as having started
+        # at the beginning.
+        #
+        # It has no weak form, unlike a count: either the position is here or
+        # nothing is. And nought is a position like any other, so saying it crosses.
+        def fill(f):
+            f.first(f.scope.from_)
+            f.ordered()
+            f.record(42, name="src/window.go")
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" from=900 count=1')
+        self.assertEqual("\n".join(c.since(1)),
+                         'result 1 ordered id=42 record={ name "src/window.go" }'
+                         ' complete exhausted first=900')
+
+    def test_a_position_of_nothing_still_crosses(self):
+        # Nought is where a sequence begins and is a position like any other, so an
+        # application saying it has said something -- which is what tells a naive
+        # answer apart from one that honoured the request and landed at the top.
+        def fill(f):
+            f.first(0)
+            f.ordered()
+            f.record(42)
+            f.exhausted()
+
+        c, _ = serve_one(fill)
+        send(c, 'q=new query source="files" from=900 count=1')
+        self.assertIn("first=0", "\n".join(c.since(1)))
+
     def test_under_extend_a_result_carries_only_what_its_place_did_not(self):
         # The display saying it will HOLD the places it is sent, so a result may
         # leave out what its place already carried -- and in the limit carry no

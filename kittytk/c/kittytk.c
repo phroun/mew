@@ -2043,6 +2043,8 @@ struct kt_fill {
     char *held;   /* the last record, kept so the terminator can ride on it */
     int total;    /* how many the sequence has, where the source said */
     int exact;    /* and whether that figure is the whole story */
+    int first;    /* where this answer began, where the source said */
+    int said;     /* and whether it said, nought being a position like any other */
 
     /* The display said it will HOLD the places it is sent, so a result may
        leave out what its place already carried -- and placed is what each of
@@ -2409,6 +2411,13 @@ void kt_fill_total(kt_fill *f, int n, int exact) {
     kt_mutex_unlock(&f->mu);
 }
 
+void kt_fill_first(kt_fill *f, int at) {
+    kt_mutex_lock(&f->mu);
+    f->first = at;
+    f->said = 1;
+    kt_mutex_unlock(&f->mu);
+}
+
 int kt_fill_subset(kt_fill *f, kt_value id, const kt_value *fields, int n,
                    int named, int ordered) {
     return fill_write(f, KT_FIELDS_ARG, id, fields, n, named, ordered);
@@ -2460,6 +2469,15 @@ static int fill_finish(kt_fill *f, const char *tail) {
     /* A figure of nothing is not written: `total=0` alone says only what is
        true of every sequence there is. `total=0 exact` is one counted and found
        empty, and does cross. */
+    /* Where the answer began, which unlike a count has no weak form: either the
+       position is here or nothing is, and nought is a position like any other. So
+       it is a flag that says it was said rather than a figure tested for being
+       non-zero. */
+    if (f->said) {
+        char tmp[48];
+        snprintf(tmp, sizeof tmp, " " KT_FIRST_ARG "=%d", f->first);
+        buf_puts(&b, tmp);
+    }
     if (f->total || f->exact) {
         char tmp[48];
         snprintf(tmp, sizeof tmp, " " KT_TOTAL_ARG "=%d", f->total);

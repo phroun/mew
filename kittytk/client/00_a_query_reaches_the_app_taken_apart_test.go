@@ -473,3 +473,62 @@ func TestOrderIsDeclaredOnce(t *testing.T) {
 		t.Errorf("the order was declared %d times", n)
 	}
 }
+
+// **`first` is what answers `from`, and an application is the one that has to say
+// it.**
+//
+// A scope carrying a position asks to begin NEAR somewhere, and an application
+// walking its own body may honour that not at all -- there being no index into a
+// sequence the display named. So one that DOES honour it says where it began, and one
+// that does not says nothing and is read as having started at the beginning.
+//
+// The wire carried `first=` from the start and the display parsed it; this end could
+// not produce one, so an application had no way to be believed.
+func TestAnAnswerSaysWhereItBegan(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) {
+		f.First(f.From)
+		f.Ordered()
+		_ = f.Record(42, serval.Named("name", "src/window.go"))
+		_ = f.Exhausted()
+	})
+	n := r.count()
+	send(t, c, `q=new query source="files" from=900 count=1`)
+
+	got := strings.Join(r.since(n), "\n")
+	if !strings.Contains(got, "first=900") {
+		t.Errorf("the answer reads\n  %s\nand does not say where it began", got)
+	}
+	// It has no weak form, unlike a count: either the position is here or nothing
+	// is, so there is no `exact` beside it.
+	if strings.Contains(got, "first=900 exact") {
+		t.Errorf("a position came with an exactness: %s", got)
+	}
+}
+
+// Nought crosses, being a position like any other: it is what an application says
+// when it honoured the request and the request was the top, which is a different
+// claim from having said nothing at all.
+func TestAPositionOfNoughtIsStillSaid(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) {
+		f.First(0)
+		_ = f.Exhausted()
+	})
+	n := r.count()
+	send(t, c, `q=new query source="files" from=900 count=1`)
+
+	if got := strings.Join(r.since(n), "\n"); !strings.Contains(got, "first=0") {
+		t.Errorf("a position of nought did not cross:\n  %s", got)
+	}
+}
+
+// And an application that says nothing writes nothing, which is what leaves the
+// reading end free to take silence for the beginning.
+func TestAnApplicationThatSaysNothingWritesNoPosition(t *testing.T) {
+	c, r, _ := serveOne(t, func(f *Fill) { _ = f.Exhausted() })
+	n := r.count()
+	send(t, c, `q=new query source="files" from=900 count=1`)
+
+	if got := strings.Join(r.since(n), "\n"); strings.Contains(got, "first=") {
+		t.Errorf("a position crossed that nobody stated:\n  %s", got)
+	}
+}
