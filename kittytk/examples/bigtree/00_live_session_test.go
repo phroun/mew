@@ -21,6 +21,7 @@ import (
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/serval"
 )
 
 // startService stands up a headless desktop serving on a socket.
@@ -185,20 +186,23 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 	}
 	flat := topRows(t, desktop, tv, aWindow)
 	onUI(desktop, func() {
-		// **A window, and a floor for how long the sequence is.** This is the whole
-		// of #64 said in two assertions: the view holds a screenful and not a
-		// hundred thousand, and it knows there is more below without having walked
-		// to it.
+		// **A window, and the whole length anyway.** The two used to be a trade: a
+		// view that read a screenful could only floor the rest, so the thumb grew as
+		// the reader scrolled and the end of the sequence was unreachable.
+		//
+		// It is not a trade. A flattening's length is its top level counted plus the
+		// children of every open node, and this application says how long its level is
+		// -- so the display holds eighty-odd rows and draws a TRUE thumb over a hundred
+		// thousand. Neither figure is a row read that nobody is looking at.
 		if n := len(flat); n > flatRows/100 {
 			t.Errorf("the view is holding %d rows of a body of %d; it is meant to hold"+
 				" a window of it", n, flatRows)
 		}
-		if got := tv.Length(); got.Exact {
-			t.Errorf("the flat level's length reads %v; a walk that stopped at its"+
-				" budget cannot count what it never reached", got)
-		} else if got.N != len(flat) {
-			t.Errorf("it holds %d rows and floors the sequence at %d", len(flat), got.N)
+		if got := tv.Length(); got != serval.Exactly(flatRows) {
+			t.Errorf("the flat level's length reads %v, want exactly the %d rows the"+
+				" application says it has", got, flatRows)
 		}
+
 		if flat[0].Text != "item 000000" {
 			t.Errorf("the first flat row shows %q, want the first record's name", flat[0].Text)
 		}
@@ -212,6 +216,21 @@ func TestBigTreeRunsOverTheService(t *testing.T) {
 			t.Errorf("the Kind column reads %q, want the record's own", got)
 		}
 	})
+
+	// **And a row outside the window is reachable**, which is what a true length buys:
+	// a thumb can be dragged to a place the view can say is there.
+	//
+	// It is asked for and WAITED for, not asked for and had: the position is past what
+	// the flattening has walked, so the walk goes down to it and the records cross
+	// while this polls. The cost is that walk -- a jump to the far end of a hundred
+	// thousand still reads a hundred thousand at the level, because a flat position is
+	// translated into a level's by walking rather than by arithmetic. Skipping to it
+	// with the same census sums the length is worked out from is the next piece.
+	onUI(desktop, func() { _ = tv.Item(600) })
+	waitFor(t, desktop, 20*time.Second, func() bool {
+		row := tv.Item(600)
+		return row != nil && row.Text == "item 000600"
+	}, "a row six hundred down, outside the window")
 
 	// Sorting a hundred thousand rows is the APPLICATION's to do: the header click
 	// sends `sort=` down with the query, and an app that ignores it draws the arrow

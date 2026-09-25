@@ -159,6 +159,12 @@ func deepBody() []row {
 //   - The COUNT is the window. Sending a hundred thousand rows for a window of
 //     forty is correct and slow, which for a demo about how much a tree asks for
 //     would hide the whole point.
+//   - The TOTAL is what turns a floor into a count. A display cannot work out how
+//     long a sequence is without reading it, which is the one thing a window exists
+//     not to do -- so a windowed view over an application that says nothing draws a
+//     thumb that shrinks as the reader scrolls. This one has the level in hand
+//     already, so saying how long it is costs nothing, and the thumb is true from
+//     the first frame.
 //
 // The scan and the sort are over the whole matching level, which is this
 // application's own cost and is visible as such: a real one would index by
@@ -177,18 +183,29 @@ func serve(body []row) func(*client.Fill) {
 		}
 		order(level, f.Descriptor, f.Scope)
 
+		// How long the LEVEL is, which is a different fact from how many are being
+		// sent: the window is forty and the sequence is a hundred thousand, and a
+		// reader wants both. It is free here, the level having just been gathered.
+		f.Total(serval.Exactly(len(level)))
+
 		f.Ordered()
 		sent := 0
+		var last any
 		for _, r := range level {
 			if sent >= f.Count {
-				// Complete up to the last one that went out, which is what lets a
-				// reader ask for the next window without asking again for this one.
-				_ = f.Filled(nil)
+				// **Complete up to the last one that went OUT, and say which one that
+				// was.** Saying nothing is what lets a reader ask for the next window
+				// without asking for this one again -- and it is also a run with no end
+				// on it, which a cache reads as the whole sequence in one piece. This
+				// application said a hundred thousand rows and was believed to have
+				// sent all of them, so the display drew a thumb for eighty-eight.
+				_ = f.Filled(last)
 				return
 			}
 			if err := f.Record(serval.NewInt(r.key), r.fields()...); err != nil {
 				return
 			}
+			last = serval.NewInt(r.key)
 			sent++
 		}
 		_ = f.Exhausted()

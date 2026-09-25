@@ -1305,12 +1305,22 @@ func (t *TreeView) closed(at int) {
 // **It is the answer of last resort and not the ordinary one.** A node opening and
 // closing is described, and goes through `opened` and `closed` instead; going
 // through here would throw away the rows on screen to learn what the view already
-// knew. What survives either way is how long the sequence is, until something says
-// otherwise.
+// knew.
+//
+// **And the LENGTH goes with the positions, which `forget` on its own does not do.**
+// A figure only ever replaces one that says less, so that a notice does not leave the
+// thumb flickering between a scale and none -- and that is right for a notice about a
+// sequence that is still the same sequence. It is wrong here: an item added, a sort
+// restated, a whole tree expanded, and the count somebody earned before is a claim
+// about a sequence that no longer exists. An exact figure kept across one of those
+// outranks every honest floor that follows it, for ever.
+//
+// Nothing flickers for it, either. The re-ask below learns the length in the same
+// breath, so there is no frame drawn against nothing.
 func (t *TreeView) moved() {
 	t.touched()
 	t.asks++
-	t.bones.forget()
+	t.bones = spine{}
 	t.clampScrollOffset()
 	t.window(t.asking())
 }

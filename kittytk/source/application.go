@@ -79,6 +79,50 @@ type appSet struct {
 	mu     sync.Mutex
 	closed bool
 	live   []*appScope // scopes still being answered
+
+	// total is how long the application said this SEQUENCE is, out of the last
+	// answer that said anything about it.
+	//
+	// **The sequence and not the scope**, which is what `Fill.Total` is documented
+	// to mean: how many came back is something whoever asked can count, so an
+	// application says this only where it knows the whole figure cheaply. Keeping it
+	// here rather than handing it to one sink is what makes it answerable to a reader
+	// that never asked for a scope at all.
+	//
+	// **It is what lets a windowed view draw a true thumb over a wire.** A tree's
+	// length is its top level counted plus the children of every open node, and the
+	// top level of an application's records is this -- so an app that says how many
+	// rows it has turns a floor into a count for every reader of it. One that says
+	// nothing leaves Unknown, and a floor is what a reader had before.
+	//
+	// A figure only ever replaces one that says less, for the reason a spine has the
+	// same rule: an answer that could not count is not news, and taking it would
+	// throw away a count another answer managed.
+	total serval.RecordCount
+}
+
+// RecordCount is how long the application said this sequence is, and Unknown where
+// it has not said.
+//
+// **It is told and never worked out.** Counting the records would mean reading them,
+// which is the whole of what a reader asking this is trying to avoid -- and an
+// application that will not say is not one whose body should be walked to find out.
+func (s *appSet) RecordCount() serval.RecordCount {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.total
+}
+
+// learn takes what an answer said about the sequence itself.
+func (s *appSet) learn(n serval.RecordCount) {
+	if n.Nothing() {
+		return
+	}
+	s.mu.Lock()
+	if !s.total.Exact || n.Exact {
+		s.total = n
+	}
+	s.mu.Unlock()
 }
 
 // An appScope is one scope asked for: one query on the wire, from the statement
@@ -435,6 +479,10 @@ func (q *appScope) finishWith(done serval.Complete, answered bool) {
 	q.done = true
 	id := q.id
 	q.mu.Unlock()
+
+	// What the answer said about the SEQUENCE, kept on the sequence -- so a reader
+	// that never asked for a scope can still be told how long it is. See appSet.total.
+	q.set.learn(done.Total)
 
 	q.set.src.forget(q)
 	q.out.Done(done)

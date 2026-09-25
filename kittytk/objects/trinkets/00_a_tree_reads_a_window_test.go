@@ -51,9 +51,14 @@ func windowed(t *testing.T, rows int) *TreeView {
 	return tv
 }
 
-// **A view reads a WINDOW.** The claim is not that it is faster -- it is that the
-// rows it holds are the rows it is looking at, and that it knows there are more
-// below without having walked to them.
+// **A view reads a WINDOW, and is told how long the sequence is anyway.** The two
+// used to be a trade: the rows it holds are the rows it is looking at, and what it
+// knew about the rest was a floor that grew as it scrolled.
+//
+// It is not a trade. A flattening's length is the top level counted plus the children
+// of every open node, and neither of those is a row read -- so a view holding thirty
+// rows of five thousand draws a TRUE thumb and can be dragged anywhere in the
+// sequence. See serval's reckon.go.
 func TestATreeReadsAWindowOfADeclaredSource(t *testing.T) {
 	tv := windowed(t, 10)
 	tv.SetSource(manyRows(5000))
@@ -65,9 +70,9 @@ func TestATreeReadsAWindowOfADeclaredSource(t *testing.T) {
 	if held > 200 {
 		t.Errorf("it is holding %d rows of five thousand", held)
 	}
-	if got := tv.Length(); got.Exact {
-		t.Errorf("it says the sequence holds %v; a walk that stopped at its budget"+
-			" cannot count what it never reached", got)
+	if got := tv.Length(); got != serval.Exactly(5000) {
+		t.Errorf("it says the sequence holds %v, want exactly five thousand -- one"+
+			" count of the top level, and nothing walked", got)
 	}
 
 	// The rows it holds are the ones at the top, which is where the reader is.
@@ -75,34 +80,28 @@ func TestATreeReadsAWindowOfADeclaredSource(t *testing.T) {
 		t.Errorf("the first row reads %q", caption(got))
 	}
 
-	// And the floor GROWS as the reader scrolls, which is the only way a tree's
-	// length is ever learned: the count is the walk.
-	was := tv.Count()
-	scrollTo(t, tv, 900)
+	// And a row nine hundred down is reachable straight away, the length being known:
+	// a thumb can be dragged to a place the view can say is there.
 	if got := tv.Item(900); got == nil || got.Text != "row00900" {
 		t.Errorf("row 900 reads %q", caption(got))
 	}
-	if now := tv.Count(); now <= was {
-		t.Errorf("after scrolling to row 900 it still says %d rows", now)
+	if got := tv.Length(); got != serval.Exactly(5000) {
+		t.Errorf("after reading row 900 it says %v", got)
 	}
-	// Scrolling did not turn the window into a log.
+	// Reading it did not turn the window into a log.
 	if n := tv.bones.held(); n > spineKept {
 		t.Errorf("after scrolling it is holding %d identities, and the cap is %d",
 			n, spineKept)
 	}
-	if _, held := tv.bones.idAt(0); held {
-		t.Error("it is still holding the row it started at")
-	}
 }
 
-// scrollTo moves the reader to a position, a window at a time.
+// scrollTo moves the reader to a position, asking for a window there.
 //
-// **A tree cannot be jumped into, and that is the model rather than a gap.** How
-// long a flattening is IS the walk, so a view that has read sixty rows knows there
-// are at least sixty and cannot know there are five thousand -- and a thumb drawn
-// against a floor shrinks as the reader scrolls rather than lying about where the
-// end is. Reaching row nine hundred means reading down to it, which is what
-// scrolling does.
+// **A tree with an expand-all in force still cannot be jumped into**, and that is
+// the model rather than a gap: under OpenAll an open node's contribution is its whole
+// subtree, and nobody has counted one. So the length is a floor, the thumb shrinks as
+// the reader scrolls, and reaching row nine hundred means reading down to it -- which
+// is what scrolling does.
 func scrollTo(t *testing.T, tv *TreeView, at int) {
 	t.Helper()
 	for step := 0; step < 2000; step++ {
@@ -637,27 +636,32 @@ func TestAWholeReadStartsAtTheTop(t *testing.T) {
 // reaches the end, and refusing a position past it made a windowed tree unjumpable
 // -- though serval answers, a scope's From being the walk's own budget.
 func TestItemAsksPastTheFloor(t *testing.T) {
+	// An expand-all, which is the state a length really is a floor in: under OpenAll
+	// an open node's contribution is a whole subtree and nobody has counted one.
 	tv := windowed(t, 10)
-	tv.SetSource(manyRows(5000))
+	src := kinWindow(t, 200, 4)
+	tv.SetSource(src)
+	src.ExpandAll()
+	tv.moved()
 
 	floor := tv.Length()
 	if floor.Exact {
 		t.Fatalf("the length reads %v; this needs a floor", floor)
 	}
-	if floor.N > 900 {
-		t.Fatalf("the floor is already %v, so 900 is not past it", floor)
+	if floor.N > 500 {
+		t.Fatalf("the floor is already %v, so 500 is not past it", floor)
 	}
 
-	if got := tv.Item(900); got == nil || got.Text != "row00900" {
-		t.Errorf("row 900 reads %q, and it is past the floor", caption(got))
+	if got := tv.Item(500); got == nil {
+		t.Error("row 500 is blank, and it is past the floor")
 	}
 	if now := tv.Length(); now.N <= floor.N {
-		t.Errorf("the floor stayed at %v after walking to row 900", now)
+		t.Errorf("the floor stayed at %v after walking to row 500", now)
 	}
 
 	// Past the END of the sequence is a blank, the walk having run out of tree.
 	if got := tv.Item(999999); got != nil {
-		t.Errorf("row 999999 reads %q over a body of five thousand", got.Text)
+		t.Errorf("row 999999 reads %q over a body of a thousand", got.Text)
 	}
 	// And before the beginning is still nothing.
 	if got := tv.Item(-1); got != nil {
@@ -698,5 +702,94 @@ func TestCollapsingOntoTheNodeMovesTheIdentityToo(t *testing.T) {
 	tv.window(tv.asking())
 	if got := tv.CurrentIndex(); got != 0 {
 		t.Errorf("a window landing moved it to %d", got)
+	}
+}
+
+// **A count earned before a change does not outlive it.** A length only ever
+// replaces one that says less, so that a notice cannot leave the thumb flickering
+// between a scale and none -- and that is right for a sequence that is still the same
+// sequence. Across a change the view cannot describe it is wrong: an exact figure
+// would outrank every honest floor that followed it, for ever.
+func TestACountDoesNotOutliveTheSequenceItCounted(t *testing.T) {
+	tv := windowed(t, 10)
+	src := kinWindow(t, 200, 4)
+	tv.SetSource(src)
+
+	// Nothing open: two hundred folders, counted.
+	if got := tv.Length(); got != serval.Exactly(200) {
+		t.Fatalf("with nothing open it says %v, want exactly the two hundred", got)
+	}
+
+	// Everything open, which is a length nobody can count -- and the old figure must
+	// not stand in for it.
+	src.ExpandAll()
+	tv.moved()
+	if got := tv.Length(); got.Exact {
+		t.Errorf("under an expand-all it still says %v", got)
+	}
+	if got := tv.Length(); got.N < 200 {
+		t.Errorf("it floors the sequence at %v, below the top level it had counted",
+			got)
+	}
+}
+
+// **A true thumb over a window, which used to be a contradiction.**
+//
+// A view that reads a screenful can say how long the whole sequence is, because a
+// flattening's length is its top level counted plus the children of every open node
+// and neither of those is a row read. So the thumb is true from the first frame and
+// the end of the sequence is reachable -- and opening a folder keeps it true, the
+// children being counted rather than walked.
+func TestAWindowedViewDrawsATrueThumb(t *testing.T) {
+	tv := windowed(t, 8)
+	tv.SetSource(kinWindow(t, 100, 4))
+
+	if got := tv.Length(); got != serval.Exactly(100) {
+		t.Fatalf("with nothing open it says %v, want exactly the hundred folders", got)
+	}
+	if n := tv.bones.held(); n >= 100 {
+		t.Errorf("it is holding %d of the hundred rows; this is meant to be a window", n)
+	}
+
+	// Opening one keeps it exact: four more rows, counted and not walked.
+	tv.ExpandItem(tv.Item(0))
+	if got := tv.Length(); got != serval.Exactly(104) {
+		t.Errorf("with one folder open it says %v, want exactly a hundred and four", got)
+	}
+	// And a second, somewhere else entirely.
+	tv.ExpandItem(tv.Item(5))
+	if got := tv.Length(); got != serval.Exactly(108) {
+		t.Errorf("with two folders open it says %v, want exactly a hundred and eight",
+			got)
+	}
+
+	// Closing takes it back, which is the same sum the other way about.
+	tv.CollapseItem(tv.Item(0))
+	if got := tv.Length(); got != serval.Exactly(104) {
+		t.Errorf("after closing one it says %v, want exactly a hundred and four", got)
+	}
+}
+
+// And an expand-all is the one state that still floors -- the thumb shrinks there,
+// which is honest: nobody has counted a subtree.
+func TestAnExpandAllStillFloorsTheView(t *testing.T) {
+	tv := windowed(t, 8)
+	src := kinWindow(t, 100, 4)
+	tv.SetSource(src)
+	if got := tv.Length(); !got.Exact {
+		t.Fatalf("with nothing open it says %v", got)
+	}
+
+	src.ExpandAll()
+	tv.moved()
+	if got := tv.Length(); got.Exact {
+		t.Errorf("under an expand-all it says %v, want a floor", got)
+	}
+	// **But a floor of at least the top level**, every one of whose rows is in the
+	// flattening -- not a floor of the rows on screen, which would be a thumb that
+	// lurched to a twelfth of its size the moment somebody expanded everything.
+	if got := tv.Length(); got.N < 100 {
+		t.Errorf("it floors the sequence at %v, below the top level it had counted",
+			got)
 	}
 }
