@@ -868,6 +868,15 @@ func aboutDesktopText() string {
 // Written out three times before this, identically each time, which is two more
 // chances than a centring calculation needs to drift.
 func (d *Desktop) showModal(mb *MessageBox) bool {
+	// **The desktop first, then the dialog on it.**
+	//
+	// Before the add, and not after: solo mode tears windows added to it onto their
+	// own surfaces, and whether that happens before or after this line depends on
+	// when the post queue next runs. Leaving solo mode first removes the question --
+	// there is a desktop, and the dialog goes on it -- so the same thing happens
+	// whatever the platform's Post does.
+	d.showDesktopToAsk()
+
 	wm := d.WindowManager()
 	if wm == nil {
 		return false
@@ -892,7 +901,7 @@ func (d *Desktop) showModal(mb *MessageBox) bool {
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
 	closeTrace("showModal: dialog %s placed at %d,%d %dx%d",
 		closeTraceWindow(&mb.Window), x, y, b.Width, b.Height)
-	d.revealModal(&mb.Window)
+	d.bringForwardToAsk(&mb.Window)
 	closeTrace("showModal: done, dialog %s", closeTraceWindow(&mb.Window))
 	return true
 }
@@ -919,32 +928,25 @@ func (d *Desktop) showModal(mb *MessageBox) bool {
 //	what a dialog from a program with no window of its own looks like everywhere
 //	else. Failing that, on a host that cannot hold a second surface, reveal the
 //	desktop: heavier, and at least visible.
-func (d *Desktop) revealModal(win *window.Window) {
-	closeTrace("revealModal: %s solo=%v", closeTraceWindow(win), d.IsSolo())
-	if d.IsSolo() {
-		// **Solo mode already gives it a surface.** A window added while solo is
-		// torn onto an OS surface of its own -- soloAdoptWindow, deferred because
-		// the add is still in flight -- which is exactly what a dialog wants.
-		// Tearing it again here would put one dialog on two surfaces, the ghost
-		// dialog the `tearing` guard was written for. So this waits for that and
-		// raises what it made.
-		d.Post(func() {
-			closeTrace("revealModal/posted: %s", closeTraceWindow(win))
-			if win.IsDetached() {
-				d.SurfaceWindow(win)
-				closeTrace("revealModal/posted: raised on its own surface")
-				return
-			}
-			closeTrace("revealModal/posted: NOTHING gave it a surface; revealing the desktop")
-			// Nothing gave it a surface, so the desktop had better be here:
-			// heavier than a dialog of its own, and the alternative is a modal
-			// question painted where nobody is looking.
-			d.ExitSoloMode()
-			d.raisePrimarySurface()
-			d.SurfaceWindow(win)
-		})
+//
+// showDesktopToAsk brings the desktop back when it is not on the screen, so that a
+// question the display cannot avoid asking has somewhere to be asked.
+//
+// Which is what show_desktop does, and is the way back a person already has: the
+// question arrives somewhere they know, alongside everything else that was on the
+// desktop, rather than as one lone window floating over an application.
+func (d *Desktop) showDesktopToAsk() {
+	if !d.IsSolo() {
 		return
 	}
+	closeTrace("showDesktopToAsk: the desktop is hidden; showing it to ask")
+	d.ExitSoloMode()
+}
+
+// bringForwardToAsk puts the dialog in front once it is on the desktop: the desktop's
+// own surface may be minimized, or sitting behind a window torn off it.
+func (d *Desktop) bringForwardToAsk(win *window.Window) {
+	closeTrace("bringForwardToAsk: %s solo=%v", closeTraceWindow(win), d.IsSolo())
 	d.raisePrimarySurface()
 	d.SurfaceWindow(win)
 }
