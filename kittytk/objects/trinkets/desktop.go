@@ -4112,46 +4112,11 @@ func (d *Desktop) tileableDesktopWindows() []*window.Window {
 	return out
 }
 
-// activateWindowFromMenu raises a window chosen from a Window menu, from
-// whichever surface it lives on, restoring it first if it was minimized.
-// A torn-off window's own OS surface is raised; an in-surface desktop
-// window is raised/activated within the desktop and the desktop's own OS
-// window is brought to the front.
+// activateWindowFromMenu is the Window menu raising the window that was picked, which is
+// bringing a window to attention like any other -- including materialising the desktop
+// when the window picked is on one that is hidden. See bringToAttention.
 func (d *Desktop) activateWindowFromMenu(win *window.Window) {
-	if win == nil {
-		return
-	}
-	d.mu.RLock()
-	hosts := make([]*window.TearOffHost, len(d.tornHosts))
-	copy(hosts, d.tornHosts)
-	surface := d.surface
-	d.mu.RUnlock()
-
-	// Torn-off window: raise its own OS surface (restore first if needed).
-	for _, th := range hosts {
-		if th.Window() == win {
-			if win.IsMinimized() {
-				win.Restore()
-			}
-			if n, ok := th.Surface().(platform.NativeSurface); ok {
-				n.Raise()
-			}
-			return
-		}
-	}
-
-	// In-surface desktop window: raise/restore within the desktop, then
-	// bring the desktop's own OS window forward.
-	if wm := d.WindowManager(); wm != nil {
-		if win.IsMinimized() {
-			wm.RestoreWindow(win)
-		} else {
-			wm.ActivateWindow(win)
-		}
-	}
-	if n, ok := surface.(platform.NativeSurface); ok {
-		n.Raise()
-	}
+	d.bringToAttention(win)
 }
 
 // buildWindowTileCascadeMenu builds the reduced Window menu shown on the

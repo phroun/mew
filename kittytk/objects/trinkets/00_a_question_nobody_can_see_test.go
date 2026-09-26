@@ -526,3 +526,73 @@ func TestClosingTheLastWindowOnTheScreenRevealsTheDesktop(t *testing.T) {
 	}
 	d.RunOn(plat)
 }
+
+// **Raising a window that lives on a hidden desktop materialises the desktop.**
+//
+// This is the Window menu listing three windows that clicking would not reveal. They
+// were docked on a desktop nobody could see, and raising a window inside a desktop that
+// is not on the screen raises nothing at all -- so the menu worked, the window was
+// activated, and the person saw no change whatever.
+//
+// Hiding the desktop does not make its windows stop existing. It makes them need it
+// back, and asking for one is when.
+func TestRaisingAWindowOnAHiddenDesktopShowsTheDesktop(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	// The host, torn out so hiding the desktop has something to promote; and another
+	// application's window, docked, which is what gets stranded.
+	host := window.NewWindow("mew")
+	host.SetMainRequested(true)
+	host.SetTearable(true)
+	d.AddApplication(&mockApp{name: "mew", main: host, windows: []*window.Window{host}})
+
+	stranded := window.NewWindow("Sulking Window")
+	d.AddApplication(&mockApp{name: "Demo", windows: []*window.Window{stranded}})
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		for _, w := range []*window.Window{host, stranded} {
+			wm.AddWindow(w)
+			w.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 300, Height: 200})
+		}
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.tearOffInPlace(host)
+		d.EnterSoloFromDesktop()
+		if !d.IsSolo() {
+			t.Fatal("harness: the desktop was not hidden")
+		}
+		if stranded.IsDetached() {
+			t.Fatal("harness: the window is not on the desktop, so nothing is stranded")
+		}
+
+		// The Window menu, picking it.
+		d.activateWindowFromMenu(stranded)
+
+		if d.IsSolo() {
+			t.Fatal("the desktop stayed hidden, so picking the window from the menu showed nothing")
+		}
+		if !stranded.IsVisible() {
+			t.Error("the window is not visible on the desktop that came back for it")
+		}
+		d.ForceQuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
+
+// And a window that has a surface of its own needs no desktop: it is already somewhere a
+// person can see, so raising it summons nothing.
+func TestRaisingATornWindowSummonsNoDesktop(t *testing.T) {
+	d, main, _, run := soloDesktop(t)
+	run(func() {
+		d.activateWindowFromMenu(main)
+		if !d.IsSolo() {
+			t.Error("a desktop was summoned to raise a window that has its own surface")
+		}
+	})
+}

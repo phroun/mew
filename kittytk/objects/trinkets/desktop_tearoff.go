@@ -415,7 +415,7 @@ func (d *Desktop) surfaceBlockingModal(win *window.Window) {
 	if wm == nil {
 		return
 	}
-	d.surfaceModal(wm.TopModalBlocking(win))
+	d.bringToAttention(wm.TopModalBlocking(win))
 }
 
 // surfaceActiveAppModal surfaces the modal of the application whose menu bar is
@@ -435,7 +435,7 @@ func (d *Desktop) surfaceActiveAppModal() {
 // that app. Used by the wallpaper-click path (surfaceActiveAppModal).
 func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
 	if wm := d.windowManager; wm != nil {
-		d.surfaceModal(wm.TopAppModal(appID))
+		d.bringToAttention(wm.TopAppModal(appID))
 	}
 }
 
@@ -445,38 +445,42 @@ func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
 // window itself cannot do -- only the desktop knows whether it is docked,
 // minimized to the dock, or torn onto an OS surface of its own.
 func (d *Desktop) SurfaceWindow(win *window.Window) {
-	d.surfaceModal(win)
+	d.bringToAttention(win)
 }
 
-// surfaceModal pulls a specific modal window to the front: if it is torn onto
-// its own OS surface, un-minimize it (OS-restore) and raise that surface back
-// over the window the user just clicked; otherwise (in-surface) restore it from
-// the dock if minimized, else raise and activate it so the user lands on it
-// ready to interact. Nil is a no-op.
-func (d *Desktop) surfaceModal(modal *window.Window) {
-	wm := d.windowManager
-	if wm == nil || modal == nil {
-		closeTrace("surfaceModal: nothing to surface (%s)", closeTraceWindow(modal))
+// bringToAttention puts one window in front of the person, wherever it lives. It is the
+// one path for that: a close somebody refused raising the window that refused, a click
+// on a blocked window raising what blocks it, the Window menu raising what was picked.
+//
+// A window on a surface of its own is restored if it is minimized at either level -- the
+// OS window, or the window's own flag -- and its surface raised. Raise alone will not
+// un-minimize an OS-minimized window, so it would otherwise stay hidden.
+//
+// **A window docked on the desktop cannot be brought to attention while the desktop is
+// not on the screen**, so the desktop is materialised for it. Hiding the desktop does
+// not make its windows stop existing; it makes them need it back. That is the same rule
+// a QUESTION about such a window follows (placeToAsk), and it is why the Window menu
+// could list windows that clicking would not reveal: they were on a desktop nobody could
+// see, and raising them raised nothing.
+func (d *Desktop) bringToAttention(win *window.Window) {
+	if win == nil {
+		closeTrace("bringToAttention: nothing to surface")
 		return
 	}
-	closeTrace("surfaceModal: %s", closeTraceWindow(modal))
-	if h := d.tornHostForWindow(modal); h != nil {
+	closeTrace("bringToAttention: %s solo=%v", closeTraceWindow(win), d.IsSolo())
+
+	if h := d.tornHostForWindow(win); h != nil {
 		surf := h.Surface()
-		// Restore before raising if the modal is minimized at EITHER level: the
-		// OS window (Minimized(), set when the user minimizes via the OS window
-		// controls - the app-level flag below doesn't capture that) or the
-		// window's own minimized flag. Raise alone won't un-minimize an
-		// OS-minimized window, so it would otherwise stay hidden.
 		osMinimized := false
 		if n, ok := surf.(platform.NativeSurface); ok {
 			osMinimized = n.Minimized()
 		}
-		if osMinimized || modal.IsMinimized() {
+		if osMinimized || win.IsMinimized() {
 			if r, ok := surf.(platform.NativeRestorer); ok {
 				r.Restore()
 			}
-			if modal.IsMinimized() {
-				modal.Restore()
+			if win.IsMinimized() {
+				win.Restore()
 			}
 		}
 		if n, ok := surf.(platform.NativeSurface); ok {
@@ -484,11 +488,21 @@ func (d *Desktop) surfaceModal(modal *window.Window) {
 		}
 		return
 	}
-	if modal.IsMinimized() {
-		wm.RestoreWindow(modal)
-	} else {
-		wm.ActivateWindow(modal)
+
+	if d.IsSolo() {
+		closeTrace("bringToAttention: it is on the desktop, which is hidden; showing it")
+		d.ExitSoloMode()
 	}
+	wm := d.WindowManager()
+	if wm == nil {
+		return
+	}
+	if win.IsMinimized() {
+		wm.RestoreWindow(win)
+	} else {
+		wm.ActivateWindow(win)
+	}
+	d.raisePrimarySurface()
 }
 
 // tearOffFollowers tears every non-tearable child of app (other than the
