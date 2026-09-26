@@ -376,6 +376,10 @@ type Desktop struct {
 	// can be waiting at once. Guarded by d.mu.
 	appQuitWanted map[ApplicationProvider]bool
 
+	// quitConfirm is the "exit the desktop?" question while it is up, so pressing the
+	// desktop's close button again joins it rather than asking twice. Guarded by d.mu.
+	quitConfirm *MessageBox
+
 	// forceClose is the "did not respond" question currently up about each window,
 	// so a second close attempt joins the answer the first is waiting for rather
 	// than putting up a second dialog about the same window. Guarded by d.mu; see
@@ -996,6 +1000,84 @@ func (d *Desktop) raisePrimarySurface() {
 		return
 	}
 	native.Raise()
+}
+
+// AskBeforeQuitting is the desktop's own close button: it asks first, and sweeps only
+// if the answer is yes.
+//
+// **Closing the desktop is not closing a window.** It ends every application running on
+// it -- the Program Manager rather than a program -- and a button that does that on one
+// click, in the corner of a window, next to the buttons that minimize and maximize it,
+// is a button in the wrong place for what it does. So it asks, and names the cost in
+// the only terms that make it a decision: how many applications go with it.
+//
+// With nothing running there is nothing to warn about and no question worth a click, so
+// it goes straight through.
+//
+// The quit it then performs is the ordinary one, which asks each application in turn
+// and stops at the first that says no. This question is not that one; it is the one
+// before it, about whether to start asking at all.
+func (d *Desktop) AskBeforeQuitting(code int) {
+	running := d.runningApplications()
+	if running == 0 {
+		closeTrace("AskBeforeQuitting: nothing is running; quitting")
+		d.QuitWithCode(code)
+		return
+	}
+
+	// **One question, however many times the button is pressed.** Pressing it again
+	// while somebody is reading this would put up a second copy of it.
+	d.mu.Lock()
+	if d.quitConfirm != nil {
+		d.mu.Unlock()
+		closeTrace("AskBeforeQuitting: already asking")
+		return
+	}
+	d.mu.Unlock()
+
+	were := "applications"
+	if running == 1 {
+		were = "application"
+	}
+	mb := NewMessageBox("Exit Desktop", fmt.Sprintf(
+		"Exiting the desktop will quit %d running %s.\n\nAre you sure?",
+		running, were), ButtonYes|ButtonNo)
+	mb.SetIcon(IconWarning)
+	// No for a dialog dismissed without a choice -- Escape, or its own [x]. The safe
+	// half: nothing has happened yet, and nothing needs to.
+	mb.SetOnFinished(func(r DialogResult) {
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+		closeTrace("AskBeforeQuitting: answered yes=%v", r == ResultYes)
+		if r == ResultYes {
+			d.QuitWithCode(code)
+		}
+	})
+
+	d.mu.Lock()
+	d.quitConfirm = mb
+	d.mu.Unlock()
+	closeTrace("AskBeforeQuitting: asking about %d running %s", running, were)
+	if !d.showModal(mb) {
+		// Nowhere to ask it, so it was not asked -- and a quit nobody confirmed does
+		// not happen.
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+	}
+}
+
+// runningApplications is how many applications have something open on the desktop,
+// which is what exiting it would end.
+func (d *Desktop) runningApplications() int {
+	n := 0
+	for _, a := range d.Applications() {
+		if len(a.Windows()) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // AskForceClose asks the PERSON whether to close a window anyway, because the
@@ -4714,7 +4796,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 	// Handle event based on type
 	switch e := event.(type) {
 	case core.QuitEvent:
-		d.QuitWithCode(0)
+		d.AskBeforeQuitting(0)
 		return true
 
 	case core.KeyPressEvent:
