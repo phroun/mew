@@ -579,7 +579,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	}
 
 	t.currentIndex = index
-	// The identity is the authority, so it is taken at the same moment. A blank has
+	// The identity is the authority, so it is taken at the same moment. A placeholder has
 	// none to take, and resolve fills it in when the record arrives.
 	t.chosen = nil
 	if index >= 0 {
@@ -638,7 +638,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		}
 	}
 
-	// A blank row names nothing, so a handler expecting a row is told nothing
+	// A placeholder names nothing, so a handler expecting a row is told nothing
 	// rather than told about a placeholder. resolve tells it when the record lands.
 	if t.onCurrentChanged != nil && index >= 0 {
 		if item := t.rowAt(index); item != nil {
@@ -682,7 +682,7 @@ func (t *TreeView) expandOrDescend(current *TreeItem) bool {
 // how much, and forgets from here DOWN where it cannot -- nothing above this row
 // moved, whatever happens beneath it.
 //
-// Which is also why the twisty flips and the blank rows appear at once, before any
+// Which is also why the twisty flips and the placeholders appear at once, before any
 // answer: laying out `Kids` rows the instant the mark moves IS the shift.
 func (t *TreeView) ExpandItem(item *TreeItem) {
 	if item.IsLeaf() || item.Expanded {
@@ -1690,7 +1690,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	if event.X >= 0 && event.X < bounds.Width && contentY >= 0 && clickedIndex >= 0 && clickedIndex < t.rowCount() {
 		item := t.rowAt(clickedIndex)
 		if item == nil {
-			// A blank: the view knows a row stands here and nothing else, so there
+			// A placeholder: the view knows a record stands here and nothing else, so there
 			// is nothing to select, expand or hand to a handler. The answer will
 			// arrive and the next click will land on a row.
 			return true

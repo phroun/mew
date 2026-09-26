@@ -109,7 +109,7 @@ func TestAListReachesAPlaceASourceWillNotJumpTo(t *testing.T) {
 	// that is where the answer began, so the two agree and there is nothing to
 	// notice.
 	if l.Item(0) == nil {
-		t.Fatal("the first row is blank")
+		t.Fatal("the first row is a placeholder")
 	}
 	if l.walks {
 		t.Fatal("it decided the source cannot jump before asking it to")
@@ -150,10 +150,10 @@ func TestASourceThatJumpsIsNeverMadeToWalk(t *testing.T) {
 	l := listOver(t, plain, 8)
 
 	if l.Item(0) == nil {
-		t.Fatal("the first row is blank")
+		t.Fatal("the first row is a placeholder")
 	}
 	if got := l.Item(300); got == nil || got.Text != "row00300" {
-		text := "<blank>"
+		text := "<placeholder>"
 		if got != nil {
 			text = got.Text
 		}
@@ -214,7 +214,7 @@ func TestAFarWalkIsBoundedByWhatTheSpineKeeps(t *testing.T) {
 		got = l.Item(rows - 1)
 	}
 	if got == nil {
-		t.Fatalf("the last row is blank after %d questions", naive.asked)
+		t.Fatalf("the last row is a placeholder after %d questions", naive.asked)
 	}
 	if got.Text != "row03999" {
 		t.Errorf("the last row reads %q", got.Text)

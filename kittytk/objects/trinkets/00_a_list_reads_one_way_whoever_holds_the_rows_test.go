@@ -308,7 +308,7 @@ func TestARowSelectedByPositionLearnsItsIdentity(t *testing.T) {
 	l.SetSource(serval.NewListSource(rows))
 	l.Count() // stated, but nothing read
 
-	// Nothing is known about where the rows are, so this row is blank.
+	// Nothing is known about where the rows are, so this row is a placeholder.
 	if _, ok := l.IDAt(30); ok {
 		t.Fatal("it named a row before reading anything")
 	}
@@ -317,7 +317,7 @@ func TestARowSelectedByPositionLearnsItsIdentity(t *testing.T) {
 		t.Fatalf("the index is %d", l.CurrentIndex())
 	}
 	if l.SelectedID() != nil {
-		t.Error("it invented an identity for a blank row")
+		t.Error("it invented an identity for a placeholder")
 	}
 
 	// The record arrives, and the same row is now named.
@@ -344,12 +344,12 @@ func TestABlankRowIsStillARow(t *testing.T) {
 	if l.Count() != 20 {
 		t.Fatalf("it counts %d rows", l.Count())
 	}
-	// Nothing read yet, so every row is blank -- and the count still says there
+	// Nothing read yet, so every row is a placeholder -- and the count still says there
 	// are twenty of them to draw.
 	if got := l.rowAt(10); got != nil {
 		t.Errorf("row 10 is %v, and nothing has been read", got)
 	}
-	if blankRow.Text != "" || !blankRow.Enabled {
-		t.Error("a blank row should be empty and not disabled")
+	if placeholderRow.Text != "" || !placeholderRow.Enabled {
+		t.Error("a placeholder should be empty and not disabled")
 	}
 }

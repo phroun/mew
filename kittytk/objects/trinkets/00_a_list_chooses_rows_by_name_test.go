@@ -141,14 +141,14 @@ func TestABlankRowIsChosenOnlyWhenEverythingIs(t *testing.T) {
 	l.extent(0, 10)
 
 	if _, ok := l.IDAt(400); ok {
-		t.Fatal("row 400 is not blank, and this is about blank rows")
+		t.Fatal("row 400 is not a placeholder, and this is about placeholders")
 	}
 	if l.IsSelected(400) {
-		t.Error("a blank row is chosen, and the selection names what is in")
+		t.Error("a placeholder is chosen, and the selection names what is in")
 	}
 	l.SelectAll()
 	if !l.IsSelected(400) {
-		t.Error("a blank row is not chosen, and the selection names what is out")
+		t.Error("a placeholder is not chosen, and the selection names what is out")
 	}
 }
 

@@ -13,11 +13,11 @@ package trinkets
 // two while a scrub settles. Anything further from the reader is dropped,
 // because a row nobody is looking at is a row that can be asked for again.
 //
-// **A row the spine cannot name is not an error.** It is a BLANK: the view
-// knows a row stands there, because it knows how long the sequence is, and
-// knows nothing else about it yet. Blank is a state a row is drawn in, not a
-// failure to draw one, and it is what lets a thumb drag stay smooth while the
-// records catch up.
+// **A record the spine cannot name is not an error.** It is a PLACEHOLDER: the view
+// knows a record stands there, because it knows how long the sequence is, and
+// knows nothing else about it yet. A placeholder is a state a row is drawn in,
+// not a failure to draw one, and it is what lets a thumb drag stay smooth while
+// the records catch up.
 //
 // # Why a held row carries a depth
 //
@@ -256,7 +256,7 @@ func distance(r run, at int) int {
 }
 
 // idAt is the identity of the row at a position, and false for a row the view
-// knows is there and nothing else about -- which is a blank, and is ordinary.
+// knows is there and nothing else about -- which is a placeholder, and is ordinary.
 func (s *spine) idAt(at int) (*serval.Value, bool) {
 	for _, r := range s.runs {
 		if at >= r.at && at < r.end() {
@@ -266,7 +266,7 @@ func (s *spine) idAt(at int) (*serval.Value, bool) {
 	return nil, false
 }
 
-// deepAt is how deep the row at a position stands, and false for a blank.
+// deepAt is how deep the row at a position stands, and false for a placeholder.
 //
 // Nought for every row of a list, which has one level. It is a tree that has
 // anything to say here, and what it says is what makes a subtree's end findable
@@ -381,14 +381,14 @@ func (s *spine) forgetFrom(at int) {
 }
 
 // grew says n rows appeared at a position: everything from there on stands n
-// further down, and the new rows are blanks.
+// further down, and the new rows are placeholders.
 //
 // **This is a tree opening a node, and it is not an invalidation.** Every level
 // is its own data set with its own cache, so no record became untrue -- what
 // changed is which levels the walk visits, and so where each row below the mark
 // stands. The view knows how far by, so it can say so rather than forgetting and
 // asking again: the rows on screen stay where they are, the twisty flips at once,
-// and the blanks fill in when the answer lands.
+// and the placeholders fill in when the answer lands.
 func (s *spine) grew(at, n int) {
 	if n <= 0 || at < 0 {
 		return

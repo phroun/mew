@@ -33,7 +33,7 @@ func rowAt(t *testing.T, s *spine, pos int) int64 {
 	t.Helper()
 	id, ok := s.idAt(pos)
 	if !ok {
-		t.Fatalf("row %d is blank, and something was expected there", pos)
+		t.Fatalf("row %d is a placeholder, and something was expected there", pos)
 	}
 	return id.Int
 }
@@ -260,7 +260,7 @@ func TestTrimmingActuallyFreesWhatItDrops(t *testing.T) {
 // below the mark STAND. So the spine has to be able to say that, or a view would
 // have to forget what it holds to learn what it already knew.
 
-// Rows appearing at a position push everything from there on down, and leave blanks
+// Rows appearing at a position push everything from there on down, and leave placeholders
 // behind them.
 func TestRowsAppearingPushWhatIsBelowThemDown(t *testing.T) {
 	s := &spine{}
@@ -275,7 +275,7 @@ func TestRowsAppearingPushWhatIsBelowThemDown(t *testing.T) {
 			t.Errorf("row %d holds %d, and nothing above the mark moved", at, got)
 		}
 	}
-	// At the mark, three blanks.
+	// At the mark, three placeholders.
 	for at := 5; at < 8; at++ {
 		if _, ok := s.idAt(at); ok {
 			t.Errorf("row %d came back named, and three rows appeared there", at)
@@ -402,7 +402,7 @@ func TestAHeldRowKnowsHowDeepItStands(t *testing.T) {
 	for at, want := range []int{0, 1, 2, 2, 1, 0} {
 		got, ok := s.deepAt(at)
 		if !ok {
-			t.Fatalf("row %d is blank", at)
+			t.Fatalf("row %d is a placeholder", at)
 		}
 		if got != want {
 			t.Errorf("row %d stands at depth %d, want %d", at, got, want)

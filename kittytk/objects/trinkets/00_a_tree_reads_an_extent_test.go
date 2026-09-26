@@ -119,7 +119,7 @@ func scrollTo(t *testing.T, tv *TreeView, at int) {
 	t.Fatalf("scrolling never reached %d; it stopped at %d", at, tv.Count())
 }
 
-// A row the view is not holding is a BLANK, which is a state a row is drawn in and
+// A row the view is not holding is a PLACEHOLDER, which is a state a row is drawn in and
 // not a failure to draw one.
 func TestARowOutsideTheWindowIsBlank(t *testing.T) {
 	tv := tall(t, 10)
@@ -132,11 +132,11 @@ func TestARowOutsideTheWindowIsBlank(t *testing.T) {
 	if got := tv.rowAt(far); got != nil {
 		t.Errorf("rowAt says row %d is %q", far, got.Text)
 	}
-	if got := tv.drawRow(far); got != blankTreeRow {
-		t.Errorf("drawRow would paint %q, want a blank", caption(got))
+	if got := tv.drawRow(far); got != placeholderTreeRow {
+		t.Errorf("drawRow would paint %q, want a placeholder", caption(got))
 	}
-	if blankTreeRow.Text != "" || !blankTreeRow.Enabled || !blankTreeRow.IsLeaf() {
-		t.Error("a blank is not an empty enabled leaf")
+	if placeholderTreeRow.Text != "" || !placeholderTreeRow.Enabled || !placeholderTreeRow.IsLeaf() {
+		t.Error("a placeholder is not an empty enabled leaf")
 	}
 }
 
@@ -234,11 +234,11 @@ func TestOpeningANodeShiftsTheRowsBelowIt(t *testing.T) {
 	}
 }
 
-// caption is a row's text, and a word for a blank, so a failure reads as a row
+// caption is a row's text, and a word for a placeholder, so a failure reads as a row
 // rather than as a struct.
 func caption(item *TreeItem) string {
 	if item == nil {
-		return "<blank>"
+		return "<placeholder>"
 	}
 	return item.Text
 }
@@ -266,7 +266,7 @@ func TestAGapInWhatIsHeldIsAGapInTheParentage(t *testing.T) {
 	}
 	far := tv.rowAt(601)
 	if far == nil {
-		t.Fatalf("row 601 is blank; the view holds %q", captionsHeld(tv))
+		t.Fatalf("row 601 is a placeholder; the view holds %q", captionsHeld(tv))
 	}
 	if far.Level() != 1 {
 		t.Fatalf("row 601 reads %q at level %d, want a child", far.Text, far.Level())
@@ -283,9 +283,9 @@ func TestAGapInWhatIsHeldIsAGapInTheParentage(t *testing.T) {
 
 // **And the rows appear the INSTANT the twisty flips**, before anything answers.
 //
-// That is #60, and it is the same move: laying out `Kids` blanks is the shift. The
+// That is #60, and it is the same move: laying out `Kids` placeholders is the shift. The
 // check is made against the spine directly, because a source holding its records
-// answers inside the call that asked -- so the only way to see the blanks is to
+// answers inside the call that asked -- so the only way to see the placeholders is to
 // look before the reading happens.
 func TestOpeningLaysTheRowsOutBeforeTheyArrive(t *testing.T) {
 	tv := tall(t, 40)
@@ -311,9 +311,9 @@ func TestOpeningLaysTheRowsOutBeforeTheyArrive(t *testing.T) {
 			t.Errorf("row %d came back named before anything answered", k)
 		}
 	}
-	// A blank draws as a blank rather than as nothing.
-	if got := tv.drawRow(2); got != blankTreeRow {
-		t.Errorf("row 2 would paint %q, want a blank", caption(got))
+	// A placeholder draws as one rather than as nothing.
+	if got := tv.drawRow(2); got != placeholderTreeRow {
+		t.Errorf("row 2 would paint %q, want a placeholder", caption(got))
 	}
 }
 
@@ -605,7 +605,7 @@ func TestAWindowHoldsRowsAboveTheReaderToo(t *testing.T) {
 			at, tv.scrollOffset)
 	}
 	if _, held := tv.bones.idAt(tv.scrollOffset - 1); !held {
-		t.Errorf("the row just above the reader is blank; the Extent is %d from %d",
+		t.Errorf("the row just above the reader is a placeholder; the Extent is %d from %d",
 			n, at)
 	}
 }
@@ -625,7 +625,7 @@ func TestAWholeReadStartsAtTheTop(t *testing.T) {
 		t.Errorf("a whole read asks from %d, want the top", at)
 	}
 	if got := tv.rowAt(0); got == nil {
-		t.Error("the first row is blank over a source that holds every row")
+		t.Error("the first row is a placeholder over a source that holds every row")
 	}
 	if n := tv.bones.held(); n != 40 {
 		t.Errorf("it holds %d of its own forty items", n)
@@ -653,7 +653,7 @@ func TestItemAsksPastTheFloor(t *testing.T) {
 	}
 
 	if got := tv.Item(500); got == nil {
-		t.Error("row 500 is blank, and it is past the floor")
+		t.Error("row 500 is a placeholder, and it is past the floor")
 	}
 	if now := tv.Length(); now.N <= floor.N {
 		t.Errorf("the floor stayed at %v after walking to row 500", now)

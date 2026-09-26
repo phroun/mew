@@ -49,9 +49,9 @@ code says and what we say.
 - **A placeholder record** is a record a view knows is THERE and knows nothing
   else about yet. Not an error and not a failure to draw: it is drawn in its
   place, with its banding and its selection bar and no values, and it is what
-  lets a thumb drag stay smooth while the records catch up. *(The code still
-  spells this `blank` in about thirty places — `blankRow`, `blankTreeRow`, "a
-  BLANK" in the prose. That is a rename waiting to happen.)*
+  lets a thumb drag stay smooth while the records catch up. The code spells it
+  `placeholderRow` and `placeholderTreeRow`; `blank` elsewhere means an empty
+  cell, an unused width or a bare caption, and is not this.
 - **An Extent is a stretch of a DataSet that somebody HOLDS**, and never a
   window — a window is a KittyTK UI object, and the display's word has no
   business in the data layer. `serval/coverage.go` owns the type: named by its

@@ -81,7 +81,7 @@ type ListView struct {
 	valueField   string
 	values       map[string]*serval.Value // what a row means, by identity
 
-	// The current row, as both of the things it is. A blank row is selected by
+	// The current row, as both of the things it is. A placeholder is selected by
 	// POSITION with no identity yet -- which keyboard scrolling requires, since
 	// moving the selection and scrolling are one motion -- and becomes selected
 	// by identity when the record arrives.
@@ -338,7 +338,7 @@ func (l *ListView) SetCurrentIndex(index int) {
 	// Announce selection change for accessibility
 	if index >= 0 && index < l.Count() {
 		if am := core.FindAccessibilityManager(l); am != nil {
-			// A blank row is announced as its place and nothing else: it is a
+			// A placeholder is announced as its place and nothing else: it is a
 			// row that is there, and saying so is truer than saying nothing
 			// while a screen reader waits for the record to arrive.
 			said := ""
@@ -481,7 +481,7 @@ func (l *ListView) Paint(p *core.Painter) {
 		// smooth: the rows are where they will be, and the words catch up.
 		item := l.rowAt(itemIndex)
 		if item == nil {
-			item = blankRow
+			item = placeholderRow
 		}
 		itemY := top + core.Unit(i)*metrics.UnitsPerCellHeight
 
@@ -1330,7 +1330,7 @@ func (l *ListView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 	}
 	item := l.rowAt(at)
 	if item == nil {
-		return "", core.UnitRect{}, false // a blank row has nothing to say yet
+		return "", core.UnitRect{}, false // a placeholder has nothing to say yet
 	}
 	x := l.rowTextX(metrics, item)
 	avail := bounds.Width - x

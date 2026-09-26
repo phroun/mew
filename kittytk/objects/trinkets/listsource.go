@@ -304,7 +304,7 @@ func (s *rowSink) Placed(c serval.Complete) { s.begin = c.First }
 //
 // For records held in this process that is inside the Read that asked; for
 // records somebody had to fetch it is whenever they arrive, and the list repaints
-// because rows that were blank are not any more.
+// because rows that were placeholders are not any more.
 func (s *rowSink) Done(c serval.Complete) {
 	s.done = c
 	s.settle()
@@ -324,7 +324,8 @@ func (s *rowSink) take(id *serval.Value, fields serval.Record) {
 // Where the answer says NOTHING, the list uses what it expected. That is not a
 // guess: the list chose the place it asked from, and asked either past a record
 // it holds or at a position, so it knows what it asked for. A source that will
-// not say where it began has not contradicted that, and leaving the rows blank
+// not say where it began has not contradicted that, and leaving the rows as
+// placeholders
 // instead would mean a list could never fill them from such a source at all.
 //
 // What is never done is writing a run at a position NOBODY chose. A run put down
@@ -452,7 +453,7 @@ func (l *ListView) rowAt(pos int) *ListItem {
 	return nil
 }
 
-// blankRow is what a row the list cannot name yet is drawn as: a place with no
+// placeholderRow is what a record the list cannot name yet is drawn as: a place with no
 // words in it. Enabled, because a row nobody has described is not a row somebody
 // has described as unavailable.
-var blankRow = &ListItem{Enabled: true}
+var placeholderRow = &ListItem{Enabled: true}

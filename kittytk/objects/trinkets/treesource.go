@@ -140,7 +140,7 @@ func (t *TreeView) reach() int {
 // **A whole-sequence read starts at the TOP.** That is what reading the whole
 // sequence means -- a view of its own items holds every one of them -- and asking
 // for all of them FROM where the reader happens to be standing left everything
-// above the viewport a blank, which is how a selection scrolled past came back
+// above the viewport a placeholder, which is how a selection scrolled past came back
 // unplaceable over a source that holds all its rows.
 //
 // **And an Extent starts a screenful ABOVE the reader**, not at it. `treeReach` says
@@ -347,7 +347,7 @@ func (t *TreeView) Length() serval.RecordCount {
 // business; it is not a bound on what a caller may ask about.
 //
 // The cost is the walk down to the position, paid on a deliberate act. A position
-// past the end of the sequence answers a blank, the walk having run out of tree.
+// past the end of the sequence answers a placeholder, the walk having run out of tree.
 func (t *TreeView) Item(at int) *TreeItem {
 	if at < 0 {
 		return nil
@@ -356,25 +356,25 @@ func (t *TreeView) Item(at int) *TreeItem {
 	return t.rowAt(at)
 }
 
-// blankTreeRow is what a row the view cannot name yet is drawn as: a place with no
+// placeholderTreeRow is what a record the view cannot name yet is drawn as: a place with no
 // words in it.
 //
 // Enabled, because a row nobody has described is not a row somebody has described
 // as unavailable. A leaf standing at the top, because a twisty or an indent on a row
 // nothing is known about would be a claim about a shape nobody has seen.
-var blankTreeRow = &TreeItem{Enabled: true}
+var placeholderTreeRow = &TreeItem{Enabled: true}
 
 // drawRow is the item to PAINT at a position: the row where there is one, and a
-// blank where the view knows a row stands and knows nothing else about it.
+// a placeholder where the view knows a record stands and knows nothing else about it.
 //
 // It is kept apart from rowAt, which tells the truth. Everything that DECIDES
 // something -- a click, an edit, a selection -- has to be able to tell a row from a
-// blank, and everything that DRAWS has to put something in the line either way.
+// placeholder, and everything that DRAWS has to put something in the line either way.
 func (t *TreeView) drawRow(at int) *TreeItem {
 	if item := t.rowAt(at); item != nil {
 		return item
 	}
-	return blankTreeRow
+	return placeholderTreeRow
 }
 
 // held is every row the view can name, in position order, with where each one
@@ -382,7 +382,7 @@ func (t *TreeView) drawRow(at int) *TreeItem {
 //
 // What a walk over the whole flattening used to be. A caller that wants to look
 // at every row -- measuring a column, searching for a caption -- can look only at
-// the rows the view HOLDS, because the rest are blanks and a blank has nothing to
+// the rows the view HOLDS, because the rest are placeholders and a placeholder has nothing to
 // measure. A caller that needs them all has to ask for them all, and saying so
 // here is what stops one quietly reading an Extent and calling it the sequence.
 func (t *TreeView) held() []int {
@@ -626,7 +626,7 @@ func (s *treeSink) Placed(c serval.Complete) { s.begin = c.First }
 //
 // For a tree over records in hand that is inside the Read that asked; for one
 // whose levels have to be fetched it is whenever they arrive, and the view
-// repaints because rows that were blank are not any more.
+// repaints because rows that were placeholders are not any more.
 func (s *treeSink) Done(c serval.Complete) {
 	s.done = c
 	s.settle()
@@ -1250,7 +1250,7 @@ func (t *TreeView) tellMarks(item *TreeItem, open bool) bool {
 // So the question is never whether to invalidate. It is whether the view can say
 // how far the rows below the mark moved. Where it can, it shifts and keeps
 // everything -- the rows on screen stay where they are, the twisty flips at once,
-// and the blanks fill in behind. Where it cannot, it forgets from the mark DOWN,
+// and the placeholders fill in behind. Where it cannot, it forgets from the mark DOWN,
 // which costs a re-ask and not a re-fetch: the levels' caches still hold every
 // record either way.
 
@@ -1329,7 +1329,7 @@ func (t *TreeView) closing(at int) int {
 // opened says the row at a position has been opened, and moves what the view
 // holds rather than forgetting it.
 //
-// This is #60 and #64 in one move, because they were one move: laying the blank
+// This is #60 and #64 in one move, because they were one move: laying the placeholder
 // rows out the instant the twisty flips IS the shift, done before the records
 // arrive. A reader clicking a folder sees it open at once, with as many empty rows
 // under it as it has children, and the captions land when the answer does.
