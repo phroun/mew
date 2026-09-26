@@ -196,7 +196,18 @@ func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 }
 
 // createButtons creates the dialog buttons for the content.
+//
+// **It builds the whole row, so it starts from nothing.** The buttons ARE the
+// row -- Children, hit testing, layout and paint all read `buttonTrinkets` and
+// nothing else -- so a call that added to them left the previous row on the
+// screen underneath the new one. Over the wire the buttons arrive one flag at a
+// time (`yes no` is two properties, not one), so `yes` built a Yes and `no`
+// rebuilt Yes and No on top of it: a dialog with two Yes buttons, the first of
+// them a ghost of the set before.
 func (c *messageBoxContent) createButtons(buttons DialogButton) {
+	c.buttonTrinkets = nil
+	c.buttonResults = nil
+
 	buttonDefs := []struct {
 		flag   DialogButton
 		text   string
