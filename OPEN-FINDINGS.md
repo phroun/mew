@@ -105,43 +105,37 @@ Anchor: `objects/trinkets/dock_protocol.go:53` is where the `window` property is
 bound; `objects/trinkets/desktop.go:831` and `dock_protocol.go:89` construct the
 `DockEntry`. *Anchors verified; the capture-at-append claim is not re-verified.*
 
-### A bundle load's complaints have nowhere to go
-*Researched 2026-09-26. Anchors verified.*
+### A bundle load's complaints — **SETTLED 2026-09-26, one case left**
 
-`display/bundleload.go` builds them (`Trouble`, appended at :445) and returns them
-(`Loaded.Trouble`, :122), and nothing outside that file reads the field.
-`display/bundlenames.go:68-71` drops them and says why: *"There is no statement for
-saying so back across the wire yet, so it is dropped here rather than turned into a
-failure it is not."* These are the SOFT ones -- the load succeeded and an optional
-include was not there. A hard failure already travels: the statement is refused and
-the reason goes back.
+They used to go nowhere: `display/bundleload.go` built them, returned them as
+`Loaded.Trouble`, and nothing outside that file read the field. They now go two
+ways, and what is left is one case rather than a design.
 
-The trinket's own refusal line (`objects/trinkets/trouble.go`) is NOT the answer,
-though today's single call path makes it look like one. `findSource` is reached only
-from the `source=` property of a ListView or TreeView, so every bundle load
-currently happens under a trinket -- an accident of what has been built, not a
-property of bundles. A bundle is a store of records, loaded FOR somebody, and a
-trinket is only one possible somebody. Routing the diagnostics through whichever
-trinket happened to trigger the load would bake that accident in.
+**To the application, on the reply to the batch that caused the load.** The
+`trouble` statement -- `trouble about="bundle:papers" text="..."` -- travels
+display to app immediately before that batch's reply. It is not an event, for the
+reason answers are not events: a complaint is solicited, and an event would pass
+the subscription filter and reach an app that had not asked. The three clients
+gather them onto the reply (`Reply.Trouble`, `last_trouble`,
+`kt_trouble_count`/`kt_trouble_at`), and `testdata/trouble.wire` is the corpus all
+three answer.
 
-Three channels, not exclusive:
+**And to the display's own log**, which the Event Viewer shows as an `Error` row
+keyed by the name that was being loaded (`Desktop.LogError`). Held whether or not
+that window is open, because the interesting ones happen while nobody is watching.
 
-1. **On the reply to the statement that caused the load.** Needs a wire shape for a
-   complaint that is not a refusal, and therefore the four things: Go, C, Python,
-   corpus.
-2. **A connection-level notice to the application**, tied to no object -- the app
-   decides whether to log it, show it or ignore it. Nearest to `error text=`, which
-   already carries the hard case.
-3. **The display's own diagnostics**, no wire change: somewhere a developer can
-   read them.
+The trinket's own refusal line was NOT the answer, and the reasoning is worth
+keeping: `findSource` is reached only from the `source=` property of a ListView or
+TreeView, so every bundle load currently happens under a trinket -- an accident of
+what has been built, not a property of bundles. A bundle is loaded FOR somebody and
+a trinket is only one possible somebody.
 
-The plumbing blocks all three either way: `SourceFinder` returns `(Source, error)`
-and has no room for complaints, so they die at `bundlenames.go:63` whatever is
-decided. Giving `LoadBundle`'s caller a way to receive them, without yet deciding
-where they go, is the small reversible step.
-
-Note also that `display.Trouble` and `trinkets.Trouble` are now two different types
-with one name.
+**What is left.** A load with no statement behind it -- a preload, a tool, anything
+that is not a connection's batch -- has nobody to tell, so it reaches the log and
+stops there. That is by design rather than an omission: the second channel a
+proposal named (a connection-level notice tied to no object, nearest to
+`error text=`) has no caller yet, and building it before there is one would be
+guessing at what it should carry.
 
 ---
 
