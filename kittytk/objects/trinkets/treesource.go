@@ -100,21 +100,21 @@ func TreeFieldNames() serval.TreeFields { return treeFields }
 const treeReach = 3
 
 // everyTreeRow is the count a WHOLE flattening is read with -- a ceiling against
-// a source that would answer forever, rather than a window.
+// a source that would answer forever, rather than an Extent.
 const everyTreeRow = 1 << 30
 
 // reach is how many rows this view asks for.
 //
-// **A tree of its OWN items reads all of them, and that is a window declined
-// rather than a window forgotten.** A made source's rows are built out of the very
+// **A tree of its OWN items reads all of them, and that is an Extent declined
+// rather than an Extent forgotten.** A made source's rows are built out of the very
 // items this view is holding -- makeSource walks them on every rebuild -- so
-// reading a window of them saves no memory, no decoding and no round trip, and
+// reading an Extent of them saves no memory, no decoding and no round trip, and
 // costs a question every time the reader scrolls. It also keeps two answers a
-// whole sequence gives and a window cannot: an exact count without a walk to earn
+// whole sequence gives and an Extent cannot: an exact count without a walk to earn
 // it, and a position for any item, which is what a resort following its selection
 // needs.
 //
-// The cost a window exists to avoid is somewhere else entirely: a DECLARED source,
+// The cost an Extent exists to avoid is somewhere else entirely: a DECLARED source,
 // whose records have to be fetched, and whose hundred thousand rows were being
 // answered in full to fill forty lines -- and, past the cache's budget, answered
 // again and again because the walk never settled.
@@ -143,7 +143,7 @@ func (t *TreeView) reach() int {
 // above the viewport a blank, which is how a selection scrolled past came back
 // unplaceable over a source that holds all its rows.
 //
-// **And a window starts a screenful ABOVE the reader**, not at it. `treeReach` says
+// **And an Extent starts a screenful ABOVE the reader**, not at it. `treeReach` says
 // the rows on show and one either side, and asking from the scroll offset only ever
 // bought the screenful below: scrolling back one line was a fresh question every
 // time, for rows the view had been holding a moment earlier.
@@ -151,7 +151,7 @@ func (t *TreeView) reach() int {
 // `everyTreeRow` is three hundred million rows, so the arithmetic below clamps to
 // nought for any scroll offset anybody could reach. It says the intent directly
 // rather than resting on that, and it is what stops a smaller ceiling than
-// `everyTreeRow` quietly windowing a source that is meant to be read whole.
+// `everyTreeRow` quietly taking an Extent of a source that is meant to be read whole.
 func (t *TreeView) asking() (int, int) {
 	n := t.reach()
 	if n >= everyTreeRow {
@@ -164,11 +164,11 @@ func (t *TreeView) asking() (int, int) {
 	return at, n
 }
 
-// window makes sure the spine can name the rows from a position on, asking the
+// extent makes sure the spine can name the rows from a position on, asking the
 // sequence about the ones it cannot.
 //
 // It asks for the stretch WHOLE rather than for the gaps in it, for the same
-// reason a list does: a window is a screenful, the answer is one question, and
+// reason a list does: an Extent is a screenful, the answer is one question, and
 // three questions to fill three holes cost three times as much as one for all of
 // it.
 //
@@ -176,9 +176,9 @@ func (t *TreeView) asking() (int, int) {
 // on every rebuild, which for a hundred thousand rows across a connection is the
 // whole body answered to fill forty lines -- and, past the cache's budget, a walk
 // that never settled. serval's flattening takes the scope as a budget and asks
-// each level for no more than the walk still needs, so a window here is a window
+// each level for no more than the walk still needs, so an Extent here is an Extent
 // all the way down.
-func (t *TreeView) window(at, n int) {
+func (t *TreeView) extent(at, n int) {
 	if n <= 0 {
 		return
 	}
@@ -254,7 +254,7 @@ func (t *TreeView) ask(at, n int) {
 		return
 	}
 	t.asks++
-	t.window(at, n)
+	t.extent(at, n)
 }
 
 // current reports whether an answer is still the one being waited for.
@@ -275,7 +275,7 @@ func (t *TreeView) spineHolds(at, n int) bool {
 // **The viewport is asked for first, and that is not laziness dressed up.** A
 // list's source counts without being read -- a ListSource knows how many rows it
 // holds -- but a tree's count IS the walk: a flattening that has not happened has
-// counted nothing, so a view that read the count before asking for a window would
+// counted nothing, so a view that read the count before asking for an Extent would
 // be told nought rows for ever and never ask.
 //
 // What comes back may be a floor. A walk that stopped where its budget ran out
@@ -316,7 +316,7 @@ func (t *TreeView) rowAt(at int) *TreeItem {
 // Count is how many rows the tree draws.
 //
 // **It may be a FLOOR, and that is the honest answer rather than a shortcoming.**
-// A tree's count is its walk, so a view that has read a window of a declared
+// A tree's count is its walk, so a view that has read an Extent of a declared
 // source has been told "at least this many" -- and a thumb drawn against a floor
 // shrinks as the reader scrolls rather than lying about where the end is. Length
 // says which of the two it is.
@@ -335,12 +335,12 @@ func (t *TreeView) Length() serval.RecordCount {
 // Item is the row at a position, and nil for one off the beginning.
 //
 // Nil is also what a BLANK row answers -- one the view knows is there and knows
-// nothing else about yet, which is every row of a windowed tree until the answer
+// nothing else about yet, which is every row of a tree read by Extents until the answer
 // arrives. Asking for one asks the source about it, so a caller drawing rows
 // should ask for the stretch it wants rather than one row at a time.
 //
 // **It will ask past the floor, and that is the point.** A tree's length is a floor
-// until the walk reaches the end, so refusing a position past it made a windowed
+// until the walk reaches the end, so refusing a position past it made an Extent-reading
 // tree unjumpable: the view would not ask, though serval answers -- a scope's From
 // IS the walk's budget, so asking for row nine hundred walks to row nine hundred and
 // says so. The floor bounds what a THUMB can express, which is `clampScrollOffset`'s
@@ -352,7 +352,7 @@ func (t *TreeView) Item(at int) *TreeItem {
 	if at < 0 {
 		return nil
 	}
-	t.window(at, 1)
+	t.extent(at, 1)
 	return t.rowAt(at)
 }
 
@@ -384,7 +384,7 @@ func (t *TreeView) drawRow(at int) *TreeItem {
 // at every row -- measuring a column, searching for a caption -- can look only at
 // the rows the view HOLDS, because the rest are blanks and a blank has nothing to
 // measure. A caller that needs them all has to ask for them all, and saying so
-// here is what stops one quietly reading a window and calling it the sequence.
+// here is what stops one quietly reading an Extent and calling it the sequence.
 func (t *TreeView) held() []int {
 	out := make([]int, 0, t.bones.held())
 	for _, r := range t.bones.runs {
@@ -580,7 +580,7 @@ func (t *TreeView) seedMarks(src *serval.TreeSource) {
 	walk(t.rootItems, nil)
 }
 
-// A treeSink is one window of the flattening arriving.
+// A treeSink is one Extent of the flattening arriving.
 //
 // It takes PLACES as well as records, which is what lets a drag stay smooth: what
 // a view needs first is where the rows are and not what they hold, so an identity
@@ -703,7 +703,7 @@ func (s *treeSink) settle() {
 // sequence read entire. Two things follow, and both are honest rather than
 // regrettable.
 //
-// **A row whose parent is above the window has no parent here.** The view is not
+// **A row whose parent is above the Extent has no parent here.** The view is not
 // holding it, so there is nothing to point at. `Level()` answers from the depth
 // the source SAID rather than from a walk up, which is why the indent is still
 // right where the parentage stops -- and it is why serval puts a depth on every
@@ -711,12 +711,12 @@ func (s *treeSink) settle() {
 //
 // **And the top of a run is a place the ancestry is unknown**, not a place the
 // rows are roots. A gap in the spine is a gap in what can be reconstructed, so the
-// stack starts empty at each run and the first rows of a scrolled window hang off
+// stack starts empty at each run and the first rows of a scrolled Extent hang off
 // nothing until the rows above them arrive.
 //
 // `fromTop` is the depth-nought rows held, which is what RootItems answers for a
 // declared source: a caller asking a tree what stands at the top is asking about
-// the sequence, and a view holding a window of the middle of one truthfully has
+// the sequence, and a view holding an Extent of the middle of one truthfully has
 // none of it.
 func (t *TreeView) hang() {
 	if t.source == nil {
@@ -778,7 +778,7 @@ func (t *TreeView) SetSource(src serval.Source) {
 	// **And what the old sequence taught it.** A length only ever replaces one
 	// that says less, which is right within one sequence and wrong across a change
 	// of them: a count earned by walking a small source to its end would then
-	// outrank the floor a window of a hundred thousand honestly reports, and the
+	// outrank the floor an Extent of a hundred thousand honestly reports, and the
 	// view would draw a thumb for fifteen rows over a body it had barely started.
 	t.bones = spine{}
 	t.asks++
@@ -1204,7 +1204,7 @@ func (t *TreeView) marks() *serval.TreeSource {
 //
 // **The row carries it, and it had to start carrying it.** This walked back up
 // `Parent` before, which works for a view holding the whole pre-order and cannot
-// work for one holding a window: everything above the window is exactly what the
+// work for one holding an Extent: everything above the Extent is exactly what the
 // view declined to hold, so a row forty deep in a scrolled tree had a chain of one
 // segment and clicking its twisty opened a node that is not there. Nothing
 // reported that, the marks having no opinion about a chain nobody walked.
@@ -1380,5 +1380,5 @@ func (t *TreeView) moved() {
 	t.asks++
 	t.bones = spine{}
 	t.clampScrollOffset()
-	t.window(t.asking())
+	t.extent(t.asking())
 }

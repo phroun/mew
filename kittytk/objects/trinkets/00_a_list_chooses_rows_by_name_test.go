@@ -16,7 +16,7 @@ func multi(n int) *ListView {
 	// row, and in single selection that is a choice. These are about choosing,
 	// so they start from nothing chosen.
 	l.ClearSelection()
-	l.window(0, n)
+	l.extent(0, n)
 	return l
 }
 
@@ -82,7 +82,7 @@ func TestChoosingEverythingNamesNothing(t *testing.T) {
 	l := NewListView()
 	l.SetSelectionMode(MultiSelection)
 	l.SetSource(serval.NewListSource(rows))
-	l.window(0, 30) // thirty rows of a hundred thousand
+	l.extent(0, 30) // thirty rows of a hundred thousand
 
 	l.SelectAll()
 	if !l.SelectsEverything() {
@@ -138,7 +138,7 @@ func TestABlankRowIsChosenOnlyWhenEverythingIs(t *testing.T) {
 	l := NewListView()
 	l.SetSelectionMode(MultiSelection)
 	l.SetSource(serval.NewListSource(rows))
-	l.window(0, 10)
+	l.extent(0, 10)
 
 	if _, ok := l.IDAt(400); ok {
 		t.Fatal("row 400 is not blank, and this is about blank rows")
@@ -164,7 +164,7 @@ func TestWhatIsChosenSurvivesScrollingAway(t *testing.T) {
 	l.SetSelectionMode(MultiSelection)
 	l.SetSource(serval.NewListSource(rows))
 
-	l.window(0, 20)
+	l.extent(0, 20)
 	l.SetSelected(3, true)
 	chosen := l.SelectedIDs()
 	if len(chosen) != 1 || chosen[0].Str != "k0003" {
@@ -173,7 +173,7 @@ func TestWhatIsChosenSurvivesScrollingAway(t *testing.T) {
 
 	// Scroll far enough that the spine has let those rows go entirely.
 	for at := 0; at < 2000; at += 40 {
-		l.window(at, 40)
+		l.extent(at, 40)
 	}
 	if _, ok := l.IDAt(3); ok {
 		t.Fatal("row 3 is still held, and this is about rows that are not")
@@ -184,7 +184,7 @@ func TestWhatIsChosenSurvivesScrollingAway(t *testing.T) {
 		t.Errorf("after scrolling away it chose %v, want k0003", still)
 	}
 	// And coming back to it finds it chosen again.
-	l.window(0, 20)
+	l.extent(0, 20)
 	if !l.IsSelected(3) {
 		t.Error("the row came back and was not chosen")
 	}
@@ -197,13 +197,13 @@ func TestInsertingIntoAPlainListMovesWhatIsChosen(t *testing.T) {
 	l.SetSelected(4, true)
 
 	l.InsertItem(1, NewListItem("wedged"))
-	l.window(0, l.Count())
+	l.extent(0, l.Count())
 	if got := fmt.Sprint(l.SelectedIndexes()); got != "[5]" {
 		t.Errorf("after an insert above it, the chosen row is at %s, want [5]", got)
 	}
 
 	l.RemoveItem(0)
-	l.window(0, l.Count())
+	l.extent(0, l.Count())
 	if got := fmt.Sprint(l.SelectedIndexes()); got != "[4]" {
 		t.Errorf("after a remove above it, the chosen row is at %s, want [4]", got)
 	}
@@ -216,7 +216,7 @@ func TestRemovingAChosenRowUnchoosesIt(t *testing.T) {
 	l.SetSelected(2, true)
 
 	l.RemoveItem(2)
-	l.window(0, l.Count())
+	l.extent(0, l.Count())
 	if got := l.SelectedIndexes(); len(got) != 0 {
 		t.Errorf("after removing the chosen row it chose %v", got)
 	}
@@ -225,7 +225,7 @@ func TestRemovingAChosenRowUnchoosesIt(t *testing.T) {
 // NoSelection chooses nothing and refuses to be told otherwise.
 func TestNoSelectionChoosesNothing(t *testing.T) {
 	l := filled(5)
-	l.window(0, 5)
+	l.extent(0, 5)
 	l.SetSelectionMode(MultiSelection)
 	l.SetSelected(2, true)
 
@@ -243,7 +243,7 @@ func TestNoSelectionChoosesNothing(t *testing.T) {
 // Single selection refuses SelectAll, which would be a contradiction.
 func TestSingleSelectionRefusesEverything(t *testing.T) {
 	l := filled(5)
-	l.window(0, 5)
+	l.extent(0, 5)
 	l.SetCurrentIndex(2)
 
 	l.SelectAll()
@@ -266,7 +266,7 @@ func TestSelectedIDsComeBackInOrder(t *testing.T) {
 		l := NewListView()
 		l.SetSelectionMode(MultiSelection)
 		l.SetSource(serval.NewListSource(rows))
-		l.window(0, 40)
+		l.extent(0, 40)
 		for _, at := range []int{31, 2, 17, 5, 28} {
 			l.SetSelected(at, true)
 		}
@@ -288,14 +288,14 @@ func TestAnInsertAtAChosenRowMovesIt(t *testing.T) {
 	l.SetSelected(1, true)
 
 	l.InsertItem(1, NewListItem("wedged"))
-	l.window(0, l.Count())
+	l.extent(0, l.Count())
 	if got := fmt.Sprint(l.SelectedIndexes()); got != "[2]" {
 		t.Errorf("an insert at the chosen row left it at %s, want [2]", got)
 	}
 
 	// And one below it does not move it.
 	l.InsertItem(4, NewListItem("later"))
-	l.window(0, l.Count())
+	l.extent(0, l.Count())
 	if got := fmt.Sprint(l.SelectedIndexes()); got != "[2]" {
 		t.Errorf("an insert below the chosen row moved it to %s", got)
 	}

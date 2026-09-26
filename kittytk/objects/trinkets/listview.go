@@ -70,7 +70,7 @@ type ListView struct {
 	// `from` is never found out this way and is never made to walk.
 	//
 	// It only ever becomes true. A source that could not skip once will not learn to,
-	// and a sequence stated afresh is a fresh spine and a fresh question. See window.
+	// and a sequence stated afresh is a fresh spine and a fresh question. See extent.
 	walks      bool
 	fromSource map[string]*ListItem // rows a source named, by identity
 
@@ -264,7 +264,7 @@ func (l *ListView) Item(index int) *ListItem {
 	if index < 0 || index >= l.Count() {
 		return nil
 	}
-	l.window(index, 1)
+	l.extent(index, 1)
 	return l.rowAt(index)
 }
 
@@ -325,7 +325,7 @@ func (l *ListView) SetCurrentIndex(index int) {
 		// resolve fills it in when the record arrives.
 		l.chosen.clear()
 		if index >= 0 {
-			l.window(index, 1)
+			l.extent(index, 1)
 			if id, ok := l.bones.idAt(index); ok {
 				l.chosen.only(id)
 			}

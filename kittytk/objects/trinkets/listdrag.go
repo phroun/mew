@@ -48,7 +48,7 @@ func (l *ListView) ask(at, n int) {
 		return
 	}
 	l.asks++
-	l.window(at, n)
+	l.extent(at, n)
 }
 
 // current reports whether an answer is still the one being waited for.

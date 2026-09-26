@@ -78,7 +78,7 @@ func (l *ListView) SetSource(src serval.Source) {
 // throw away the very records the notice is about -- which is what it did, and
 // what left a list over an application source permanently empty.
 //
-// A tree is now the same shape: it too streams a window into a spine, so its
+// A tree is now the same shape: it too streams an Extent into a spine, so its
 // Reread does not forget either. It used to read the whole flattening into a fresh
 // slice, which is what made the two answers to one notice different.
 func (l *ListView) Reread() {
@@ -159,13 +159,13 @@ func (l *ListView) makeSource() serval.Source {
 	return serval.NewAmendedSource(serval.NewListSource(rows))
 }
 
-// window makes sure the spine can name the rows from a position on, asking the
+// extent makes sure the spine can name the rows from a position on, asking the
 // source about the ones it cannot.
 //
-// It asks for the stretch WHOLE rather than for the gaps in it. A window is a
+// It asks for the stretch WHOLE rather than for the gaps in it. An Extent is a
 // screenful, the answer is one question, and asking three questions to fill
 // three holes in it costs three times as much as asking once for all of it.
-func (l *ListView) window(at, n int) {
+func (l *ListView) extent(at, n int) {
 	if n <= 0 {
 		return
 	}
@@ -346,7 +346,7 @@ func (s *rowSink) settle() {
 	// at one and said it began somewhere else, which is a source walking its own body
 	// and finding no index into the sequence. Asking again for the same position would
 	// be the same unanswerable question, so the view carries on from what it holds
-	// instead. See window.
+	// instead. See extent.
 	if s.positional && s.done.First.Exact && s.done.First.N != s.expected {
 		l.walks = true
 	}

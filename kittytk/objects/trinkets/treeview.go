@@ -141,8 +141,8 @@ func (t *TreeItem) Key() string {
 //
 // **A row out of a SOURCE answers from what the source said**, and a row the tree
 // made itself from its parentage. The same split `IsLeaf` makes, and for the same
-// reason: a view holding a window of a tree holds no ancestor of the rows at the
-// top of it, so walking up would report the window's edge as the top of the tree
+// reason: a view holding an Extent of a tree holds no ancestor of the rows at the
+// top of it, so walking up would report the Extent's edge as the top of the tree
 // and draw a row forty deep flush against the margin.
 func (t *TreeItem) Level() int {
 	if t.rowKey != nil {
@@ -168,14 +168,14 @@ type TreeView struct {
 	rootItems []*TreeItem
 	// currentIndex is WHERE the chosen row stands, and -1 for a row the view
 	// cannot place -- which is a row scrolled past, or one a reorder moved outside
-	// the window, and is not the same as nothing being chosen. See chosen.
+	// the Extent, and is not the same as nothing being chosen. See chosen.
 	currentIndex int
 	scrollOffset int
 
 	// chosen is the row the reader chose, as an IDENTITY.
 	//
 	// **Which is what a selection IS, and what an index only stands for.** An index
-	// is a fact about the window: a resort moves the row, a node opening above it
+	// is a fact about the Extent: a resort moves the row, a node opening above it
 	// moves the row, and scrolling away stops the view holding it at all -- and an
 	// index kept as the authority quietly named a different row after any of the
 	// three. The identity survives all of them, and `resolve` puts the index back
@@ -204,7 +204,7 @@ type TreeView struct {
 	// `from` is never found out this way and is never made to walk.
 	//
 	// It only ever becomes true. A source that could not skip once will not learn to,
-	// and a sequence stated afresh is a fresh spine and a fresh question. See window.
+	// and a sequence stated afresh is a fresh spine and a fresh question. See extent.
 	walks bool
 
 	// Where the rows come from (see treesource.go). A tree given no source
@@ -562,7 +562,7 @@ func (t *TreeView) positionOf(item *TreeItem) (int, bool) {
 // place.
 //
 // **-1 does not mean nothing is chosen.** A row scrolled past, or moved outside the
-// window by a reorder, is still chosen and is still what CurrentItem answers; what
+// Extent by a reorder, is still chosen and is still what CurrentItem answers; what
 // is not known is where it stands. A caller that wants to know whether anything is
 // chosen asks CurrentItem.
 func (t *TreeView) CurrentIndex() int {
@@ -704,7 +704,7 @@ func (t *TreeView) ExpandItem(item *TreeItem) {
 		t.moved() // the items themselves changed, so the made source is remade
 	} else if known {
 		t.opened(at, item)
-		t.window(t.asking())
+		t.extent(t.asking())
 		t.clampScrollOffset()
 	} else {
 		// A row the view is not holding: there is no position to shift from, so
@@ -747,7 +747,7 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 		// the view holds the end of the subtree -- the rows going are the ones in
 		// hand. See closing.
 		t.closed(at)
-		t.window(t.asking())
+		t.extent(t.asking())
 		t.clampScrollOffset()
 	} else {
 		t.moved()
@@ -775,7 +775,7 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 // restoreSelectionByItem chooses the given item and reports whether the view could
 // say where it stands.
 //
-// **It chooses either way.** A row a reorder moved outside the window is still the
+// **It chooses either way.** A row a reorder moved outside the Extent is still the
 // row the reader chose, and forgetting it because the view cannot currently place it
 // would lose a selection to a scroll. False says the index is unknown, not that the
 // selection is gone -- so a caller with a fallback row still has one, and one
@@ -796,7 +796,7 @@ func (t *TreeView) restoreSelectionByItem(item *TreeItem) bool {
 
 // resolve puts the index back where the chosen row has turned up again.
 //
-// Called when a window lands, which is the moment the answer to "where is it now"
+// Called when an Extent lands, which is the moment the answer to "where is it now"
 // can have changed. A row that is still nowhere the spine can find leaves the index
 // at -1 and the selection where it was: held, and waiting.
 func (t *TreeView) resolve() {
@@ -1027,7 +1027,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
-	// Asked once, and before anything is MEASURED: rowCount makes sure the window is
+	// Asked once, and before anything is MEASURED: rowCount makes sure the Extent is
 	// there, and the answer can change what there is to measure -- a refusal takes a
 	// row out of the rows' own area, and a frame that measured first would draw
 	// itself as though nothing had been refused. Asking per row would run the

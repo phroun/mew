@@ -193,7 +193,7 @@ func TestARowCanShowOneFieldAndMeanAnother(t *testing.T) {
 // it shows and a caller need not know which kind of list it is asking.
 func TestAPlainListMeansWhatItShows(t *testing.T) {
 	l := filled(4)
-	l.window(0, 4)
+	l.extent(0, 4)
 
 	if got := l.Item(2); got == nil || got.Text != "item 2" {
 		t.Fatalf("row 2 shows %v", got)

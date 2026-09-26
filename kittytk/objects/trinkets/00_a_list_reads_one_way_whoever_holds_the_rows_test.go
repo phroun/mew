@@ -99,7 +99,7 @@ func TestEveryChangeToTheItemsReachesTheSequence(t *testing.T) {
 // a plain list's identities are the figures an application already knows.
 func TestInAMadeSourceTheKeyIsThePosition(t *testing.T) {
 	l := filled(4)
-	l.window(0, 4) // so the list has been told where all four rows are
+	l.extent(0, 4) // so the list has been told where all four rows are
 
 	for i := 0; i < 4; i++ {
 		id, ok := l.IDAt(i)
@@ -182,7 +182,7 @@ func TestDeclaringASourceReplacesTheItems(t *testing.T) {
 // The selection is a PAIR, and setting either half sets the other.
 func TestTheSelectionMovesByEitherHalf(t *testing.T) {
 	l := filled(6)
-	l.window(0, 6) // the list has been told where its rows are
+	l.extent(0, 6) // the list has been told where its rows are
 
 	l.SetCurrentIndex(3)
 	if l.CurrentIndex() != 3 {
@@ -203,7 +203,7 @@ func TestTheSelectionMovesByEitherHalf(t *testing.T) {
 // nothing is how you get there.
 func TestNothingSelectedIsBothHalvesEmpty(t *testing.T) {
 	l := filled(4)
-	l.window(0, 4)
+	l.extent(0, 4)
 	l.SetCurrentIndex(2)
 
 	l.SetSelectedID(nil)
@@ -220,7 +220,7 @@ func TestNothingSelectedIsBothHalvesEmpty(t *testing.T) {
 // selected straight away.
 func TestAnIdentityMissingFromAWholeSequenceIsNothing(t *testing.T) {
 	l := filled(4)
-	l.window(0, 4) // all four rows, so the sequence is entirely in hand
+	l.extent(0, 4) // all four rows, so the sequence is entirely in hand
 
 	l.SetSelectedID(serval.NewText("nobody"))
 	if l.CurrentIndex() != -1 {
@@ -244,7 +244,7 @@ func TestAnIdentityMissingFromPartOfASequenceIsPending(t *testing.T) {
 	}
 	l := NewListView()
 	l.SetSource(serval.NewListSource(rows))
-	l.window(0, 5) // five rows of fifty
+	l.extent(0, 5) // five rows of fifty
 
 	// One the list has not been told about, which may yet turn up.
 	l.SetSelectedID(serval.NewText("k40"))
@@ -257,7 +257,7 @@ func TestAnIdentityMissingFromPartOfASequenceIsPending(t *testing.T) {
 
 	// And reading where it lives resolves it, no announcement needed: the same
 	// row was current before and after.
-	l.window(38, 5)
+	l.extent(38, 5)
 	if l.CurrentIndex() != 40 {
 		t.Errorf("after the record arrived the index is %d, want 40", l.CurrentIndex())
 	}
@@ -275,7 +275,7 @@ func TestAPendingIdentityThatNeverTurnsUpIsDropped(t *testing.T) {
 	}
 	l := NewListView()
 	l.SetSource(serval.NewListSource(rows))
-	l.window(0, 5)
+	l.extent(0, 5)
 
 	l.SetSelectedID(serval.NewText("nobody"))
 	if l.SelectedID() == nil {
@@ -283,7 +283,7 @@ func TestAPendingIdentityThatNeverTurnsUpIsDropped(t *testing.T) {
 	}
 
 	// Reading to the end settles the order, and it is still not there.
-	l.window(0, 50)
+	l.extent(0, 50)
 	if l.SelectedID() != nil {
 		t.Errorf("after the order settled it is still holding %v", l.SelectedID())
 	}
@@ -321,7 +321,7 @@ func TestARowSelectedByPositionLearnsItsIdentity(t *testing.T) {
 	}
 
 	// The record arrives, and the same row is now named.
-	l.window(28, 5)
+	l.extent(28, 5)
 	if id := l.SelectedID(); id == nil || id.Str != "k30" {
 		t.Errorf("after the record arrived the identity is %v, want k30", id)
 	}

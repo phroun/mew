@@ -195,7 +195,7 @@ func TestAFlooredLengthKeepsTheThumbOffTheBottom(t *testing.T) {
 	l.SetSource(&uncountedSource{rows: slowRows(400)})
 
 	// Nothing counted it, so what is known is what has been placed.
-	l.window(0, 40)
+	l.extent(0, 40)
 	if got := l.Length(); got.Exact {
 		t.Fatalf("the length came back exact: %v", got)
 	}

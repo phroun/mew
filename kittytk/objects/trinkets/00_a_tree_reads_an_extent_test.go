@@ -37,10 +37,10 @@ func manyRows(n int) *serval.ListSource {
 	return serval.NewListSource(rows)
 }
 
-// windowed is a view with a height, so it asks for a window rather than for as much
+// tall is a view with a height, so it asks for an Extent rather than for as much
 // as it is willing to hold. A view nobody sized reads what the spine will keep, and
-// a test about windowing should not rest on that fallback.
-func windowed(t *testing.T, rows int) *TreeView {
+// a test about Extents should not rest on that fallback.
+func tall(t *testing.T, rows int) *TreeView {
 	t.Helper()
 	tv := NewTreeView()
 	tv.SetKindMap("", InOrder("name"))
@@ -60,7 +60,7 @@ func windowed(t *testing.T, rows int) *TreeView {
 // rows of five thousand draws a TRUE thumb and can be dragged anywhere in the
 // sequence. See serval's reckon.go.
 func TestATreeReadsAWindowOfADeclaredSource(t *testing.T) {
-	tv := windowed(t, 10)
+	tv := tall(t, 10)
 	tv.SetSource(manyRows(5000))
 
 	held := tv.bones.held()
@@ -88,14 +88,14 @@ func TestATreeReadsAWindowOfADeclaredSource(t *testing.T) {
 	if got := tv.Length(); got != serval.Exactly(5000) {
 		t.Errorf("after reading row 900 it says %v", got)
 	}
-	// Reading it did not turn the window into a log.
+	// Reading it did not turn the Extent into a log.
 	if n := tv.bones.held(); n > spineKept {
 		t.Errorf("after scrolling it is holding %d identities, and the cap is %d",
 			n, spineKept)
 	}
 }
 
-// scrollTo moves the reader to a position, asking for a window there.
+// scrollTo moves the reader to a position, asking for an Extent there.
 //
 // **A tree with an expand-all in force still cannot be jumped into**, and that is
 // the model rather than a gap: under OpenAll an open node's contribution is its whole
@@ -107,7 +107,7 @@ func scrollTo(t *testing.T, tv *TreeView, at int) {
 	for step := 0; step < 2000; step++ {
 		if at < tv.Count() {
 			tv.scrollOffset = at
-			tv.Count() // which is what asks for the window there
+			tv.Count() // which is what asks for the Extent there
 			return
 		}
 		was := tv.Count()
@@ -122,7 +122,7 @@ func scrollTo(t *testing.T, tv *TreeView, at int) {
 // A row the view is not holding is a BLANK, which is a state a row is drawn in and
 // not a failure to draw one.
 func TestARowOutsideTheWindowIsBlank(t *testing.T) {
-	tv := windowed(t, 10)
+	tv := tall(t, 10)
 	tv.SetSource(manyRows(5000))
 
 	far := tv.bones.rows() + 40 // past everything placed, inside nothing
@@ -201,7 +201,7 @@ func captionsHeld(tv *TreeView) string {
 // stands at kids+1, because that is how many rows appeared -- and the figure came
 // off the row that was clicked.
 func TestOpeningANodeShiftsTheRowsBelowIt(t *testing.T) {
-	tv := windowed(t, 40)
+	tv := tall(t, 40)
 	tv.SetSource(kinWindow(t, 6, 4))
 
 	first, second := tv.Item(0), tv.Item(1)
@@ -252,7 +252,7 @@ func caption(item *TreeItem) string {
 // no ancestry here: what they DO have is the depth the source said and the chain it
 // wrote down, which is why the indent and the twisty still work.
 func TestAGapInWhatIsHeldIsAGapInTheParentage(t *testing.T) {
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	src := kinWindow(t, 200, 4)
 	tv.SetSource(src)
 	src.ExpandAll()
@@ -260,7 +260,7 @@ func TestAGapInWhatIsHeldIsAGapInTheParentage(t *testing.T) {
 
 	// A stretch a long way off, beginning on a CHILD row, so nothing above it is
 	// held and the run before it is somewhere else entirely.
-	tv.window(601, 20)
+	tv.extent(601, 20)
 	if len(tv.bones.runs) < 2 {
 		t.Fatalf("the spine holds %d run(s); this needs two", len(tv.bones.runs))
 	}
@@ -288,7 +288,7 @@ func TestAGapInWhatIsHeldIsAGapInTheParentage(t *testing.T) {
 // answers inside the call that asked -- so the only way to see the blanks is to
 // look before the reading happens.
 func TestOpeningLaysTheRowsOutBeforeTheyArrive(t *testing.T) {
-	tv := windowed(t, 40)
+	tv := tall(t, 40)
 	tv.SetSource(kinWindow(t, 6, 4))
 
 	first := tv.Item(0)
@@ -320,7 +320,7 @@ func TestOpeningLaysTheRowsOutBeforeTheyArrive(t *testing.T) {
 // Closing is the same move the other way about, and it is EXACT: the rows going
 // are the ones in hand.
 func TestClosingANodeTakesOutExactlyTheRowsUnderIt(t *testing.T) {
-	tv := windowed(t, 40)
+	tv := tall(t, 40)
 	tv.SetSource(kinWindow(t, 6, 4))
 
 	first, second := tv.Item(0), tv.Item(1)
@@ -347,7 +347,7 @@ func TestClosingANodeTakesOutExactlyTheRowsUnderIt(t *testing.T) {
 // subtree's size is not free. `Kids` is then a floor, and a shift by too little
 // would put every row below in the wrong place.
 func TestADeltaNobodyCanWorkOutForgetsOnlyBelowTheMark(t *testing.T) {
-	tv := windowed(t, 40)
+	tv := tall(t, 40)
 	src := kinWindow(t, 6, 4)
 	tv.SetSource(src)
 
@@ -386,7 +386,7 @@ func TestADeltaNobodyCanWorkOutForgetsOnlyBelowTheMark(t *testing.T) {
 // A row NOBODY could count draws its twisty and finds out on opening, which is an
 // unknown delta and not a delta of nought.
 func TestARowNobodyCouldCountClaimsNoDelta(t *testing.T) {
-	tv := windowed(t, 40)
+	tv := tall(t, 40)
 	tv.SetSource(kinWindow(t, 2, 2))
 	item := tv.Item(0)
 	if item == nil {
@@ -398,13 +398,13 @@ func TestARowNobodyCouldCountClaimsNoDelta(t *testing.T) {
 	}
 }
 
-// --- the chain a windowed row carries ------------------------------------
+// --- the chain a read by Extents row carries ------------------------------------
 
 // **A row deep in a scrolled tree opens the right node.**
 //
 // The chain used to be walked back up `Parent`, which works for a view holding the
-// whole pre-order and cannot work for one holding a window: everything above the
-// window is exactly what the view declined to hold, so a row's chain came back one
+// whole pre-order and cannot work for one holding an Extent: everything above the
+// Extent is exactly what the view declined to hold, so a row's chain came back one
 // segment long and clicking its twisty marked a node that is not there. Nothing
 // reported it -- the marks have no opinion about a chain nobody walked -- so the
 // twisty simply did not move.
@@ -431,7 +431,7 @@ func TestARowKeepsItsChainOutsideTheWindow(t *testing.T) {
 // rows the chain names have been DROPPED, not merely that they are off screen.
 func scrolledDeep(t *testing.T) (*TreeView, *TreeItem) {
 	t.Helper()
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	src := kinWindow(t, 200, 4)
 	tv.SetSource(src)
 	src.ExpandAll()
@@ -454,13 +454,13 @@ func scrolledDeep(t *testing.T) (*TreeView, *TreeItem) {
 	return tv, deep
 }
 
-// The depth comes off the row too, for the same reason: a view holding a window
+// The depth comes off the row too, for the same reason: a view holding an Extent
 // cannot count its way up to the top, and an indent worked out from a walk would
 // draw a row forty deep flush against the margin.
 func TestALevelComesFromWhatTheSourceSaid(t *testing.T) {
 	_, deep := scrolledDeep(t)
 	if deep.Level() == 0 {
-		t.Error("a row whose ancestors are outside the window reads as a root")
+		t.Error("a row whose ancestors are outside the Extent reads as a root")
 	}
 	if deep.rowDepth != deep.Level() {
 		t.Errorf("Level() answers %d and the source said %d", deep.Level(), deep.rowDepth)
@@ -504,9 +504,9 @@ func TestASubtreeRunningPastWhatIsCountedCannotBeClosedExactly(t *testing.T) {
 // different row after any of them.
 
 // **A resort does not lose the selection**, even when it moves the row outside the
-// window. The index goes; the selection does not.
+// Extent. The index goes; the selection does not.
 func TestAResortKeepsTheSelectionOutsideTheWindow(t *testing.T) {
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	tv.SetSource(manyRows(400))
 	tv.SetKindMap("", InOrder("name"))
 
@@ -519,7 +519,7 @@ func TestAResortKeepsTheSelectionOutsideTheWindow(t *testing.T) {
 		t.Fatalf("choosing row 0 chose %q", caption(tv.CurrentItem()))
 	}
 
-	// Reversed: the first row becomes the last, which is far outside the window.
+	// Reversed: the first row becomes the last, which is far outside the Extent.
 	tv.SetSorted(true, -1, true)
 
 	if at, held := tv.positionOf(chosen); held {
@@ -536,9 +536,9 @@ func TestAResortKeepsTheSelectionOutsideTheWindow(t *testing.T) {
 }
 
 // And it comes back the moment the row does, which is `resolve` running when a
-// window lands rather than anything asking.
+// Extent lands rather than anything asking.
 func TestAnUnplacedSelectionResolvesWhenItsRowReturns(t *testing.T) {
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	tv.SetSource(manyRows(400))
 
 	chosen := tv.Item(0)
@@ -560,7 +560,7 @@ func TestAnUnplacedSelectionResolvesWhenItsRowReturns(t *testing.T) {
 	tv.scrollOffset = 0
 	tv.Count()
 	if got := tv.CurrentIndex(); got != 0 {
-		t.Errorf("with the row back in the window it stands at %d, want 0", got)
+		t.Errorf("with the row back in the Extent it stands at %d, want 0", got)
 	}
 }
 
@@ -568,7 +568,7 @@ func TestAnUnplacedSelectionResolvesWhenItsRowReturns(t *testing.T) {
 // key has to tell them apart: Down from nothing chooses the FIRST row, and Down from
 // an unplaced selection moves from where the reader is looking.
 func TestAMovementKeyTellsUnchosenFromUnplaced(t *testing.T) {
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	tv.SetSource(manyRows(400))
 
 	// Nothing chosen: before the first row, so Down lands on it.
@@ -591,11 +591,11 @@ func TestAMovementKeyTellsUnchosenFromUnplaced(t *testing.T) {
 	}
 }
 
-// **A window holds a screenful either side of the reader**, which is what treeReach
+// **A Extent holds a screenful either side of the reader**, which is what treeReach
 // says and what asking from the scroll offset alone did not do: scrolling back one
 // line was a fresh question for rows the view had been holding a moment earlier.
 func TestAWindowHoldsRowsAboveTheReaderToo(t *testing.T) {
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	tv.SetSource(manyRows(400))
 	scrollTo(t, tv, 200)
 
@@ -605,7 +605,7 @@ func TestAWindowHoldsRowsAboveTheReaderToo(t *testing.T) {
 			at, tv.scrollOffset)
 	}
 	if _, held := tv.bones.idAt(tv.scrollOffset - 1); !held {
-		t.Errorf("the row just above the reader is blank; the window is %d from %d",
+		t.Errorf("the row just above the reader is blank; the Extent is %d from %d",
 			n, at)
 	}
 }
@@ -633,12 +633,12 @@ func TestAWholeReadStartsAtTheTop(t *testing.T) {
 }
 
 // **Item will ask past the floor.** A tree's length is a floor until the walk
-// reaches the end, and refusing a position past it made a windowed tree unjumpable
+// reaches the end, and refusing a position past it made a read by Extents tree unjumpable
 // -- though serval answers, a scope's From being the walk's own budget.
 func TestItemAsksPastTheFloor(t *testing.T) {
 	// An expand-all, which is the state a length really is a floor in: under OpenAll
 	// an open node's contribution is a whole subtree and nobody has counted one.
-	tv := windowed(t, 10)
+	tv := tall(t, 10)
 	src := kinWindow(t, 200, 4)
 	tv.SetSource(src)
 	src.ExpandAll()
@@ -674,11 +674,11 @@ func TestItemAsksPastTheFloor(t *testing.T) {
 //
 // It is the one place a row is chosen that the reader did not choose: the row they
 // did choose has just stopped being in the sequence, and the node they closed is the
-// nearest thing to where they were. The identity has to follow, or the next window
+// nearest thing to where they were. The identity has to follow, or the next Extent
 // landing would resolve against the row that went and unplace a selection that is
 // perfectly well placed.
 func TestCollapsingOntoTheNodeMovesTheIdentityToo(t *testing.T) {
-	tv := windowed(t, 40)
+	tv := tall(t, 40)
 	tv.SetSource(kinWindow(t, 6, 4))
 
 	folder := tv.Item(0)
@@ -698,10 +698,10 @@ func TestCollapsingOntoTheNodeMovesTheIdentityToo(t *testing.T) {
 	if got := tv.CurrentIndex(); got != 0 {
 		t.Errorf("it stands at %d, want the folder's own position", got)
 	}
-	// And a window landing does not undo it, which is what a stale identity would do.
-	tv.window(tv.asking())
+	// And an Extent landing does not undo it, which is what a stale identity would do.
+	tv.extent(tv.asking())
 	if got := tv.CurrentIndex(); got != 0 {
-		t.Errorf("a window landing moved it to %d", got)
+		t.Errorf("an Extent landing moved it to %d", got)
 	}
 }
 
@@ -711,7 +711,7 @@ func TestCollapsingOntoTheNodeMovesTheIdentityToo(t *testing.T) {
 // sequence. Across a change the view cannot describe it is wrong: an exact figure
 // would outrank every honest floor that followed it, for ever.
 func TestACountDoesNotOutliveTheSequenceItCounted(t *testing.T) {
-	tv := windowed(t, 10)
+	tv := tall(t, 10)
 	src := kinWindow(t, 200, 4)
 	tv.SetSource(src)
 
@@ -733,7 +733,7 @@ func TestACountDoesNotOutliveTheSequenceItCounted(t *testing.T) {
 	}
 }
 
-// **A true thumb over a window, which used to be a contradiction.**
+// **A true thumb over an Extent, which used to be a contradiction.**
 //
 // A view that reads a screenful can say how long the whole sequence is, because a
 // flattening's length is its top level counted plus the children of every open node
@@ -741,14 +741,14 @@ func TestACountDoesNotOutliveTheSequenceItCounted(t *testing.T) {
 // the end of the sequence is reachable -- and opening a folder keeps it true, the
 // children being counted rather than walked.
 func TestAWindowedViewDrawsATrueThumb(t *testing.T) {
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	tv.SetSource(kinWindow(t, 100, 4))
 
 	if got := tv.Length(); got != serval.Exactly(100) {
 		t.Fatalf("with nothing open it says %v, want exactly the hundred folders", got)
 	}
 	if n := tv.bones.held(); n >= 100 {
-		t.Errorf("it is holding %d of the hundred rows; this is meant to be a window", n)
+		t.Errorf("it is holding %d of the hundred rows; this is meant to be an Extent", n)
 	}
 
 	// Opening one keeps it exact: four more rows, counted and not walked.
@@ -773,7 +773,7 @@ func TestAWindowedViewDrawsATrueThumb(t *testing.T) {
 // And an expand-all is the one state that still floors -- the thumb shrinks there,
 // which is honest: nobody has counted a subtree.
 func TestAnExpandAllStillFloorsTheView(t *testing.T) {
-	tv := windowed(t, 8)
+	tv := tall(t, 8)
 	src := kinWindow(t, 100, 4)
 	tv.SetSource(src)
 	if got := tv.Length(); !got.Exact {

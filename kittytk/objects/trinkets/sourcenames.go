@@ -283,7 +283,7 @@ func (l *ListView) ValueAt(index int) *serval.Value {
 	if index < 0 || index >= l.Count() {
 		return nil
 	}
-	l.window(index, 1)
+	l.extent(index, 1)
 	id, ok := l.bones.idAt(index)
 	if !ok {
 		return nil

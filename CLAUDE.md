@@ -52,6 +52,15 @@ code says and what we say.
   lets a thumb drag stay smooth while the records catch up. *(The code still
   spells this `blank` in about thirty places — `blankRow`, `blankTreeRow`, "a
   BLANK" in the prose. That is a rename waiting to happen.)*
+- **An Extent is a stretch of a DataSet that somebody HOLDS**, and never a
+  window — a window is a KittyTK UI object, and the display's word has no
+  business in the data layer. `serval/coverage.go` owns the type: named by its
+  ends, both INCLUSIVE, both records actually held. It is not a **Scope**: a
+  scope is the ASK — where to start, which way to walk, how many, where the
+  asker's own knowledge picks up again — and its ends are exclusive because they
+  say where to start and stop walking. A scope asks; what is held afterwards is
+  an extent. A view's spine holds extents; so does a flattening; so does a cache,
+  which is what `Covers` hands out and what a staleness notice is stated against.
 - **A Trouble is one thing that was wrong, carried as a VALUE.** Nothing is
   thrown. It travels the path the answer would have taken — `Complete.Error`, an
   `Open` refusal, the `trouble` statement — and is held where the answer would
@@ -66,9 +75,9 @@ that the next reader meets them by name rather than deducing them.
 
 - **The spine** (`objects/trinkets/spine.go`) is what a view knows about where
   its records are, standing between the positions it draws and the identities a
-  DataSet answers in. It is NOT a copy: it holds a few RUNS — stretches somebody
-  was actually told about, each anchored by the position of its first record —
-  plus how long the DataSet is, capped at `spineKept`. Anything further from the
+  DataSet answers in. It is NOT a copy: it holds a few extents — stretches
+  somebody was actually told about, each anchored by the position of its first
+  record — plus how long the DataSet is, capped at `spineKept`. Anything further from the
   reader is dropped, a record nobody is looking at being one that can be asked
   for again. Each held record carries a depth, dead weight for a list and the two
   answers a tree needs: how far to indent, and where a subtree ENDS.

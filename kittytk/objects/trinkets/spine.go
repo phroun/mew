@@ -179,7 +179,7 @@ func inOrder(runs []run, r run) []run {
 // it. But a reader scrolling steadily never makes a second run at all -- every
 // answer joins the one before it -- so the run it is IN has to be cut too, or a
 // view that scrolled a long way would be holding the whole sequence under the
-// name of holding a window of it.
+// name of holding an Extent of it.
 //
 // The run holding the reader is never dropped, only shortened.
 func (s *spine) trim(from, to int) {
