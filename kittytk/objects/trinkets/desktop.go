@@ -918,25 +918,30 @@ func (d *Desktop) showModal(mb *MessageBox) bool {
 //	desktop: heavier, and at least visible.
 func (d *Desktop) revealModal(win *window.Window) {
 	if d.IsSolo() {
-		// **Solo mode already gives it a surface.** A window added while solo is
-		// torn onto an OS surface of its own -- soloAdoptWindow, deferred because
-		// the add is still in flight -- which is exactly what a dialog wants.
-		// Tearing it again here would put one dialog on two surfaces, the ghost
-		// dialog the `tearing` guard was written for. So this waits for that and
-		// raises what it made.
-		d.Post(func() {
-			if win.IsDetached() {
-				d.SurfaceWindow(win)
-				return
-			}
-			// Nothing gave it a surface, so the desktop had better be here:
-			// heavier than a dialog of its own, and the alternative is a modal
-			// question painted where nobody is looking.
-			d.ExitSoloMode()
-			d.raisePrimarySurface()
+		// **The desktop's surface belongs to an application, so the desktop is not
+		// on the screen** and nothing drawn on it can be seen. The dialog gets a
+		// surface of its OWN -- torn off, as a window dragged clear of the desktop
+		// is -- because that is the only place a person can see it.
+		//
+		// Torn HERE, and now. Solo mode does adopt windows added to it onto their
+		// own surfaces, and that is where this was left before; but it happens on
+		// the next turn of the post queue, and it is not this code's to rely on. A
+		// question somebody is waiting to answer should not depend on another
+		// mechanism getting round to it. Whichever of the two runs first, the other
+		// finds the window already detached and does nothing, so there is still
+		// exactly one surface and no ghost dialog.
+		if !win.IsDetached() {
+			b := win.Bounds()
+			d.createTornHost(win, b.X, b.Y)
+		}
+		if win.IsDetached() {
 			d.SurfaceWindow(win)
-		})
-		return
+			return
+		}
+		// Nothing here can hold another surface, so the desktop has to come back:
+		// heavier than a dialog of its own, and the alternative is a modal question
+		// painted where nobody is looking.
+		d.ExitSoloMode()
 	}
 	d.raisePrimarySurface()
 	d.SurfaceWindow(win)

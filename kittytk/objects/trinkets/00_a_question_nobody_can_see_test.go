@@ -391,3 +391,37 @@ func TestADesktopHiddenWithNoSurfaceToGiveComesBack(t *testing.T) {
 		t.Errorf("the question could not be answered: %v", answered)
 	}
 }
+
+// **The question tears itself off, straight away.**
+//
+// With the desktop hidden, the only place a person can see the question is a surface of
+// its own. Solo mode does adopt windows added to it, and that is where this was left
+// before -- but it happens on the next turn of the post queue, and a question somebody
+// is waiting to answer should not depend on another mechanism getting round to it.
+//
+// Asserted with nothing posted in between, which is the whole point: the dialog is on
+// its own surface by the time AskForceClose returns.
+func TestTheQuestionTearsItselfOffAtOnce(t *testing.T) {
+	d, main, plat, run := soloDesktop(t)
+
+	run(func() {
+		// Nothing runs on the queue while this happens, so the only thing that can
+		// put the dialog on a surface is the dialog path itself.
+		plat.deferPosts = true
+		defer func() { plat.deferPosts = false; plat.drainPosts() }()
+
+		before := len(plat.surfaces)
+		d.AskForceClose(main, func(bool) {})
+
+		mb := theBox(t, d, main)
+		if !mb.Window.IsDetached() {
+			t.Fatal("the question is still on the hidden desktop's surface when AskForceClose returned")
+		}
+		if got := len(plat.surfaces) - before; got != 1 {
+			t.Errorf("the question took %d new surfaces, want exactly one of its own", got)
+		}
+		if surf := plat.surfaces[len(plat.surfaces)-1]; !surf.raised {
+			t.Error("the question has a surface of its own and it was never raised")
+		}
+	})
+}
