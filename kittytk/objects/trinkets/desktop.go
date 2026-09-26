@@ -867,15 +867,12 @@ func aboutDesktopText() string {
 //
 // Written out three times before this, identically each time, which is two more
 // chances than a centring calculation needs to drift.
-func (d *Desktop) showModal(mb *MessageBox) bool {
-	// **The desktop first, then the dialog on it.**
-	//
-	// Before the add, and not after: solo mode tears windows added to it onto their
-	// own surfaces, and whether that happens before or after this line depends on
-	// when the post queue next runs. Leaving solo mode first removes the question --
-	// there is a desktop, and the dialog goes on it -- so the same thing happens
-	// whatever the platform's Post does.
-	d.showDesktopToAsk()
+func (d *Desktop) showModal(mb *MessageBox) bool { return d.showModalAbout(mb, nil) }
+
+// showModalAbout is showModal for a dialog that is ABOUT a particular window, which is
+// what decides where it goes. See placeToAsk.
+func (d *Desktop) showModalAbout(mb *MessageBox, about *window.Window) bool {
+	d.placeToAsk(about)
 
 	wm := d.WindowManager()
 	if wm == nil {
@@ -929,24 +926,50 @@ func (d *Desktop) showModal(mb *MessageBox) bool {
 //	else. Failing that, on a host that cannot hold a second surface, reveal the
 //	desktop: heavier, and at least visible.
 //
-// showDesktopToAsk brings the desktop back when it is not on the screen, so that a
-// question the display cannot avoid asking has somewhere to be asked.
+// placeToAsk makes sure there is somewhere to ask about `about`, before the dialog is
+// put anywhere.
 //
-// Which is what show_desktop does, and is the way back a person already has: the
-// question arrives somewhere they know, alongside everything else that was on the
-// desktop, rather than as one lone window floating over an application.
-func (d *Desktop) showDesktopToAsk() {
+// **The question goes where the window it is about already lives.** That is the whole
+// rule, and it is the subject's home that decides, not the desktop's state:
+//
+//	the window has a surface of its own -- torn off, or filling the display in solo
+//	mode -- so the question gets one too, a dialog over the thing it is about. Solo
+//	mode already gives one to every window added to it, so there is nothing to do
+//
+//	the window lives on the desktop, so the question belongs on the desktop, and the
+//	desktop has to be showing for either of them to be seen
+//
+// Keying on the subject is what keeps both halves from being absurd. Summoning a whole
+// desktop to hold one small question about the only window on the screen is absurd; so
+// is floating a lone dialog over an application to ask about a window docked on a
+// desktop nobody can see. And a host that holds ONE surface needs no special case: its
+// windows are never detached, so a question is always about something on the desktop,
+// and the desktop is always what comes back.
+func (d *Desktop) placeToAsk(about *window.Window) {
+	if about != nil && about.IsDetached() {
+		closeTrace("placeToAsk: %s has a surface of its own; the question gets one too",
+			closeTraceWindow(about))
+		return
+	}
 	if !d.IsSolo() {
 		return
 	}
-	closeTrace("showDesktopToAsk: the desktop is hidden; showing it to ask")
+	closeTrace("placeToAsk: %s lives on the desktop, which is hidden; showing it",
+		closeTraceWindow(about))
 	d.ExitSoloMode()
 }
 
-// bringForwardToAsk puts the dialog in front once it is on the desktop: the desktop's
-// own surface may be minimized, or sitting behind a window torn off it.
+// bringForwardToAsk puts the dialog in front, once it is wherever placeToAsk decided.
 func (d *Desktop) bringForwardToAsk(win *window.Window) {
 	closeTrace("bringForwardToAsk: %s solo=%v", closeTraceWindow(win), d.IsSolo())
+	if d.IsSolo() {
+		// Its own surface arrives on the next turn of the queue, so this waits.
+		d.Post(func() {
+			closeTrace("bringForwardToAsk/posted: %s", closeTraceWindow(win))
+			d.SurfaceWindow(win)
+		})
+		return
+	}
 	d.raisePrimarySurface()
 	d.SurfaceWindow(win)
 }
@@ -1046,7 +1069,7 @@ func (d *Desktop) AskForceClose(win *window.Window, then func(force bool)) {
 	d.mu.Lock()
 	d.forceClose[win] = mb
 	d.mu.Unlock()
-	if !d.showModal(mb) {
+	if !d.showModalAbout(mb, win) {
 		// Nowhere to ask, so nobody was asked: leave the window alone.
 		d.mu.Lock()
 		delete(d.forceClose, win)

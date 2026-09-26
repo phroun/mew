@@ -54,38 +54,32 @@ func soloDesktop(t *testing.T) (*Desktop, *window.Window, *msPlatform, func(func
 	return d, main, plat, run
 }
 
-// **With the desktop hidden, asking shows the desktop.**
+// **A question about the window on the screen summons no desktop.**
 //
-// There is no desktop behind the application, so a question left on the desktop's
-// surface would be painted where nobody is looking. Showing the desktop is what
-// show_desktop does and is the way back a person already has, so the question arrives
-// somewhere they know, alongside everything else that was on the desktop, rather than
-// as one lone window floating over an application.
-func TestAskingWithTheDesktopHiddenShowsTheDesktop(t *testing.T) {
+// The window being asked about has a surface of its own -- it is filling the display --
+// so the question gets one too, a dialog over the thing it is about. Revealing a whole
+// desktop to hold one small question about the only window there is would be absurd.
+func TestAskingAboutTheWindowOnTheScreenSummonsNoDesktop(t *testing.T) {
 	d, main, _, run := soloDesktop(t)
 
 	run(func() {
 		var answered *bool
 		d.AskForceClose(main, func(force bool) { answered = &force })
 
+		if !d.IsSolo() {
+			t.Fatal("a whole desktop was summoned to ask one question about the window filling it")
+		}
 		if answered != nil {
 			t.Fatalf("the question answered itself: %v", *answered)
 		}
-		if d.IsSolo() {
-			t.Fatal("the desktop is still hidden, so the question is painted where nobody can see it")
-		}
-		if !onTheScreen(d) {
-			t.Error("the desktop was shown and the question is not on it")
-		}
-		// The application that was filling the display is still there -- re-homed as
-		// a window on the revealed desktop, not closed to make room for a dialog.
-		if !main.IsVisible() {
-			t.Error("showing the desktop closed the application that was filling it")
+		mb := theBox(t, d, main)
+		if !mb.Window.IsDetached() {
+			t.Error("the question has no surface of its own, so it is painted where nobody can see it")
 		}
 	})
 }
 
-// And it is answerable, which is the whole point of showing the desktop for it.
+// And it is answerable, wherever it went.
 func TestAQuestionOnAShownDesktopAnswers(t *testing.T) {
 	d, main, _, run := soloDesktop(t)
 
@@ -217,14 +211,17 @@ func TestAQuestionSurvivesTheDesktopBeingHidden(t *testing.T) {
 	d := NewDesktop()
 	d.SetBackend(px)
 
+	// Two applications, because tearing one app's MAIN window tears that app's own
+	// followers with it -- so a window left docked on the hidden desktop has to
+	// belong to somebody else. Which is the reported shape: the host promoted, and
+	// another application's windows left on the desktop behind it.
 	main := window.NewWindow("Ledger")
 	main.SetMainRequested(true)
 	main.SetTearable(true)
+	d.AddApplication(&mockApp{name: "Ledger", main: main, windows: []*window.Window{main}})
+
 	sulking := window.NewWindow("Quarterly Figures")
-	d.AddApplication(&mockApp{
-		name: "Ledger", main: main,
-		windows: []*window.Window{main, sulking},
-	})
+	d.AddApplication(&mockApp{name: "Diary", windows: []*window.Window{sulking}})
 	d.SetOnStartup(func() {
 		wm := d.WindowManager()
 		wm.AddWindow(main)
@@ -246,8 +243,11 @@ func TestAQuestionSurvivesTheDesktopBeingHidden(t *testing.T) {
 		var answered *bool
 		d.AskForceClose(sulking, func(force bool) { answered = &force })
 
+		if sulking.IsDetached() {
+			t.Fatal("harness: the window is not on the desktop, so there is nothing to reveal for")
+		}
 		if d.IsSolo() {
-			t.Fatal("the desktop is still hidden, so the question is painted where nobody can see it")
+			t.Fatal("the window being asked about is on the hidden desktop, and the desktop was not shown -- so the question is painted where nobody can see it")
 		}
 		if !onTheScreen(d) {
 			t.Fatal("the desktop was shown and the question is not on it")
@@ -350,15 +350,14 @@ func TestADesktopHiddenWithNoSurfaceToGiveComesBack(t *testing.T) {
 	}
 }
 
-// **Asking hands the display to nobody.** Showing the desktop retires the primary host
-// -- that is what leaving solo mode means -- and what must NOT happen is some other
-// application taking it over. An application promoted onto the primary surface because a
-// dialog appeared has been moved for no reason a person could explain.
+// **Asking about the window on the screen leaves the display exactly as it was.** The
+// application filling it goes on filling it; nothing is retired, nothing else is
+// promoted onto the primary surface, and no desktop appears underneath.
 //
 // Run on a platform that behaves like SDL: Post defers, and creating a surface drains
 // the queue from inside, which is the re-entrancy createTornHost's own claim guards.
 // Every earlier test of this ran with both off, which is why none could see it.
-func TestAskingHandsTheDisplayToNobody(t *testing.T) {
+func TestAskingAboutTheSoloWindowLeavesTheDisplayAlone(t *testing.T) {
 	d, main, plat, run := soloDesktop(t)
 
 	run(func() {
@@ -369,27 +368,26 @@ func TestAskingHandsTheDisplayToNobody(t *testing.T) {
 			plat.drainPosts()
 		}()
 
-		if d.soloPrimaryHost == nil || d.soloPrimaryHost.Window() != main {
-			t.Fatalf("harness: the primary host is not the solo window")
+		before := d.soloPrimaryHost
+		if before == nil || before.Window() != main {
+			t.Fatal("harness: the primary host is not the solo window")
 		}
 
 		d.AskForceClose(main, func(bool) {})
 		plat.drainPosts()
 
-		if d.IsSolo() {
-			t.Fatal("the desktop is still hidden")
+		if !d.IsSolo() {
+			t.Error("a desktop appeared to hold a question about the window filling the display")
 		}
-		if h := d.soloPrimaryHost; h != nil {
-			var who string
-			if h.Window() != nil {
-				who = h.Window().Title()
+		if after := d.soloPrimaryHost; after != before {
+			var is string
+			if after != nil && after.Window() != nil {
+				is = after.Window().Title()
 			}
-			t.Errorf("asking the question handed the display to %q", who)
+			t.Errorf("asking the question handed the display to %q", is)
 		}
-		// And the application that was filling it is still open, re-homed onto the
-		// revealed desktop rather than closed to make room.
 		if !main.IsVisible() {
-			t.Error("the application that was filling the display was closed")
+			t.Error("the application filling the display was closed")
 		}
 	})
 }
