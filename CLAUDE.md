@@ -41,6 +41,65 @@ code says and what we say.
   and is no more PawScript than JSON is JavaScript.
 - **The KittyTK Wire Language** is the language; `kittytk/wire/` is the package
   that reads and writes it. Name which you mean when both are in play.
+- **A View reads a DataSet; it does not hold one.** ListView and TreeView are
+  views: they draw POSITIONS, the DataSet answers in identities, and the view
+  owns neither the records nor the order. It is why the two are the same shape —
+  a tree view is a list view that takes its indent from one field and its twisty
+  from another.
+- **A placeholder record** is a record a view knows is THERE and knows nothing
+  else about yet. Not an error and not a failure to draw: it is drawn in its
+  place, with its banding and its selection bar and no values, and it is what
+  lets a thumb drag stay smooth while the records catch up. *(The code still
+  spells this `blank` in about thirty places — `blankRow`, `blankTreeRow`, "a
+  BLANK" in the prose. That is a rename waiting to happen.)*
+- **A Trouble is one thing that was wrong, carried as a VALUE.** Nothing is
+  thrown. It travels the path the answer would have taken — `Complete.Error`, an
+  `Open` refusal, the `trouble` statement — and is held where the answer would
+  have been held. The word means one thing at three layers: `wire.Trouble` is the
+  statement, `display.Trouble` a bundle load's complaint, `trinkets.Trouble` what
+  a view holds and draws.
+
+## Concepts the code names
+
+Longer than a word each, and each has a file that owns the full account. Here so
+that the next reader meets them by name rather than deducing them.
+
+- **The spine** (`objects/trinkets/spine.go`) is what a view knows about where
+  its records are, standing between the positions it draws and the identities a
+  DataSet answers in. It is NOT a copy: it holds a few RUNS — stretches somebody
+  was actually told about, each anchored by the position of its first record —
+  plus how long the DataSet is, capped at `spineKept`. Anything further from the
+  reader is dropped, a record nobody is looking at being one that can be asked
+  for again. Each held record carries a depth, dead weight for a list and the two
+  answers a tree needs: how far to indent, and where a subtree ENDS.
+- **`reckon`** (`serval/reckon.go`) is how long a flattening is, worked out
+  rather than walked: the top level counts itself, and every open node adds its
+  children out of the census — one question per node TYPE, not per row. It
+  refuses, and floors instead, for an expand-all, for more than one kind of row,
+  for a kind chosen per row, for `SaysChildren`, and for a loop. The floor is
+  still *at least the top level*, which is what stops a thumb lurching.
+- **`walks`** (`objects/trinkets/listsource.go`) is a view's note that this
+  DataSet will not jump to a position. Told, never assumed: it asked to begin at
+  one and the answer said it began somewhere else. The view then carries on from
+  the nearest record it holds BELOW the place it wants, covering the gap in one
+  ask, rather than asking the same unanswerable question for ever. It only ever
+  becomes true, and a source that honours `from` is never made to walk.
+- **`first=`** is an answer saying where it BEGAN, and it is what makes
+  `Scope.From` safe to be best effort. Everything downstream reads that one
+  number: a view's `walks`, and a tree's descent deciding whether the rows it
+  was handed are the ones it skipped to.
+
+## Expansion is not invalidation
+
+Opening a node makes no record anywhere untrue. Every level of a tree is a data
+set of its own, opened with its own descriptor and cached on its own, so opening
+changes only which levels the walk visits — and therefore what POSITION each row
+below the mark stands at. Nothing above the mark moves at all.
+
+So a view told the delta shifts by it and keeps what it holds (`spine.grew` and
+`shrank`), and one that is not told forgets from the mark DOWN, which costs a
+re-ask and not a re-fetch: the levels' own caches still hold every record either
+way.
 
 ## Invalidation is told, never decided
 
