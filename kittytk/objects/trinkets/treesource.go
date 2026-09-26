@@ -193,17 +193,53 @@ func (t *TreeView) window(at, n int) {
 		return
 	}
 
-	// From a position, because that is what a view has: it knows which rows are
-	// on screen and need not know any identity to ask for them. Where the row
-	// just before the stretch is one the spine names, `after` says the same thing
-	// and says it better -- a record is exact where a position is best effort.
+	// **After a RECORD where one names the same place, and at a position otherwise.**
+	// A position is best effort -- a source honours it as well as it can -- and a
+	// record is exact, so the row immediately above the stretch is the better
+	// question wherever the view holds it.
+	//
+	// **And where this sequence will not jump to a position, after whatever is held
+	// BELOW the stretch, however far below.** That is the case a source walking its
+	// own body is in: it answered from the beginning, so the view holds rows nowhere
+	// near the one it wants -- and asking for the same position again would be asking
+	// the same unanswerable question, which is how a reader came to ask for row nine
+	// hundred for ever and never move. Carrying on from what it holds converges,
+	// which is the convergence `Scope.From` describes.
+	//
+	// It costs a question per stretch, which is what a source that cannot skip costs.
+	// One that honours `from` is answered in a single question and never reaches here.
 	scope := &serval.Scope{Count: n}
-	if before, ok := t.bones.idAt(at - 1); ok && at > 0 {
+	before, ok := t.bones.idAt(at - 1)
+	if !ok && t.walks {
+		// **And the count covers the GAP, not the stretch.** A walk that asked for
+		// only the rows wanted advanced by that many a question -- one row a question
+		// for a caller asking one row at a time -- so reaching row three hundred took
+		// three hundred questions. Asking for the gap reaches it in one wherever the
+		// source will send that many.
+		//
+		// Capped at what the spine will KEEP, because a question for more than that is
+		// a question whose answer is thrown away as it arrives. So a far place costs a
+		// question per `spineKept` rows, which is the price of a source that cannot
+		// skip and is the price an application removes by honouring `from`.
+		if last, id, held := t.bones.lastBefore(at); held {
+			before, ok = id, true
+			if gap := at - last - 1 + n; gap > scope.Count {
+				scope.Count = gap
+				if scope.Count > spineKept {
+					scope.Count = spineKept
+				}
+			}
+		}
+	}
+	if ok && at > 0 {
 		scope.After = before
 	} else {
 		scope.From = at
 	}
-	if err := set.Read(scope, &treeSink{tree: t, expected: at, asked: t.asks}); err != nil {
+	positional := scope.After == nil
+	if err := set.Read(scope, &treeSink{
+		tree: t, expected: at, asked: t.asks, positional: positional,
+	}); err != nil {
 		return
 	}
 }
@@ -554,6 +590,10 @@ type treeSink struct {
 	done     serval.Complete
 	expected int    // where the view asked from, and so where it expects the answer
 	asked    asking // which ask this answers, so a stale one can be dropped
+
+	// positional says this read asked to begin at a POSITION rather than past a
+	// record. See rowSink.positional.
+	positional bool
 }
 
 func (s *treeSink) Ordered() {}
@@ -622,6 +662,11 @@ func (s *treeSink) settle() {
 		// where it is.
 		return
 	}
+	// Whether this sequence will jump to a position at all. See rowSink.settle.
+	if s.positional && s.done.First.Exact && s.done.First.N != s.expected {
+		t.walks = true
+	}
+
 	first := s.done.First
 	if !first.Exact {
 		first = s.begin

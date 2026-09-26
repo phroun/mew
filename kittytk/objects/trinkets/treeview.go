@@ -191,6 +191,18 @@ type TreeView struct {
 	// somewhere the reader has since left can be recognised and dropped.
 	asks asking
 
+	// walks says this sequence will not jump to a POSITION, so the only question it
+	// answers is one carrying on from a record.
+	//
+	// **Told rather than assumed.** It was asked to begin at a position and said it
+	// began somewhere else, which is what a source walking its own body does -- there
+	// being no index into a sequence somebody else named. An application that honours
+	// `from` is never found out this way and is never made to walk.
+	//
+	// It only ever becomes true. A source that could not skip once will not learn to,
+	// and a sequence stated afresh is a fresh spine and a fresh question. See window.
+	walks bool
+
 	// Where the rows come from (see treesource.go). A tree given no source
 	// makes one out of its own items, so the rows are read out of a sequence
 	// either way rather than walked for by the view.

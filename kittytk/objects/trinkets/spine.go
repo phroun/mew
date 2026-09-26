@@ -280,6 +280,40 @@ func (s *spine) deepAt(at int) (int, bool) {
 	return 0, false
 }
 
+// lastBefore is the nearest row the spine can name BELOW a position: where it
+// stands and what it is, and false where nothing below it is held.
+//
+// **It is how a reader gets to a place a source will not jump to.** A position is
+// best effort and a record is exact, so `after` is always the better question -- and
+// it used to be asked only where the row IMMEDIATELY above the stretch was held,
+// which is the scrolling case. A reader that asked for a position and was answered
+// from the beginning holds rows nowhere near the one it wants, and had nothing to
+// carry on from: it asked for the same position again, was answered from the
+// beginning again, and never moved.
+//
+// Anything held below is something to carry on from, however far below it is. That is
+// the convergence `Scope.From` describes -- ask, read where the answer began, and ask
+// again from what you learned -- and it is why the walk terminates.
+func (s *spine) lastBefore(at int) (int, *serval.Value, bool) {
+	best, found := -1, (*serval.Value)(nil)
+	for _, r := range s.runs {
+		if r.at >= at {
+			continue
+		}
+		end := r.end()
+		if end > at {
+			end = at
+		}
+		if end-1 > best {
+			best, found = end-1, r.rows[end-1-r.at].id
+		}
+	}
+	if best < 0 {
+		return 0, nil, false
+	}
+	return best, found, true
+}
+
 // posOf is where a record stands, and false for one outside what is held.
 //
 // A scan, because the runs are few and short and this is asked when something

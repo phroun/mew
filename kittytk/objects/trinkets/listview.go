@@ -54,8 +54,20 @@ type ListView struct {
 	// arrivals counts the sources this view has been pointed at, so a
 	// subscription taken against one it has left knows to do nothing. See
 	// arrival.go.
-	arrivals   int
-	asks       asking               // which ask is current; see listdrag.go
+	arrivals int
+	asks     asking // which ask is current; see listdrag.go
+
+	// walks says this sequence will not jump to a POSITION, so the only question it
+	// answers is one carrying on from a record.
+	//
+	// **Told rather than assumed.** It was asked to begin at a position and said it
+	// began somewhere else, which is what a source walking its own body does -- there
+	// being no index into a sequence somebody else named. An application that honours
+	// `from` is never found out this way and is never made to walk.
+	//
+	// It only ever becomes true. A source that could not skip once will not learn to,
+	// and a sequence stated afresh is a fresh spine and a fresh question. See window.
+	walks      bool
 	fromSource map[string]*ListItem // rows a source named, by identity
 
 	// Which field a row SHOWS and which it means, empty for the ones a made

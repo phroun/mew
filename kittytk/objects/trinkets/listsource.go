@@ -178,17 +178,50 @@ func (l *ListView) window(at, n int) {
 		return
 	}
 
-	// From a position, because that is what a list has: it knows which rows are
-	// on screen and need not know any identity to ask for them. Where the row
-	// just before the stretch is one the spine names, `after` says the same
-	// thing and says it better -- a record is exact where a position is best
-	// effort -- so that is preferred.
+	// **After a RECORD where one names the same place, and at a position otherwise.**
+	// A position is best effort -- a source honours it as well as it can -- and a
+	// record is exact, so the row immediately above the stretch is the better
+	// question wherever the view holds it.
+	//
+	// **And where this sequence will not jump to a position, after whatever is held
+	// BELOW the stretch, however far below.** That is the case a source walking its
+	// own body is in: it answered from the beginning, so the view holds rows nowhere
+	// near the one it wants -- and asking for the same position again would be asking
+	// the same unanswerable question, which is how a reader came to ask for row nine
+	// hundred for ever and never move. Carrying on from what it holds converges,
+	// which is the convergence `Scope.From` describes.
+	//
+	// It costs a question per stretch, which is what a source that cannot skip costs.
+	// One that honours `from` is answered in a single question and never reaches here.
 	scope := &serval.Scope{Count: n}
-	if before, ok := l.bones.idAt(at - 1); ok && at > 0 {
+	before, ok := l.bones.idAt(at - 1)
+	if !ok && l.walks {
+		// **And the count covers the GAP, not the stretch.** A walk that asked for
+		// only the rows wanted advanced by that many a question -- one row a question
+		// for a caller asking one row at a time -- so reaching row three hundred took
+		// three hundred questions. Asking for the gap reaches it in one wherever the
+		// source will send that many.
+		//
+		// Capped at what the spine will KEEP, because a question for more than that is
+		// a question whose answer is thrown away as it arrives. So a far place costs a
+		// question per `spineKept` rows, which is the price of a source that cannot
+		// skip and is the price an application removes by honouring `from`.
+		if last, id, held := l.bones.lastBefore(at); held {
+			before, ok = id, true
+			if gap := at - last - 1 + n; gap > scope.Count {
+				scope.Count = gap
+				if scope.Count > spineKept {
+					scope.Count = spineKept
+				}
+			}
+		}
+	}
+	if ok && at > 0 {
 		scope.After = before
 	} else {
 		scope.From = at
 	}
+	positional := scope.After == nil
 
 	// What the list EXPECTED, which it knows because it chose where to ask from.
 	// An answer that says where it began is believed over this; one that says
@@ -198,7 +231,9 @@ func (l *ListView) window(at, n int) {
 	// this call and for records somebody has to fetch is later. So what arrived
 	// is written down by Done and not by this returning -- doing it here would
 	// settle an empty answer every time and never settle a real one.
-	if err := set.Read(scope, &rowSink{list: l, expected: at, asked: l.asks}); err != nil {
+	if err := set.Read(scope, &rowSink{
+		list: l, expected: at, asked: l.asks, positional: positional,
+	}); err != nil {
 		return
 	}
 }
@@ -228,6 +263,11 @@ type rowSink struct {
 	done     serval.Complete
 	expected int    // where the list asked from, and so where it expects the answer
 	asked    asking // which ask this answers, so a stale one can be dropped
+
+	// positional says this read asked to begin at a POSITION rather than past a
+	// record, which is what makes the answer's own `First` worth comparing against
+	// what was asked: a source that came back somewhere else cannot jump.
+	positional bool
 }
 
 func (s *rowSink) Ordered() {}
@@ -300,6 +340,15 @@ func (s *rowSink) settle() {
 		// rather than where it is.
 		return
 	}
+	// **Whether this sequence will jump to a position at all.** It was asked to begin
+	// at one and said it began somewhere else, which is a source walking its own body
+	// and finding no index into the sequence. Asking again for the same position would
+	// be the same unanswerable question, so the view carries on from what it holds
+	// instead. See window.
+	if s.positional && s.done.First.Exact && s.done.First.N != s.expected {
+		l.walks = true
+	}
+
 	first := s.done.First
 	if !first.Exact {
 		first = s.begin
