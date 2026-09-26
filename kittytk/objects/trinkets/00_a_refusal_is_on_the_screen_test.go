@@ -258,14 +258,16 @@ func TestAnAnswerTakesTheRefusalBack(t *testing.T) {
 	}
 }
 
-// **Somebody else taking the refusal takes the line away.** A view that both drew
-// the line and told a handler would be saying it twice, and the caller with a status
-// bar put it there to have it in one place.
-func TestSomebodyElseTakingItTakesTheLineAway(t *testing.T) {
+// **A handler that answers TRUE has taken the refusal, and the line goes away.**
+//
+// It is the shape a window's close handler has: the caller is asked, and what it
+// answers decides what happens next. The caller with a status bar of its own says so
+// per refusal, rather than the view inferring it from a handler merely existing.
+func TestAHandlerThatSaysItHandledItTakesTheLineAway(t *testing.T) {
 	const why = "no such source: flies"
 	var told []Trouble
 	l := listOver(t, &shutSource{why: why}, 8)
-	l.SetOnTrouble(func(tr Trouble) { told = append(told, tr) })
+	l.SetOnTrouble(func(tr Trouble) bool { told = append(told, tr); return true })
 
 	l.Item(0)
 	if len(told) != 1 || told[0].Reason != why {
@@ -284,7 +286,7 @@ func TestSomebodyElseTakingItTakesTheLineAway(t *testing.T) {
 		t.Errorf("a handled refusal took %d units of the rows' area", l.rowsTop())
 	}
 	if marks := tape(t, l); func() bool { _, ok := marks.band(l.GetScheme()); return ok }() {
-		t.Error("the line was drawn as well as handed on")
+		t.Error("the line was drawn although the handler said it had it")
 	}
 
 	// **The same refusal twice is not news.** The view asks again, is refused again,
@@ -293,6 +295,48 @@ func TestSomebodyElseTakingItTakesTheLineAway(t *testing.T) {
 	l.Item(4)
 	if len(told) != 1 {
 		t.Errorf("the handler was told %d times about one refusal", len(told))
+	}
+}
+
+// **A handler that answers FALSE was told and did not take it**, so the view draws
+// the line as it would have anyway. Being told and deciding where it shows are two
+// decisions, and a handler that only logs makes the first one.
+func TestAHandlerThatOnlyListensLeavesTheLine(t *testing.T) {
+	const why = "no such source: flies"
+	var told []Trouble
+	l := listOver(t, &shutSource{why: why}, 8)
+	l.SetOnTrouble(func(tr Trouble) bool { told = append(told, tr); return false })
+
+	l.Item(0)
+	if len(told) != 1 {
+		t.Fatalf("the handler was told %v, want the one refusal", told)
+	}
+	if l.visibleCount() != 7 || l.rowsTop() == 0 {
+		t.Errorf("the line took no room: %d rows from %d", l.visibleCount(), l.rowsTop())
+	}
+	if !drewALine(t, l) {
+		t.Error("nothing was drawn, and the handler did not say it had it")
+	}
+}
+
+// **And a caller that wants no line ever says so once.** Standing, and about every
+// refusal rather than this one.
+func TestAViewToldToKeepQuietDrawsNoLine(t *testing.T) {
+	l := listOver(t, &shutSource{why: "no such source: flies"}, 8)
+	l.SetShowsTrouble(false)
+
+	l.Item(0)
+	if !l.Trouble().Any() {
+		t.Fatal("it was refused and holds nothing")
+	}
+	if l.visibleCount() != 8 || l.rowsTop() != 0 {
+		t.Errorf("a quiet view still took %d units for a line", l.rowsTop())
+	}
+	if marks := tape(t, l); func() bool { _, ok := marks.band(l.GetScheme()); return ok }() {
+		t.Error("a view told to keep quiet drew the line anyway")
+	}
+	if l.ShowsTrouble() {
+		t.Error("ShowsTrouble disagrees with what it was told")
 	}
 }
 

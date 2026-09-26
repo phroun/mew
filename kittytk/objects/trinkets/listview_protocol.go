@@ -27,6 +27,10 @@ func init() {
 			"activate": protocol.NewEventDesc("A row was activated — double-clicked, or Enter on the selection.").
 				Field("trinket", "uint", "The list's object ID.").
 				Field("selected", "int", "Index of the activated row."),
+			"trouble": protocol.NewEventDesc("Something this list asked for was refused — a source it named, or a scope of it. The list goes on showing what it has.").
+				Field("trinket", "uint", "The list's object ID.").
+				Field("text", "string", "Why, in the words of whoever refused it.").
+				Field("at", "int", "The row it was asking about, or -1 where it was asking about none."),
 		},
 		New: func() any { return NewListView() },
 		ID: func(t any) uint64 {
@@ -42,6 +46,16 @@ func init() {
 			l.SetOnItemActivated(func(index int) {
 				ctx.EmitEvent(protocol.NewEvent("activate").
 					WithUint("trinket", id).WithInt("selected", index))
+			})
+			// A refusal reaches the application the way everything else about this
+			// object does. It does NOT stop the list drawing its own line: being
+			// told and deciding where it shows are two decisions, and `trouble=`
+			// below is how an application makes the second one.
+			l.announceTrouble(func(t Trouble) {
+				ctx.EmitEvent(protocol.NewEvent("trouble").
+					WithUint("trinket", id).
+					WithString("text", t.Reason).
+					WithInt("at", t.At))
 			})
 		},
 		Props: map[string]protocol.Property{
@@ -82,7 +96,9 @@ func init() {
 				Tip("The record field a row stands for, where it is not the one shown."),
 
 			"selected": intProp("selected", (*ListView).SetCurrentIndex).Tip("Selected row index (-1 = none).").Def("-1"),
-			"ledger":   boolProp("ledger", (*ListView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
+			"trouble": boolProp("trouble", (*ListView).SetShowsTrouble).
+				Tip("Draw a refusal as a line of its own, above the rows.").Def("true"),
+			"ledger": boolProp("ledger", (*ListView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
 			"items": protocol.NewCollection(func(parent, child any) error {
 				l, ok := parent.(*ListView)
 				if !ok {

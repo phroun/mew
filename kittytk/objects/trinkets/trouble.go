@@ -56,7 +56,30 @@ func (t Trouble) Any() bool { return t.Reason != "" }
 // tree, and the only part that differs is where each one paints it.
 type troubled struct {
 	trouble   Trouble
-	onTrouble func(Trouble)
+	onTrouble func(Trouble) bool
+
+	// announce is the wire's own hearing of the same thing: the `trouble` event,
+	// set when this view is bound to a connection. Separate from onTrouble because
+	// they belong to two different callers -- whoever built this view in Go, and
+	// whoever is holding the other end of a socket -- and either may want it.
+	announce func(Trouble)
+
+	// handled says the last refusal was taken off this view's hands: a handler
+	// answered that it has dealt with it, so there is nothing for the line to say.
+	// It is about THIS refusal and is reconsidered for the next one, which is what
+	// makes it different from `quiet`.
+	handled bool
+
+	// quiet says somebody would rather this view did not draw its own line.
+	//
+	// **Asked for, never inferred.** Being TOLD about a refusal and choosing where
+	// it is SHOWN are two decisions: an application that subscribes to the event to
+	// write it in a log still wants its reader to see the line, and one with a
+	// status bar of its own wants the line gone whether or not anything is
+	// listening. Reading the one as the other -- which this did, silencing the line
+	// the moment a handler was set -- makes a visible thing move for an invisible
+	// reason.
+	quiet bool
 }
 
 // Trouble is what this view was last told was wrong, and the zero Trouble where it has
@@ -68,15 +91,37 @@ type troubled struct {
 // why.
 func (v *troubled) Trouble() Trouble { return v.trouble }
 
-// SetOnTrouble is told when a question this view asked is refused.
+// SetOnTrouble is told when a question this view asked is refused, and answers
+// whether it has HANDLED it.
 //
-// **Setting one turns the drawn line off.** A caller that has somewhere better to put
-// a refusal -- a status bar, a dialog, a log -- is saying that this view should not
-// speak for itself, and a view that both drew the line and called the handler would be
-// saying it twice.
+// **True means handled, and a handled refusal is not drawn.** It is the shape a
+// window's close handler has -- the caller is asked, and what it answers decides what
+// happens next -- and it is per refusal rather than a standing preference: a handler
+// that puts a missing source in its own status bar and answers true for that, and
+// answers false for one it does not recognise, gets the line for the second and not
+// the first.
 //
-// Nil puts the line back.
-func (v *troubled) SetOnTrouble(fn func(Trouble)) { v.onTrouble = fn }
+// False means told, not handled: the view draws the line as it would have anyway. A
+// caller that wants no line ever says so once with SetShowsTrouble.
+func (v *troubled) SetOnTrouble(fn func(Trouble) bool) { v.onTrouble = fn }
+
+// SetShowsTrouble says whether this view draws its own refusal. It does, until
+// somebody with somewhere better to put it -- a status bar, a dialog, a log -- says
+// otherwise.
+//
+// **The default is to draw it**, because the case this exists for is the one where
+// nobody has thought about refusals at all: a view that was turned down and said
+// nothing draws an empty area for ever, which is what a source with nothing in it
+// looks like.
+func (v *troubled) SetShowsTrouble(show bool) { v.quiet = !show }
+
+// ShowsTrouble reports whether this view draws its own refusals.
+func (v *troubled) ShowsTrouble() bool { return !v.quiet }
+
+// announceTrouble is how the wire binding hears a refusal. Not exported: an
+// application reaches this through the `trouble` event, and a Go caller through
+// SetOnTrouble.
+func (v *troubled) announceTrouble(fn func(Trouble)) { v.announce = fn }
 
 // took records a refusal and hands it on, and reports whether anything changed.
 //
@@ -87,8 +132,19 @@ func (v *troubled) took(t Trouble) bool {
 		return false
 	}
 	v.trouble = t
-	if t.Any() && v.onTrouble != nil {
-		v.onTrouble(t)
+	// **Only a refusal is announced, and not its going away.** An answer arriving is
+	// the ordinary thing happening; what is news is a view being unable to show what
+	// it was asked to.
+	v.handled = false
+	if t.Any() {
+		if v.onTrouble != nil && v.onTrouble(t) {
+			// Taken off this view's hands, for this refusal. The next one is asked
+			// about again.
+			v.handled = true
+		}
+		if v.announce != nil {
+			v.announce(t)
+		}
 	}
 	return true
 }
@@ -96,9 +152,10 @@ func (v *troubled) took(t Trouble) bool {
 // untroubled forgets a refusal, which is what an answer that arrives does.
 func (v *troubled) untroubled() bool { return v.took(Trouble{}) }
 
-// showsTrouble reports whether this view draws its own refusal, which it does unless
-// somebody said they would rather handle it.
-func (v *troubled) showsTrouble() bool { return v.trouble.Any() && v.onTrouble == nil }
+// showsTrouble reports whether there is a line to draw right now: something was
+// refused, nobody has asked this view to keep quiet, and nobody answered that they
+// have handled this one.
+func (v *troubled) showsTrouble() bool { return v.trouble.Any() && !v.quiet && !v.handled }
 
 // troubleHeight is what the line takes out of the rows' own area, and nought where
 // there is no line.

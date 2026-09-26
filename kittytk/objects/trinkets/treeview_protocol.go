@@ -57,6 +57,10 @@ func init() {
 				Field("key", "string", "The edited RECORD's identity, for a declared source; empty for a tree's own items.").
 				Field("column", "int", "Index of the edited column.").
 				Field("value", "string", "The committed cell text."),
+			"trouble": protocol.NewEventDesc("Something this tree asked for was refused — a source it named, or a scope of it. The tree goes on showing what it has.").
+				Field("trinket", "uint", "The tree's object ID.").
+				Field("text", "string", "Why, in the words of whoever refused it.").
+				Field("at", "int", "The row it was asking about, or -1 where it was asking about none."),
 		},
 		New: func() any { return NewTreeView() },
 		ID: func(t any) uint64 {
@@ -74,6 +78,16 @@ func init() {
 					WithUint("item", uint64(item.ID)).
 					WithInt("selected", tv.CurrentIndex()))
 			}
+			// A refusal reaches the application the way everything else about this
+			// object does. It does NOT stop the tree drawing its own line: being
+			// told and deciding where it shows are two decisions, and `trouble=`
+			// is how an application makes the second one.
+			tv.announceTrouble(func(t Trouble) {
+				ctx.EmitEvent(protocol.NewEvent("trouble").
+					WithUint("trinket", id).
+					WithString("text", t.Reason).
+					WithInt("at", t.At))
+			})
 			tv.SetOnCurrentChanged(func(item *TreeItem) { emit("change", item) })
 			tv.SetOnItemActivated(func(item *TreeItem) { emit("activate", item) })
 			tv.SetOnItemExpanded(func(item *TreeItem) {

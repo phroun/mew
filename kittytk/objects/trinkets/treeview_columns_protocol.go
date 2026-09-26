@@ -441,7 +441,9 @@ func treeViewProps() map[string]protocol.Property {
 		"display": stringProp("display", (*TreeView).SetKeyField).
 			Tip("Field the key (tree) column reads, for a declared source."),
 
-		"selected":     intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
+		"selected": intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
+		"trouble": boolProp("trouble", (*TreeView).SetShowsTrouble).
+			Tip("Draw a refusal as a line of its own, under the header and above the rows.").Def("true"),
 		"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth).Tip("Indent width per tree level."),
 
 		"caption":    stringProp("caption", (*TreeView).SetKeyCaption).Tip("Header caption over the key (tree) column."),
