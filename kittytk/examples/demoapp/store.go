@@ -48,6 +48,9 @@ func samples() []sample {
 		{"seal", "bin", byteRamp(1)},
 		{client.CacheMark + "orchard-thumbnail", "bin", byteRamp(24)},
 		{client.CacheMark + "search-index", "txt", []byte(searchIndex)},
+		// A bundle that loads and has something said about it, for the Lists
+		// tab's Make trouble button. See trouble.go.
+		troubleSample(),
 	}
 }
 

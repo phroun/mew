@@ -187,6 +187,7 @@ li=new tab caption="Lists" children={
 	}
 	new label caption="A list whose source REFUSES -- three rows arrive and the rest is turned down:"
 	lirefused=new listview source="source:` + refusedSourceName + `" display="name" min_width=160 min_height=80
+	litrouble=new button caption="Make trouble" action=demo.trouble fill=none
 	}
 }
 
@@ -812,6 +813,7 @@ pgc=w.t.pg.pgv.pgc
 lirtl=w.t.li.liv.lirtl
 lilv=w.t.li.liv.lisp.lilp.lilv
 lirefused=w.t.li.liv.lirefused
+litrouble=w.t.li.liv.litrouble
 `)
 
 	// The menu bar and status bar are adopted as this application's

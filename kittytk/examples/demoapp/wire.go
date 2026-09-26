@@ -390,6 +390,10 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.nested.pick", func() { a.setStatus("Nested: ordinary item") })
 	c.OnCommand("demo.nested.deep", func() { a.setStatus("Nested: fired from level 4") })
 
+	// The Lists tab's Make trouble button: a bundle that loads and has something
+	// said about it. See trouble.go.
+	a.wireTrouble(c)
+
 	// Help menu.
 	c.OnCommand("demo.help.about", func() { a.showAbout() })
 }
