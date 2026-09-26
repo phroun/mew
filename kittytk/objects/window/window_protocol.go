@@ -261,6 +261,7 @@ func init() {
 					func(v protocol.Verdict) {
 						switch {
 						case v.Allowed:
+							closeTrace("window_closing allowed for %q", w.Title())
 							settle(true)
 						case v.Said:
 							// Denied. It stays open, which is what was asked
@@ -295,12 +296,15 @@ func init() {
 								// second time, and report it as NOT having happened.
 								return
 							}
+							closeTrace("window_closing NOT answered for %q; deciding=%v connectionGone=%v",
+								w.Title(), w.Deciding(), ctx.Gone())
 							if ctx.Gone() {
 								// The application left rather than failing to answer. The
 								// window stays, and the teardown closing it is next.
 								settle(false)
 								return
 							}
+							closeTrace("asking the person about %q", w.Title())
 							w.AskForceClose(settle)
 						}
 					})
@@ -312,6 +316,8 @@ func init() {
 				// A question is outstanding, which is NOT a refusal -- see
 				// Window.SetDeciding for why the difference matters.
 				w.SetDeciding(true)
+				closeTrace("window_closing asked about %q(id=%d); waiting %v for an answer",
+					w.Title(), w.ObjectID(), closeDecision)
 				return false
 			})
 

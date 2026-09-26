@@ -209,6 +209,10 @@ func (d *Desktop) tearOffInPlace(win *window.Window) {
 // position. Returns nil when the platform can't host it. Shared by
 // the drag and click detach paths.
 func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.Unit) *window.TearOffHost {
+	if closeTracing() {
+		closeTraceFrom("createTornHost: %s at %d,%d", closeTraceWindow(win), deskUnitX, deskUnitY)
+		defer func() { closeTrace("createTornHost: returned, %s", closeTraceWindow(win)) }()
+	}
 	// Claim the window for the duration of this call. createTornHost latches
 	// its "claimed" state (RemoveWindow / SetDetached) only after CreateSurface
 	// below, and on SDL that surface creation re-enters the post queue - which
@@ -254,6 +258,7 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 
 	deskX, deskY := native.ScreenPositionPx()
 	b := win.Bounds()
+	closeTrace("createTornHost: asking the platform for a surface for %s", closeTraceWindow(win))
 	newSurf, err := plat.CreateSurface(platform.SurfaceOptions{
 		Title:      win.Title(),
 		Borderless: true,
@@ -269,8 +274,11 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 		HeightPx:       d.HardUnitToPxY(b.Height),
 	})
 	if err != nil {
+		closeTrace("createTornHost: the platform refused a surface: %v", err)
 		return nil
 	}
+	closeTrace("createTornHost: got a surface; taking %s out of the window manager",
+		closeTraceWindow(win))
 
 	wm.RemoveWindow(win)
 
@@ -448,8 +456,10 @@ func (d *Desktop) SurfaceWindow(win *window.Window) {
 func (d *Desktop) surfaceModal(modal *window.Window) {
 	wm := d.windowManager
 	if wm == nil || modal == nil {
+		closeTrace("surfaceModal: nothing to surface (%s)", closeTraceWindow(modal))
 		return
 	}
+	closeTrace("surfaceModal: %s", closeTraceWindow(modal))
 	if h := d.tornHostForWindow(modal); h != nil {
 		surf := h.Surface()
 		// Restore before raising if the modal is minimized at EITHER level: the
@@ -915,6 +925,16 @@ func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY co
 // dropTornHost disposes of a torn window's surface and forgets the
 // host (the window closed itself while torn).
 func (d *Desktop) dropTornHost(host *window.TearOffHost) {
+	if closeTracing() {
+		d.mu.RLock()
+		wasPrimary := host == d.soloPrimaryHost
+		d.mu.RUnlock()
+		var w *window.Window
+		if host != nil {
+			w = host.Window()
+		}
+		closeTraceFrom("dropTornHost: %s wasPrimary=%v", closeTraceWindow(w), wasPrimary)
+	}
 	d.mu.Lock()
 	if d.tornDrag != nil && d.tornDrag.host == host {
 		d.tornDrag = nil

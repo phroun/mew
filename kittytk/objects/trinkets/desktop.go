@@ -890,7 +890,10 @@ func (d *Desktop) showModal(mb *MessageBox) bool {
 		y = metrics.RoundDownToCellY(y)
 	}
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+	closeTrace("showModal: dialog %s placed at %d,%d %dx%d",
+		closeTraceWindow(&mb.Window), x, y, b.Width, b.Height)
 	d.revealModal(&mb.Window)
+	closeTrace("showModal: done, dialog %s", closeTraceWindow(&mb.Window))
 	return true
 }
 
@@ -917,6 +920,7 @@ func (d *Desktop) showModal(mb *MessageBox) bool {
 //	else. Failing that, on a host that cannot hold a second surface, reveal the
 //	desktop: heavier, and at least visible.
 func (d *Desktop) revealModal(win *window.Window) {
+	closeTrace("revealModal: %s solo=%v", closeTraceWindow(win), d.IsSolo())
 	if d.IsSolo() {
 		// **Solo mode already gives it a surface.** A window added while solo is
 		// torn onto an OS surface of its own -- soloAdoptWindow, deferred because
@@ -925,10 +929,13 @@ func (d *Desktop) revealModal(win *window.Window) {
 		// dialog the `tearing` guard was written for. So this waits for that and
 		// raises what it made.
 		d.Post(func() {
+			closeTrace("revealModal/posted: %s", closeTraceWindow(win))
 			if win.IsDetached() {
 				d.SurfaceWindow(win)
+				closeTrace("revealModal/posted: raised on its own surface")
 				return
 			}
+			closeTrace("revealModal/posted: NOTHING gave it a surface; revealing the desktop")
 			// Nothing gave it a surface, so the desktop had better be here:
 			// heavier than a dialog of its own, and the alternative is a modal
 			// question painted where nobody is looking.
@@ -1001,6 +1008,8 @@ func (d *Desktop) AskForceClose(win *window.Window, then func(force bool)) {
 		return
 	}
 	d.mu.Unlock()
+
+	d.closeTraceDesktop("AskForceClose " + closeTraceWindow(win))
 
 	name := "An application"
 	for _, a := range d.Applications() {
@@ -2060,6 +2069,10 @@ func (d *Desktop) RaiseToFront() {
 // close an application, and from then on no desktop, no question, and no way back to
 // either.
 func (d *Desktop) ExitSoloMode() {
+	if closeTracing() {
+		closeTraceFrom("ExitSoloMode: revealing the desktop")
+		defer d.closeTraceDesktop("ExitSoloMode: done")
+	}
 	d.mu.RLock()
 	solo := d.solo
 	host := d.soloPrimaryHost
@@ -2168,6 +2181,10 @@ func (d *Desktop) ExitSoloMode() {
 // exactly where it was floating rather than snapping to where the desktop
 // sat. Runs on the platform thread.
 func (d *Desktop) EnterSoloFromDesktop() {
+	if closeTracing() {
+		closeTraceFrom("EnterSoloFromDesktop: hiding the desktop")
+		defer d.closeTraceDesktop("EnterSoloFromDesktop: done")
+	}
 	d.mu.RLock()
 	solo := d.solo
 	wm := d.windowManager
@@ -2260,6 +2277,9 @@ func (d *Desktop) soloHostOnPrimary(win *window.Window) {
 // application, which is about lastWindowClosed and not about surfaces. ExitSoloMode is
 // what copes with the difference.
 func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
+	if closeTracing() {
+		closeTraceFrom("soloHostOnPrimaryAt: %s becomes the primary host", closeTraceWindow(win))
+	}
 	d.mu.RLock()
 	plat := d.platform
 	surf := d.surface
@@ -2365,12 +2385,16 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 // back to) and are not zoomed - only the main window fills the display.
 func (d *Desktop) soloAdoptWindow(win *window.Window) {
 	if win == nil || !d.IsSolo() || win.IsDetached() {
+		closeTrace("soloAdoptWindow: skipping %s (solo=%v)", closeTraceWindow(win), d.IsSolo())
 		return
 	}
 	// Only genuinely managed windows tear off (a closed one has left).
 	if !d.managesWindow(win) {
+		closeTrace("soloAdoptWindow: %s is not in the window manager", closeTraceWindow(win))
 		return
 	}
+	closeTrace("soloAdoptWindow: tearing %s", closeTraceWindow(win))
+	defer func() { closeTrace("soloAdoptWindow: after, %s", closeTraceWindow(win)) }()
 	// Forced tearable only so the tear can happen; the handle then goes away
 	// because a solo peer has no desktop to dock back to. Remember what it
 	// really was, so revealing a desktop restores it rather than guessing.
@@ -2453,6 +2477,10 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
 	havePrimary := d.soloPrimaryHost != nil
 	d.mu.RUnlock()
+	if closeTracing() {
+		closeTraceFrom("soloRebalance(primaryClosed=%v): solo=%v hosting=%v hosts=%d docked=%d havePrimary=%v",
+			primaryClosed, solo, hosting, len(hosts), len(wm.Windows()), havePrimary)
+	}
 	if !solo || wm == nil || hosting {
 		// Mid-lift: a window was just removed to be hosted, not closed.
 		return
@@ -2463,6 +2491,8 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 	}
 	if primaryClosed && !havePrimary {
 		if h := pickPromotable(hosts); h != nil {
+			closeTraceFrom("soloRebalance: PROMOTING %s onto the primary surface",
+				closeTraceWindow(h.Window()))
 			d.promoteToPrimary(h, true)
 		}
 	}

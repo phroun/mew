@@ -1148,6 +1148,7 @@ func (w *Window) AskForceClose(then func(force bool)) {
 	if then == nil {
 		return
 	}
+	w.traceCoordinator()
 	if c := w.findCloseCoordinator(); c != nil {
 		c.AskForceClose(w, then)
 		return
