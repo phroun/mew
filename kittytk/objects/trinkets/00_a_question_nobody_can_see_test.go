@@ -14,6 +14,7 @@ package trinkets
 
 import (
 	"testing"
+	"time"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
@@ -303,4 +304,90 @@ func TestAQuestionSurvivesTheDesktopBeingHidden(t *testing.T) {
 		d.ForceQuitWithCode(0)
 	}
 	d.RunOn(plat)
+}
+
+// **A desktop hidden on a host that cannot hand over its surface.**
+//
+// A single-surface host -- a terminal, headless polling -- has no surface to give an
+// application, so hiding the desktop leaves its windows docked and means only that the
+// desktop is the frame around one application. That is a real state and not a mistake.
+//
+// What WAS a mistake is that it could not be left again. ExitSoloMode returned early
+// without a host behind the solo mode, so `solo` stayed true for ever -- and every path
+// that reveals the desktop in order to show something then silently did nothing,
+// including the one that puts a force-close question where a person can see it. Hide the
+// desktop, try to close an application, and from then on no desktop, no question, and no
+// way back to either.
+func TestADesktopHiddenWithNoSurfaceToGiveComesBack(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Ledger")
+	main.SetMainRequested(true)
+	sulking := window.NewWindow("Quarterly Figures")
+	d.AddApplication(&mockApp{
+		name: "Ledger", main: main,
+		windows: []*window.Window{main, sulking},
+	})
+
+	// Run() builds a polling platform over the backend: one surface, and not a
+	// native one, so there is nothing to hand over.
+	ready := make(chan struct{})
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 20, Y: 20, Width: 400, Height: 300})
+		wm.AddWindow(sulking)
+		sulking.SetBounds(core.UnitRect{X: 60, Y: 60, Width: 300, Height: 200})
+		close(ready)
+	})
+	go d.Run()
+	<-ready
+	defer d.ForceQuitWithCode(0)
+
+	onThread := func(fn func()) {
+		t.Helper()
+		done := make(chan struct{})
+		d.Post(func() { defer close(done); fn() })
+		<-done
+	}
+
+	onThread(func() { d.EnterSoloFromDesktop() }) // hide_desktop
+	if !d.IsSolo() {
+		t.Fatal("the desktop was not hidden, so this proves nothing")
+	}
+
+	// And now something has to be asked about closing a window.
+	var answered *bool
+	onThread(func() { d.AskForceClose(sulking, func(force bool) { answered = &force }) })
+
+	// Revealing the desktop is posted, so give the queue a chance to run it.
+	deadline := time.Now().Add(5 * time.Second)
+	for d.IsSolo() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if d.IsSolo() {
+		t.Fatal("the desktop could not be revealed, so the question is painted where nobody can see it and there is no way back")
+	}
+	// **And it is a place in its own right again.** Revealing the desktop is asking
+	// for somewhere to go back to, so the last window closing now leaves the desktop
+	// showing rather than ending the process -- the same as the hosted path.
+	if !d.IsDesktopEnvironment() {
+		t.Error("the revealed desktop is still only the frame around an application, so closing the last window would end it")
+	}
+
+	var up bool
+	onThread(func() { up = onTheScreen(d) })
+	if !up {
+		t.Fatal("the desktop came back and the question is not on it")
+	}
+	if answered != nil {
+		t.Errorf("the question answered itself: %v", *answered)
+	}
+	onThread(func() { theBox(t, d, sulking).done(ResultYes) })
+	if answered == nil || !*answered {
+		t.Errorf("the question could not be answered: %v", answered)
+	}
 }

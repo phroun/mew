@@ -2016,6 +2016,11 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 			d.Post(func() { d.soloRebalance(false) })
 		})
 	}
+	// **Hosting can fail, and solo mode is still solo mode.** A single-surface host
+	// -- a terminal, headless polling -- has no surface to hand over, so the window
+	// stays docked; what solo mode MEANS there is that this desktop is the frame
+	// around one application and ends with it, which is about lastWindowClosed and
+	// not about surfaces. ExitSoloMode is what has to cope with the difference.
 	if win != nil {
 		d.soloHostOnPrimary(win)
 	}
@@ -2043,8 +2048,17 @@ func (d *Desktop) RaiseToFront() {
 // torn-off window at the same screen rectangle - so it floats over the
 // freshly revealed desktop with its redock handle and can be dragged in to
 // dock. Any client can request this over the protocol (`set host desktop`);
-// it is a no-op when not in solo mode or when the platform can't host
-// surfaces. Runs on the platform thread.
+// it is a no-op when not in solo mode. Runs on the platform thread.
+//
+// **It works with no host behind the solo mode, and has to.** A single-surface host --
+// a terminal, headless polling -- has nothing to hand over, so solo mode there means
+// only that the desktop is the frame around one application; its windows stayed
+// docked, and there is nothing to re-home. This used to return early on that, which
+// made hiding the desktop a ONE-WAY DOOR: `solo` stayed true for ever, and every path
+// that reveals the desktop to show something silently did nothing -- including the one
+// that puts a force-close question where a person can see it. Hide the desktop, try to
+// close an application, and from then on no desktop, no question, and no way back to
+// either.
 func (d *Desktop) ExitSoloMode() {
 	d.mu.RLock()
 	solo := d.solo
@@ -2052,11 +2066,25 @@ func (d *Desktop) ExitSoloMode() {
 	surf := d.surface
 	wm := d.windowManager
 	d.mu.RUnlock()
-	if !solo || host == nil || surf == nil || wm == nil {
+	if !solo || surf == nil || wm == nil {
 		return
 	}
-	win := host.Window()
+	var win *window.Window
+	if host != nil {
+		win = host.Window()
+	}
 	if win == nil {
+		// Nothing was ever hosted, so there is nothing to give back and nothing to
+		// re-home: leaving solo mode is the flags and the chrome.
+		d.mu.Lock()
+		d.solo = false
+		d.desktopEnvironment = true
+		d.soloPrimaryHost = nil
+		d.mu.Unlock()
+		d.restoreSoloSuppressedTear()
+		d.updateMenuBarContent()
+		d.updateStatusBarContent()
+		d.invalidateSurface()
 		return
 	}
 
@@ -2227,6 +2255,10 @@ func (d *Desktop) soloHostOnPrimary(win *window.Window) {
 // surface repositions and resizes to where that peer's window was, so the
 // primary surface "takes on the personality" of the promoted window
 // including its screen placement.
+// It can do nothing at all -- a host with no surface to hand over -- and solo mode is
+// entered either way: what it means there is that the desktop is the frame around one
+// application, which is about lastWindowClosed and not about surfaces. ExitSoloMode is
+// what copes with the difference.
 func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	d.mu.RLock()
 	plat := d.platform
