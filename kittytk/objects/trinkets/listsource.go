@@ -132,10 +132,12 @@ func (l *ListView) sequence() serval.DataSet {
 	if l.set == nil && read != nil {
 		set, err := read.Open(&l.descriptor)
 		if err != nil {
-			// A sequence that cannot be stated is a list with no rows, and the
-			// refusal is the source's to explain. There is nothing a list can
-			// usefully do with it: it cannot ask a different question, having
-			// been told which one to ask.
+			// **A sequence that cannot be stated is a list with no rows, and now it
+			// says so.** It cannot ask a different question, having been told which
+			// one to ask -- but drawing nothing and explaining nothing was the whole
+			// of what it used to do with the refusal, and a reader could not tell it
+			// from an empty source. See trouble.go.
+			l.took(Trouble{Reason: err.Error(), At: -1})
 			return nil
 		}
 		l.set = set
@@ -360,6 +362,19 @@ func (s *rowSink) settle() {
 		l.bones.place(first.N, s.rows)
 	}
 	l.resolve()
+	// **What the answer said was wrong, kept where a reader can see it.** It used to
+	// be noticed here and dropped, so a refused question drew an empty list for ever
+	// -- which is what a source with nothing in it draws, and tells nobody anything.
+	if s.done.Error != "" {
+		if l.took(Trouble{Reason: s.done.Error, At: s.expected}) {
+			l.Update()
+		}
+	} else if len(s.rows) > 0 {
+		// An answer that brought records is the refusal no longer being true.
+		if l.untroubled() {
+			l.Update()
+		}
+	}
 	if s.done.Stop != "" || s.done.Error != "" {
 		l.settled()
 	}

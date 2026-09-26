@@ -240,6 +240,15 @@ type Scheme struct {
 	// List Related Colors (TreeView, ListView)
 	// =========================================================================
 
+	// ErrorMessage is what a trinket says a REFUSAL in: something it asked for was
+	// turned down, and this is the line it says so on.
+	//
+	// **Its own colour and not a borrowed one**, because a refusal is the one thing a
+	// trinket draws that is not about the data: every other style here says what a row
+	// IS, and this says that a row is missing and why. Bright white on red by default,
+	// which is what the terminal has always meant by it.
+	ErrorMessage *CellStyle // nil = bright white on red
+
 	ListBG            *CellStyle // nil = TrinketContentBG
 	ListFG            *CellStyle // nil = TrinketContentFG
 	FocusedListBG     *CellStyle // nil = ListBG
@@ -369,6 +378,7 @@ func DefaultScheme() *Scheme {
 		FocusedDockItem:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightCyan)),
 		HoveredDockItem:   nil, // HoverBG + HoverFG
 		Tooltip:           ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorBlack).WithAttrs(StyleBold)),
+		ErrorMessage:      ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorRed)),
 		TooltipBorder:     ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
 
 		// Window Frame Related Colors
@@ -1334,6 +1344,30 @@ func (s *Scheme) GetFocusedTab() CellStyle {
 		return *s.FocusedTab
 	}
 	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+// --- The refusal line ---
+
+func (s *Scheme) GetErrorMessageFG() Color {
+	if s.ErrorMessage != nil {
+		return s.ErrorMessage.Fg
+	}
+	return ColorBrightWhite
+}
+
+func (s *Scheme) GetErrorMessageBG() Color {
+	if s.ErrorMessage != nil {
+		return s.ErrorMessage.Bg
+	}
+	return ColorRed
+}
+
+// GetErrorMessage is the whole style of a refusal line, which is what a painter wants.
+func (s *Scheme) GetErrorMessage() CellStyle {
+	if s.ErrorMessage != nil {
+		return *s.ErrorMessage
+	}
+	return DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorRed)
 }
 
 // --- List Colors ---

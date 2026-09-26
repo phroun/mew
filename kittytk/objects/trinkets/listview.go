@@ -35,6 +35,10 @@ type ListView struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
+	// What this view was told was wrong, and whether it says so itself. See
+	// trouble.go.
+	troubled
+
 	// The rows this list was given, in the order it was given them. A list told
 	// to read a source of its own has none of these and reads that instead; see
 	// listsource.go, which is the one mechanism both go through.
@@ -299,7 +303,7 @@ func (l *ListView) SetCurrentIndex(index int) {
 		// Calculate the visual Y position of this item (after internal scrolling)
 		// This is where the item appears on screen, relative to the ListView's bounds
 		visualRow := index - l.scrollOffset
-		itemY := core.Unit(visualRow) * metrics.UnitsPerCellHeight
+		itemY := l.rowsTop() + core.Unit(visualRow)*metrics.UnitsPerCellHeight
 
 		itemRect := core.UnitRect{
 			X:      0,
@@ -405,9 +409,7 @@ func (l *ListView) ensureVisible(index int) {
 		return
 	}
 
-	bounds := l.Bounds()
-	metrics := l.EffectiveCellMetrics()
-	visibleCount := int(bounds.Height / metrics.UnitsPerCellHeight)
+	visibleCount := l.visibleCount()
 
 	// A list with no room yet shows nothing, so there is nothing to bring into
 	// view. Scrolling by the arithmetic below instead puts the list one row
@@ -447,6 +449,15 @@ func (l *ListView) Paint(p *core.Painter) {
 
 	visibleCount := l.visibleCount() // clamped: never negative
 
+	// A refusal is drawn FIRST and takes its row out of what the rows below have:
+	// it is not an overlay, it stands where a row would have stood. See trouble.go.
+	top := l.rowsTop()
+	if top > 0 {
+		paintTrouble(p, &l.TrinketBase, scheme,
+			troubleRow(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, top),
+			l.trouble.Reason)
+	}
+
 	// One question for the whole screenful, asked before anything is drawn.
 	// Asking per row would be a question per row, and a source that has to go
 	// and find out would be asked thirty times for one frame.
@@ -467,7 +478,7 @@ func (l *ListView) Paint(p *core.Painter) {
 		if item == nil {
 			item = blankRow
 		}
-		itemY := core.Unit(i) * metrics.UnitsPerCellHeight
+		itemY := top + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// Determine style
 		var s style.CellStyle
@@ -583,8 +594,12 @@ func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyl
 	}
 	bounds := l.Bounds()
 	metrics := l.EffectiveCellMetrics()
+	// The fade belongs to the ROWS' area: a refusal line above them is not an edge
+	// there is more list beyond, so it is not faded into.
+	top := l.rowsTop()
+	rowsHeight := bounds.Height - top
 	wtPx := p.UnitSpanPxY(0, metrics.UnitsPerCellHeight) // one row deep
-	if hvPx := p.UnitSpanPxY(0, bounds.Height); wtPx > hvPx/2 {
+	if hvPx := p.UnitSpanPxY(0, rowsHeight); wtPx > hvPx/2 {
 		wtPx = hvPx / 2
 	}
 	if wtPx <= 0 {
@@ -592,7 +607,7 @@ func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyl
 	}
 	wPx := p.UnitSpanPxX(0, bounds.Width)
 	rowPx := p.UnitSpanPxY(0, metrics.UnitsPerCellHeight)
-	totalPx := p.UnitSpanPxY(0, bounds.Height)
+	totalPx := p.UnitSpanPxY(0, rowsHeight)
 	listBG := l.GetScheme().GetListBG()
 	bgAt := func(px int) style.Color {
 		if rowPx > 0 {
@@ -607,7 +622,7 @@ func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyl
 		a := alphaAt(j)
 		if showTop {
 			r, g, b := bgAt(j).RGBComponents()
-			p.FillRectPixelsAlpha(0, 0, 0, j, wPx, 1, r, g, b, a)
+			p.FillRectPixelsAlpha(0, top, 0, j, wPx, 1, r, g, b, a)
 		}
 		if showBottom {
 			r, g, b := bgAt(totalPx - 1 - j).RGBComponents()
@@ -749,19 +764,22 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	// opacity behind, and one solid full-opacity rectangle for the
 	// thumb, at unit granularity - same treatment as the combobox
 	// popup lane.
+	// The bar runs beside the ROWS, so it begins where they do.
+	top := l.rowsTop()
+
 	if p.Graphical() {
 		trackU, thumbU, posU := l.scrollbarUnits(visibleCount)
 		laneX := l.laneX()
 		stripeX := laneX + metrics.UnitsPerCellWidth/2
 		p.FillRect(core.UnitRect{
 			X:      stripeX,
-			Y:      0,
+			Y:      top,
 			Width:  1,
 			Height: core.Unit(trackU + 0.5),
 		}, '▒', trackStyle.WithBg(style.ColorTransparent))
 		p.FillRect(core.UnitRect{
 			X:      laneX + 1,
-			Y:      core.Unit(posU + 0.5),
+			Y:      top + core.Unit(posU+0.5),
 			Width:  metrics.UnitsPerCellWidth - 2,
 			Height: core.Unit(thumbU + 0.5),
 		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
@@ -772,13 +790,13 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 	// Draw scrollbar track
 	for i := 0; i < trackHeight; i++ {
-		y := core.Unit(i) * metrics.UnitsPerCellHeight
+		y := top + core.Unit(i)*metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
-		y := core.Unit(thumbStart+i) * metrics.UnitsPerCellHeight
+		y := top + core.Unit(thumbStart+i)*metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
 }
@@ -854,9 +872,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketPagePrior:
-		bounds := l.Bounds()
-		metrics := l.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
+		pageSize := l.visibleCount()
 		newIndex := l.currentIndex - pageSize
 		if newIndex < 0 {
 			newIndex = 0
@@ -865,9 +881,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketPageNext:
-		bounds := l.Bounds()
-		metrics := l.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
+		pageSize := l.visibleCount()
 		newIndex := l.currentIndex + pageSize
 		if newIndex >= l.Count() {
 			newIndex = l.Count() - 1
@@ -895,11 +909,35 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 func (l *ListView) visibleCount() int {
 	bounds := l.Bounds()
 	metrics := l.EffectiveCellMetrics()
-	n := int(bounds.Height / metrics.UnitsPerCellHeight)
+	n := int((bounds.Height - l.rowsTop()) / metrics.UnitsPerCellHeight)
 	if n < 0 {
 		n = 0
 	}
 	return n
+}
+
+// rowsTop is where the rows' own area begins: under the refusal line where there is
+// one, and at the trinket's own top edge where there is not.
+//
+// Everything to do with the rows is reckoned from here rather than from the bounds --
+// which row a press lands on, where the bar's thumb sits, where a row is painted -- so
+// a refusal appearing moves the rows down and takes one off the end, rather than
+// covering the first one over.
+func (l *ListView) rowsTop() core.Unit {
+	return l.troubleHeight(l.EffectiveCellMetrics())
+}
+
+// rowUnder is the visible row a list-local y lands on, counted from the rows' own top
+// edge, and -1 where it lands on the refusal line above them instead.
+func (l *ListView) rowUnder(y core.Unit) int {
+	metrics := l.EffectiveCellMetrics()
+	if metrics.UnitsPerCellHeight <= 0 {
+		return -1
+	}
+	if y -= l.rowsTop(); y < 0 {
+		return -1
+	}
+	return int(y / metrics.UnitsPerCellHeight)
 }
 
 // SetBounds resizes the list and re-clamps its scroll offset (the
@@ -947,19 +985,24 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
+	// The refusal line is not a row and is not the bar: it is something to READ.
+	// A press on it does nothing rather than choosing the row under it.
+	if l.rowUnder(event.Y) < 0 {
+		return false
+	}
+
 	l.SetFocusWithoutScroll() // Use without-scroll variant since click proves visibility
-	metrics := l.EffectiveCellMetrics()
 
 	// Check if click is on scrollbar
 	_, thumbStart, thumbHeight, _ := l.scrollbarGeometry(l.visibleCount())
 	if l.showsScrollbar() && l.onLane(event.X) {
-		clickedRow := int(event.Y / metrics.UnitsPerCellHeight)
+		clickedRow := l.rowUnder(event.Y)
 
 		// Pixel surfaces anchor the drag to the grab point within
 		// the unit-granular thumb.
 		if core.FindSmoothPositioning(l.Self()) {
 			_, thumbU, posU := l.scrollbarUnits(l.visibleCount())
-			pos := float64(event.Y)
+			pos := float64(event.Y - l.rowsTop())
 			if pos >= posU && pos < posU+thumbU {
 				l.scrollbarDragging = true
 				l.smoothScrollbarDrag = true
@@ -1011,7 +1054,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	// no bar that is the whole row, including the column one would have taken.
 
 	// Calculate which item was clicked
-	clickedRow := int(event.Y / metrics.UnitsPerCellHeight)
+	clickedRow := l.rowUnder(event.Y)
 	clickedIndex := l.scrollOffset + clickedRow
 
 	// Only start content drag if click is on a valid item
@@ -1044,10 +1087,10 @@ func (l *ListView) overScrollbarThumb(x, y core.Unit) bool {
 	}
 	if core.FindSmoothPositioning(l.Self()) {
 		_, thumbU, posU := l.scrollbarUnits(visibleCount)
-		pos := float64(y)
+		pos := float64(y - l.rowsTop())
 		return pos >= posU && pos < posU+thumbU
 	}
-	row := int(y / l.EffectiveCellMetrics().UnitsPerCellHeight)
+	row := l.rowUnder(y)
 	return row >= thumbStart && row < thumbStart+thumbHeight
 }
 
@@ -1075,8 +1118,6 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	metrics := l.EffectiveCellMetrics()
-
 	// Handle scrollbar thumb drag
 	// Note: Once drag is captured on press, we don't check horizontal bounds during drag
 	if l.scrollbarDragging {
@@ -1086,7 +1127,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 			visibleCount := l.visibleCount()
 			trackU, thumbU, _ := l.scrollbarUnits(visibleCount)
 			scrollable := trackU - thumbU
-			newPos := float64(event.Y) - l.scrollbarGrabOff
+			newPos := float64(event.Y-l.rowsTop()) - l.scrollbarGrabOff
 			if newPos < 0 {
 				newPos = 0
 			}
@@ -1105,7 +1146,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		currentRow := int(event.Y / metrics.UnitsPerCellHeight)
+		currentRow := l.rowUnder(event.Y)
 		rowDelta := currentRow - l.scrollbarDragStart
 
 		visibleCount := l.visibleCount()
@@ -1143,7 +1184,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	row := int(event.Y / metrics.UnitsPerCellHeight)
+	row := l.rowUnder(event.Y)
 	index := l.scrollOffset + row
 
 	// Clamp to valid range
@@ -1277,9 +1318,9 @@ func (l *ListView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 	if metrics.UnitsPerCellHeight <= 0 || local.Y < 0 || local.Y >= bounds.Height {
 		return "", core.UnitRect{}, false
 	}
-	row := int(local.Y / metrics.UnitsPerCellHeight)
+	row := l.rowUnder(local.Y)
 	at := l.scrollOffset + row
-	if at < 0 || at >= l.Count() {
+	if row < 0 || at < 0 || at >= l.Count() {
 		return "", core.UnitRect{}, false
 	}
 	item := l.rowAt(at)
@@ -1296,7 +1337,7 @@ func (l *ListView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 	}
 	return item.Text, core.UnitRect{
 		X:      x,
-		Y:      core.Unit(row) * metrics.UnitsPerCellHeight,
+		Y:      l.rowsTop() + core.Unit(row)*metrics.UnitsPerCellHeight,
 		Width:  avail,
 		Height: metrics.UnitsPerCellHeight,
 	}, true

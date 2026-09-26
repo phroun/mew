@@ -762,7 +762,7 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 		if !ok {
 			return core.UnitRect{}, false
 		}
-		y := lay.headerH + core.Unit(row)*metrics.UnitsPerCellHeight
+		y := lay.rowsY + core.Unit(row)*metrics.UnitsPerCellHeight
 		r := core.UnitRect{X: clip.X, Y: y, Width: clip.Width, Height: metrics.UnitsPerCellHeight}
 		// A tree-hosting cell's editor starts where the caption TEXT
 		// starts - past the indent, expander, and icon - so it lines
@@ -954,12 +954,11 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 	if !t.multiColumn() || t.rowEditing {
 		return
 	}
-	headerH := t.headerHeight()
-	if event.Y < headerH {
+	under := t.rowUnder(event.Y)
+	if under < 0 {
 		return
 	}
-	metrics := t.EffectiveCellMetrics()
-	row := t.scrollOffset + int((event.Y-headerH)/metrics.UnitsPerCellHeight)
+	row := t.scrollOffset + under
 	if row != t.currentIndex || row < 0 || row >= t.rowCount() {
 		return
 	}

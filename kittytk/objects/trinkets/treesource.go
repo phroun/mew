@@ -414,9 +414,11 @@ func (t *TreeView) sequence() serval.DataSet {
 	if t.set == nil {
 		set, err := read.Open(nil)
 		if err != nil {
-			// A sequence that cannot be stated is a tree with no rows. There is
-			// nothing a tree can usefully do with the refusal, having been told
-			// which question to ask.
+			// A sequence that cannot be stated is a tree with no rows, and now it says
+			// so: it cannot ask a different question, having been told which one to
+			// ask, and drawing nothing without explaining why was indistinguishable
+			// from a source with nothing in it. See trouble.go.
+			t.took(Trouble{Reason: err.Error(), At: -1})
 			return nil
 		}
 		t.set = set
@@ -677,6 +679,17 @@ func (s *treeSink) settle() {
 	if first.Exact && len(s.rows) > 0 {
 		t.bones.place(first.N, s.rows)
 	}
+	// What the answer said was wrong, kept where a reader can see it. See trouble.go.
+	if s.done.Error != "" {
+		if t.took(Trouble{Reason: s.done.Error, At: s.expected}) {
+			t.Update()
+		}
+	} else if len(s.rows) > 0 {
+		if t.untroubled() {
+			t.Update()
+		}
+	}
+
 	t.hang()
 	// A row the view could not place may be placeable now, this being the moment the
 	// answer to "where is it" can have changed.

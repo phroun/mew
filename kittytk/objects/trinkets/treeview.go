@@ -161,6 +161,10 @@ type TreeView struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
+	// What this view was told was wrong, and whether it says so itself. See
+	// trouble.go.
+	troubled
+
 	rootItems []*TreeItem
 	// currentIndex is WHERE the chosen row stands, and -1 for a row the view
 	// cannot place -- which is a row scrolled past, or one a reorder moved outside
@@ -608,7 +612,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		}
 
 		// The visual Y position of this item, after the internal scroll.
-		itemY := core.Unit(index-t.scrollOffset) * metrics.UnitsPerCellHeight
+		itemY := t.rowsTop() + core.Unit(index-t.scrollOffset)*metrics.UnitsPerCellHeight
 
 		t.ScrollRectIntoView(core.UnitRect{
 			X:      t.treeRunX(sp, at, w),
@@ -1023,7 +1027,20 @@ func (t *TreeView) Paint(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
-	visibleCount := int(bounds.Height / metrics.UnitsPerCellHeight)
+	// A refusal is drawn FIRST and takes its row out of what the rows have: it is
+	// not an overlay, it stands where a row would have stood. See trouble.go.
+	top := t.rowsTop()
+	if h := t.troubleHeight(metrics); h > 0 {
+		paintTrouble(p, &t.TrinketBase, scheme,
+			troubleRow(core.UnitRect{
+				Y:      t.headerHeight(),
+				Width:  bounds.Width,
+				Height: bounds.Height - t.headerHeight(),
+			}, h),
+			t.trouble.Reason)
+	}
+
+	visibleCount := t.visibleCount()
 
 	// GUI: paint one extra partial row into any leftover strip rather
 	// than leaving it blank (never counted as visible for scrolling).
@@ -1033,7 +1050,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 	drawn := t.rowCount()
 	rows := visibleCount
 	if p.Graphical() && t.scrollOffset+visibleCount < drawn &&
-		core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
+		top+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
 		rows++
 	}
 
@@ -1045,7 +1062,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 		}
 
 		item := t.drawRow(itemIndex)
-		itemY := core.Unit(i) * metrics.UnitsPerCellHeight
+		itemY := top + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// Determine style
 		var s style.CellStyle
@@ -1098,11 +1115,36 @@ func (t *TreeView) Paint(p *core.Painter) {
 func (t *TreeView) visibleCount() int {
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	n := int((bounds.Height - t.headerHeight() - t.footerHeight()) / metrics.UnitsPerCellHeight)
+	n := int((bounds.Height - t.rowsTop() - t.footerHeight()) / metrics.UnitsPerCellHeight)
 	if n < 0 {
 		n = 0
 	}
 	return n
+}
+
+// rowsTop is where the rows begin: under the header where there is one, and under the
+// refusal line where there is one of those (see trouble.go).
+//
+// A refusal stands BELOW the header and above the rows: the header says what the
+// columns are, which is still true, and the line says what the rows are not, which is
+// what stands in their place. Everything about the rows is reckoned from here, so a
+// refusal appearing moves them down and takes one off the end rather than covering the
+// first one over.
+func (t *TreeView) rowsTop() core.Unit {
+	return t.headerHeight() + t.troubleHeight(t.EffectiveCellMetrics())
+}
+
+// rowUnder is the visible row a tree-local y lands on, counted from the rows' own top
+// edge, and -1 where it lands on the header or the refusal line above them.
+func (t *TreeView) rowUnder(y core.Unit) int {
+	metrics := t.EffectiveCellMetrics()
+	if metrics.UnitsPerCellHeight <= 0 {
+		return -1
+	}
+	if y -= t.rowsTop(); y < 0 {
+		return -1
+	}
+	return int(y / metrics.UnitsPerCellHeight)
 }
 
 // treeHostSpan is the span the tree apparatus is drawn in: the key column's,
@@ -1242,8 +1284,9 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 	// opacity behind, and one solid full-opacity rectangle for the
 	// thumb, at unit granularity - same treatment as the combobox
 	// popup lane.
-	// The track starts below the header row (when one is shown).
-	headerH := t.headerHeight()
+	// The track runs beside the ROWS, so it starts below the header row (when one is
+	// shown) and below a refusal line (when there is one).
+	headerH := t.rowsTop()
 
 	if p.Graphical() {
 		// No track stripe: the hairline reads as another column
@@ -1433,9 +1476,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketPagePrior:
-		bounds := t.Bounds()
-		metrics := t.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
+		pageSize := t.visibleCount()
 		newIndex := t.movingFrom() - pageSize
 		if newIndex < 0 {
 			newIndex = 0
@@ -1444,9 +1485,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketPageNext:
-		bounds := t.Bounds()
-		metrics := t.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
+		pageSize := t.visibleCount()
 		newIndex := t.movingFrom() + pageSize
 		if newIndex >= t.rowCount() {
 			newIndex = t.rowCount() - 1
@@ -1569,8 +1608,13 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	if t.handleHBarPress(event) {
 		return true
 	}
-	headerH := t.headerHeight()
-	contentY := event.Y - headerH
+	contentY := event.Y - t.rowsTop()
+
+	// The refusal line stands between the header and the rows: it is something to
+	// READ, so a press on it is neither a press on a row nor one on the bar.
+	if event.Y >= t.headerHeight() && contentY < 0 {
+		return false
+	}
 
 	// Check if click is on scrollbar
 	_, thumbStart, thumbHeight, _ := t.scrollbarGeometry(t.visibleCount())
@@ -1729,7 +1773,7 @@ func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
 	if !t.onLane(x) {
 		return false
 	}
-	contentY := y - t.headerHeight() // the track starts below the header
+	contentY := y - t.rowsTop() // the track starts below the header and any refusal
 	if core.FindSmoothPositioning(t.Self()) {
 		_, thumbU, posU := t.scrollbarUnits(visibleCount)
 		pos := float64(contentY)
@@ -1786,7 +1830,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	metrics := t.EffectiveCellMetrics()
-	contentY := event.Y - t.headerHeight()
+	contentY := event.Y - t.rowsTop()
 
 	// Handle scrollbar thumb drag
 	// Note: Once drag is captured on press, we don't check horizontal bounds during drag

@@ -94,6 +94,32 @@ func EncodeError(msg string) string {
 	return "error text=" + Quote(msg)
 }
 
+// DecodeError parses an `error` statement back into the reason it carries.
+//
+// **A refusal is what a batch is answered WITH**, in place of the reply that would
+// have named what it made. So it is read the same way a reply is, by whoever was
+// waiting for one -- there is nothing thrown, nothing to unwind, and no path through
+// a program that exists only when something goes wrong.
+//
+// A refusal with no reason on it is still a refusal, and says so: an answer that
+// reached the far end and was turned down tells a reader more than silence does,
+// whatever else it manages to say.
+func DecodeError(stmt *Statement) (string, error) {
+	if stmt.Verb != "error" {
+		return "", fmt.Errorf("not an error statement: %q", stmt.Verb)
+	}
+	for _, a := range stmt.Args {
+		if a.Name != "text" {
+			continue
+		}
+		if a.Value == nil {
+			break
+		}
+		return a.Value.Str, nil
+	}
+	return "a refusal with no reason on it", nil
+}
+
 // Scanner frames complete statements out of a stream. "Complete"
 // means a newline (or EOF) reached at brace depth zero outside a
 // string - the language frames itself; no length prefixes (D22).

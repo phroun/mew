@@ -425,6 +425,10 @@ func treeViewProps() map[string]protocol.Property {
 				// different bundles.
 				src, err := LookupSourceOn(ctx, s)
 				if err != nil {
+					// A name nothing serves is a refusal this tree says out loud, the
+					// same as a list does: the complaint goes up to whoever is
+					// assembling the bundle, and the reader is looking HERE.
+					t.took(Trouble{Reason: err.Error(), At: -1})
 					return err
 				}
 				t.SetSource(src)

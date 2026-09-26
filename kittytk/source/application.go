@@ -270,6 +270,8 @@ func (h *ApplicationSource) Inbound(stmt *wire.Statement) bool {
 	switch stmt.Verb {
 	case "reply":
 		return h.name1(stmt)
+	case "error":
+		return h.refused(stmt)
 	case wire.ResultVerb:
 		return h.result(stmt)
 	case wire.PlaceVerb:
@@ -296,6 +298,51 @@ func (h *ApplicationSource) Inbound(stmt *wire.Statement) bool {
 // Invalidation causes forgetting rather than traffic everywhere else here; this
 // is the one place it causes a read, because a view on screen is a standing
 // question and the records behind it just changed.
+// refused ends the scope a batch was turned down for, with the reason it was turned
+// down with.
+//
+// **A batch is answered by exactly one line: a `reply` naming what it made, or an
+// `error` refusing it.** So the two are read the same way and by the same
+// bookkeeping -- the first scope still waiting to be named is the one this batch was
+// for, because a source sends one query per batch and they are answered in order.
+//
+// **Nothing was listening before, and the cost was silence.** A display asking an
+// application for a source it does not serve -- a name misspelled in a bundle, which
+// is the ordinary way it happens -- was refused, and the refusal reached nobody: the
+// reader waited for records that were never coming, for as long as the window was
+// open. `appsources.go` records that as the known cost of resolving a name by asking,
+// and it is no longer the cost.
+//
+// The refusal travels as a value on the answer's own ending, which is where every
+// refusal in this library travels: `Complete.Error`, the same field a source that
+// runs out of records mid-answer fills in. There is nothing thrown and nothing to
+// unwind.
+func (h *ApplicationSource) refused(stmt *wire.Statement) bool {
+	why, err := wire.DecodeError(stmt)
+	if err != nil {
+		return false
+	}
+	h.mu.Lock()
+	var waiting *appScope
+	for _, q := range h.opening {
+		q.mu.Lock()
+		unnamed := q.id == 0
+		q.mu.Unlock()
+		if unnamed {
+			waiting = q
+			break
+		}
+	}
+	h.mu.Unlock()
+	if waiting == nil {
+		// Nothing of ours was waiting to be named, so this refuses something else --
+		// a statement another part of the display sent on the same connection.
+		return false
+	}
+	waiting.finish(serval.Complete{Error: why})
+	return true
+}
+
 func (h *ApplicationSource) stale(stmt *wire.Statement) bool {
 	n, err := wire.ParseStale(stmt.Args)
 	if err != nil || n.Source != h.name {

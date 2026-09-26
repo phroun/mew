@@ -1021,8 +1021,13 @@ type colSpan struct {
 
 // treeColLayout is the computed column geometry for one pass.
 type treeColLayout struct {
-	spans      []colSpan
-	headerH    core.Unit
+	spans   []colSpan
+	headerH core.Unit
+	// rowsY is where the ROWS begin, which is under the header and under the
+	// refusal line where one is drawn (see trouble.go). It is headerH wherever
+	// nothing was refused, so everything about the rows reads from rowsY and the
+	// header band alone reads from headerH.
+	rowsY      core.Unit
 	blankW     core.Unit // blank past the last span along the run (natural)
 	contentX   core.Unit // where the content band starts (the lane took the other side)
 	dividerW   core.Unit // what a divider occupies: a column in the TUI, nothing on pixels
@@ -1070,7 +1075,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 	cw := metrics.UnitsPerCellWidth
 	q := t.colQuantum()
 	bounds := t.Bounds()
-	lay := treeColLayout{headerH: t.headerHeight()}
+	lay := treeColLayout{headerH: t.headerHeight(), rowsY: t.rowsTop()}
 	lay.contentW = bounds.Width - cw // scrollbar lane
 	if lay.contentW < cw {
 		lay.contentW = cw
@@ -1508,6 +1513,18 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		// inside the content area the right-edge fade covers.
 	}
 
+	// A refusal, drawn between the header and the rows and taking its row out of
+	// what the rows have. See trouble.go.
+	if h := lay.rowsY - lay.headerH; h > 0 {
+		paintTrouble(p, &t.TrinketBase, scheme,
+			troubleRow(core.UnitRect{
+				Y:      lay.headerH,
+				Width:  bounds.Width,
+				Height: bounds.Height - lay.headerH,
+			}, h),
+			t.trouble.Reason)
+	}
+
 	// Rows. Row styles are collected for the horizontal-scroll edge
 	// fades, which must match each band's own background (header,
 	// selected row, plain rows). enterCol is the cell Enter would edit
@@ -1523,7 +1540,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	// overlays it). It never joins visibleCount, so the scrolling math
 	// does not treat the clipped row as visible.
 	if p.Graphical() && t.scrollOffset+visibleCount < t.rowCount() &&
-		lay.headerH+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
+		lay.rowsY+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
 		rows++
 	}
 	// Per-row fade colors for the horizontal-scroll edge fades: usually
@@ -1543,7 +1560,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			break
 		}
 		item := t.drawRow(itemIndex)
-		itemY := lay.headerH + core.Unit(i)*metrics.UnitsPerCellHeight
+		itemY := lay.rowsY + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// While the internal focus sits in the header (bar or drilled
 		// items), the column chooser menu is popped down, or the cell
@@ -1812,8 +1829,10 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 	y := core.Unit(0)
 	if lay.headerH > 0 {
 		bands = append(bands, band{0, lay.headerH, headerStyle.Bg, headerStyle.Bg})
-		y = lay.headerH
 	}
+	// The rows' bands begin where the rows do: a refusal line is not scrolled
+	// sideways and has no edge to fade.
+	y = lay.rowsY
 	for i := range fadeL {
 		bands = append(bands, band{y, y + metrics.UnitsPerCellHeight, fadeL[i], fadeR[i]})
 		y += metrics.UnitsPerCellHeight
@@ -1861,7 +1880,7 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 	}
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	top := lay.headerH
+	top := lay.rowsY
 	// The bottom fade anchors at the TRUE bottom and runs through the
 	// partial peek strip in one continuous gradient (a fade stopping
 	// at the footer would let the peek row snap back to full
@@ -3224,9 +3243,9 @@ func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 	if local.Y < headerH {
 		return t.headingAt(local, headerH)
 	}
-	visible := int((local.Y - headerH) / rowH)
+	visible := t.rowUnder(local.Y)
 	at := t.scrollOffset + visible
-	if at < 0 || at >= t.rowCount() {
+	if visible < 0 || at < 0 || at >= t.rowCount() {
 		return "", core.UnitRect{}, false
 	}
 	item := t.rowAt(at)
@@ -3281,7 +3300,7 @@ func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool)
 		}
 		return text, core.UnitRect{
 			X:      x,
-			Y:      headerH + core.Unit(visible)*rowH,
+			Y:      t.rowsTop() + core.Unit(visible)*rowH,
 			Width:  width,
 			Height: rowH,
 		}, true

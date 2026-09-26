@@ -62,6 +62,12 @@ func init() {
 					// two different bundles.
 					src, err := LookupSourceOn(ctx, s)
 					if err != nil {
+						// **A name nothing serves is the refusal this list says out
+						// loud.** It goes up to whoever is assembling the bundle as
+						// well, but a misspelling there used to leave a window that
+						// simply never filled, and the list is where a reader is
+						// looking. See trouble.go.
+						l.took(Trouble{Reason: err.Error(), At: -1})
 						return err
 					}
 					l.SetSource(src)
