@@ -447,6 +447,16 @@ func (l *ListView) Paint(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
+	// One question for the whole screenful, asked before anything is drawn OR
+	// MEASURED. Asking per row would be a question per row, and a source that has
+	// to go and find out would be asked thirty times for one frame.
+	//
+	// Before the measuring, because the answer can change what there is to measure:
+	// a refusal takes a row out of the rows' own area, and a frame that measured
+	// first would draw itself as though nothing had been refused. The screenful it
+	// asks for is a row out either way, which is what a screenful is.
+	l.ask(l.scrollOffset, l.visibleCount())
+
 	visibleCount := l.visibleCount() // clamped: never negative
 
 	// A refusal is drawn FIRST and takes its row out of what the rows below have:
@@ -457,11 +467,6 @@ func (l *ListView) Paint(p *core.Painter) {
 			troubleRow(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, top),
 			l.trouble.Reason)
 	}
-
-	// One question for the whole screenful, asked before anything is drawn.
-	// Asking per row would be a question per row, and a source that has to go
-	// and find out would be asked thirty times for one frame.
-	l.ask(l.scrollOffset, visibleCount)
 
 	// Draw items (styles collected for the vertical edge fades).
 	rowStyles := make([]style.CellStyle, 0, visibleCount)

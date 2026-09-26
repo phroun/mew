@@ -1027,6 +1027,14 @@ func (t *TreeView) Paint(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
+	// Asked once, and before anything is MEASURED: rowCount makes sure the window is
+	// there, and the answer can change what there is to measure -- a refusal takes a
+	// row out of the rows' own area, and a frame that measured first would draw
+	// itself as though nothing had been refused. Asking per row would run the
+	// spine's scan down the whole viewport for an answer that cannot change while
+	// this paint is being drawn.
+	drawn := t.rowCount()
+
 	// A refusal is drawn FIRST and takes its row out of what the rows have: it is
 	// not an overlay, it stands where a row would have stood. See trouble.go.
 	top := t.rowsTop()
@@ -1044,10 +1052,6 @@ func (t *TreeView) Paint(p *core.Painter) {
 
 	// GUI: paint one extra partial row into any leftover strip rather
 	// than leaving it blank (never counted as visible for scrolling).
-	// Asked once: rowCount makes sure the window is there, and asking it per row
-	// would run the spine's scan down the whole viewport for an answer that cannot
-	// change while this paint is being drawn.
-	drawn := t.rowCount()
 	rows := visibleCount
 	if p.Graphical() && t.scrollOffset+visibleCount < drawn &&
 		top+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {

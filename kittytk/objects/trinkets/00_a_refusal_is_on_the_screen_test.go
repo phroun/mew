@@ -463,3 +463,41 @@ func TestANameNothingServesIsSaidByTheTrinketItself(t *testing.T) {
 		}
 	}
 }
+
+// **One paint is enough.**
+//
+// The question a view asks goes out DURING the paint, so the answer -- and a refusal
+// is an answer -- arrives while the frame is being drawn. A frame that measured the
+// rows' area before asking would draw itself as though nothing had been refused, and
+// the line would appear a frame late, over rows that had already been laid out
+// without it. What a reader sees then is a list that flickers into a different shape.
+//
+// So the ask comes first and the measuring after it, in both views.
+func TestOneFrameIsEnoughToShowARefusal(t *testing.T) {
+	const why = "refused on the first question"
+
+	l := NewListView()
+	l.SetBounds(core.UnitRect{Width: 40 * cell, Height: 8 * rowUnit})
+	l.SetSource(&sulkySource{why: why, rows: 20})
+	// Nothing is asked before the paint: no Item, no Count, nothing.
+	if !drewALine(t, l) {
+		t.Error("a list refused during its own paint drew no line in that paint")
+	}
+
+	tv := NewTreeView()
+	tv.SetBounds(core.UnitRect{Width: 40 * cell, Height: 8 * rowUnit})
+	tv.SetSource(&sulkySource{why: why, rows: 20})
+	if !drewALine(t, tv) {
+		t.Error("a tree refused during its own paint drew no line in that paint")
+	}
+}
+
+// drewALine paints a view once and reports whether a refusal line came out of it.
+func drewALine(t *testing.T, w interface {
+	core.Trinket
+	GetScheme() *style.Scheme
+}) bool {
+	t.Helper()
+	_, ok := tape(t, w).band(w.GetScheme())
+	return ok
+}

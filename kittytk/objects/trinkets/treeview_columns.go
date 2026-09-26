@@ -1428,6 +1428,13 @@ func (l *treeColLayout) divVisible(sp colSpan) bool {
 // paintMulti renders the multi-column presentation: header, per-column
 // rows, dividers, chooser button, scrollbar.
 func (t *TreeView) paintMulti(p *core.Painter) {
+	// Asked once, and before anything is MEASURED: rowCount makes sure the window is
+	// there, and the answer can change what there is to measure -- a refusal takes a
+	// row out of the rows' own area, and the layout below measures that area. Asking
+	// per row would run the spine's scan down the whole viewport for an answer that
+	// cannot change while this paint is being drawn.
+	drawn := t.rowCount()
+
 	bounds := t.Bounds()
 	scheme := t.GetScheme()
 	focused := t.HasFocus()
@@ -1550,10 +1557,6 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	fadeL := make([]style.Color, 0, rows)
 	fadeR := make([]style.Color, 0, rows)
 	rowBands := make([]style.Color, 0, rows) // full-row band bg (vertical fades)
-	// Asked once: rowCount makes sure the window is there, and asking it per row
-	// would run the spine's scan down the whole viewport for an answer that cannot
-	// change while this paint is being drawn.
-	drawn := t.rowCount()
 	for i := 0; i < rows; i++ {
 		itemIndex := t.scrollOffset + i
 		if itemIndex >= drawn {

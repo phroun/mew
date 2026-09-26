@@ -186,7 +186,7 @@ li=new tab caption="Lists" children={
 		}
 	}
 	new label caption="A list whose source REFUSES -- three rows arrive and the rest is turned down:"
-	lirefused=new listview source="source:` + refusedSourceName + `" display="name" min_height=80 fill=none
+	lirefused=new listview source="source:` + refusedSourceName + `" display="name" min_width=160 min_height=80
 	}
 }
 
