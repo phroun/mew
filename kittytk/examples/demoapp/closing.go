@@ -77,8 +77,10 @@ func (a *app) openSulkingWindow() {
 	}
 	win := ui.Window("swin")
 
-	// **Subscribed, and never answered.** A real application would answer here,
-	// with the client's own helper for it. Saying nothing is the demonstration.
+	// **Subscribed, and never answered.** A real application answers here, or says
+	// it is still asking somebody -- the documents do both, and Conn.Asking is the
+	// helper for the second. Saying neither is the demonstration, and now the only
+	// way left to reach that dialog.
 	win.On("window_closing", func(ev *wire.Event) {
 		id, _ := ev.Uint(wire.DecisionField)
 		a.setStatus(fmt.Sprintf(
@@ -121,7 +123,11 @@ func (a *app) confirmClose(win client.Window, what string, unsaved func() bool) 
 			// question whose reply reaches nobody.
 			return
 		}
-		a.askBeforeClosing(decision, what, unsaved())
+		// **Said before the question goes up, not after.** Putting a dialog on
+		// the screen and reading it takes longer than the display's patience,
+		// and what it does when that runs out is ask about this very window --
+		// so the keep-alive starts before anything slow happens.
+		a.askBeforeClosing(decision, a.conn.Asking(ev), what, unsaved())
 	})
 	// No `window_closed` handler to go with it: the MDI pane owns the
 	// close-complete hook of the windows it hosts, so a child's own
@@ -132,14 +138,11 @@ func (a *app) confirmClose(win client.Window, what string, unsaved func() bool) 
 // askBeforeClosing puts the question on the screen and answers the decision with
 // whatever comes back.
 //
-// **Answer promptly, even to say no.** The display waits about five seconds for
-// this and then asks the person whether to force the window closed, naming the
-// application that did not respond -- so a question left on the screen longer than
-// that gets a second question stacked on top of it, about this very window. That
-// is not a fault in either party: the display cannot tell somebody reading a
-// dialog from an application that has stopped. It is what the Sulking Window
-// demonstrates, and what answering quickly avoids.
-func (a *app) askBeforeClosing(decision uint64, what string, unsaved bool) {
+// `stillAsking` is what keeps the display from asking its own question on top of
+// this one -- see Conn.Asking. It is stopped on every way out of here, because a
+// keep-alive for a question nobody is being asked any more is a lie about a person
+// who has gone back to work.
+func (a *app) askBeforeClosing(decision uint64, stillAsking func(), what string, unsaved bool) {
 	a.closeAsks++
 	key := fmt.Sprintf("cq%d", a.closeAsks)
 	ui, err := a.conn.Build(closeConfirmScript(key, what, unsaved))
@@ -148,11 +151,13 @@ func (a *app) askBeforeClosing(decision uint64, what string, unsaved bool) {
 		// Sulking Window, and it ends in the display asking somebody whether to
 		// force the window closed. Deny instead: the window stays, which is the
 		// answer that loses nothing, and pressing [x] again asks again.
+		stillAsking()
 		a.setStatus(what + ": could not ask about closing (" + err.Error() + ") — keeping it open.")
 		_ = a.conn.Decide(decision, false)
 		return
 	}
 	ui.Object(key).On("finish", func(ev *wire.Event) {
+		stillAsking()
 		result, _ := ev.Word("result")
 		allow := closeAnswer(result)
 		if err := a.conn.Decide(decision, allow); err != nil {

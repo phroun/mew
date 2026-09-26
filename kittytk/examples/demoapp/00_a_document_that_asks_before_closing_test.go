@@ -57,7 +57,20 @@ func TestADocumentIsAskedAndAnswers(t *testing.T) {
 		t.Error("the decision is not read off the event, so the answer would be to the wrong question")
 	}
 
+	// **And says the answer is a person's while they read it.** Without this the
+	// display waits its few seconds and then asks somebody whether to force the
+	// window closed -- about a window that is already being asked about, with this
+	// application named as the one that did not respond.
+	if !strings.Contains(confirm, "a.conn.Asking(ev)") {
+		t.Error("nothing tells the display the answer is a person's, so its own question lands on top of this one")
+	}
+
 	ask := funcBody(t, "closing.go", "func (a *app) askBeforeClosing(")
+	// Stopped on every way out, including the one that fails to ask: a keep-alive
+	// outliving the question holds the window open for ever.
+	if n := strings.Count(ask, "stillAsking()"); n < 2 {
+		t.Errorf("the keep-alive is stopped on %d of the ways out of askBeforeClosing, want all of them", n)
+	}
 	if !strings.Contains(ask, "a.conn.Decide(decision, allow)") {
 		t.Error("the dialog's answer never reaches the decision, so the close times out and the display asks about a window that IS being asked about")
 	}

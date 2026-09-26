@@ -19,7 +19,7 @@ package protocol
 // ordinary field of an ordinary event, and the application decides it the way it
 // does anything else to an object:
 //
-//	event window_closing window=17 decision=94
+//	event window_closing window=17 decision=94 within=5000
 //	do 94 allow
 //
 // So an event stays one-way and stays an announcement. Nothing in the middle grew
@@ -27,10 +27,25 @@ package protocol
 // `do`. A decision is opted INTO, by the one event type in a hundred that wants
 // one, and the other ninety-nine are untouched.
 //
-// The vocabulary is two words, `allow` and `deny`, because every decidable event
-// is the same question: the display is about to do something, and may it? Closing
-// a window is one. Drawing a refusal across a list is another -- denying that one
-// is an application saying it has shown the reader itself.
+// The answer is two words, `allow` and `deny`, because every decidable event is the
+// same question: the display is about to do something, and may it? Closing a window
+// is one. Drawing a refusal across a list is another -- denying that one is an
+// application saying it has shown the reader itself.
+//
+// # The answer may be a person's
+//
+// A third word, `waiting`, is the application saying it is asking somebody: a
+// confirmation is not a decision, it is the time taken to reach one, and from here
+// an application holding a save-your-work dialog in front of a person and one that
+// has stopped look exactly alike -- which is what the deadline below is for.
+//
+// So it is said rather than worked out. The display could notice that the
+// application owing it an answer has just put a dialog on the screen, but noticing
+// is guessing: the dialog may be about something else entirely. `waiting` says it,
+// buys another `within`, and has to keep coming to keep counting. Only a running
+// application can send it, so the deadline still catches precisely what it was built
+// to catch, and one that says it is asking and then hangs is caught one `within`
+// after its last word.
 //
 // # Nobody is made to answer
 //
@@ -39,9 +54,13 @@ package protocol
 // nobody, so there is nobody who could decide it. Deciding returns nil, the event
 // does not go out, and the caller does what it would have done unasked.
 //
-// **A deadline is optional.** Some decisions can be defaulted after a moment; a
-// close cannot, because the answer may be a person reading a dialog, so it waits
-// Whenever. The rule above and the one below are what keep that from being a hang.
+// **A deadline is optional.** Some decisions can be defaulted after a moment -- a
+// refusal nobody claimed gets drawn, and no harm done. A close cannot be defaulted
+// so cheaply, and it is also the one whose answer is most likely to be a person's,
+// so it does not wait Whenever: it waits a few seconds, `waiting` extends that for
+// as long as the application says somebody is still reading, and what happens when
+// even that stops is not a default at all -- the display asks a person whether to
+// force the window closed. See objects/window's closeDecision.
 //
 // **A connection going means every decision it owed.** Whatever was outstanding
 // comes back unsaid the moment the application is gone, because nothing is going to
@@ -66,11 +85,13 @@ import (
 // a decision depends on `wire` and not on this package. See wire.DecisionType for
 // what they mean.
 const (
-	DecisionType  = wire.DecisionType
-	DecisionField = wire.DecisionField
+	DecisionType        = wire.DecisionType
+	DecisionField       = wire.DecisionField
+	DecisionWithinField = wire.DecisionWithinField
 
-	DecisionAllow = wire.DecisionAllow
-	DecisionDeny  = wire.DecisionDeny
+	DecisionAllow   = wire.DecisionAllow
+	DecisionDeny    = wire.DecisionDeny
+	DecisionWaiting = wire.DecisionWaiting
 )
 
 // Whenever is the deadline of a decision that has none: it waits as long as it
@@ -97,9 +118,19 @@ type Decision struct {
 	id  uint64
 	ctx *BindContext
 
-	mu    sync.Mutex
-	then  func(Verdict)
-	timer *time.Timer
+	mu   sync.Mutex
+	then func(Verdict)
+
+	// within is how long each wait is worth: the first one, and every one that
+	// `waiting` buys after it. Whenever if nothing is counting.
+	within time.Duration
+	timer  *time.Timer
+
+	// armed counts the waits, so a timer that has already fired cannot decide a
+	// decision that was extended in the meantime. The two happen at the same
+	// instant often enough to matter: a person answers a dialog just as the
+	// display runs out of patience, and the answer should win.
+	armed uint64
 }
 
 // ID implements Object: the id the event carried, and the id a statement names.
@@ -117,13 +148,15 @@ func (d *Decision) Append(slot string, _ Object) error {
 	return fmt.Errorf("%s: nothing goes inside a decision", slot)
 }
 
-// Do decides it. A word this decision does not know is refused and the decision
-// stays open, so a misspelling is answered rather than silently counting as one of
-// the two things it might have meant.
+// Do decides it, or says the answer is still coming. A word this decision does not
+// know is refused and the decision stays open, so a misspelling is answered rather
+// than silently counting as one of the things it might have meant.
 //
 // Deciding a decision TWICE is refused too, and by then it is not even found: it
 // stopped being addressable the moment it was decided. That refusal comes from the
-// session, which no longer holds the id.
+// session, which no longer holds the id -- and it is the same refusal an application
+// gets for saying `waiting` about a question the display has given up on, which is
+// how it learns that it has been overtaken.
 func (d *Decision) Do(action string, _ []*Arg) error {
 	switch action {
 	case DecisionAllow:
@@ -132,8 +165,61 @@ func (d *Decision) Do(action string, _ []*Arg) error {
 	case DecisionDeny:
 		d.settle(Verdict{Said: true})
 		return nil
+	case DecisionWaiting:
+		d.extend()
+		return nil
 	}
-	return fmt.Errorf("do: a decision is %s or %s, not %q", DecisionAllow, DecisionDeny, action)
+	return fmt.Errorf("do: a decision is %s, %s or %s, not %q",
+		DecisionAllow, DecisionDeny, DecisionWaiting, action)
+}
+
+// extend buys another `within`, which is what `waiting` means: the application is
+// still there and the answer is a person's.
+//
+// It is not an answer and it never becomes one. A decision with no deadline has
+// nothing to extend and takes it as the no-op it is -- an application that pings a
+// question nobody is timing is not wrong, it just cannot know that.
+//
+// The settled check is belt and braces rather than a gate anything reaches: a
+// decided decision is forgotten, so the session turns a keep-alive for it away
+// before it could get here. It is what makes this safe to call on its own terms,
+// the way settle is.
+func (d *Decision) extend() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.then == nil || d.within <= Whenever {
+		return
+	}
+	d.arm()
+}
+
+// arm starts the wait, or starts it again. Held under d.mu.
+//
+// Each arming is counted and the count is carried into the timer, because Stop
+// cannot un-fire a timer that already has: the run it queued still arrives, and
+// what stops it deciding anything is finding that the wait it belonged to is over.
+func (d *Decision) arm() {
+	d.armed++
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+	wait := d.armed
+	ctx := d.ctx
+	d.timer = time.AfterFunc(d.within, func() {
+		ctx.onThread(func() { d.ranOut(wait) })
+	})
+}
+
+// ranOut is the deadline arriving: nobody said, unless this wait was superseded
+// while the timer was on its way here.
+func (d *Decision) ranOut(wait uint64) {
+	d.mu.Lock()
+	stale := wait != d.armed
+	d.mu.Unlock()
+	if stale {
+		return
+	}
+	d.settle(Verdict{})
 }
 
 // settle calls whoever wanted the decision back exactly once, whichever of the
@@ -191,7 +277,7 @@ func (c *BindContext) Deciding(ev *Event, within time.Duration, then func(Verdic
 		return nil
 	}
 
-	d := &Decision{id: virtualIDSource(), ctx: c, then: then}
+	d := &Decision{id: virtualIDSource(), ctx: c, then: then, within: within}
 	c.mu.Lock()
 	if c.decisions == nil {
 		c.decisions = map[uint64]*Decision{}
@@ -202,15 +288,16 @@ func (c *BindContext) Deciding(ev *Event, within time.Duration, then func(Verdic
 
 	if within > Whenever {
 		d.mu.Lock()
-		d.timer = time.AfterFunc(within, func() {
-			c.onThread(func() { d.settle(Verdict{}) })
-		})
+		d.arm()
 		d.mu.Unlock()
 	}
 
 	// The id rides on the event as an ordinary field, which is what makes this one
-	// decidable and leaves every other event alone.
-	c.EmitEvent(ev.WithUint(DecisionField, d.id))
+	// decidable and leaves every other event alone. The deadline rides with it
+	// because an application cannot answer inside a window of time it has not been
+	// told the width of -- and `waiting` is paced against that width.
+	c.EmitEvent(ev.WithUint(DecisionField, d.id).
+		WithInt(DecisionWithinField, int(within.Milliseconds())))
 	return d
 }
 
@@ -322,6 +409,12 @@ func init() {
 			DecisionDeny: NewDoDesc(
 				"Do not. A decision denied is one the application has taken on itself: " +
 					"the window stays open, the refusal is not drawn."),
+			DecisionWaiting: NewDoDesc(
+				"Not an answer: the answer is a person's, a dialog is up, and somebody " +
+					"is reading it. It buys another `within` milliseconds, and has to " +
+					"keep coming to keep counting -- send one every half of `within` " +
+					"while the question is on the screen. Only a running application " +
+					"can send it, which is the whole reason the display believes it."),
 		},
 	})
 }

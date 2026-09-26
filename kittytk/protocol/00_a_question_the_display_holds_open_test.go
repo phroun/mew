@@ -438,3 +438,198 @@ func TestADeadlineIsDeliveredOnTheConnectionsThread(t *testing.T) {
 func statement(id uint64, word string) string {
 	return "do " + itoa(id) + " " + word
 }
+
+// The deadline rides on the event beside the decision, in milliseconds. An
+// application asked to answer inside a window of time has no other way to know how
+// wide it is -- and `waiting` is paced against that width, so guessing it is
+// guessing whether the keep-alive works.
+func TestTheDeadlineRidesOnTheEventToo(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		given time.Duration
+		want  string
+	}{
+		{"a few seconds", 5 * time.Second, DecisionWithinField + "=5000"},
+		{"as long as it takes", Whenever, DecisionWithinField + "=0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newDeciding(t)
+			d.hearing("closing")
+			if dec, _ := d.asking(tc.given); dec == nil {
+				t.Fatal("nothing was asked")
+			}
+			sent := d.events()
+			if len(sent) != 1 {
+				t.Fatalf("the display sent %d events: %v", len(sent), sent)
+			}
+			if !strings.Contains(sent[0], tc.want) {
+				t.Errorf("the question went out as %q, want it to carry %q", sent[0], tc.want)
+			}
+		})
+	}
+}
+
+// **`waiting` is not an answer.** It says the answer is a person's, so the decision
+// stays open, stays addressable, and still wants its allow or deny.
+func TestWaitingIsNotAnAnswer(t *testing.T) {
+	d := newDeciding(t)
+	d.hearing("closing")
+
+	var got *Verdict
+	dec := d.ctx.Deciding(NewEvent("closing").WithUint("window", 17), time.Hour,
+		func(v Verdict) { got = &v })
+	if dec == nil {
+		t.Fatal("nothing was asked")
+	}
+
+	if err := d.say(statement(dec.ID(), DecisionWaiting)); err != nil {
+		t.Fatalf("saying it is still asking: %v", err)
+	}
+	if got != nil {
+		t.Errorf("saying it is still asking decided it: %+v", *got)
+	}
+	if _, ok := d.s.Object(dec.ID()); !ok {
+		t.Error("a decision that is still being asked about stopped being addressable")
+	}
+	// Twice, because that is the whole shape of it: one is not a special case.
+	if err := d.say(statement(dec.ID(), DecisionWaiting)); err != nil {
+		t.Fatalf("saying it again: %v", err)
+	}
+	if err := d.say(statement(dec.ID(), DecisionAllow)); err != nil {
+		t.Fatalf("the answer, when it came: %v", err)
+	}
+	if got == nil || !got.Allowed || !got.Said {
+		t.Errorf("the answer after two keep-alives came back %+v, want allowed and said", got)
+	}
+}
+
+// And it buys another wait. Without that it would be a statement that changes
+// nothing, which is the bug it exists to fix.
+func TestWaitingBuysAnotherWait(t *testing.T) {
+	d := newDeciding(t)
+	d.hearing("closing")
+
+	const within = 300 * time.Millisecond
+	done := make(chan Verdict, 1)
+	dec := d.ctx.Deciding(NewEvent("closing").WithUint("window", 17), within,
+		func(v Verdict) { done <- v })
+	if dec == nil {
+		t.Fatal("nothing was asked")
+	}
+
+	// Kept alive well past the deadline it was given, the way a person reading a
+	// dialog outlasts it.
+	for range 5 {
+		time.Sleep(within / 3)
+		if err := d.say(statement(dec.ID(), DecisionWaiting)); err != nil {
+			t.Fatalf("the display stopped holding the question open: %v", err)
+		}
+		select {
+		case v := <-done:
+			t.Fatalf("it timed out while the application was saying it is still asking: %+v", v)
+		default:
+		}
+	}
+
+	// And the moment it stops saying so, it is a hang again.
+	select {
+	case v := <-done:
+		if v.Said {
+			t.Errorf("the deadline came back as somebody having said: %+v", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the keep-alive stopped and the deadline never came, so a hung application would wait for ever")
+	}
+}
+
+// **A wait that was superseded decides nothing.** Stop cannot un-fire a timer that
+// already has: the run it queued still arrives on the connection's thread, and what
+// stops it is finding that the wait it belonged to is over. It happens at the moment
+// a person answers just as the display runs out of patience, and the answer wins.
+func TestATimerThatAlreadyFiredDoesNotDecideAnExtendedWait(t *testing.T) {
+	d := newDeciding(t)
+	d.hearing("closing")
+
+	posted := make(chan func(), 2)
+	d.ctx.Post = func(fn func()) { posted <- fn }
+
+	var got *Verdict
+	dec := d.ctx.Deciding(NewEvent("closing").WithUint("window", 17), time.Millisecond,
+		func(v Verdict) { got = &v })
+
+	var ranOut func()
+	select {
+	case ranOut = <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the deadline never reached the connection's thread")
+	}
+	// The keep-alive, arriving after the timer fired and before its run: exactly
+	// the overlap this is about.
+	if err := d.say(statement(dec.ID(), DecisionWaiting)); err != nil {
+		t.Fatalf("the keep-alive: %v", err)
+	}
+	ranOut()
+
+	if got != nil {
+		t.Fatalf("the superseded wait decided it anyway: %+v", *got)
+	}
+	if _, ok := d.s.Object(dec.ID()); !ok {
+		t.Fatal("the superseded wait forgot a decision that is still open")
+	}
+	// The new wait is the live one, and it still ends.
+	select {
+	case fn := <-posted:
+		fn()
+	case <-time.After(2 * time.Second):
+		t.Fatal("extending it left nothing counting, so a hung application would wait for ever")
+	}
+	if got == nil || got.Said {
+		t.Errorf("the extended wait came back %+v, want nobody having said", got)
+	}
+}
+
+// A question with no deadline has nothing to extend, and an application pinging one
+// cannot know that. It is a no-op, not a refusal.
+func TestWaitingOnAQuestionNobodyIsTimingIsHarmless(t *testing.T) {
+	d := newDeciding(t)
+	d.hearing("closing")
+
+	var got *Verdict
+	dec := d.ctx.Deciding(NewEvent("closing").WithUint("window", 17), Whenever,
+		func(v Verdict) { got = &v })
+
+	if err := d.say(statement(dec.ID(), DecisionWaiting)); err != nil {
+		t.Errorf("a keep-alive for a question nobody is timing was refused: %v", err)
+	}
+	if got != nil {
+		t.Errorf("it decided a question that has no deadline: %+v", *got)
+	}
+	if _, ok := d.s.Object(dec.ID()); !ok {
+		t.Error("a question with no deadline stopped being addressable")
+	}
+}
+
+// **A keep-alive for a question the display has given up on is refused**, and that
+// refusal is how an application learns it has been overtaken -- by the deadline, or
+// by somebody else answering. There is nothing to keep alive and nothing to correct.
+func TestWaitingAfterTheDisplayGaveUpIsRefused(t *testing.T) {
+	d := newDeciding(t)
+	d.hearing("closing")
+
+	done := make(chan Verdict, 1)
+	dec := d.ctx.Deciding(NewEvent("closing").WithUint("window", 17), time.Millisecond,
+		func(v Verdict) { done <- v })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the deadline never came")
+	}
+
+	err := d.say(statement(dec.ID(), DecisionWaiting))
+	if err == nil {
+		t.Fatal("a question the display stopped holding took a keep-alive")
+	}
+	if !strings.Contains(err.Error(), "no object with id") {
+		t.Errorf("the refusal was %q, want it to say the id names nothing", err)
+	}
+}

@@ -31,7 +31,8 @@ func init() {
 				Field("trinket", "uint", "The list's object ID.").
 				Field("text", "string", "Why, in the words of whoever refused it.").
 				Field("at", "int", "The row it was asking about, or -1 where it was asking about none.").
-				Field(protocol.DecisionField, "uint", "The decision to answer about THIS refusal: `do <id> deny` and the list draws no line, because you have shown the reader yourself; `do <id> allow` and it draws its own. Answer promptly — the line waits, and appears anyway shortly if nothing comes. `trouble=false` is the same thing said once about every refusal."),
+				Field(protocol.DecisionField, "uint", "The decision to answer about THIS refusal: `do <id> deny` and the list draws no line, because you have shown the reader yourself; `do <id> allow` and it draws its own. Answer promptly — the line waits, and appears anyway shortly if nothing comes. `trouble=false` is the same thing said once about every refusal.").
+				Field(protocol.DecisionWithinField, "uint", "How many milliseconds the list will wait for the answer before drawing its own line. Short: this is a line on a screen, not a question for a person."),
 		},
 		New: func() any { return NewListView() },
 		ID: func(t any) uint64 {

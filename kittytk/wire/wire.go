@@ -37,7 +37,7 @@ const (
 // unsaved work. Such an event carries one extra field, the id of a decision, and
 // the application answers it with the verb it already has:
 //
-//	event window_closing window=17 decision=94
+//	event window_closing window=17 decision=94 within=5000
 //	do 94 allow
 //
 // So nothing about events changed. No verb was added and nothing in a client had to
@@ -45,15 +45,32 @@ const (
 // the applications that answer decisions depend on this package and not on the
 // host's -- see protocol/decisions.go for what holding one costs the display.
 //
-// Two words, because every decidable event asks the same thing. Deny is the
-// application taking the matter on itself: the window stays open, the refusal is
-// not drawn.
+// `within` is how many milliseconds the display will wait before it stops waiting,
+// stated rather than left to be guessed: the application is being asked to answer
+// inside a window of time and has no other way to know how wide it is. Zero means
+// it waits as long as it takes.
+//
+// # Three words
+//
+// Allow and deny are the answer, because every decidable event asks the same thing.
+// Deny is the application taking the matter on itself: the window stays open, the
+// refusal is not drawn.
+//
+// `waiting` is not an answer. It is the application saying the answer is a PERSON'S
+// -- that a dialog is up and somebody is reading it -- and it buys another `within`
+// before the display gives up. Only a running application can send it, which is the
+// whole reason it is worth anything: the deadline exists to catch one that has
+// stopped, and one that has stopped says nothing at all. It has to keep coming to
+// keep counting, so an application that says it is asking and then hangs times out
+// one `within` after its last word.
 const (
-	DecisionType  = "decision"
-	DecisionField = "decision"
+	DecisionType        = "decision"
+	DecisionField       = "decision"
+	DecisionWithinField = "within"
 
-	DecisionAllow = "allow"
-	DecisionDeny  = "deny"
+	DecisionAllow   = "allow"
+	DecisionDeny    = "deny"
+	DecisionWaiting = "waiting"
 )
 
 // InitVerb names the statement that follows the welcome, saying what objects

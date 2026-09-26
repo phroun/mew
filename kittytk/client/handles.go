@@ -3,6 +3,8 @@ package client
 import (
 	"fmt"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/phroun/kittytk/wire"
 )
@@ -99,6 +101,79 @@ func (c *Conn) Decide(decision uint64, allow bool) error {
 		word = wire.DecisionAllow
 	}
 	return c.Object(decision).Do(word)
+}
+
+// Asking says the answer is a person's, and goes on saying it until the returned
+// func is called.
+//
+// **A confirmation dialog is not an answer.** It is the time taken to reach one, and
+// the display cannot see it: from there, an application holding a question in front
+// of somebody and one that has stopped look exactly alike. That is what the deadline
+// on a decision is for, and why it would otherwise put its own question -- "did not
+// respond; force the window closed?" -- on top of yours.
+//
+// So say so, for as long as it is true:
+//
+//	win.On("window_closing", func(ev *wire.Event) {
+//	    stop := c.Asking(ev)
+//	    askSomebody(func(yes bool) { stop(); c.Decide(id, yes) })
+//	})
+//
+// The pace comes off the event: the display states how long it will wait, and this
+// speaks twice inside every wait, so one ping going missing costs nothing. Stopping
+// is not answering -- `stop` only ends the pinging, and a decision still wants its
+// `allow` or `deny`. Calling it twice is safe, and so is never calling it: the
+// pinging ends with the connection, and ends by itself the moment the display stops
+// recognising the decision, which is what a question it has given up on looks like.
+//
+// A ping already on the wire when `stop` is called cannot be recalled, and costs
+// nothing: it buys one more wait, and the answer that follows settles the question
+// well inside it.
+//
+// An event carrying no decision, or one nobody is timing, hands back a func that
+// does nothing -- there is nothing to keep alive.
+func (c *Conn) Asking(ev *wire.Event) (stop func()) {
+	nothing := func() {}
+	if ev == nil {
+		return nothing
+	}
+	decision, ok := ev.Uint(wire.DecisionField)
+	if !ok {
+		return nothing
+	}
+	within, _ := ev.Int(wire.DecisionWithinField)
+	if within <= 0 {
+		return nothing
+	}
+	// Twice per wait, so the deadline is only ever reached by two in a row going
+	// unsent -- which is a connection in trouble, not a slow reader.
+	every := time.Duration(within) * time.Millisecond / 2
+	if every < 10*time.Millisecond {
+		every = 10 * time.Millisecond
+	}
+
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-c.closed:
+				return
+			case <-t.C:
+				// A refusal means the display is no longer holding this
+				// question: it gave up, or somebody else answered. Either way
+				// there is nothing left to keep alive.
+				if err := c.Object(decision).Do(wire.DecisionWaiting); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // Object is a handle on any display-side object by its id -- one a key surfaced, or

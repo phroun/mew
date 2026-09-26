@@ -53,6 +53,12 @@ func TestTheSulkingWindowIsReachable(t *testing.T) {
 	if strings.Contains(open, "a.confirmClose(") {
 		t.Error("the sulking window is wired to answer, so it no longer sulks")
 	}
+	// And it does not say it is still asking, either. A keep-alive is not an answer,
+	// but it is a reason to go on waiting -- and this window's whole purpose is to
+	// run out the display's patience.
+	if strings.Contains(open, "Asking(") {
+		t.Error("the sulking window keeps its decision alive, so the deadline never passes and the force-close question never comes")
+	}
 }
 
 // The window says what to do with it. A window whose entire behaviour is a
