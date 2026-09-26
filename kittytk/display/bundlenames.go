@@ -65,9 +65,32 @@ func (c *conn) findSource(name string) (serval.Source, error) {
 		return nil, fmt.Errorf("bundle %q: %w", key, err)
 	}
 
-	// What went wrong short of stopping the load -- an optional include that was
-	// not there -- is reported and not refused. There is no statement for saying
-	// so back across the wire yet, so it is dropped here rather than turned into
-	// a failure it is not.
+	// **What went wrong short of stopping the load** -- an optional include that was
+	// not there, a cycle whose back edge was dropped -- is a report and not a
+	// refusal: the load finished, and turning it into a failure would refuse a
+	// window over a complaint its author may already know about.
+	//
+	// There is still no statement for saying it back across the wire. What there is
+	// now is the display's own log, which is where a silent drop used to be: the
+	// Event Viewer shows it as an Error against the name that was being loaded, and
+	// the complaint survives until somebody opens the window. See Desktop.LogError.
+	c.report(name, loaded.Trouble)
 	return loaded.Source, nil
+}
+
+// report puts a load's complaints where somebody can read them: the desktop's log,
+// keyed by the name that was being loaded.
+//
+// **A complaint with nowhere to go used to go nowhere.** This is the floor under
+// that, not the finished answer: the load happened for somebody -- a statement, an
+// application -- and telling THEM is a wire shape nobody has designed yet. What is
+// certain meanwhile is that a silent drop is the worst of the options, being
+// indistinguishable from nothing having gone wrong.
+func (c *conn) report(name string, troubles []Trouble) {
+	if len(troubles) == 0 || c == nil || c.server == nil || c.server.desktop == nil {
+		return
+	}
+	for _, t := range troubles {
+		c.server.desktop.LogError(name, t.String())
+	}
 }

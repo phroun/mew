@@ -372,6 +372,10 @@ type Desktop struct {
 	eventViewer          *eventViewer
 	eventViewerInstalled bool
 
+	// reported is what the display was told went wrong, kept whether or not the
+	// Event Viewer happens to be open. Guarded by d.mu. See LogError.
+	reported []reported
+
 	// soloHosting is true while a window is being lifted onto the primary
 	// surface. The lift removes the window from the manager, which fires
 	// the removed-hook; this flag stops that internal removal from being
@@ -641,6 +645,78 @@ func (d *Desktop) modeSource() core.ModeSource {
 // It is desktop-wide for the same reason. Events bound for any application's
 // windows pass through, so this can be opened to watch the program being
 // debugged rather than only itself.
+// A reported is one thing the display was told went wrong, held until somebody
+// looks.
+type reported struct{ source, reason string }
+
+// reportedKept bounds the held log. These are rare -- an event filter logs
+// thousands a minute and this logs one when something goes wrong -- so the bound is
+// about a runaway rather than about volume.
+const reportedKept = 500
+
+// LogError records something that went wrong where there is nowhere else to put it,
+// and shows it in the Event Viewer.
+//
+// **The display is told things it cannot pass on.** A bundle's optional include that
+// resolved to nothing, a complaint with no statement to carry it back across the
+// wire: they are real, they are the author's to fix, and what used to happen to
+// them was nothing at all. A silent drop is the worst answer available -- it is
+// indistinguishable from nothing having gone wrong.
+//
+// `source` is who is reporting, which for a data source is its name; `reason` is
+// what it said, in its own words. They become the Key and Detail of a row whose
+// Event reads `Error`.
+//
+// It is kept whether or not the viewer is open, because the interesting ones happen
+// while nobody is watching -- a name misspelled in a bundle goes wrong once, as the
+// window is built. Opening the viewer afterwards is how a programmer finds out.
+func (d *Desktop) LogError(source, reason string) {
+	if reason == "" {
+		return
+	}
+	d.mu.Lock()
+	d.reported = append(d.reported, reported{source: source, reason: reason})
+	if len(d.reported) > reportedKept {
+		d.reported = d.reported[len(d.reported)-reportedKept:]
+	}
+	open := d.eventViewer
+	d.mu.Unlock()
+
+	// **Onto the platform thread**, because a row is a trinket and whoever noticed
+	// is on whatever thread noticed -- a connection's reader, most often.
+	if open != nil {
+		d.Post(func() {
+			d.mu.RLock()
+			v := d.eventViewer
+			d.mu.RUnlock()
+			if v == open {
+				v.logError(source, reason)
+			}
+		})
+	}
+}
+
+// Reported is what the display has been told went wrong, oldest first, as
+// `source: reason` lines. It is what the Event Viewer shows, for anything that
+// wants it without a window.
+func (d *Desktop) Reported() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	out := make([]string, 0, len(d.reported))
+	for _, r := range d.reported {
+		out = append(out, r.source+": "+r.reason)
+	}
+	return out
+}
+
+// forgetReported drops the held log, which is what the viewer's Clear means: the
+// window and what would refill it.
+func (d *Desktop) forgetReported() {
+	d.mu.Lock()
+	d.reported = nil
+	d.mu.Unlock()
+}
+
 func (d *Desktop) showEventViewer() {
 	wm := d.WindowManager()
 	if wm == nil {
@@ -660,10 +736,21 @@ func (d *Desktop) showEventViewer() {
 	// Built before the lock is taken: modeSource takes d.mu itself, and
 	// nothing below here should hold the desktop's lock across trinket
 	// construction.
-	v := &eventViewer{modes: d.modeSource()}
+	v := &eventViewer{modes: d.modeSource(), forget: d.forgetReported}
 	win := window.NewWindow("Event Viewer")
 	win.SetContent(v.build())
 	v.win = win
+
+	// **What went wrong before anybody was looking.** The errors worth seeing
+	// happened while the viewer was closed -- a name misspelled in a bundle goes
+	// wrong once, as the window is built -- so opening it shows them rather than
+	// starting from whatever happens next.
+	d.mu.RLock()
+	held := append([]reported{}, d.reported...)
+	d.mu.RUnlock()
+	for _, r := range held {
+		v.logError(r.source, r.reason)
+	}
 
 	d.mu.Lock()
 	if lost := d.eventViewer; lost != nil {

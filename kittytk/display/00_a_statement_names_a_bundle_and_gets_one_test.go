@@ -9,6 +9,7 @@ package display
 // walking all of it rather than by any part of it saying it would work.
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -420,5 +421,106 @@ func TestAComposedBundleSaysItsShapeToo(t *testing.T) {
 	}
 	if hint.Parent != ".up" || hint.Label != ".name" {
 		t.Errorf("it says %+v", hint)
+	}
+}
+
+// **A load's complaints reach the display's log.**
+//
+// They are reports and not refusals -- the bundle loaded -- so nothing on the wire
+// carries them and nothing in the window shows them. Until this they went nowhere
+// at all, which is indistinguishable from nothing having gone wrong.
+//
+// What is checked here is the mapping and the floor under it: the Event Viewer's
+// Key is the name that was being loaded and its Detail is what the loader said. The
+// line that calls this sits in findSource, one statement after the load.
+func TestABundlesComplaintsReachTheDisplaysLog(t *testing.T) {
+	s := storeHolding(t, "muddle", `(
+  _bundle: (
+    key: "muddle", version: "1.0.0",
+    tree: ( parent: "up", location: "where", delimiter: "/" )
+  ),
+  ("a record")
+)`)
+	loaded, err := s.LoadBundle("muddle", "", nil)
+	if err != nil {
+		t.Fatalf("it was refused: %v", err)
+	}
+	if len(loaded.Trouble) == 0 {
+		t.Fatal("this bundle was meant to load with something to say about it")
+	}
+
+	desktop := trinkets.NewDesktop()
+	c := &conn{server: &Server{desktop: desktop}}
+	c.report("bundle:muddle", loaded.Trouble)
+
+	got := desktop.Reported()
+	if len(got) != len(loaded.Trouble) {
+		t.Fatalf("the desktop holds %d of %d complaints: %v",
+			len(got), len(loaded.Trouble), got)
+	}
+	if !strings.HasPrefix(got[0], "bundle:muddle: ") {
+		t.Errorf("it is filed as %q, want the name it was loaded under", got[0])
+	}
+	if !strings.Contains(got[0], "two ways down") {
+		t.Errorf("it reads %q, want what the loader said", got[0])
+	}
+
+	// A connection with no desktop behind it -- which is every test that builds one
+	// by hand -- reports to nobody rather than falling over.
+	(&conn{server: &Server{}}).report("bundle:muddle", loaded.Trouble)
+}
+
+// And the same thing through the door a statement actually comes in at: a name on
+// a connection, resolved against that connection's own store.
+//
+// This is the line itself rather than the mapping -- findSource loads the bundle
+// and reports what the load had to say -- so a complaint dropped there is caught
+// here rather than in a review.
+func TestFindingABundleReportsWhatTheLoadSaid(t *testing.T) {
+	cfg := tempConfig(t) // XDG_CONFIG_HOME, so the folders below are this test's
+	known := newKnownStore(filepath.Join(cfg, "known"))
+	if err := known.admitted("sha256:aaa", "Papers App", "Test Host", noon); err != nil {
+		t.Fatal(err)
+	}
+	host, item := known.folders("sha256:aaa", "Papers App")
+	if host == "" || item == "" {
+		t.Fatalf("the client was admitted and keeps nothing: host=%q item=%q", host, item)
+	}
+	stock(t, newAppStore(host, item), "muddle-1.0.0", `(
+  _bundle: (
+    key: "muddle", version: "1.0.0",
+    tree: ( parent: "up", location: "where", delimiter: "/" )
+  ),
+  ("a record")
+)`)
+
+	desktop := trinkets.NewDesktop()
+	c := &conn{
+		server:   &Server{desktop: desktop, known: known},
+		identity: "sha256:aaa",
+		appName:  "Papers App",
+	}
+
+	// The bundle loads: a hint that cannot mean what it says is a report, not a
+	// refusal, and the records are all still there.
+	src, err := c.findSource("bundle:muddle")
+	if err != nil {
+		t.Fatalf("the bundle was refused: %v", err)
+	}
+	if src == nil {
+		t.Fatal("it loaded no source")
+	}
+
+	// And what it had to say is in the display's log, against the name that was
+	// asked for.
+	got := desktop.Reported()
+	if len(got) == 0 {
+		t.Fatal("the load had something to say and the display holds nothing")
+	}
+	if !strings.HasPrefix(got[0], "bundle:muddle: ") {
+		t.Errorf("it is filed as %q, want the name the statement used", got[0])
+	}
+	if !strings.Contains(got[0], "two ways down") {
+		t.Errorf("it reads %q, want what the loader said", got[0])
 	}
 }

@@ -38,6 +38,10 @@ type eventViewer struct {
 	modes     core.ModeSource
 	showMouse bool
 	seq       int
+
+	// forget drops what the desktop is keeping for the NEXT viewer, so Clear
+	// clears the log rather than just the window. See Desktop.LogError.
+	forget func()
 }
 
 // build assembles the window content: the log, a filter row, and a hint line.
@@ -98,11 +102,7 @@ func (v *eventViewer) build() core.Trinket {
 	mouse.SetOnToggled(func(checked bool) { v.showMouse = checked })
 
 	clear := NewButton("Clear")
-	clear.SetOnClick(func() {
-		v.tree.Clear()
-		v.seq = 0
-		v.setStatus("cleared")
-	})
+	clear.SetOnClick(v.clearLog)
 
 	controls := NewPanel()
 	controlsLayout := layout.NewBoxLayout(core.Horizontal)
@@ -214,6 +214,52 @@ func (v *eventViewer) log(ev core.Event) {
 		v.tree.RemoveRootItem(roots[0])
 	}
 	// Follow the tail, the way a log window does.
+	v.tree.SetCurrentIndex(len(v.tree.RootItems()) - 1)
+	v.setStatus(fmt.Sprintf("%d events", v.seq))
+}
+
+// clearLog empties the window AND what the desktop is holding for the next one.
+//
+// Both, because they are one log. Clearing the window alone would put the errors
+// back the next time the viewer was opened, which is a Clear that cleared nothing.
+func (v *eventViewer) clearLog() {
+	v.tree.Clear()
+	v.seq = 0
+	if v.forget != nil {
+		v.forget()
+	}
+	v.setStatus("cleared")
+}
+
+// logError appends one row for something that went WRONG, which is not an event
+// and belongs here anyway.
+//
+// **A log nobody can see is the bug it is meant to close.** The display is told
+// things it cannot pass on -- an optional include a bundle could not find, a
+// complaint with no statement to carry it back across the wire -- and what it used
+// to do with them was nothing. They are rare, they are what somebody debugging came
+// here for, and this is where a reader is already looking.
+//
+// The mouse filter does not touch these: what it hides is noise, and a refusal is
+// never noise.
+func (v *eventViewer) logError(source, reason string) {
+	v.seq++
+	seq := fmt.Sprintf("%d", v.seq)
+	item := NewTreeItem(seq)
+	item.SetValue("seq", seq)
+	item.SetValue("event", "Error")
+	// Whoever reported it, which for a source is its name: that is the one thing a
+	// reader needs to know which of their own names went wrong.
+	item.SetValue("key", source)
+	item.SetValue("mods", "")
+	item.SetValue("repeat", "-")
+	item.SetValue("text", "")
+	item.SetValue("detail", reason)
+	v.tree.AddRootItem(item)
+
+	if roots := v.tree.RootItems(); len(roots) > eventViewerMaxRows {
+		v.tree.RemoveRootItem(roots[0])
+	}
 	v.tree.SetCurrentIndex(len(v.tree.RootItems()) - 1)
 	v.setStatus(fmt.Sprintf("%d events", v.seq))
 }
