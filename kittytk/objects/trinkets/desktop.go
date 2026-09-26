@@ -364,6 +364,13 @@ type Desktop struct {
 	// dialog closes. Guarded by d.mu.
 	aboutBox *window.Window
 
+	// quitWanted is a quit that stopped at a window still waiting on an answer
+	// about closing, with the code it was asked to exit with. Resumed by
+	// CloseDecided when that answer lands; cleared by a refusal, which is final.
+	// Guarded by d.mu.
+	quitWanted bool
+	quitCode   int
+
 	// forceClose is the "did not respond" question currently up about each window,
 	// so a second close attempt joins the answer the first is waiting for rather
 	// than putting up a second dialog about the same window. Guarded by d.mu; see
@@ -4907,11 +4914,56 @@ func (d *Desktop) Quit() {
 }
 
 // QuitWithCode is Quit with an exit code: it asks, and a refusal abandons it.
+//
+// **A window still DECIDING is not a refusal.** Once an application can be consulted
+// about a close, a window that has not closed is either refusing or waiting for an
+// answer, and those are opposites: one means give up, the other means not yet. Read
+// as a refusal, a quit would be abandoned, the answer would arrive a moment later,
+// every window would close -- and the desktop would still be running, with nothing
+// on it and nothing to say why.
+//
+// So a quit that stopped on a pending answer is REMEMBERED, and CloseDecided tries
+// it again when the answer lands. Trying again costs nothing and asks nobody twice:
+// a window that already agreed is closed, so it is no longer among the windows to
+// close.
 func (d *Desktop) QuitWithCode(code int) {
-	if !d.closeEveryWindow() {
+	allClosed, deciding := d.closeEveryWindow()
+	if allClosed {
+		d.mu.Lock()
+		d.quitWanted = false
+		d.mu.Unlock()
+		d.ForceQuitWithCode(code)
 		return
 	}
-	d.ForceQuitWithCode(code)
+	// A refusal is final, and clears any quit that was waiting: otherwise closing
+	// some unrelated window an hour later would quit the desktop out from under
+	// somebody who had already said no.
+	d.mu.Lock()
+	d.quitWanted = deciding
+	d.quitCode = code
+	d.mu.Unlock()
+}
+
+// CloseDecided is told that a close which was being decided has resolved, and either
+// resumes a quit that stopped for it or abandons it. Nothing else: a close nobody was
+// waiting on leaves this doing nothing at all, which is the ordinary case.
+//
+// **The outcome is what decides between the two, and it has to be.** A window that
+// closed means the sweep can carry on, and it will not see that window again. One
+// that did NOT close is the refusal the quit was waiting to hear about -- and going
+// back round would put the same question to an application that has just answered it,
+// which is a loop, not a retry.
+func (d *Desktop) CloseDecided(_ *window.Window, closed bool) {
+	d.mu.Lock()
+	wanted, code := d.quitWanted, d.quitCode
+	if !closed {
+		d.quitWanted = false
+	}
+	d.mu.Unlock()
+	if !wanted || !closed {
+		return
+	}
+	d.QuitWithCode(code)
 }
 
 // ForceQuit ends the desktop without asking anything on it. It is for the
@@ -4924,9 +4976,13 @@ func (d *Desktop) ForceQuit() {
 // closeEveryWindow attempts to close everything on the desktop -- every
 // application's windows, whatever the window manager still holds, and the
 // windows living on their own torn-off surfaces -- and reports whether they
-// all agreed. It stops at the first refusal; child windows go with their
-// parents, since a window closes its children first.
-func (d *Desktop) closeEveryWindow() bool {
+// all agreed. It stops at the first window that did not close; child windows go
+// with their parents, since a window closes its children first.
+//
+// `deciding` says WHY it stopped, which the caller cannot otherwise tell: true where
+// the window is waiting on an answer about closing, false where it refused. See
+// QuitWithCode, which treats them as opposites.
+func (d *Desktop) closeEveryWindow() (allClosed, deciding bool) {
 	d.mu.RLock()
 	apps := append([]ApplicationProvider(nil), d.applications...)
 	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
@@ -4957,10 +5013,10 @@ func (d *Desktop) closeEveryWindow() bool {
 
 	for _, w := range all {
 		if !w.Close() {
-			return false
+			return false, w.Deciding()
 		}
 	}
-	return true
+	return true, false
 }
 
 // ForceQuitWithCode is ForceQuit with an exit code.

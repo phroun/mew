@@ -26,12 +26,13 @@ type silentApp struct {
 	*core.TrinketBase
 	asked   []*Window
 	answer  func(force bool)
+	settled []*Window
+	closed  []bool
 	raised  []string
-	present bool // whether this stands in for a desktop that can ask at all
 }
 
 func newSilentApp() *silentApp {
-	return &silentApp{TrinketBase: core.NewTrinketBase(), present: true}
+	return &silentApp{TrinketBase: core.NewTrinketBase()}
 }
 
 func (s *silentApp) Children() []core.Trinket            { return nil }
@@ -47,6 +48,14 @@ func (s *silentApp) SurfaceWindow(w *Window) { s.raised = append(s.raised, w.Tit
 func (s *silentApp) AskForceClose(win *Window, then func(force bool)) {
 	s.asked = append(s.asked, win)
 	s.answer = then
+}
+
+// settled records that a close which was being decided has resolved, and whether the
+// window actually went -- which is what a sweep over several windows, a quit, is
+// waiting to hear.
+func (s *silentApp) CloseDecided(win *Window, closed bool) {
+	s.settled = append(s.settled, win)
+	s.closed = append(s.closed, closed)
 }
 
 // unanswered builds a window the way the wire does, parents it to something that
@@ -166,6 +175,35 @@ func TestAnApplicationThatAnsweredIsNotReported(t *testing.T) {
 	}
 	if !c.w.IsVisible() {
 		t.Error("the application denied the close and the window closed anyway")
+	}
+}
+
+// **What was ALLOWED is not what HAPPENED.** A child window of this one can still
+// refuse after the application allowed the parent's close, and then the close ends
+// with everything still on the screen. A sweep told "closed" for that would carry on
+// to the next window and quit over a dialog somebody is still answering.
+func TestAChildsRefusalMeansTheCloseDidNotHappen(t *testing.T) {
+	c := newClosing(t, true)
+	desk := newSilentApp()
+	c.w.SetParent(desk)
+
+	child := NewWindow("Unsaved changes")
+	child.SetParentWindow(c.w)
+	child.SetOnClose(func() bool { return false })
+
+	c.w.Close()
+	if err := c.say("do " + itoa(c.decision()) + " " + protocol.DecisionAllow); err != nil {
+		t.Fatalf("allowing the close: %v", err)
+	}
+
+	if !c.w.IsVisible() {
+		t.Error("the parent closed over a child that refused")
+	}
+	if len(desk.closed) != 1 {
+		t.Fatalf("the close was reported %d times, want once", len(desk.closed))
+	}
+	if desk.closed[0] {
+		t.Error("the close was reported as done, though the child refused and nothing closed")
 	}
 }
 

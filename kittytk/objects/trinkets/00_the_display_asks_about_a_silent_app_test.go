@@ -250,3 +250,31 @@ func theDialogText(t *testing.T, d *Desktop, win *window.Window) string {
 	t.Helper()
 	return theBox(t, d, win).content.text
 }
+
+// **A plain refusal is not a pending answer, and a quit it cancelled stays
+// cancelled.** A window whose own handler says no is refusing, full stop -- there is
+// no application being consulted and nothing to wait for. Remembered as "waiting"
+// instead, the quit would sit there, and the next close to resolve anywhere on the
+// desktop would carry it out: the desktop quitting minutes later, out from under
+// somebody who said not to.
+func TestAPlainRefusalDoesNotLeaveAQuitWaiting(t *testing.T) {
+	d, win := deskWithApp(t, "Ledger", "Quarterly Figures")
+	win.SetOnClose(func() bool { return false })
+
+	d.Quit()
+	if d.QuitRequested() {
+		t.Fatal("the window refused and the desktop quit anyway")
+	}
+
+	// The window goes some other way -- its handler dropped, so this close is the
+	// plain one -- and now nothing is in the quit's way any more.
+	win.SetOnClose(nil)
+	win.Close()
+
+	// A close resolving elsewhere is what a WAITING quit resumes on. This one is
+	// not waiting; it was refused.
+	d.CloseDecided(win, true)
+	if d.QuitRequested() {
+		t.Error("a later close carried out a quit that had been refused")
+	}
+}

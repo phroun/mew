@@ -154,6 +154,10 @@ type Window struct {
 	maxWidth  core.Unit
 	maxHeight core.Unit
 
+	// deciding says an answer about whether this window may close is still
+	// coming, which is the one thing onClose's bool cannot say. See SetDeciding.
+	deciding bool
+
 	// Callbacks
 	onClose       func() bool // Return false to prevent close
 	onResize      func(width, height core.Unit)
@@ -1101,14 +1105,32 @@ type windowSurfacer interface {
 	SurfaceWindow(win *Window)
 }
 
-// forceCloseAsker is the desktop again, and for the same reason: putting a window
-// in front of a person is its job and not a window's.
+// closeCoordinator is the desktop again, and for the same reason as the surfacer:
+// what it does about a close is desktop-wide, and a window cannot do it.
 //
 // It is asked when an application that wanted a say in this window closing has not
-// answered. See Desktop.AskForceClose for why that is a question for the person
-// rather than a rule the display could apply on its own.
-type forceCloseAsker interface {
+// answered, and told when a close that was being decided has resolved. See
+// Desktop.AskForceClose and Desktop.CloseDecided.
+type closeCoordinator interface {
 	AskForceClose(win *Window, then func(force bool))
+	CloseDecided(win *Window, closed bool)
+}
+
+// findCloseCoordinator walks up for the desktop, which is further up than the
+// parent: a window's parent is the window MANAGER.
+func (w *Window) findCloseCoordinator() closeCoordinator {
+	var current any = w.Parent()
+	for current != nil {
+		if c, ok := current.(closeCoordinator); ok {
+			return c
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
 }
 
 // AskForceClose puts that question to whatever can ask a person, and answers false
@@ -1121,19 +1143,52 @@ func (w *Window) AskForceClose(then func(force bool)) {
 	if then == nil {
 		return
 	}
-	var current any = w.Parent()
-	for current != nil {
-		if a, ok := current.(forceCloseAsker); ok {
-			a.AskForceClose(w, then)
-			return
-		}
-		t, ok := current.(core.Trinket)
-		if !ok {
-			break
-		}
-		current = t.Parent()
+	if c := w.findCloseCoordinator(); c != nil {
+		c.AskForceClose(w, then)
+		return
 	}
 	then(false)
+}
+
+// SetDeciding records whether somebody is being asked whether this window may
+// close, and Deciding reads it back.
+//
+// **It is the third answer Close has no room for.** Close reports a bool: closed, or
+// not closed. Once an application can be consulted, "not closed" covers two quite
+// different things -- a refusal, which is final, and an answer still coming, which is
+// not. A sweep over several windows has to tell them apart: a refusal abandons a
+// quit, and a pending answer means try the quit again when it lands.
+//
+// Set by whoever asks -- the wire binding in window_protocol.go -- because it is the
+// only thing that knows a question is outstanding.
+func (w *Window) SetDeciding(deciding bool) {
+	w.mu.Lock()
+	w.deciding = deciding
+	w.mu.Unlock()
+}
+
+// Deciding reports whether an answer about closing this window is still coming.
+func (w *Window) Deciding() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.deciding
+}
+
+// CloseSettled says a close that was being decided has finished being decided, and
+// whether the window actually went.
+//
+// A sweep that stopped at this window did not treat it as a refusal; it is waiting
+// for exactly this. **And it needs to know which way**: a window that closed means
+// carry on to the next one, and a window that did not means the sweep is over. Told
+// the outcome rather than just the fact, or a refused close would send the sweep back
+// round to put the same question to an application that has already answered it.
+//
+// Called after the window has done whatever the answer said, so a sweep that resumes
+// sees the result rather than the question.
+func (w *Window) CloseSettled(closed bool) {
+	if c := w.findCloseCoordinator(); c != nil {
+		c.CloseDecided(w, closed)
+	}
 }
 
 // surfaceBlockingChain brings the window that refused back into view, together

@@ -234,17 +234,35 @@ func init() {
 					allowing = false
 					return true
 				}
+				// settle ends this close for good: do what was decided, stop
+				// being a question, and tell a sweep that stopped here -- a
+				// quit -- that it may carry on. Exactly once, however the
+				// answer arrived.
+				settle := func(mayClose bool) {
+					// What actually HAPPENED, which is not the same as what was
+					// allowed: a child window of this one can still refuse, and
+					// then the close ends with everything still on the screen.
+					closed := false
+					if mayClose {
+						// The handler above clears `allowing` as it lets this
+						// close through, so it is already false again here.
+						allowing = true
+						closed = w.Close()
+					}
+					w.SetDeciding(false)
+					w.CloseSettled(closed)
+				}
 				d := ctx.Deciding(
 					protocol.NewEvent("window_closing").WithUint("window", id),
 					closeDecision,
 					func(v protocol.Verdict) {
 						switch {
 						case v.Allowed:
-							allowing = true
-							w.Close()
+							settle(true)
 						case v.Said:
 							// Denied. It stays open, which is what was asked
 							// for.
+							settle(false)
 						default:
 							// **Nobody answered, and the display cannot tell
 							// why.** An application that subscribed may be
@@ -254,18 +272,23 @@ func init() {
 							//
 							// So it stops guessing and asks the one party that
 							// can tell, who is looking at the screen.
-							w.AskForceClose(func(force bool) {
-								if !force {
-									return
-								}
-								allowing = true
-								w.Close()
-							})
+							//
+							// It stays DECIDING while they read the question:
+							// the close is still unresolved, and a quit that
+							// stopped at this window should go on waiting
+							// rather than give up on somebody mid-answer.
+							w.AskForceClose(settle)
 						}
 					})
 				// Nobody is listening, so nobody is deciding: close at once,
 				// exactly as a window with no wire binding at all does.
-				return d == nil
+				if d == nil {
+					return true
+				}
+				// A question is outstanding, which is NOT a refusal -- see
+				// Window.SetDeciding for why the difference matters.
+				w.SetDeciding(true)
+				return false
 			})
 		},
 		Props: props,

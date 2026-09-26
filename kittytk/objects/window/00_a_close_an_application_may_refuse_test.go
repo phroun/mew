@@ -191,6 +191,12 @@ func TestADeniedCloseStaysOpenAndAsksAgain(t *testing.T) {
 	if c.saw("window_closed") {
 		t.Errorf("a denied close was announced as a close: %v", c.sent)
 	}
+	// And it is no longer awaiting an answer, which is what a sweep over several
+	// windows reads to tell a refusal from an answer still coming. Left set, this
+	// window would look like it was still deciding for ever.
+	if c.w.Deciding() {
+		t.Error("the window is still marked as awaiting an answer after the application gave one")
+	}
 
 	// Asked again, with a decision of its own: the first one is spent.
 	c.sent = nil
