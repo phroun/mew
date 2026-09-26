@@ -30,6 +30,7 @@ import (
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/wire"
 )
 
 // Config configures a display server's transport and authorization.
@@ -364,6 +365,11 @@ type conn struct {
 	// through, so their events pass the same subscription filter a trinket's
 	// do rather than arriving whether or not the app asked for them.
 	ctx *protocol.BindContext
+
+	// troubles is what went wrong on this batch's behalf without stopping it, held
+	// until the batch is answered. Guarded by answerMu, which is the lock the
+	// other held-until-the-reply queue uses. See conn.trouble.
+	troubles []wire.Trouble
 
 	// The connection's store, as a wire object: the handshake hands the client
 	// its id, and everything it holds is addressed through it.
@@ -706,6 +712,7 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	reply, err := c.session.Execute(script, c.factory)
 	if err != nil {
 		c.flushAnswers()
+		c.flushTroubles()
 		c.send(protocol.EncodeError(err.Error()))
 		return
 	}
@@ -766,10 +773,42 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	// them whatever the store was asked and could not answer while emission was
 	// suppressed.
 	c.flushAnswers()
+	c.flushTroubles()
 	for _, line := range reply.Extra {
 		c.send(line)
 	}
 	c.send(protocol.EncodeReply(reply))
+}
+
+// trouble holds something that went wrong on this batch's behalf until the batch
+// is answered.
+//
+// **Held rather than sent at once**, because a batch's stream is request and reply
+// and a line arriving in the middle of one desyncs a client reading it. It goes out
+// with the describe stream and the store's held answers, immediately before the
+// reply that ends the batch, which is where everything else a batch produced goes.
+func (c *conn) trouble(t wire.Trouble) {
+	if t.Text == "" {
+		return
+	}
+	c.answerMu.Lock()
+	c.troubles = append(c.troubles, t)
+	c.answerMu.Unlock()
+}
+
+// flushTroubles sends what the batch had to say and forgets it.
+//
+// Before the reply AND before a refusal: a batch that went on to fail may still
+// have loaded something with a complaint in it, and the complaint is about the
+// load rather than about the failure.
+func (c *conn) flushTroubles() {
+	c.answerMu.Lock()
+	said := c.troubles
+	c.troubles = nil
+	c.answerMu.Unlock()
+	for _, t := range said {
+		c.send(wire.EncodeTrouble(t))
+	}
 }
 
 // resolveOwnerWindow returns the window an owner object id refers to in this

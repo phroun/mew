@@ -31,10 +31,11 @@ func TestThePythonClientAnswersTheComparisonCorpus(t *testing.T) {
 	// Each corpus named, so a suite that silently stopped discovering one of
 	// them is a failure here rather than a gap nobody notices.
 	for _, ran := range []string{
-		"test_every_case_answers_the_same_way",        // compare.wire
-		"test_every_query_case_answers_the_same_way",  // query.wire
-		"test_every_answer_case_answers_the_same_way", // answer.wire
-		"test_every_stale_case_answers_the_same_way",  // stale.wire
+		"test_every_case_answers_the_same_way",         // compare.wire
+		"test_every_query_case_answers_the_same_way",   // query.wire
+		"test_every_answer_case_answers_the_same_way",  // answer.wire
+		"test_every_stale_case_answers_the_same_way",   // stale.wire
+		"test_every_trouble_case_answers_the_same_way", // trouble.wire
 	} {
 		if !strings.Contains(text, ran) {
 			t.Errorf("%s did not run:\n%s", ran, text)

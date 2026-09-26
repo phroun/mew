@@ -78,6 +78,11 @@ class Conn:
         # describe (D24): flat vocabulary statements buffered until the
         # reply that terminates the batch.
         self._pending_desc: List[str] = []
+        # What the display says went wrong on this batch's behalf without
+        # stopping it, held until the reply it is part of. See protocol.Trouble.
+        self._pending_trouble: List[protocol.Trouble] = []
+        # What the last batch was told went wrong, for a caller that wants it.
+        self.last_trouble: List[protocol.Trouble] = []
 
         self._lock = threading.Lock()
         self._state: Dict[int, _ObjState] = {}
@@ -144,20 +149,33 @@ class Conn:
                 for stmt in script.statements:
                     if stmt.verb == "reply":
                         desc = self._pending_desc
+                        trouble = self._pending_trouble
                         self._pending_desc = []
+                        self._pending_trouble = []
                         try:
                             ids = protocol.decode_reply(stmt)
-                            self._replies.put(("reply", ids, desc))
+                            self._replies.put(("reply", ids, desc, trouble))
                         except Exception as e:  # noqa: BLE001
-                            self._replies.put(("error", str(e), None))
+                            self._replies.put(("error", str(e), None, []))
+                    elif stmt.verb == protocol.TROUBLE_VERB:
+                        # Held until the reply, which is what it is part of. A
+                        # batch that goes on to fail is answered with the refusal
+                        # instead and these are let go -- the display's own log
+                        # still holds them.
+                        try:
+                            self._pending_trouble.append(
+                                protocol.decode_trouble(stmt))
+                        except Exception:  # noqa: BLE001
+                            pass
                     elif stmt.verb == "error":
                         self._pending_desc = []
+                        self._pending_trouble = []
                         msg = "display error"
                         for a in stmt.args:
                             if a.name == "text" and a.value is not None \
                                     and a.value.kind == protocol.ValueKind.STRING:
                                 msg = a.value.str
-                        self._replies.put(("error", msg, None))
+                        self._replies.put(("error", msg, None, []))
                     elif stmt.verb in ("proptype", "prop", "propcommon",
                                        "ask", "askarg", "do", "doarg",
                                        "eventfield"):
@@ -279,9 +297,11 @@ class Conn:
     # --- request / reply -------------------------------------------------
 
     def _exec_raw(self, src: str):
-        """Execute one batch; returns (ids, extra_lines) where extra_lines
-        are any verb-produced statements delivered ahead of the reply
-        (the describe verb's flat vocabulary). Raises on error/disconnect."""
+        """Execute one batch; returns (ids, extra_lines, trouble) where
+        extra_lines are any verb-produced statements delivered ahead of the
+        reply (the describe verb's flat vocabulary) and trouble is what the
+        display said went wrong without stopping the batch. Raises on
+        error/disconnect."""
         with self._write_lock:
             with self._lock:
                 if self._closed_flag:
@@ -290,10 +310,10 @@ class Conn:
             item = self._replies.get()
             if item is _CLOSED:
                 raise ConnectionError("connection closed")
-            kind, payload, extra = item
+            kind, payload, extra, trouble = item
             if kind == "error":
                 raise RuntimeError(payload)
-            return payload, (extra or [])
+            return payload, (extra or []), (trouble or [])
 
     def send(self, src: str):
         """Write without waiting for anything back.
@@ -313,7 +333,10 @@ class Conn:
     def exec(self, src: str) -> Dict[str, int]:
         """Execute one batch of protocol text; returns the surfaced
         name->id map, or raises on a display error / disconnect."""
-        ids, _ = self._exec_raw(src)
+        ids, _, trouble = self._exec_raw(src)
+        # The last batch's complaints, for a caller that wants them: `exec`
+        # answers with the ids, which is what nearly every caller is after.
+        self.last_trouble = trouble
         return ids
 
     def _hand_over(self, stmt):
@@ -414,7 +437,7 @@ class Conn:
         types and, for each, the properties it accepts with each
         property's kind, default, and a brief description. Common
         properties (accepted by every non-virtual type) are reported once."""
-        _, extra = self._exec_raw("describe")
+        _, extra, _ = self._exec_raw("describe")
         return protocol.decode_vocabulary(extra)
 
     def build(self, src: str) -> "UI":

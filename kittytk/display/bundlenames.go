@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/objects/trinkets"
+	"github.com/phroun/kittytk/wire"
 	"github.com/phroun/serval"
 )
 
@@ -87,10 +88,21 @@ func (c *conn) findSource(name string) (serval.Source, error) {
 // certain meanwhile is that a silent drop is the worst of the options, being
 // indistinguishable from nothing having gone wrong.
 func (c *conn) report(name string, troubles []Trouble) {
-	if len(troubles) == 0 || c == nil || c.server == nil || c.server.desktop == nil {
+	if len(troubles) == 0 || c == nil {
 		return
 	}
 	for _, t := range troubles {
-		c.server.desktop.LogError(name, t.String())
+		// **To the application**, on the batch that caused the load: it is that
+		// author's mistake and their program that can be changed. Said just before
+		// the reply, so it is part of the answer to what they sent rather than news
+		// arriving out of the blue. See conn.trouble.
+		c.trouble(wire.Trouble{About: name, Text: t.String()})
+
+		// **And to the display's own log**, which is the floor under all of it: a
+		// load with no statement behind it -- a preload, a tool -- has nobody to
+		// tell, and an application is free to ignore what it is told.
+		if c.server != nil && c.server.desktop != nil {
+			c.server.desktop.LogError(name, t.String())
+		}
 	}
 }

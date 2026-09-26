@@ -85,6 +85,17 @@ int kt_set_app(kt_conn *c, const char *props);
  * display error / disconnect. */
 int kt_exec(kt_conn *c, const char *src);
 
+/* What the display said went wrong on the last batch's behalf WITHOUT stopping
+ * it: an optional include a bundle could not find, a hint that cannot mean what
+ * it says. A refusal is what a batch is answered WITH, in place of its reply;
+ * these arrive alongside a reply that came.
+ *
+ * kt_trouble_at hands back pointers into the connection's own copy, valid until
+ * the next batch. `about` is what it was about, in the words the statement
+ * used; `text` is the reason, in the words of whoever reported it. */
+int kt_trouble_count(kt_conn *c);
+int kt_trouble_at(kt_conn *c, int i, const char **about, const char **text);
+
 /* Build a construction script; returns handle access to the surfaced
  * names (NULL on error). Free with kt_ui_free. */
 kt_ui *kt_build(kt_conn *c, const char *src);

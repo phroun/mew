@@ -30,6 +30,7 @@ type (
 	AskInfo         = wire.AskInfo
 	EventFieldDesc  = wire.EventFieldDesc
 	Vocabulary      = wire.Vocabulary
+	Trouble         = wire.Trouble
 	EventDispatcher = wire.EventDispatcher
 )
 
@@ -63,6 +64,10 @@ const (
 	// rather than asks: where a record stands, and what has stopped being true.
 	PlaceVerb = wire.PlaceVerb
 	StaleVerb = wire.StaleVerb
+
+	// TroubleVerb is what the display says went wrong on a batch's behalf without
+	// stopping it, said just before that batch's reply.
+	TroubleVerb = wire.TroubleVerb
 )
 
 // Language functions.
@@ -75,6 +80,8 @@ var (
 	EncodeReply        = wire.EncodeReply
 	DecodeReply        = wire.DecodeReply
 	EncodeError        = wire.EncodeError
+	EncodeTrouble      = wire.EncodeTrouble
+	DecodeTrouble      = wire.DecodeTrouble
 	NewScanner         = wire.NewScanner
 	EncodeStatement    = wire.EncodeStatement
 	DecodeVocabulary   = wire.DecodeVocabulary

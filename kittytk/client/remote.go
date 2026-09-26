@@ -204,6 +204,11 @@ type remoteTransport struct {
 	// reply's Extra.
 	pendingDesc []string
 
+	// pendingTrouble accumulates the `trouble` statements that arrive ahead of the
+	// same reply: what the display says went wrong on this batch's behalf without
+	// stopping it. Attached to that reply's Trouble.
+	pendingTrouble []wire.Trouble
+
 	// events are delivered on their own goroutine so a handler that
 	// executes statements (SetCaption inside OnToggle) cannot
 	// deadlock the reader that must route the reply.
@@ -280,10 +285,24 @@ func (t *remoteTransport) readLoop() {
 				if r != nil && len(t.pendingDesc) > 0 {
 					r.Extra = t.pendingDesc
 				}
-				t.pendingDesc = nil
+				// What the display said went wrong on this batch's behalf without
+				// stopping it. It rides the reply because that is what it is part
+				// of -- the answer to what this application sent. See
+				// wire.TroubleVerb.
+				if r != nil && len(t.pendingTrouble) > 0 {
+					r.Trouble = t.pendingTrouble
+				}
+				t.pendingDesc, t.pendingTrouble = nil, nil
 				t.answer(replyOrError{reply: r, err: err})
+			case wire.TroubleVerb:
+				// Held until the reply, which is what it is part of. A batch that
+				// goes on to fail is answered with the refusal instead, and these
+				// are let go -- the display's own log still holds them.
+				if tr, err := wire.DecodeTrouble(stmt); err == nil {
+					t.pendingTrouble = append(t.pendingTrouble, tr)
+				}
 			case "error":
-				t.pendingDesc = nil
+				t.pendingDesc, t.pendingTrouble = nil, nil
 				msg := "display error"
 				for _, a := range stmt.Args {
 					if a.Name == "text" && a.Value != nil && a.Value.Kind == wire.StringValue {

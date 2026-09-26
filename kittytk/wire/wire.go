@@ -53,6 +53,11 @@ const InitVerb = "init"
 type Reply struct {
 	IDs   map[string]uint64
 	Extra []string
+
+	// Trouble is what the display said went wrong on this batch's behalf without
+	// stopping it, gathered from the `trouble` statements that came before the
+	// reply line. Empty for a batch nothing had to say about. See TroubleVerb.
+	Trouble []Trouble
 }
 
 // EncodeReply renders a Reply as a wire statement:
@@ -87,6 +92,84 @@ func DecodeReply(stmt *Statement) (*Reply, error) {
 		r.IDs[a.Name] = uint64(a.Value.Int)
 	}
 	return r, nil
+}
+
+// TroubleVerb is what the display says about something that went wrong on a
+// batch's behalf WITHOUT stopping it.
+//
+// A refusal is what a batch is answered with instead of a reply. A trouble is not
+// that: the statements ran, the objects exist, and something along the way is worth
+// the author knowing -- an optional include a bundle could not find, a hint that
+// cannot mean what it says. It travels immediately before the reply, so it is part
+// of the answer to the batch that caused it rather than news arriving out of the
+// blue.
+//
+// **It is not an event, for the reason answers are not events.** A complaint is
+// solicited: it belongs to the statement that provoked it. An event would pass the
+// subscription filter and the emission suppression, so an application that had not
+// asked to hear about the object would never be told -- and a complaint nobody is
+// told is the silence this exists to break.
+const TroubleVerb = "trouble"
+
+// A Trouble is one thing that went wrong and did not stop anything.
+type Trouble struct {
+	// About is what it was about, in the words the statement used: the bundle or
+	// source name that was being loaded. Empty where it is about nothing nameable.
+	About string
+
+	// Text is the reason, in the words of whoever reported it. Nothing rewrites it
+	// on the way: a reason passed through is a reason a programmer can search their
+	// own code for.
+	Text string
+}
+
+// EncodeTrouble renders one as a wire statement:
+//
+//	trouble about="bundle:papers" text="papers/extra: no such include"
+func EncodeTrouble(t Trouble) string {
+	var sb strings.Builder
+	sb.WriteString(TroubleVerb)
+	if t.About != "" {
+		sb.WriteString(" about=" + Quote(t.About))
+	}
+	sb.WriteString(" text=" + Quote(t.Text))
+	return sb.String()
+}
+
+// DecodeTrouble parses a `trouble` statement back into what it says.
+//
+// A statement with no `text=` is a complaint with nothing in it, which is refused:
+// a reader shown a row with no reason on it is told there is a problem and nothing
+// else, which is worse than not being told.
+func DecodeTrouble(stmt *Statement) (Trouble, error) {
+	if stmt.Verb != TroubleVerb {
+		return Trouble{}, fmt.Errorf("not a trouble statement: %q", stmt.Verb)
+	}
+	var t Trouble
+	said := false
+	for _, a := range stmt.Args {
+		// **Only the two it reads are checked.** An argument this version does not
+		// know is a later version saying more, and a client that refused the whole
+		// statement over one would stop hearing complaints the day the display
+		// learned to say where they came from.
+		switch a.Name {
+		case "about", "text":
+		default:
+			continue
+		}
+		if a.Value == nil || a.Value.Kind != StringValue {
+			return Trouble{}, fmt.Errorf("trouble %s: expected a string", a.Name)
+		}
+		if a.Name == "about" {
+			t.About = a.Value.Str
+		} else {
+			t.Text, said = a.Value.Str, true
+		}
+	}
+	if !said {
+		return Trouble{}, fmt.Errorf("trouble: no text=, so it says nothing")
+	}
+	return t, nil
 }
 
 // EncodeError renders a batch failure as a wire statement.

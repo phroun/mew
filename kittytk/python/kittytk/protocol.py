@@ -685,6 +685,61 @@ def parse(src: str) -> Script:
 
 # --- Reply ---------------------------------------------------------------
 
+TROUBLE_VERB = "trouble"
+
+
+@dataclass
+class Trouble:
+    """One thing the display says went wrong without stopping the batch.
+
+    A refusal is what a batch is answered WITH, in place of its reply. This is
+    not that: the statements ran and something on the way is worth the author
+    knowing -- an optional include a bundle could not find, a hint that cannot
+    mean what it says. It travels just before the reply, so it is part of the
+    answer to the batch that caused it.
+
+    `about` is what it was about, in the words the statement used; `text` is the
+    reason, in the words of whoever reported it."""
+
+    about: str = ""
+    text: str = ""
+
+
+def encode_trouble(t: "Trouble") -> str:
+    """Render one as a wire statement."""
+    out = TROUBLE_VERB
+    if t.about:
+        out += " about=" + quote(t.about)
+    return out + " text=" + quote(t.text)
+
+
+def decode_trouble(stmt: Statement) -> "Trouble":
+    """Parse a `trouble` statement into what it says.
+
+    One with no `text=` says nothing and is refused: a reader shown a complaint
+    with no reason on it is told there is a problem and nothing else."""
+    if stmt.verb != TROUBLE_VERB:
+        raise ValueError("not a trouble statement: %r" % stmt.verb)
+    t = Trouble()
+    said = False
+    for a in stmt.args:
+        # Only the two it reads are checked. An argument this version does not
+        # know is a later version saying more, and a client that refused the whole
+        # statement over one would stop hearing complaints the day the display
+        # learned to say where they came from.
+        if a.name not in ("about", "text"):
+            continue
+        if a.value is None or a.value.kind != ValueKind.STRING:
+            raise ValueError("trouble %s: expected a string" % a.name)
+        if a.name == "about":
+            t.about = a.value.str
+        else:
+            t.text, said = a.value.str, True
+    if not said:
+        raise ValueError("trouble: no text=, so it says nothing")
+    return t
+
+
 def decode_reply(stmt: Statement) -> dict:
     """Parse a `reply` statement into a name -> id dict."""
     if stmt.verb != "reply":

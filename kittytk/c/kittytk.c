@@ -1715,6 +1715,10 @@ struct kt_conn {
     /* describe (D24): flat vocabulary statements buffered (under rmu)
      * until the reply that terminates the batch. */
     char **desc; int desc_n;
+    /* What the display says went wrong on this batch's behalf WITHOUT stopping
+     * it, buffered the same way and for the same reason: it is part of the
+     * answer to the batch, so it is held until the reply it belongs to. */
+    char **trouble_about; char **trouble_text; int trouble_n;
 
     kt_mutex emu; kt_cond ecv;
     evnode *ehead, *etail;
@@ -2892,6 +2896,28 @@ static void *read_loop(void *arg) {
             enqueue_inbound(c, text);
         } else if (strcmp(st->verb, "end") == 0) {
             enqueue_inbound(c, "end");
+        } else if (strcmp(st->verb, "trouble") == 0) {
+            /* A complaint that did not stop the batch. Held until the reply,
+             * which is what it is part of; a batch that goes on to fail is
+             * answered with the refusal instead and these are let go. */
+            const char *about = "", *text = NULL;
+            for (int i = 0; i < st->n; i++) {
+                const char *nm = st->args[i].name ? st->args[i].name : "";
+                if (!st->args[i].has_value || st->args[i].kind != 2) continue;
+                if (strcmp(nm, "about") == 0) about = st->args[i].sval;
+                else if (strcmp(nm, "text") == 0) text = st->args[i].sval;
+            }
+            /* No text= is a complaint with nothing in it, which says less than
+             * silence: a reader is told there is a problem and nothing else. */
+            if (text) {
+                kt_mutex_lock(&c->rmu);
+                c->trouble_about = realloc(c->trouble_about, (c->trouble_n + 1) * sizeof(char *));
+                c->trouble_text = realloc(c->trouble_text, (c->trouble_n + 1) * sizeof(char *));
+                c->trouble_about[c->trouble_n] = strdup(about);
+                c->trouble_text[c->trouble_n] = strdup(text);
+                c->trouble_n++;
+                kt_mutex_unlock(&c->rmu);
+            }
         } else if (strcmp(st->verb, "proptype") == 0 ||
                    strcmp(st->verb, "prop") == 0 ||
                    strcmp(st->verb, "propcommon") == 0 ||
@@ -2914,6 +2940,34 @@ static void *read_loop(void *arg) {
     return NULL;
 }
 
+/* Drop what the last batch was told. Called with rmu held. */
+static void kt_trouble_clear(kt_conn *c) {
+    for (int i = 0; i < c->trouble_n; i++) {
+        free(c->trouble_about[i]);
+        free(c->trouble_text[i]);
+    }
+    free(c->trouble_about); free(c->trouble_text);
+    c->trouble_about = NULL; c->trouble_text = NULL; c->trouble_n = 0;
+}
+
+int kt_trouble_count(kt_conn *c) {
+    if (!c) return 0;
+    kt_mutex_lock(&c->rmu);
+    int n = c->trouble_n;
+    kt_mutex_unlock(&c->rmu);
+    return n;
+}
+
+int kt_trouble_at(kt_conn *c, int i, const char **about, const char **text) {
+    if (!c) return -1;
+    kt_mutex_lock(&c->rmu);
+    if (i < 0 || i >= c->trouble_n) { kt_mutex_unlock(&c->rmu); return -1; }
+    if (about) *about = c->trouble_about[i];
+    if (text) *text = c->trouble_text[i];
+    kt_mutex_unlock(&c->rmu);
+    return 0;
+}
+
 /* Write src + "\nend\n"; wait for the reply. out_ids may be NULL. When
  * out_desc is non-NULL it receives ownership of the batch's buffered
  * describe statements (out_ndesc their count). */
@@ -2925,6 +2979,7 @@ static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids,
     c->reply_ready = 0;
     for (int i = 0; i < c->desc_n; i++) free(c->desc[i]);
     free(c->desc); c->desc = NULL; c->desc_n = 0;
+    kt_trouble_clear(c);
     kt_mutex_unlock(&c->rmu);
 
     /* One write: src + the D22 terminator as a single buffer, so the
@@ -3857,6 +3912,7 @@ void kt_close(kt_conn *c) {
     if (c->ssl) { SSL_free(c->ssl); SSL_CTX_free(c->ssl_ctx); }
 #endif
     /* (handler/sub tables reclaimed at process exit in demo/smoke usage.) */
+    kt_trouble_clear(c);
     for (int i = 0; i < c->desc_n; i++) free(c->desc[i]);
     free(c->desc);
     for (int i = 0; i < c->ngiven; i++) free(c->given[i].name);
