@@ -37,6 +37,12 @@ const (
 	ButtonDiscard
 	ButtonApply
 	ButtonHelp
+
+	// ButtonPopOut is an offer rather than an answer: do the thing another way.
+	// The desktop's exit uses it to give the applications inside it windows of
+	// their own instead of closing them, and names it per case ("Pop It Out",
+	// "Pop Them Out") with SetButtonText.
+	ButtonPopOut
 )
 
 // DialogResult represents the result of a dialog.
@@ -55,6 +61,7 @@ const (
 	ResultDiscard
 	ResultApply
 	ResultHelp
+	ResultPopOut
 )
 
 // MessageBoxIcon represents message box icons.
@@ -121,6 +128,7 @@ type messageBoxContent struct {
 	icon           MessageBoxIcon
 	text           string
 	buttonTrinkets []*Button
+	buttonResults  []DialogResult
 	onDone         func(result DialogResult)
 }
 
@@ -205,6 +213,7 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 		{ButtonDiscard, "Discard", ResultDiscard},
 		{ButtonApply, "Apply", ResultApply},
 		{ButtonHelp, "Help", ResultHelp},
+		{ButtonPopOut, "Pop Out", ResultPopOut},
 	}
 
 	for _, def := range buttonDefs {
@@ -218,6 +227,22 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 				}
 			})
 			c.buttonTrinkets = append(c.buttonTrinkets, btn)
+			c.buttonResults = append(c.buttonResults, def.result)
+		}
+	}
+}
+
+// SetButtonText renames one of the dialog's buttons, named by what it answers.
+//
+// The standard wording carries most dialogs, and a few are worth saying in their own
+// terms: "Pop It Out" reads as an offer about one application where "Pop Out" reads as
+// a setting. Call it before the dialog is shown -- it changes the button's width, and
+// ResizeToFitContent is what takes account of that.
+func (m *MessageBox) SetButtonText(answers DialogResult, text string) {
+	for i, r := range m.content.buttonResults {
+		if r == answers {
+			m.content.buttonTrinkets[i].SetText(text)
+			return
 		}
 	}
 }

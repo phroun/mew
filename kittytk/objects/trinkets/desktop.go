@@ -2350,18 +2350,182 @@ func pickDockedMain(wins []*window.Window) *window.Window {
 }
 
 // ExitDesktop is the desktop's own close button and the system menu's "Exit Desktop"
-// item, which are the same verb and now do the same thing: they EXIT.
+// item, which are the same verb.
 //
-// **It used to dismiss the desktop instead**, handing the display to one of the
-// applications on it as a solo app. That is a different operation wearing this one's
-// name -- and a lossy one, because the other applications' windows stayed docked on a
-// desktop that was no longer on the screen, reachable from the Window menu and from
-// nowhere else. Hiding the desktop is still available and still has its own verb
-// (hide_desktop, EnterSoloFromDesktop); this is the one that ends the session.
+// **It ends the desktop, not the session.** An application torn out onto a surface of
+// its own is not inside the desktop and does not go with it: it keeps running, and one
+// of them takes the primary surface as the desktop leaves it. What IS at stake is the
+// applications DOCKED in the desktop -- they have nowhere to be once it is gone.
 //
-// It asks first, and names what it would end. See AskBeforeQuitting.
+// So it asks about exactly those, and only when there are any:
+//
+//	Yes         close them, the sweep the desktop's own quit would do
+//	Pop It Out  give them windows of their own instead, so nothing is lost
+//	No          nothing at all
+//
+// Pop Out is offered only where a window can HAVE a surface of its own. On a host that
+// holds one, there is nowhere to pop out to and the offer would be a lie.
 func (d *Desktop) ExitDesktop() {
-	d.AskBeforeQuitting(0)
+	inside := d.applicationsInsideDesktop()
+	if len(inside) == 0 {
+		closeTrace("ExitDesktop: nothing is docked; closing the desktop")
+		d.closeDesktop(nil)
+		return
+	}
+
+	// One question, however many times the button is pressed.
+	d.mu.Lock()
+	if d.quitConfirm != nil {
+		d.mu.Unlock()
+		closeTrace("ExitDesktop: already asking")
+		return
+	}
+	d.mu.Unlock()
+
+	// The windows as they are NOW: the answer comes later, and what it applies to is
+	// what was inside the desktop when the question was put.
+	docked := d.dockedWindows()
+	n := len(inside)
+	word, it := "applications", "Them"
+	if n == 1 {
+		word, it = "application", "It"
+	}
+
+	buttons := ButtonYes | ButtonNo
+	popOut := d.canTearOff()
+	if popOut {
+		buttons |= ButtonPopOut
+	}
+	mb := NewMessageBox("Exit Desktop", fmt.Sprintf(
+		"Exiting the desktop will quit %d running %s.\n\nAre you sure?", n, word), buttons)
+	mb.SetIcon(IconWarning)
+	if popOut {
+		mb.SetButtonText(ResultPopOut, "Pop "+it+" Out")
+	}
+	mb.SetOnFinished(func(r DialogResult) {
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+		closeTrace("ExitDesktop: answered %v", r)
+		switch r {
+		case ResultYes:
+			for _, a := range inside {
+				d.quitApplication(a)
+			}
+			// Everything except THIS dialog, which is a docked window too and is
+			// about to close itself: counting it would read as work left to do.
+			if len(d.dockedWindowsExcept(&mb.Window)) > 0 {
+				// A quit stopped to ask something of its own. The desktop is
+				// where those windows live and where that question has to be
+				// seen, so it stays until they are gone.
+				closeTrace("ExitDesktop: a quit is still asking; the desktop stays")
+				return
+			}
+			d.closeDesktop(&mb.Window)
+		case ResultPopOut:
+			d.popOutWindows(docked)
+			d.closeDesktop(&mb.Window)
+		}
+	})
+
+	d.mu.Lock()
+	d.quitConfirm = mb
+	d.mu.Unlock()
+	closeTrace("ExitDesktop: asking about %d docked %s (popOut=%v)", n, word, popOut)
+	if !d.showModal(mb) {
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+	}
+}
+
+// closeDesktop ends the desktop itself: a remaining application takes the primary
+// surface, and with nothing left to take it the host quits.
+func (d *Desktop) closeDesktop(ignoring *window.Window) {
+	d.mu.RLock()
+	torn := len(d.tornHosts)
+	d.mu.RUnlock()
+	left := torn + len(d.dockedWindowsExcept(ignoring))
+	closeTrace("closeDesktop: %d windows left to take the primary surface", left)
+	if left > 0 {
+		d.EnterSoloFromDesktop()
+		return
+	}
+	d.Quit()
+}
+
+// dockedWindows are the windows living IN the desktop rather than on surfaces of their
+// own -- the ones with nowhere to be once it is gone.
+func (d *Desktop) dockedWindows() []*window.Window { return d.dockedWindowsExcept(nil) }
+
+// dockedWindowsExcept is dockedWindows without one of them, for a caller that is holding
+// a dialog of its own on the desktop and must not count it as work left to do.
+func (d *Desktop) dockedWindowsExcept(skip *window.Window) []*window.Window {
+	wm := d.WindowManager()
+	if wm == nil {
+		return nil
+	}
+	var out []*window.Window
+	for _, w := range wm.Windows() {
+		if w != skip && !w.IsDetached() {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// applicationsInsideDesktop are the applications with at least one window docked in it,
+// which is what exiting the desktop would end.
+func (d *Desktop) applicationsInsideDesktop() []ApplicationProvider {
+	var out []ApplicationProvider
+	for _, a := range d.Applications() {
+		for _, w := range a.Windows() {
+			if w != nil && !w.IsDetached() {
+				out = append(out, a)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// popOutWindows gives each window a surface of its own, which is what makes exiting the
+// desktop lossless: the applications inside it come out rather than being closed.
+func (d *Desktop) popOutWindows(wins []*window.Window) {
+	for _, w := range wins {
+		if w == nil || w.IsDetached() || !d.managesWindow(w) {
+			continue
+		}
+		// Forced tearable only so the tear can happen, the same way solo mode adopts
+		// a window; what it really was is put back.
+		was := w.IsTearable()
+		w.SetTearable(true)
+		d.tearOffInPlace(w)
+		w.SetTearable(was)
+		closeTrace("popOutWindows: %s", closeTraceWindow(w))
+	}
+}
+
+// canTearOff reports whether a window can be given a surface of its own here, which is
+// what the platform has to support for the tear-off handler to be wired at all (see
+// setupTearOff). A host that holds one surface cannot, and is not offered it.
+func (d *Desktop) canTearOff() bool {
+	d.mu.RLock()
+	plat := d.platform
+	surf := d.surface
+	d.mu.RUnlock()
+	if plat == nil || surf == nil {
+		return false
+	}
+	ms, ok := plat.(platform.MultiSurfacePlatform)
+	if !ok || !ms.SupportsMultipleSurfaces() {
+		return false
+	}
+	if _, ok := surf.(platform.NativeSurface); !ok {
+		return false
+	}
+	_, ok = plat.(platform.GlobalPointerPlatform)
+	return ok
 }
 
 // screenRect is a surface's OS-window geometry in screen pixels.

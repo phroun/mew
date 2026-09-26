@@ -1067,15 +1067,10 @@ func TestTornWindowTabComboboxPopupController(t *testing.T) {
 	d.RunOn(plat)
 }
 
-// The system menu's "Exit Desktop" command, and the desktop's own close button, EXIT:
-// they ask what it would end and then quit, rather than dismissing the desktop and
-// handing the display to one of the applications on it.
-//
-// That dismissal is what this used to assert. It was a different operation wearing this
-// one's name, and a lossy one: the applications NOT promoted kept their windows docked
-// on a desktop that was no longer on the screen, reachable from the Window menu and from
-// nowhere else. Hiding the desktop still exists and still has its own verb.
-func TestExitDesktopAsksThenQuits(t *testing.T) {
+// **An application torn out of the desktop is not inside it**, so exiting the desktop
+// asks nothing about it: it keeps running, and takes the primary surface as the desktop
+// leaves it. Form 3 becoming Form 2.
+func TestExitDesktopWithOnlyTornAppsAsksNothing(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
@@ -1097,33 +1092,30 @@ func TestExitDesktopAsksThenQuits(t *testing.T) {
 		d.EnterSoloMode(main)
 		d.ExitSoloMode() // desktop revealed, main is a torn window on it
 
-		// With an application still there it ASKS, and nothing has happened yet.
 		d.ExitDesktop()
-		if d.IsSolo() {
-			t.Error("Exit Desktop dismissed the desktop instead of offering to exit it")
-		}
-		if plat.quitCalled {
-			t.Error("Exit Desktop quit without asking")
-		}
+
 		d.mu.RLock()
 		asking := d.quitConfirm
 		d.mu.RUnlock()
-		if asking == nil {
-			t.Fatal("Exit Desktop asked nothing")
+		if asking != nil {
+			t.Error("Exit Desktop asked about an application it was not going to close")
 		}
-
-		// And on yes it quits.
-		asking.done(ResultYes)
-		if !plat.quitCalled {
-			t.Error("the answer was yes and the host did not quit")
+		if !d.IsSolo() {
+			t.Error("the desktop did not close")
 		}
+		if !main.IsVisible() {
+			t.Error("the torn-out application was closed by the desktop exiting")
+		}
+		if plat.quitCalled {
+			t.Error("the host quit although an application was still running")
+		}
+		d.ForceQuitWithCode(0)
 	}
 
 	d.RunOn(plat)
 }
 
-// With nothing running there is nothing to warn about, so Exit Desktop goes straight
-// through -- the same rule the close button follows.
+// With nothing left to take the primary surface, closing the desktop ends the host.
 func TestExitDesktopWithNothingRunningQuitsAtOnce(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)

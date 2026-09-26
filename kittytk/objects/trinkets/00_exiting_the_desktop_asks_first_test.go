@@ -1,12 +1,15 @@
 package trinkets
 
-// The desktop's own close button.
+// The desktop's own close button, and the system menu's Exit Desktop item.
 //
-// **Closing the desktop is not closing a window.** It ends every application running on
-// it -- the Program Manager rather than a program -- and the button that does it sits in
-// the corner of a window next to the ones that minimize and maximize it, which is a
-// button in the wrong place for what it does. So it asks first, and names the cost in
-// the only terms that make it a decision: how many applications go with it.
+// **It ends the desktop, not the session.** An application torn out onto a surface of
+// its own is not inside the desktop and does not go with it. What is at stake is the
+// applications DOCKED in it, which have nowhere to be once it is gone -- so it asks
+// about exactly those, and offers to give them windows of their own instead of closing
+// them.
+//
+// The other file's AskBeforeQuitting is a different question: the OS asking to quit
+// everything. This one is about the desktop.
 
 import (
 	"strings"
@@ -212,4 +215,174 @@ func TestTheQuestionComesBackAfterNo(t *testing.T) {
 		d.ForceQuitWithCode(0)
 	}
 	d.RunOn(plat)
+}
+
+// dockedAndTorn is a desktop with one application docked inside it and one torn out onto
+// a surface of its own -- the shape the question is about.
+func dockedAndTorn(t *testing.T) (*Desktop, *window.Window, *window.Window, *msPlatform, func(func())) {
+	t.Helper()
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	torn := window.NewWindow("mew")
+	torn.SetMainRequested(true)
+	torn.SetTearable(true)
+	d.AddApplication(&mockApp{name: "mew", main: torn, windows: []*window.Window{torn}})
+
+	docked := window.NewWindow("KittyTK Demo")
+	d.AddApplication(&mockApp{name: "Demo", main: docked, windows: []*window.Window{docked}})
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		for _, w := range []*window.Window{torn, docked} {
+			wm.AddWindow(w)
+			w.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 300, Height: 200})
+		}
+	})
+
+	plat := &msPlatform{}
+	run := func(body func()) {
+		plat.script = func() {
+			d.tearOffInPlace(torn)
+			if !torn.IsDetached() || docked.IsDetached() {
+				t.Fatal("harness: one torn out and one docked is the shape this is about")
+			}
+			body()
+			d.ForceQuitWithCode(0)
+		}
+		d.RunOn(plat)
+	}
+	return d, docked, torn, plat, run
+}
+
+// **It counts what it would close, which is what is docked.** The torn-out application
+// keeps running either way, so warning about it would be warning about nothing.
+func TestTheQuestionCountsOnlyWhatIsInsideTheDesktop(t *testing.T) {
+	d, _, _, _, run := dockedAndTorn(t)
+	run(func() {
+		d.ExitDesktop()
+		text := theQuitBox(t, d).content.text
+		if !strings.Contains(text, "1 running application.") {
+			t.Errorf("the question counts the torn-out application too; it says: %s", text)
+		}
+	})
+}
+
+// Yes closes what was inside, and the desktop goes -- leaving the torn-out application
+// running on the primary surface.
+func TestYesClosesWhatWasInsideAndLeavesTheRest(t *testing.T) {
+	d, docked, torn, plat, run := dockedAndTorn(t)
+	run(func() {
+		d.ExitDesktop()
+		theQuitBox(t, d).done(ResultYes)
+
+		if docked.IsVisible() {
+			t.Error("the application inside the desktop is still open")
+		}
+		if !torn.IsVisible() {
+			t.Error("the torn-out application was closed by the desktop exiting")
+		}
+		if !d.IsSolo() {
+			t.Error("the desktop did not close")
+		}
+		if plat.quitCalled {
+			t.Error("the host quit although an application was still running")
+		}
+	})
+}
+
+// **Pop It Out is the lossless answer**: the application inside gets a window of its own
+// and keeps running, and the desktop goes anyway.
+func TestPopOutGivesTheApplicationAWindowOfItsOwn(t *testing.T) {
+	d, docked, torn, _, run := dockedAndTorn(t)
+	run(func() {
+		d.ExitDesktop()
+		mb := theQuitBox(t, d)
+		mb.done(ResultPopOut)
+
+		if !docked.IsVisible() {
+			t.Fatal("popping it out closed it")
+		}
+		if !docked.IsDetached() {
+			t.Error("it was not given a surface of its own, so it is on a desktop that has gone")
+		}
+		if !torn.IsVisible() {
+			t.Error("the torn-out application was closed")
+		}
+		if !d.IsSolo() {
+			t.Error("the desktop did not close")
+		}
+	})
+}
+
+// And it is named for what it is about: one application is "It", several are "Them".
+func TestThePopOutButtonNamesWhatItWouldDo(t *testing.T) {
+	d, _, _, _, run := dockedAndTorn(t)
+	run(func() {
+		d.ExitDesktop()
+		mb := theQuitBox(t, d)
+		var labels []string
+		for _, b := range mb.content.buttonTrinkets {
+			labels = append(labels, b.Text())
+		}
+		joined := strings.Join(labels, "|")
+		if !strings.Contains(joined, "Pop It Out") {
+			t.Errorf("the buttons read %s", joined)
+		}
+	})
+}
+
+// No leaves everything exactly as it was, desktop included.
+func TestNoLeavesTheDesktopAlone(t *testing.T) {
+	d, docked, torn, _, run := dockedAndTorn(t)
+	run(func() {
+		d.ExitDesktop()
+		theQuitBox(t, d).done(ResultNo)
+
+		if d.IsSolo() {
+			t.Error("the desktop closed although the answer was no")
+		}
+		for _, w := range []*window.Window{docked, torn} {
+			if !w.IsVisible() {
+				t.Errorf("%q was closed although the answer was no", w.Title())
+			}
+		}
+	})
+}
+
+// **Pop Out is offered only where a window can have a surface of its own.** On a host
+// that holds one, there is nowhere to pop out to and the offer would be a lie.
+func TestPopOutIsNotOfferedWithNowhereToPopOutTo(t *testing.T) {
+	d, wins := desktopWithApps(t, "Ledger")
+	ready := make(chan struct{})
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		for _, w := range wins {
+			wm.AddWindow(w)
+			w.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 300, Height: 200})
+		}
+		close(ready)
+	})
+	// Run() builds a polling platform: one surface, and not a native one.
+	go d.Run()
+	<-ready
+	defer d.ForceQuitWithCode(0)
+
+	done := make(chan struct{})
+	d.Post(func() {
+		defer close(done)
+		if d.canTearOff() {
+			t.Fatal("harness: this platform can hold a second surface")
+		}
+		d.ExitDesktop()
+		mb := theQuitBox(t, d)
+		for _, b := range mb.content.buttonTrinkets {
+			if strings.Contains(b.Text(), "Pop") {
+				t.Errorf("the question offers %q on a host with nowhere to pop out to", b.Text())
+			}
+		}
+	})
+	<-done
 }
