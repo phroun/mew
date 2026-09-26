@@ -110,6 +110,31 @@ type msPlatform struct {
 	// host that cannot hold a second window behaves: the desktop has to fall back
 	// to showing itself rather than giving a dialog a surface of its own.
 	noMoreSurfaces bool
+
+	// deferPosts makes Post QUEUE rather than run inline, which is what a real
+	// platform does. Inline is convenient, and it means a test cannot tell work that
+	// HAPPENED from work that was merely scheduled -- so anything that must be done
+	// by the time a call returns has to be checked with this on.
+	deferPosts bool
+	queued     []func()
+
+	// reentrantCreate makes CreateSurface drain the queue before it returns, which
+	// is what SDL does: creating an OS window fires a resize event-watch that runs
+	// the queue synchronously. createTornHost's `tearing` claim exists for exactly
+	// this. Without it a test cannot see what re-entrant work does to state the
+	// caller is in the middle of changing.
+	reentrantCreate bool
+}
+
+// drainPosts runs what Post queued, and whatever that queues in turn.
+func (p *msPlatform) drainPosts() {
+	for len(p.queued) > 0 {
+		next := p.queued
+		p.queued = nil
+		for _, fn := range next {
+			fn()
+		}
+	}
 }
 
 func (p *msPlatform) Run(init func(platform.Platform)) int {
@@ -119,7 +144,14 @@ func (p *msPlatform) Run(init func(platform.Platform)) int {
 	}
 	return 0
 }
-func (p *msPlatform) Post(fn func())                       { fn() }
+func (p *msPlatform) Post(fn func()) {
+	if p.deferPosts {
+		p.queued = append(p.queued, fn)
+		return
+	}
+	fn()
+}
+
 func (p *msPlatform) PostAfter(_ time.Duration, fn func()) { p.afters = append(p.afters, fn) }
 func (p *msPlatform) Quit(int)                             { p.quitCalled = true }
 func (p *msPlatform) Clipboard() string                    { return "" }
@@ -128,6 +160,10 @@ func (p *msPlatform) Beep()                                {}
 func (p *msPlatform) SupportsMultipleSurfaces() bool       { return true }
 func (p *msPlatform) GlobalPointerPx() (int, int)          { return p.gx, p.gy }
 func (p *msPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
+	if p.reentrantCreate {
+		// SDL drains the queue from inside here, before the caller gets its surface.
+		p.drainPosts()
+	}
 	if p.noMoreSurfaces && len(p.surfaces) > 0 {
 		return nil, fmt.Errorf("this host holds one surface")
 	}

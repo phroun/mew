@@ -391,3 +391,44 @@ func TestADesktopHiddenWithNoSurfaceToGiveComesBack(t *testing.T) {
 		t.Errorf("the question could not be answered: %v", answered)
 	}
 }
+
+// **Whatever puts the question on a surface must not change which window is the
+// primary host.** Giving a dialog a window of its own says nothing about which
+// application owns the display, and an application promoted onto the primary surface
+// by a dialog appearing has been moved for no reason a person could explain.
+//
+// Run on a platform that behaves like SDL: Post defers, and creating a surface drains
+// the queue from inside, which is the re-entrancy createTornHost's own claim guards.
+// Every earlier test of this ran with both off, which is why none of them could see it.
+func TestAskingAQuestionLeavesThePrimaryHostAlone(t *testing.T) {
+	d, main, plat, run := soloDesktop(t)
+
+	run(func() {
+		plat.deferPosts = true
+		plat.reentrantCreate = true
+		defer func() {
+			plat.deferPosts, plat.reentrantCreate = false, false
+			plat.drainPosts()
+		}()
+
+		before := d.soloPrimaryHost
+		if before == nil || before.Window() != main {
+			t.Fatalf("harness: the primary host is not the solo window (%v)", before)
+		}
+
+		d.AskForceClose(main, func(bool) {})
+		plat.drainPosts()
+
+		after := d.soloPrimaryHost
+		if after != before {
+			var was, is string
+			if before != nil && before.Window() != nil {
+				was = before.Window().Title()
+			}
+			if after != nil && after.Window() != nil {
+				is = after.Window().Title()
+			}
+			t.Errorf("asking the question changed the primary host from %q to %q", was, is)
+		}
+	})
+}
