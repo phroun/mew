@@ -364,6 +364,12 @@ type Desktop struct {
 	// dialog closes. Guarded by d.mu.
 	aboutBox *window.Window
 
+	// forceClose is the "did not respond" question currently up about each window,
+	// so a second close attempt joins the answer the first is waiting for rather
+	// than putting up a second dialog about the same window. Guarded by d.mu; see
+	// AskForceClose.
+	forceClose map[*window.Window]*MessageBox
+
 	// The Event Viewer accessory while its window is open, and the flag that
 	// remembers its event filter was installed. The filter is permanent
 	// (AddEventFilter has no counterpart) so it is installed at most once and
@@ -844,18 +850,19 @@ func aboutDesktopText() string {
 		core.Name, core.Tagline, core.FullVersion())
 }
 
-// showAboutDesktop opens the About KittyTK dialog - the About entry in the
-// system (Ψ) menu - as a modal message box on the desktop.
-func (d *Desktop) showAboutDesktop() {
-	mb := NewMessageBox("About KittyTK", aboutDesktopText(), ButtonOK)
-	mb.SetIcon(IconInformation)
+// showModal puts one of the display's OWN dialogs on the desktop, centred, and
+// reports whether there was a desktop to put it on.
+//
+// Written out three times before this, identically each time, which is two more
+// chances than a centring calculation needs to drift.
+func (d *Desktop) showModal(mb *MessageBox) bool {
 	wm := d.WindowManager()
 	if wm == nil {
-		return
+		return false
 	}
 	wm.AddWindow(&mb.Window)
 	// Now parented to the desktop, the window knows its real (graphical vs
-	// cell) chrome: re-measure so the content holds the text and OK button,
+	// cell) chrome: re-measure so the content holds the text and its buttons,
 	// then center the dialog in the desktop's client area.
 	mb.ResizeToFitContent()
 	area := wm.ClientArea()
@@ -871,6 +878,95 @@ func (d *Desktop) showAboutDesktop() {
 		y = metrics.RoundDownToCellY(y)
 	}
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+	return true
+}
+
+// AskForceClose asks the PERSON whether to close a window anyway, because the
+// application that owns it asked to be consulted about closing and then did not
+// answer.
+//
+// **The display cannot tell a thoughtful application from a hung one.** One that
+// subscribed to `window_closing` may be putting a save-your-work dialog in front of
+// somebody, which can take as long as it takes, or it may be in a loop and never
+// going to answer at all. Both look exactly alike from here: a decision that was
+// asked and has not come back.
+//
+// So the display stops guessing and asks the one party that can actually tell, who
+// is looking at the screen. Waiting for ever would be a window that cannot be
+// closed; forcing it after a few seconds would throw away work. Asking is neither.
+//
+// It is implemented here, and not where the close is decided, because a window in
+// front of a person is the desktop's to put there -- see window.forceCloseAsker for
+// the seam.
+func (d *Desktop) AskForceClose(win *window.Window, then func(force bool)) {
+	if then == nil {
+		return
+	}
+	// **One question per window.** Pressing [x] again while the person is reading
+	// this would start a second close, wait its own five seconds and put up a
+	// second dialog about the same window -- so the second press joins the answer
+	// the first is waiting for.
+	d.mu.Lock()
+	if d.forceClose == nil {
+		d.forceClose = map[*window.Window]*MessageBox{}
+	}
+	if open := d.forceClose[win]; open != nil {
+		d.mu.Unlock()
+		open.alsoTell(then)
+		return
+	}
+	d.mu.Unlock()
+
+	name := "An application"
+	for _, a := range d.Applications() {
+		for _, w := range a.Windows() {
+			if w == win {
+				if n := a.Name(); n != "" {
+					name = n
+				}
+			}
+		}
+	}
+	title := win.Title()
+	if title == "" {
+		title = "an untitled window"
+	}
+
+	mb := NewMessageBox("Not Responding", fmt.Sprintf(
+		"%s did not respond while trying to close %q.\n\n"+
+			"Force the window closed? Anything unsaved in it will be lost.",
+		name, title), ButtonYes|ButtonNo)
+	mb.SetIcon(IconWarning)
+	mb.alsoTell(then)
+	// Answered once, whichever way it goes, and No for a dialog dismissed without
+	// a choice -- the safe half, the same as the close it is about.
+	mb.SetOnFinished(func(r DialogResult) {
+		d.mu.Lock()
+		delete(d.forceClose, win)
+		d.mu.Unlock()
+		mb.tellThem(r == ResultYes)
+	})
+
+	d.mu.Lock()
+	d.forceClose[win] = mb
+	d.mu.Unlock()
+	if !d.showModal(mb) {
+		// Nowhere to ask, so nobody was asked: leave the window alone.
+		d.mu.Lock()
+		delete(d.forceClose, win)
+		d.mu.Unlock()
+		mb.tellThem(false)
+	}
+}
+
+// showAboutDesktop opens the About KittyTK dialog - the About entry in the
+// system (Ψ) menu - as a modal message box on the desktop.
+func (d *Desktop) showAboutDesktop() {
+	mb := NewMessageBox("About KittyTK", aboutDesktopText(), ButtonOK)
+	mb.SetIcon(IconInformation)
+	if !d.showModal(mb) {
+		return
+	}
 
 	// Track it while open so the R-key rotation easter egg can be gated to its
 	// focus (aboutBoxFocused). Clear the reference when it closes.
@@ -5104,21 +5200,7 @@ func (d *Desktop) clipboardGraceElapsed(w *clipboardWait) {
 		d.resolveClipboard(w, w.internal)
 	})
 	w.modal = mb
-
-	if wm := d.WindowManager(); wm != nil {
-		wm.AddWindow(&mb.Window)
-		mb.ResizeToFitContent()
-		area := wm.ClientArea()
-		b := mb.Bounds()
-		x := area.X + (area.Width-b.Width)/2
-		y := area.Y + (area.Height-b.Height)/2
-		if !wm.SmoothPositioning() {
-			metrics := d.EffectiveCellMetrics()
-			x = metrics.RoundDownToCellX(x)
-			y = metrics.RoundDownToCellY(y)
-		}
-		mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
-	}
+	d.showModal(mb)
 }
 
 // onClipboardResponse handles a clipboard reply arriving from the backend

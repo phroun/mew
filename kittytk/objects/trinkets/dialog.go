@@ -79,6 +79,40 @@ type MessageBox struct {
 
 	// Callbacks
 	onFinished func(result DialogResult)
+
+	// waiters are callers waiting on the one answer this dialog will get, for a
+	// question more than one of them asked: two close attempts on the same window
+	// are one question to the person, and both are told what they said. Answered
+	// exactly once, whichever of them is still listening.
+	waiters  []func(bool)
+	answered bool
+}
+
+// alsoTell adds a caller to those told what the person answers.
+func (m *MessageBox) alsoTell(fn func(bool)) {
+	if fn == nil {
+		return
+	}
+	if m.answered {
+		// Already settled: tell this one what was decided rather than leaving it
+		// waiting on an answer that has been and gone.
+		fn(m.result == ResultYes)
+		return
+	}
+	m.waiters = append(m.waiters, fn)
+}
+
+// tellThem delivers the answer to everyone waiting on it, once.
+func (m *MessageBox) tellThem(yes bool) {
+	if m.answered {
+		return
+	}
+	m.answered = true
+	waiting := m.waiters
+	m.waiters = nil
+	for _, fn := range waiting {
+		fn(yes)
+	}
 }
 
 // messageBoxContent is the content trinket for a MessageBox.

@@ -836,6 +836,7 @@ mb=new menubar children={
 	new menu caption="&Demo" wellknown="app" children={
 		new menuitem caption="&New" shortcut="^N" action=demo.file.new
 		new menuitem caption="New &Bounded Window" action=demo.file.bounded
+		new menuitem caption="New &Sulking Window" action=demo.file.sulking
 		new menuitem caption="&Open..." shortcut="^O"
 		new menuitem caption="&Save" shortcut="^S"
 	}

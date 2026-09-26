@@ -85,10 +85,11 @@ func (h Handle) On(event string, fn func(*wire.Event)) {
 //	    c.Decide(id, !unsavedWork)
 //	})
 //
-// **Answer every question you subscribe to.** A window's close waits as long as it
-// takes, having no way to know whether the answer is a person reading a dialog, so
-// one left unanswered is a window that cannot close. Nothing is owed for an event
-// that carries no `decision=`, which is nearly all of them.
+// **Answer every question you subscribe to, and promptly.** A window's close waits
+// about five seconds and then asks the person whether to force it, naming the
+// application that did not respond -- because the display cannot tell one that is
+// still thinking from one that is never going to answer. Nothing is owed for an
+// event that carries no `decision=`, which is nearly all of them.
 //
 // It is `do <id> allow` and nothing more; Object(id).Do(wire.DecisionAllow) is the
 // same statement said longhand.

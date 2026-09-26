@@ -1101,6 +1101,41 @@ type windowSurfacer interface {
 	SurfaceWindow(win *Window)
 }
 
+// forceCloseAsker is the desktop again, and for the same reason: putting a window
+// in front of a person is its job and not a window's.
+//
+// It is asked when an application that wanted a say in this window closing has not
+// answered. See Desktop.AskForceClose for why that is a question for the person
+// rather than a rule the display could apply on its own.
+type forceCloseAsker interface {
+	AskForceClose(win *Window, then func(force bool))
+}
+
+// AskForceClose puts that question to whatever can ask a person, and answers false
+// where nothing can -- a window with no desktop under it has nobody to ask, and
+// leaving it open is the half of the answer that loses no work.
+//
+// Exported because the close handler that needs it is installed from outside this
+// package, by the wire binding in window_protocol.go.
+func (w *Window) AskForceClose(then func(force bool)) {
+	if then == nil {
+		return
+	}
+	var current any = w.Parent()
+	for current != nil {
+		if a, ok := current.(forceCloseAsker); ok {
+			a.AskForceClose(w, then)
+			return
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			break
+		}
+		current = t.Parent()
+	}
+	then(false)
+}
+
 // surfaceBlockingChain brings the window that refused back into view, together
 // with every window between this one and it. Outermost first so the innermost
 // -- the one actually asking the user something -- ends up on top.

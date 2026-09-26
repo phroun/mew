@@ -223,6 +223,67 @@ func TestPermissionIsNotKeptForTheNextClose(t *testing.T) {
 	}
 }
 
+// **A close is asked about PER WINDOW, not per application.** An application with a
+// document window holding unsaved work and a palette holding nothing subscribes for
+// the document alone, and the palette goes on closing at once. Every other test here
+// subscribes to every window at once, which would pass either way.
+func TestSubscribingToOneWindowLeavesTheOthersAlone(t *testing.T) {
+	s := protocol.NewSession()
+	ctx := &protocol.BindContext{}
+	var sent []string
+	ctx.Emit = func(ev *protocol.Event) { sent = append(sent, ev.Encode()) }
+	ctx.Adopt = func(obj protocol.Object) { s.Register(obj) }
+	ctx.Drop = func(id uint64) { s.Forget(id) }
+
+	f := protocol.NewRegistryFactory(ctx)
+	build := func(title string) *Window {
+		obj, err := f.New("window")
+		if err != nil {
+			t.Fatalf("building a window: %v", err)
+		}
+		w := obj.(interface{ Target() any }).Target().(*Window)
+		w.SetTitle(title)
+		s.Register(obj)
+		return w
+	}
+	document := build("Unsaved Work")
+	palette := build("Palette")
+
+	// One window's close, and one window's only.
+	ctx.Subscribe(uint64(document.ObjectID()), "window_closing")
+
+	if !palette.Close() {
+		t.Error("the palette's close was declined, though nobody asked to decide it")
+	}
+	if palette.IsVisible() {
+		t.Error("the palette stayed open waiting for an answer nobody wanted to give")
+	}
+	for _, line := range sent {
+		if strings.HasPrefix(line, "event window_closing ") {
+			t.Errorf("closing the palette asked about it: %q", line)
+		}
+	}
+
+	if document.Close() {
+		t.Error("the document closed without the application being consulted")
+	}
+	if !document.IsVisible() {
+		t.Error("the document closed while the application was deciding")
+	}
+	var asked []string
+	for _, line := range sent {
+		if strings.HasPrefix(line, "event window_closing ") {
+			asked = append(asked, line)
+		}
+	}
+	if len(asked) != 1 {
+		t.Fatalf("%d windows were asked about, want the one that was subscribed to: %v", len(asked), sent)
+	}
+	if want := "window=" + itoa(uint64(document.ObjectID())); !strings.Contains(asked[0], want) {
+		t.Errorf("the question is about the wrong window: %q, want %s", asked[0], want)
+	}
+}
+
 // **Destroying is not asking.** The statement came from the application, and
 // putting its own order back to it as a question would want an answer inside the
 // batch that gave the order.

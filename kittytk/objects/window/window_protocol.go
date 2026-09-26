@@ -2,10 +2,29 @@ package window
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
 )
+
+// closeDecision is how long an application gets to answer whether one of its
+// windows may close, before the display asks the person instead.
+//
+// **There is no such thing as waiting long enough.** An application that
+// subscribed to `window_closing` and has not answered may be holding a
+// save-your-work dialog in front of somebody, in which case no deadline is long
+// enough; or it may be in a loop and never going to answer, in which case no
+// deadline is short enough. The two are indistinguishable from here.
+//
+// So this is not a guess at how long deciding takes. It is how long the display
+// waits before admitting it cannot tell, and asking somebody who can -- see
+// Desktop.AskForceClose. Long enough that an application which is merely thinking
+// is never interrupted, short enough that a hung one does not look like a window
+// that simply will not close.
+//
+// A var, so a test of what happens when it passes need not take five seconds.
+var closeDecision = 5 * time.Second
 
 // Wire registration for Window. Per D12, behavior flags are
 // individual named flags, never bitsets:
@@ -183,7 +202,7 @@ func init() {
 		Events: map[string]protocol.EventDesc{
 			"window_closing": protocol.NewEventDesc("The window is closing and has NOT closed: the application decides whether it may, because it is the only one that knows there is unsaved work. Subscribing is what makes a close askable at all — a window nobody is listening about closes at once.").
 				Field("window", "uint", "The window asking.").
-				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and it closes, `do <id> deny` and it stays. **It waits as long as it takes** — there is no deadline, because the answer may be a person reading a save-your-work dialog. So an application that subscribes to this must answer every one of them: one left unanswered is a window that cannot be closed until the application disconnects. Subscribe only if you mean to answer."),
+				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and it closes, `do <id> deny` and it stays. Answer within about five seconds — not because deciding must be quick, but because the display cannot tell an application that is still thinking from one that is never going to answer. Past that it asks the person whether to force the window closed, and says which application did not respond. Answering promptly, even to say `deny`, is what keeps your name out of that dialog."),
 			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
 				Field("window", "uint", "The closed window's object ID."),
 		},
@@ -217,19 +236,32 @@ func init() {
 				}
 				d := ctx.Deciding(
 					protocol.NewEvent("window_closing").WithUint("window", id),
-					// Never times out: what is being waited for may be a person
-					// deciding whether to save, and defaulting that after a
-					// moment would close a window over somebody's answer.
-					protocol.Whenever,
+					closeDecision,
 					func(v protocol.Verdict) {
-						// Denied, or nobody said -- the connection went while
-						// the question was open. Either way it stays open,
-						// which is the safe half of an unsaved-work question.
-						if !v.Allowed {
-							return
+						switch {
+						case v.Allowed:
+							allowing = true
+							w.Close()
+						case v.Said:
+							// Denied. It stays open, which is what was asked
+							// for.
+						default:
+							// **Nobody answered, and the display cannot tell
+							// why.** An application that subscribed may be
+							// holding a save-your-work dialog in front of
+							// somebody, or may be in a loop and never going to
+							// answer. Both look exactly alike from here.
+							//
+							// So it stops guessing and asks the one party that
+							// can tell, who is looking at the screen.
+							w.AskForceClose(func(force bool) {
+								if !force {
+									return
+								}
+								allowing = true
+								w.Close()
+							})
 						}
-						allowing = true
-						w.Close()
 					})
 				// Nobody is listening, so nobody is deciding: close at once,
 				// exactly as a window with no wire binding at all does.

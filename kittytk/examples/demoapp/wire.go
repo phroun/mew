@@ -341,6 +341,7 @@ func (a *app) wireMenus() {
 	// Demo menu.
 	c.OnCommand("demo.file.new", func() { a.openTerminalWindow() })
 	c.OnCommand("demo.file.bounded", func() { a.openBoundedWindow() })
+	a.wireSulking(c)
 
 	// Edit menu: Cut/Copy/Paste/Select All are supplied by the host's
 	// system Edit menu and act on the focused trinket directly; the client
