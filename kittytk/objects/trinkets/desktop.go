@@ -2349,26 +2349,19 @@ func pickDockedMain(wins []*window.Window) *window.Window {
 	return nil
 }
 
-// ExitDesktop handles the system menu's "Exit Desktop" command. If any
-// application window remains, the desktop is dismissed and that app takes
-// over the whole display as a solo app (promote a detached app again);
-// otherwise nothing is left to run, so the desktop process quits. A no-op
-// distinction only matters off solo - a solo app has no desktop to exit.
+// ExitDesktop is the desktop's own close button and the system menu's "Exit Desktop"
+// item, which are the same verb and now do the same thing: they EXIT.
+//
+// **It used to dismiss the desktop instead**, handing the display to one of the
+// applications on it as a solo app. That is a different operation wearing this one's
+// name -- and a lossy one, because the other applications' windows stayed docked on a
+// desktop that was no longer on the screen, reachable from the Window menu and from
+// nowhere else. Hiding the desktop is still available and still has its own verb
+// (hide_desktop, EnterSoloFromDesktop); this is the one that ends the session.
+//
+// It asks first, and names what it would end. See AskBeforeQuitting.
 func (d *Desktop) ExitDesktop() {
-	d.mu.RLock()
-	solo := d.solo
-	wm := d.windowManager
-	tornCount := len(d.tornHosts)
-	d.mu.RUnlock()
-	docked := 0
-	if wm != nil {
-		docked = len(wm.Windows())
-	}
-	if !solo && tornCount+docked > 0 {
-		d.EnterSoloFromDesktop()
-		return
-	}
-	d.Quit()
+	d.AskBeforeQuitting(0)
 }
 
 // screenRect is a surface's OS-window geometry in screen pixels.
