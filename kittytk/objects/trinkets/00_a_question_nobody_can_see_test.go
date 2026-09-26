@@ -432,3 +432,67 @@ func TestAskingAQuestionLeavesThePrimaryHostAlone(t *testing.T) {
 		}
 	})
 }
+
+// **Revealing the desktop gives the surface back even with nothing to re-home.**
+//
+// The solo window can close before the desktop is revealed: its [x] is pressed, its
+// host is dropped, soloPrimaryHost goes nil, and whatever reveals the desktop next --
+// the host's own shutdown, say -- arrives with no window to put back.
+//
+// Giving the SURFACE back does not depend on that. Until its handler points at the
+// desktop, it goes on painting through the host that was dropped: a dead frame of a
+// window that has gone. Every flag says the desktop is revealed, nothing on the screen
+// agrees, and clicking the one thing still showing does nothing at all -- which is
+// exactly how this was reported.
+func TestRevealingTheDesktopGivesTheSurfaceBackWithNothingToReHome(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	solo := window.NewWindow("mew")
+	solo.SetMainRequested(true)
+	// A peer, so closing the solo window is not the last window closing -- that ends
+	// the process and is a different story.
+	peer := window.NewWindow("Sulking Window")
+	d.AddApplication(&mockApp{name: "mew", main: solo, windows: []*window.Window{solo}})
+	d.AddApplication(&mockApp{name: "Demo", windows: []*window.Window{peer}})
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(solo)
+		solo.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 800, Height: 480})
+		wm.AddWindow(peer)
+		peer.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 300, Height: 200})
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(solo)
+		primary := plat.surfaces[0]
+		if d.soloPrimaryHost == nil {
+			t.Fatal("harness: nothing is hosted on the primary surface")
+		}
+
+		// The solo window's own [x].
+		solo.Close()
+		if d.soloPrimaryHost != nil {
+			t.Fatal("harness: the host was not dropped, so there is still something to re-home")
+		}
+
+		// And now something reveals the desktop, with nothing to put back.
+		d.ExitSoloMode()
+
+		if _, ok := primary.handler.(*desktopSurfaceHandler); !ok {
+			t.Errorf("the surface still paints through %T, so the screen shows the window that closed",
+				primary.handler)
+		}
+		if !primary.raised {
+			t.Error("the revealed desktop was never brought to the front")
+		}
+		if d.IsSolo() {
+			t.Error("the desktop still says it is hidden")
+		}
+		d.ForceQuitWithCode(0)
+	}
+	d.RunOn(plat)
+}

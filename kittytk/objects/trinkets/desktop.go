@@ -2086,32 +2086,28 @@ func (d *Desktop) ExitSoloMode() {
 	if host != nil {
 		win = host.Window()
 	}
-	if win == nil {
-		// Nothing was ever hosted, so there is nothing to give back and nothing to
-		// re-home: leaving solo mode is the flags and the chrome.
-		d.mu.Lock()
-		d.solo = false
-		d.desktopEnvironment = true
-		d.soloPrimaryHost = nil
-		d.mu.Unlock()
-		d.restoreSoloSuppressedTear()
-		d.updateMenuBarContent()
-		d.updateStatusBarContent()
-		d.invalidateSurface()
-		return
-	}
 
 	// Give the primary surface back to the desktop: re-border it (unless the
 	// themed frame paints its own chrome) and point its handler at the
 	// desktop again so it paints its own chrome.
+	//
+	// **Whether or not there is a window to re-home.** The surface is what a person
+	// is looking at, and until its handler points at the desktop it goes on painting
+	// through whatever was there before -- which, once the solo window has closed and
+	// its host has been dropped, is a dead frame. Revealing the desktop and leaving
+	// the screen exactly as it was is worse than not revealing it at all: every flag
+	// says the desktop is back, nothing on the screen agrees, and clicking the one
+	// thing still showing does nothing.
 	if bt, ok := surf.(platform.BorderToggler); ok {
 		bt.SetBordered(d.wantsNativeBorder())
 	}
 	surf.SetHandler(&desktopSurfaceHandler{d: d})
 
-	// Retire the solo host without closing the primary surface (it lives on
-	// as the desktop's surface).
-	host.SetOnClosed(nil)
+	// Retire the solo host, if there is one, without closing the primary surface
+	// (it lives on as the desktop's surface).
+	if host != nil {
+		host.SetOnClosed(nil)
+	}
 	d.mu.Lock()
 	d.solo = false
 	// Revealing the desktop is asking for somewhere to go back to, so from
@@ -2150,6 +2146,14 @@ func (d *Desktop) ExitSoloMode() {
 	// this one: the peers adopted onto their own surfaces are still out there
 	// and now have a desktop to dock to.
 	d.restoreSoloSuppressedTear()
+
+	if win == nil {
+		// Nothing to re-home: either nothing was ever hosted on the primary surface,
+		// or the window that was has closed. The desktop has its surface back, which
+		// is the whole of what a person needs from this.
+		d.invalidateSurface()
+		return
+	}
 
 	win.SetDetached(false) // createTornHost re-detaches and re-wires it
 	win.SetTearable(true)  // its redock handle returns; it can dock now
