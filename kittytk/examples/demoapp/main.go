@@ -56,9 +56,12 @@ type app struct {
 	ui      *client.UI // the app's main build (window + chrome)
 	primary bool
 
-	// MDI bookkeeping (primary only): document and dock-entry counters.
-	mdiCount int
-	dockSeq  int
+	// MDI bookkeeping (primary only): document and dock-entry counters, and
+	// the close questions, which are keyed apart so two documents can both be
+	// asking at once.
+	mdiCount  int
+	dockSeq   int
+	closeAsks int
 
 	// Client-side PTYs backing this app's terminal surfaces, closed when
 	// the app quits.

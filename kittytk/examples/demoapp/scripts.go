@@ -1063,13 +1063,18 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 
 // mdiChildScript spawns one document window inside the MDI pane, wired
 // through click events (no per-child command IDs to collide).
+//
+// Its text field is surfaced as `wtext` because the close question asked about
+// this window depends on it: whether there is anything in the document is
+// something only the application knows, which is the whole reason the display
+// asks rather than deciding. See confirmClose in closing.go.
 func mdiChildScript(n int) string {
 	offset := (n - 1) % 5
 	return fmt.Sprintf(`
 set mdi children={d%d=new window title="Document %d" x=%d y=%d width=240 height=128 children={
 	p=new panel layout=vbox spacing=8 children={
-		new label caption="Document #%d"
-		new textinput min_width=160 placeholder="Enter document content..."
+		new label caption="Document #%d ([x] asks)"
+		ti=new textinput min_width=160 placeholder="Enter document content..."
 		bp=new panel layout=hbox spacing=8 children={
 			nb=new button caption="New"
 			cl=new button caption="Close"
@@ -1079,7 +1084,8 @@ set mdi children={d%d=new window title="Document %d" x=%d y=%d width=240 height=
 wwin=mdi.d%d
 wnew=mdi.d%d.p.bp.nb
 wclose=mdi.d%d.p.bp.cl
-`, n, n, (offset*2+1)*8, (offset+1)*16, n, n, n, n)
+wtext=mdi.d%d.p.ti
+`, n, n, (offset*2+1)*8, (offset+1)*16, n, n, n, n, n)
 }
 
 // mdiBoundedChildScript spawns a document window that says how far it grows,

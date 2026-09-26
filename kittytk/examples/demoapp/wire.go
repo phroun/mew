@@ -468,9 +468,17 @@ func (a *app) wireMDI() {
 
 // spawnMDIChild appends one document window into the MDI pane and wires
 // its New/Close buttons through click events (no per-child command IDs).
+//
+// Its [x] is answerable: the document says whether it may close, and says it after
+// asking the person -- with what is typed into it deciding how the question reads.
+// See confirmClose in closing.go. The Close button inside it is `remove`, which the
+// pane does without asking, the same way `destroy` never asks: the order came from
+// the application, and handing it back as a question would want an answer inside
+// the batch that gave the order.
 func (a *app) spawnMDIChild() {
 	a.mdiCount++
-	ui, err := a.conn.Build(mdiChildScript(a.mdiCount))
+	n := a.mdiCount
+	ui, err := a.conn.Build(mdiChildScript(n))
 	if err != nil {
 		return
 	}
@@ -479,6 +487,9 @@ func (a *app) spawnMDIChild() {
 	ui.Button("wclose").OnClick(func() {
 		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
 	})
+	text := ui.TextInput("wtext")
+	a.confirmClose(ui.Window("wwin"), fmt.Sprintf("Document %d", n),
+		func() bool { return strings.TrimSpace(text.Text()) != "" })
 }
 
 // spawnBoundedMDIChild spawns a child that says how far it grows, so the
@@ -486,7 +497,8 @@ func (a *app) spawnMDIChild() {
 // pane with the shaded room around it.
 func (a *app) spawnBoundedMDIChild() {
 	a.mdiCount++
-	ui, err := a.conn.Build(mdiBoundedChildScript(a.mdiCount))
+	n := a.mdiCount
+	ui, err := a.conn.Build(mdiBoundedChildScript(n))
 	if err != nil {
 		return
 	}
@@ -494,6 +506,9 @@ func (a *app) spawnBoundedMDIChild() {
 	ui.Button("bwclose").OnClick(func() {
 		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
 	})
+	// It holds nothing to lose, so its question is only whether you meant it.
+	a.confirmClose(ui.Window("bwwin"), fmt.Sprintf("Bounded %d", n),
+		func() bool { return false })
 }
 
 // openBoundedWindow builds a desktop window that says how far it grows: the

@@ -1,5 +1,19 @@
 package main
 
+// Two windows that are asked whether they may close: the MDI documents, which
+// answer, and the Sulking Window, which does not.
+//
+// The pair is the point. Both subscribe to `window_closing`, so from the display
+// they start out indistinguishable -- and the display's five-second deadline
+// exists precisely because it cannot tell them apart. A document that puts a
+// question in front of somebody and a window that will never speak again look the
+// same from the outside for as long as the person takes to read the question.
+//
+// So confirmClose is what an application is expected to do, and the Sulking Window
+// is what happens to one that does not.
+//
+// ---
+//
 // A window that is asked whether it may close, and says nothing.
 //
 // An application that subscribes to `window_closing` is consulted before one of its
@@ -84,4 +98,94 @@ func (a *app) openSulkingWindow() {
 // wireSulking wires the menu item that opens it.
 func (a *app) wireSulking(c *client.Conn) {
 	c.OnCommand("demo.file.sulking", func() { a.openSulkingWindow() })
+}
+
+// confirmClose subscribes one window's close and puts a question in front of the
+// person before allowing it.
+//
+// `what` names the window the way the question should read, and `unsaved` is asked
+// at the moment of the question rather than remembered: whether there is work in
+// the document is exactly what changes between opening it and closing it.
+//
+// **This is per WINDOW, and that is the reason to do it here.** The subscription
+// belongs to this document, so the application's other windows -- its main window,
+// the protocol companion, the bounded windows -- go on closing without a word.
+// Nothing is made askable by an application being willing to be asked about one
+// thing.
+func (a *app) confirmClose(win client.Window, what string, unsaved func() bool) {
+	win.On("window_closing", func(ev *wire.Event) {
+		decision, ok := ev.Uint(wire.DecisionField)
+		if !ok {
+			// No decision named, so there is nothing to answer and nothing
+			// waiting on an answer. Putting a dialog up here would ask a
+			// question whose reply reaches nobody.
+			return
+		}
+		a.askBeforeClosing(decision, what, unsaved())
+	})
+	// No `window_closed` handler to go with it: the MDI pane owns the
+	// close-complete hook of the windows it hosts, so a child's own
+	// `window_closed` is superseded by the pane's `remove` -- which wireMDI is
+	// already listening to. Subscribing here would be a handler that never fires.
+}
+
+// askBeforeClosing puts the question on the screen and answers the decision with
+// whatever comes back.
+//
+// **Answer promptly, even to say no.** The display waits about five seconds for
+// this and then asks the person whether to force the window closed, naming the
+// application that did not respond -- so a question left on the screen longer than
+// that gets a second question stacked on top of it, about this very window. That
+// is not a fault in either party: the display cannot tell somebody reading a
+// dialog from an application that has stopped. It is what the Sulking Window
+// demonstrates, and what answering quickly avoids.
+func (a *app) askBeforeClosing(decision uint64, what string, unsaved bool) {
+	a.closeAsks++
+	key := fmt.Sprintf("cq%d", a.closeAsks)
+	ui, err := a.conn.Build(closeConfirmScript(key, what, unsaved))
+	if err != nil {
+		// **Unable to ask is not a reason to say nothing.** Silence is the
+		// Sulking Window, and it ends in the display asking somebody whether to
+		// force the window closed. Deny instead: the window stays, which is the
+		// answer that loses nothing, and pressing [x] again asks again.
+		a.setStatus(what + ": could not ask about closing (" + err.Error() + ") — keeping it open.")
+		_ = a.conn.Decide(decision, false)
+		return
+	}
+	ui.Object(key).On("finish", func(ev *wire.Event) {
+		result, _ := ev.Word("result")
+		allow := closeAnswer(result)
+		if err := a.conn.Decide(decision, allow); err != nil {
+			a.setStatus(what + ": answering the close failed: " + err.Error())
+			return
+		}
+		if allow {
+			a.setStatus(what + ": allowed to close.")
+		} else {
+			a.setStatus(what + ": kept open. Press [x] again to be asked again.")
+		}
+	})
+}
+
+// closeAnswer translates between two vocabularies: a messagebox finishes with a
+// word of its own -- `yes`, `no`, and whatever a dialog dismissed some other way
+// reports -- and a decision is answered `allow` or `deny`.
+//
+// **Only yes closes.** Everything else keeps the window, dismissal included: a
+// dialog that went away without being answered has not been answered, and the
+// answer that loses nothing is the one to give in its place.
+func closeAnswer(result string) bool { return result == "yes" }
+
+// closeConfirmScript is the question. Two of them, because a document with
+// something in it is asking about losing that, and an empty one is only asking
+// whether you meant it -- and a warning about nothing teaches people to dismiss
+// warnings.
+func closeConfirmScript(key, what string, unsaved bool) string {
+	text, icon := "Close "+what+"?", "question"
+	if unsaved {
+		text = what + " has content that is not saved anywhere.\n\nClose it and lose what is in it?"
+		icon = "warning"
+	}
+	return fmt.Sprintf("%s=new messagebox title=%s icon=%s yes no text=%s",
+		key, wire.Quote("Close "+what), icon, wire.Quote(text))
 }

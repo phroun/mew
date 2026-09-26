@@ -35,15 +35,23 @@ func TestTheSulkingWindowIsReachable(t *testing.T) {
 	if !strings.Contains(string(src), `OnCommand("demo.file.sulking"`) {
 		t.Error("nothing listens for demo.file.sulking")
 	}
+	// Read from the window's OWN function, not the file: closing.go also holds the
+	// documents, which subscribe and DO answer, and a check across the whole file
+	// cannot tell whose Decide it is looking at.
+	open := funcBody(t, "closing.go", "func (a *app) openSulkingWindow(")
 	// **Subscribed is what makes the close askable at all.** Without this the
 	// window closes at once and the demonstration is of nothing.
-	if !strings.Contains(string(src), `win.On("window_closing"`) {
+	if !strings.Contains(open, `win.On("window_closing"`) {
 		t.Error("the window's close is not subscribed to, so it closes at once and asks nobody")
 	}
 	// And NOT answered: a Decide call here would close the window and the force-close
 	// question would never come up.
-	if strings.Contains(string(src), "Decide(") {
+	if strings.Contains(open, "Decide(") {
 		t.Error("the sulking window answers the question, so it never times out")
+	}
+	// Nor by way of the documents' helper, which answers on the window's behalf.
+	if strings.Contains(open, "a.confirmClose(") {
+		t.Error("the sulking window is wired to answer, so it no longer sulks")
 	}
 }
 
