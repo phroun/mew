@@ -13,8 +13,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
 )
+
+// The ids a DECISION is minted under come from the same counter that issues real
+// object ids, which is what keeps the two from colliding -- see
+// protocol.SetVirtualIDSource. The host installs this from the trinkets package;
+// these tests do not link it, and without this a decision can be registered under an
+// id a window already answers to and shadow it in the session.
+func init() {
+	protocol.SetVirtualIDSource(func() uint64 { return uint64(core.NextObjectID()) })
+}
 
 // closing is a window built the way the wire builds one, with somewhere for its
 // events to go and somewhere for its decisions to be addressed from.

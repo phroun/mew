@@ -231,3 +231,80 @@ func TestWithNobodyToAskTheWindowStaysOpen(t *testing.T) {
 		t.Error("a window with nobody to ask closed itself")
 	}
 }
+
+// **A window destroyed while the question was pending is asked about at all.** The
+// application may destroy it, or disconnect and have it closed for it, and then a
+// "force this closed?" dialog is a question about nothing -- which a person cannot
+// answer sensibly and, being modal, would block the desktop while they tried.
+func TestAWindowGoneBeforeTheDeadlineIsNotAskedAbout(t *testing.T) {
+	was := closeDecision
+	closeDecision = 5 * time.Millisecond
+	t.Cleanup(func() { closeDecision = was })
+
+	c := newClosing(t, true)
+	desk := newSilentApp()
+	c.w.SetParent(desk)
+	posted := make(chan func(), 1)
+	c.ctx.Post = func(fn func()) { posted <- fn }
+
+	if c.w.Close() {
+		t.Fatal("the close went through before the application had answered")
+	}
+	// Destroyed while the seconds run, which is `destroy` and does not ask.
+	if err := c.say("destroy " + itoa(uint64(c.w.ObjectID()))); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if c.w.IsVisible() {
+		t.Fatal("the window was destroyed and is still open")
+	}
+	// **And the close was reported as DONE the moment it went**, not left for the
+	// deadline: a sweep waiting on this window carries on rather than sitting there.
+	if len(desk.settled) != 1 || !desk.closed[0] {
+		t.Errorf("the close was reported as settled=%v closed=%v, want it reported once as closed",
+			len(desk.settled), desk.closed)
+	}
+	if c.w.Deciding() {
+		t.Error("the window is gone and still marked as awaiting an answer")
+	}
+
+	// Now the deadline arrives, about a window that no longer exists.
+	select {
+	case fn := <-posted:
+		fn()
+	case <-time.After(5 * time.Second):
+		t.Fatal("the deadline never fired")
+	}
+	if len(desk.asked) != 0 {
+		t.Errorf("the person was asked to force closed a window that had already gone (%d times)", len(desk.asked))
+	}
+	if len(desk.settled) != 1 {
+		t.Errorf("the close was reported %d times, want once", len(desk.settled))
+	}
+}
+
+// **An application that DISCONNECTED did not fail to answer, it left.** Its windows
+// are about to be closed for it, and naming it in a "did not respond" dialog would
+// blame it for going -- and put a question in front of somebody about an application
+// that is no longer there to be waited for.
+func TestAnApplicationThatLeftIsNotReportedAsSilent(t *testing.T) {
+	c := newClosing(t, true)
+	desk := newSilentApp()
+	c.w.SetParent(desk)
+
+	if c.w.Close() {
+		t.Fatal("the close went through before the application had answered")
+	}
+	c.ctx.Undecided() // what tearing the connection down does
+
+	if len(desk.asked) != 0 {
+		t.Errorf("a departed application was reported as not responding (%d times)", len(desk.asked))
+	}
+	if c.w.Deciding() {
+		t.Error("the window is still waiting on an answer from a connection that is gone")
+	}
+	// It stays open, and the teardown that follows closes it: see
+	// TestAWindowLeftBehindClosesWithoutAsking.
+	if !c.w.IsVisible() {
+		t.Error("the window closed itself on the connection going")
+	}
+}

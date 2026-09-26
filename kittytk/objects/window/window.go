@@ -1116,8 +1116,13 @@ type closeCoordinator interface {
 	CloseDecided(win *Window, closed bool)
 }
 
-// findCloseCoordinator walks up for the desktop, which is further up than the
-// parent: a window's parent is the window MANAGER.
+// findCloseCoordinator walks up for the desktop.
+//
+// A window on the desktop has the desktop as its direct parent -- AddWindow sets it,
+// so capability lookups reach it -- and a window torn onto its own surface keeps that
+// parent, because leaving the manager does not change whose desktop it is on. So this
+// usually finds it at the first step; it walks because nothing guarantees that, and a
+// window nested under something else still has to be able to ask.
 func (w *Window) findCloseCoordinator() closeCoordinator {
 	var current any = w.Parent()
 	for current != nil {

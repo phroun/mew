@@ -237,6 +237,23 @@ func (c *BindContext) Undecided() {
 	}
 }
 
+// Gone reports whether this connection has been torn down, so nothing more will be
+// asked of the application and nothing more will arrive from it.
+//
+// It is the difference between an answer that has not come YET and one that is never
+// coming, which look alike in a Verdict: both say nobody said. A caller that would
+// otherwise escalate -- put a question to a person about an application that did not
+// answer -- asks this first, because an application that has disconnected did not fail
+// to answer, it left.
+func (c *BindContext) Gone() bool {
+	if c == nil {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gone
+}
+
 // forget drops a decided decision, from the connection's own table and from the
 // ids a statement can name. It is not `destroy`: the application did not ask for
 // it to go, it went because it was answered.

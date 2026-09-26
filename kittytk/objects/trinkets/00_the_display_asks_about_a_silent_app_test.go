@@ -176,9 +176,8 @@ func TestALateJoinerIsToldWhatWasDecided(t *testing.T) {
 }
 
 // **The window finds the desktop by itself**, which is the path this actually runs
-// on. A window's parent is the window MANAGER; the desktop is above that. So the
-// walk has to go further than one level, and a test that hands the desktop the
-// window directly never finds out.
+// on: the binding has a window and nothing else, and a test that hands the desktop
+// the window directly skips the only step that can fail.
 func TestAWindowFindsTheDesktopToAskThrough(t *testing.T) {
 	d, win := deskWithApp(t, "Ledger", "Quarterly Figures")
 

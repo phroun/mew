@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -104,6 +105,11 @@ type msPlatform struct {
 	afters     []func() // PostAfter callbacks, fired by the script
 	gx, gy     int
 	quitCalled bool
+
+	// noMoreSurfaces makes CreateSurface refuse after the first, which is how a
+	// host that cannot hold a second window behaves: the desktop has to fall back
+	// to showing itself rather than giving a dialog a surface of its own.
+	noMoreSurfaces bool
 }
 
 func (p *msPlatform) Run(init func(platform.Platform)) int {
@@ -122,6 +128,9 @@ func (p *msPlatform) Beep()                                {}
 func (p *msPlatform) SupportsMultipleSurfaces() bool       { return true }
 func (p *msPlatform) GlobalPointerPx() (int, int)          { return p.gx, p.gy }
 func (p *msPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
+	if p.noMoreSurfaces && len(p.surfaces) > 0 {
+		return nil, fmt.Errorf("this host holds one surface")
+	}
 	s := &msSurface{opts: o, x: o.XPx, y: o.YPx, opacity: 1, bordered: !o.Borderless}
 	if len(p.surfaces) == 0 {
 		// The desktop window: 800x480 units at 50,60 px, scale 1. It owns

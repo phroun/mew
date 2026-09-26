@@ -239,6 +239,10 @@ func init() {
 				// quit -- that it may carry on. Exactly once, however the
 				// answer arrived.
 				settle := func(mayClose bool) {
+					// **Cleared FIRST**, before the close it permits: closing runs
+					// the observer below, and a window still marked as deciding
+					// would be settled there as well as here.
+					w.SetDeciding(false)
 					// What actually HAPPENED, which is not the same as what was
 					// allowed: a child window of this one can still refuse, and
 					// then the close ends with everything still on the screen.
@@ -249,7 +253,6 @@ func init() {
 						allowing = true
 						closed = w.Close()
 					}
-					w.SetDeciding(false)
 					w.CloseSettled(closed)
 				}
 				d := ctx.Deciding(
@@ -277,6 +280,27 @@ func init() {
 							// the close is still unresolved, and a quit that
 							// stopped at this window should go on waiting
 							// rather than give up on somebody mid-answer.
+							//
+							// **Two things are asked nothing.** A window that has
+							// already gone -- destroyed while the seconds ran --
+							// was settled by the observer below, and a question
+							// about it is a question about nothing. And an
+							// application that DISCONNECTED did not fail to
+							// answer, it left: its windows are about to be closed
+							// for it, and naming it in a dialog would blame it for
+							// going.
+							if !w.Deciding() {
+								// Gone already, and the observer below settled it when it
+								// went. Settling again here would report the same close a
+								// second time, and report it as NOT having happened.
+								return
+							}
+							if ctx.Gone() {
+								// The application left rather than failing to answer. The
+								// window stays, and the teardown closing it is next.
+								settle(false)
+								return
+							}
 							w.AskForceClose(settle)
 						}
 					})
@@ -289,6 +313,25 @@ func init() {
 				// Window.SetDeciding for why the difference matters.
 				w.SetDeciding(true)
 				return false
+			})
+
+			// **A window can close while the question about closing it is open**:
+			// the application destroys it, or disconnects and has it closed for
+			// it. The question is then about nothing -- and a MODAL question about
+			// nothing is worse than none, because it blocks the desktop over a
+			// window nobody can point at.
+			//
+			// Registered once, here, rather than per close, so it never piles up.
+			// It does nothing for an ordinary close: settle clears the flag before
+			// the close it permits, exactly so this finds nothing to do.
+			w.AddOnClosed(func() {
+				if !w.Deciding() {
+					return
+				}
+				w.SetDeciding(false)
+				// It IS closed, whoever closed it, so a sweep waiting on this
+				// window carries on rather than treating it as a refusal.
+				w.CloseSettled(true)
 			})
 		},
 		Props: props,

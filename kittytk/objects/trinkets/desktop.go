@@ -885,7 +885,80 @@ func (d *Desktop) showModal(mb *MessageBox) bool {
 		y = metrics.RoundDownToCellY(y)
 	}
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+	d.revealModal(&mb.Window)
 	return true
+}
+
+// revealModal makes sure a dialog of the display's OWN is somewhere a person can see
+// and answer it.
+//
+// **The desktop's surface may not be on the screen at all.** In solo mode it has been
+// given over to one application's window and there is no desktop behind it, so a
+// dialog added to the window manager is painted where nobody is looking. A question
+// nobody can see is not a question, and a MODAL one is worse than useless: it blocks,
+// invisibly, and explains nothing. The same is true, less completely, when the
+// desktop's own surface is minimized or sitting behind a torn-off window.
+//
+// So, cheapest case first:
+//
+//	the desktop is showing -- raise the dialog within it, the way a window that
+//	refused a close is raised
+//
+//	the desktop is there but not in front -- restore and raise its surface first,
+//	and only when something else could be covering it
+//
+//	there is no desktop (solo) -- give the dialog a surface of ITS own, which is
+//	what a dialog from a program with no window of its own looks like everywhere
+//	else. Failing that, on a host that cannot hold a second surface, reveal the
+//	desktop: heavier, and at least visible.
+func (d *Desktop) revealModal(win *window.Window) {
+	if d.IsSolo() {
+		// **Solo mode already gives it a surface.** A window added while solo is
+		// torn onto an OS surface of its own -- soloAdoptWindow, deferred because
+		// the add is still in flight -- which is exactly what a dialog wants.
+		// Tearing it again here would put one dialog on two surfaces, the ghost
+		// dialog the `tearing` guard was written for. So this waits for that and
+		// raises what it made.
+		d.Post(func() {
+			if win.IsDetached() {
+				d.SurfaceWindow(win)
+				return
+			}
+			// Nothing gave it a surface, so the desktop had better be here:
+			// heavier than a dialog of its own, and the alternative is a modal
+			// question painted where nobody is looking.
+			d.ExitSoloMode()
+			d.raisePrimarySurface()
+			d.SurfaceWindow(win)
+		})
+		return
+	}
+	d.raisePrimarySurface()
+	d.SurfaceWindow(win)
+}
+
+// raisePrimarySurface restores and raises the desktop's own OS surface, so a dialog
+// on it is not left behind the window the person is actually looking at.
+//
+// Only where something could be in front of it: with everything in-surface the desktop
+// IS the only surface, and raising it would be a focus grab that changes nothing.
+func (d *Desktop) raisePrimarySurface() {
+	d.mu.RLock()
+	surf := d.surface
+	torn := len(d.tornHosts)
+	d.mu.RUnlock()
+	native, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return
+	}
+	if native.Minimized() {
+		if r, ok := surf.(platform.NativeRestorer); ok {
+			r.Restore()
+		}
+	} else if torn == 0 {
+		return
+	}
+	native.Raise()
 }
 
 // AskForceClose asks the PERSON whether to close a window anyway, because the
@@ -964,6 +1037,26 @@ func (d *Desktop) AskForceClose(win *window.Window, then func(force bool)) {
 		d.mu.Unlock()
 		mb.tellThem(false)
 	}
+}
+
+// dismissForceClose takes down a "did not respond" question about a window whose
+// close has been settled some other way, and tells whoever was waiting on it that
+// nobody forced anything.
+//
+// Left up, it would be a MODAL dialog blocking the desktop and asking whether to
+// force closed a window that has already gone -- a question about nothing, which a
+// person cannot answer sensibly and should not have to.
+func (d *Desktop) dismissForceClose(win *window.Window) {
+	d.mu.Lock()
+	mb := d.forceClose[win]
+	delete(d.forceClose, win)
+	d.mu.Unlock()
+	if mb == nil {
+		return
+	}
+	// Nobody forced it: it went on its own, or stayed on its own.
+	mb.tellThem(false)
+	mb.Window.Close()
 }
 
 // showAboutDesktop opens the About KittyTK dialog - the About entry in the
@@ -4953,7 +5046,13 @@ func (d *Desktop) QuitWithCode(code int) {
 // that did NOT close is the refusal the quit was waiting to hear about -- and going
 // back round would put the same question to an application that has just answered it,
 // which is a loop, not a retry.
-func (d *Desktop) CloseDecided(_ *window.Window, closed bool) {
+func (d *Desktop) CloseDecided(win *window.Window, closed bool) {
+	// **A question about this window is over, however it was answered.** Usually
+	// that question IS what settled it and has taken itself down already; this is
+	// for the other way round -- the window destroyed, or its application gone,
+	// while somebody was reading a dialog about closing it.
+	d.dismissForceClose(win)
+
 	d.mu.Lock()
 	wanted, code := d.quitWanted, d.quitCode
 	if !closed {
