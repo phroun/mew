@@ -105,6 +105,44 @@ Anchor: `objects/trinkets/dock_protocol.go:53` is where the `window` property is
 bound; `objects/trinkets/desktop.go:831` and `dock_protocol.go:89` construct the
 `DockEntry`. *Anchors verified; the capture-at-append claim is not re-verified.*
 
+### A bundle load's complaints have nowhere to go
+*Researched 2026-09-26. Anchors verified.*
+
+`display/bundleload.go` builds them (`Trouble`, appended at :445) and returns them
+(`Loaded.Trouble`, :122), and nothing outside that file reads the field.
+`display/bundlenames.go:68-71` drops them and says why: *"There is no statement for
+saying so back across the wire yet, so it is dropped here rather than turned into a
+failure it is not."* These are the SOFT ones -- the load succeeded and an optional
+include was not there. A hard failure already travels: the statement is refused and
+the reason goes back.
+
+The trinket's own refusal line (`objects/trinkets/trouble.go`) is NOT the answer,
+though today's single call path makes it look like one. `findSource` is reached only
+from the `source=` property of a ListView or TreeView, so every bundle load
+currently happens under a trinket -- an accident of what has been built, not a
+property of bundles. A bundle is a store of records, loaded FOR somebody, and a
+trinket is only one possible somebody. Routing the diagnostics through whichever
+trinket happened to trigger the load would bake that accident in.
+
+Three channels, not exclusive:
+
+1. **On the reply to the statement that caused the load.** Needs a wire shape for a
+   complaint that is not a refusal, and therefore the four things: Go, C, Python,
+   corpus.
+2. **A connection-level notice to the application**, tied to no object -- the app
+   decides whether to log it, show it or ignore it. Nearest to `error text=`, which
+   already carries the hard case.
+3. **The display's own diagnostics**, no wire change: somewhere a developer can
+   read them.
+
+The plumbing blocks all three either way: `SourceFinder` returns `(Source, error)`
+and has no room for complaints, so they die at `bundlenames.go:63` whatever is
+decided. Giving `LoadBundle`'s caller a way to receive them, without yet deciding
+where they go, is the small reversible step.
+
+Note also that `display.Trouble` and `trinkets.Trouble` are now two different types
+with one name.
+
 ---
 
 ## KittyTK — behaviour

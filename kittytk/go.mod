@@ -15,7 +15,7 @@ require (
 	github.com/phroun/khatool v0.1.2-0.20260916075045-149034ad25c7
 	github.com/phroun/mew v0.3.1-alpha
 	github.com/phroun/purfecterm v0.2.55
-	github.com/phroun/serval v0.1.1-alpha.0.20260926002309-73dc16860f8f
+	github.com/phroun/serval v0.1.1-alpha.0.20260926033643-2a36066ed93c
 	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
