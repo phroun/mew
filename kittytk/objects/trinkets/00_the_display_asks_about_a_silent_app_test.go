@@ -277,3 +277,167 @@ func TestAPlainRefusalDoesNotLeaveAQuitWaiting(t *testing.T) {
 		t.Error("a later close carried out a quit that had been refused")
 	}
 }
+
+// **An APPLICATION's own quit waits the same way a desktop quit does.** It sweeps its
+// own windows and stops at the first that does not close, and a window waiting on an
+// answer about closing is not refusing. Read as a refusal the application silently
+// fails to quit -- nothing happens when you close it -- and then its window closes a
+// moment later and it is left on the desktop with nothing open.
+func TestAnApplicationQuitWaitsForAnAnswerToo(t *testing.T) {
+	d, win := deskWithApp(t, "Ledger", "Quarterly Figures")
+	app := d.Applications()[0]
+
+	// A window that has not closed because an answer about closing it is still
+	// coming, which is what the wire binding leaves behind while it asks.
+	win.SetOnClose(func() bool { return false })
+	win.SetDeciding(true)
+
+	d.quitApplication(app)
+	if len(d.Applications()) != 1 {
+		t.Fatal("the application was taken off the desktop with a window still open")
+	}
+	d.mu.RLock()
+	remembered := d.appQuitWanted[app]
+	d.mu.RUnlock()
+	if !remembered {
+		t.Fatal("the quit was abandoned, so answering will not finish it and closing the app does nothing")
+	}
+
+	// The answer arrives and the window goes, which is what the window's own close
+	// observer reports.
+	win.SetOnClose(nil)
+	win.SetDeciding(false)
+	win.Close()
+	d.CloseDecided(win, true)
+
+	if len(d.Applications()) != 0 {
+		t.Error("the answer arrived, the window went, and the application is still on the desktop")
+	}
+	// And the note is gone with it, rather than left behind keyed by an application
+	// that is no longer on the desktop.
+	d.mu.RLock()
+	left := len(d.appQuitWanted)
+	d.mu.RUnlock()
+	if left != 0 {
+		t.Errorf("%d application quits are still remembered after one finished", left)
+	}
+}
+
+// **A refusal ends an application quit that was waiting.** Not "try again": going back
+// round would put the same question to the application that has just refused, and
+// then again on that answer.
+func TestADeniedCloseEndsTheApplicationQuitItStopped(t *testing.T) {
+	d, win := deskWithApp(t, "Ledger", "Quarterly Figures")
+	app := d.Applications()[0]
+
+	asked := 0
+	win.SetOnClose(func() bool { asked++; return false })
+	win.SetDeciding(true)
+	d.quitApplication(app)
+
+	d.mu.RLock()
+	remembered := d.appQuitWanted[app]
+	d.mu.RUnlock()
+	if !remembered {
+		t.Fatal("the quit was not remembered, so this proves nothing about ending it")
+	}
+	was := asked
+
+	// Denied: the window stays, and the close is reported as not having happened.
+	win.SetDeciding(false)
+	d.CloseDecided(win, false)
+
+	// **Not asked again.** This is the loop the outcome exists to prevent: sweeping
+	// on a refusal puts the same question back to the application that just refused,
+	// and then again on that answer.
+	if asked != was {
+		t.Errorf("the window was asked to close again (%d, was %d) on hearing its own refusal", asked, was)
+	}
+
+	d.mu.RLock()
+	still := d.appQuitWanted[app]
+	d.mu.RUnlock()
+	if still {
+		t.Error("the application quit is still waiting, so the next close would re-ask the application that refused")
+	}
+	if len(d.Applications()) != 1 {
+		t.Error("the application quit over a window whose close was refused")
+	}
+}
+
+// **One application's answer finishes one application's quit.** Two can be waiting at
+// once, and a window settling in one of them says nothing about the other -- which
+// would otherwise be torn off the desktop with its own window still open.
+func TestOneApplicationsAnswerDoesNotQuitAnother(t *testing.T) {
+	d, mine := deskWithApp(t, "Ledger", "Quarterly Figures")
+	ledger := d.Applications()[0]
+
+	theirs := window.NewWindow("Someone Else's Work")
+	d.WindowManager().AddWindow(theirs)
+	other := &mockApp{name: "Diary", windows: []*window.Window{theirs}}
+	d.AddApplication(other)
+
+	mine.SetOnClose(func() bool { return false })
+	mine.SetDeciding(true)
+	// Counted, because the sharpest way somebody else's answer can go wrong is not
+	// the Diary quitting -- its own window is still deciding, so it would not -- but
+	// the Diary being ASKED again about a window it has already been asked about.
+	theirsAsked := 0
+	theirs.SetOnClose(func() bool { theirsAsked++; return false })
+	theirs.SetDeciding(true)
+
+	d.quitApplication(ledger)
+	d.quitApplication(other)
+	asked := theirsAsked
+
+	d.mu.RLock()
+	both := len(d.appQuitWanted)
+	d.mu.RUnlock()
+	if both != 2 {
+		t.Fatalf("%d application quits are waiting, want both", both)
+	}
+
+	// The Ledger's window is answered and goes. The Diary's is untouched.
+	mine.SetOnClose(nil)
+	mine.SetDeciding(false)
+	mine.Close()
+	d.CloseDecided(mine, true)
+
+	names := map[string]bool{}
+	for _, a := range d.Applications() {
+		names[a.Name()] = true
+	}
+	if names["Ledger"] {
+		t.Error("the Ledger answered and is still on the desktop")
+	}
+	if !names["Diary"] {
+		t.Error("the Diary was quit by somebody else's answer, with its own window still open")
+	}
+	if !theirs.IsVisible() {
+		t.Error("the Diary's window was closed by somebody else's answer")
+	}
+	if theirsAsked != asked {
+		t.Errorf("the Diary was asked about closing its window again (%d, was %d) because another application answered",
+			theirsAsked, asked)
+	}
+}
+
+// And a REFUSAL abandons it, for the reason a desktop quit's does: going back round
+// would put the same question to an application that has just answered it.
+func TestARefusedApplicationQuitStaysAbandoned(t *testing.T) {
+	d, win := deskWithApp(t, "Ledger", "Quarterly Figures")
+	app := d.Applications()[0]
+
+	win.SetOnClose(func() bool { return false }) // refusing, not deciding
+
+	d.quitApplication(app)
+	d.mu.RLock()
+	remembered := d.appQuitWanted[app]
+	d.mu.RUnlock()
+	if remembered {
+		t.Error("a refused application quit is remembered, so a later close would carry it out")
+	}
+	if len(d.Applications()) != 1 {
+		t.Error("the application quit over a window that refused")
+	}
+}

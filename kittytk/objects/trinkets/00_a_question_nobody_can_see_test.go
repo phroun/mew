@@ -233,3 +233,74 @@ func TestAnUncoveredDesktopIsNotRaisedToAsk(t *testing.T) {
 	}
 	d.RunOn(plat)
 }
+
+// **The desktop HIDDEN, rather than never shown.** Reveal the desktop, put an
+// application on it, hide the desktop again -- which is mew's show_desktop and
+// hide_desktop, and is how this was actually met. The desktop went back to being
+// nothing a person can see, and the question about closing a window had to be asked
+// anyway.
+//
+// It is a different road into solo mode from EnterSoloMode: a window is PROMOTED onto
+// the primary surface rather than the desktop being reshaped around one. What the
+// question needs from it is the same, so this is here to say so rather than to assume.
+func TestAQuestionSurvivesTheDesktopBeingHidden(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Ledger")
+	main.SetMainRequested(true)
+	sulking := window.NewWindow("Quarterly Figures")
+	d.AddApplication(&mockApp{
+		name: "Ledger", main: main,
+		windows: []*window.Window{main, sulking},
+	})
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 20, Y: 20, Width: 400, Height: 300})
+		wm.AddWindow(sulking)
+		sulking.SetBounds(core.UnitRect{X: 60, Y: 60, Width: 300, Height: 200})
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		// The desktop is showing, and then it is not: hide_desktop.
+		d.EnterSoloFromDesktop()
+		if !d.IsSolo() {
+			t.Fatal("the desktop was not hidden, so this proves nothing")
+		}
+
+		before := len(plat.surfaces)
+		var answered *bool
+		d.AskForceClose(sulking, func(force bool) { answered = &force })
+
+		if answered != nil {
+			t.Fatalf("the question answered itself: %v", *answered)
+		}
+		// Somewhere a person can see it: on a surface of its own, or on a desktop
+		// that has been brought back. Not on a hidden desktop's surface.
+		onItsOwn := len(plat.surfaces) > before
+		revealed := !d.IsSolo()
+		if !onItsOwn && !revealed {
+			t.Fatal("the question is on the hidden desktop's surface: invisible, modal, and unanswerable")
+		}
+		if onItsOwn {
+			if surf := plat.surfaces[len(plat.surfaces)-1]; !surf.raised {
+				t.Error("the question has a surface and it was never raised")
+			}
+		}
+
+		// And it is answerable, which is the whole point of it being visible.
+		theBox(t, d, sulking).done(ResultYes)
+		if answered == nil {
+			t.Fatal("the question was answered and nobody was told")
+		}
+		if !*answered {
+			t.Error("yes was given and no came back")
+		}
+		d.ForceQuitWithCode(0)
+	}
+	d.RunOn(plat)
+}

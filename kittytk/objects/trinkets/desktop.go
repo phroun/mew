@@ -371,6 +371,11 @@ type Desktop struct {
 	quitWanted bool
 	quitCode   int
 
+	// appQuitWanted is the same for one APPLICATION's quit, which sweeps its own
+	// windows and stops the same way. Keyed by the application, because two of them
+	// can be waiting at once. Guarded by d.mu.
+	appQuitWanted map[ApplicationProvider]bool
+
 	// forceClose is the "did not respond" question currently up about each window,
 	// so a second close attempt joins the answer the first is waiting for rather
 	// than putting up a second dialog about the same window. Guarded by d.mu; see
@@ -3982,10 +3987,30 @@ func (d *Desktop) quitApplication(app ApplicationProvider) {
 	// refusal cancels the quit: the application stays on the desktop rather
 	// than being torn off it with a window still open.
 	for _, win := range app.Windows() {
-		if win != nil && !win.Close() {
-			return
+		if win == nil || win.Close() {
+			continue
 		}
+		// **A window still DECIDING is not a refusal.** Same as a desktop quit:
+		// one means give up, the other means not yet, and read as a refusal the
+		// application would silently fail to quit, its window would close a moment
+		// later, and it would be left on the desktop with nothing open. Remembered
+		// instead, and CloseDecided tries it again when the answer lands.
+		d.mu.Lock()
+		if win.Deciding() {
+			if d.appQuitWanted == nil {
+				d.appQuitWanted = map[ApplicationProvider]bool{}
+			}
+			d.appQuitWanted[app] = true
+		} else {
+			delete(d.appQuitWanted, app)
+		}
+		d.mu.Unlock()
+		return
 	}
+
+	d.mu.Lock()
+	delete(d.appQuitWanted, app)
+	d.mu.Unlock()
 
 	// Remove the application from the desktop
 	d.RemoveApplication(app)
@@ -5059,10 +5084,55 @@ func (d *Desktop) CloseDecided(win *window.Window, closed bool) {
 		d.quitWanted = false
 	}
 	d.mu.Unlock()
+	if closed {
+		d.resumeAppQuit(win)
+	} else {
+		d.abandonAppQuit(win)
+	}
 	if !wanted || !closed {
 		return
 	}
 	d.QuitWithCode(code)
+}
+
+// resumeAppQuit carries on an application quit that stopped at a window waiting on
+// an answer about closing, now that one has arrived and the window has gone.
+//
+// A refusal abandons it, for the reason a desktop quit's does: going back round would
+// put the same question to an application that has just answered it.
+func (d *Desktop) resumeAppQuit(win *window.Window) {
+	for _, app := range d.appsQuittingOn(win) {
+		d.quitApplication(app)
+	}
+}
+
+// abandonAppQuit ends an application quit that was waiting on this window, because the
+// close it was waiting for was REFUSED. Left waiting, the next of that application's
+// windows to close would carry out a quit its own user had said no to.
+func (d *Desktop) abandonAppQuit(win *window.Window) {
+	d.mu.Lock()
+	for _, app := range d.appsQuittingOnLocked(win) {
+		delete(d.appQuitWanted, app)
+	}
+	d.mu.Unlock()
+}
+
+// appsQuittingOn is the applications whose quit stopped at this window.
+func (d *Desktop) appsQuittingOn(win *window.Window) []ApplicationProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.appsQuittingOnLocked(win)
+}
+
+// appsQuittingOnLocked is appsQuittingOn with d.mu already held.
+func (d *Desktop) appsQuittingOnLocked(win *window.Window) []ApplicationProvider {
+	var found []ApplicationProvider
+	for app := range d.appQuitWanted {
+		if appOwnsWindow(app, win) {
+			found = append(found, app)
+		}
+	}
+	return found
 }
 
 // ForceQuit ends the desktop without asking anything on it. It is for the
