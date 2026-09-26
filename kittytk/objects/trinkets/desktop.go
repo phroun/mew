@@ -2523,7 +2523,20 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 			closeTraceFrom("soloRebalance: PROMOTING %s onto the primary surface",
 				closeTraceWindow(h.Window()))
 			d.promoteToPrimary(h, true)
+			return
 		}
+		// **Nothing has a surface to be promoted, and windows remain.** They are
+		// docked on the desktop, which is not on the screen -- so there is nothing
+		// to put on the primary surface, and nobody left who could be asked to.
+		//
+		// The desktop takes it back. Otherwise the surface goes on painting the
+		// window that just closed: it looks alive, it answers the mouse through the
+		// host that was dropped, and pressing its [x] again does nothing -- while
+		// the windows that ARE still open sit on a desktop nobody can see. Revealing
+		// the desktop is what closing the last thing on the screen should do.
+		closeTraceFrom("soloRebalance: nothing to promote and %d windows left; showing the desktop",
+			len(wm.Windows()))
+		d.ExitSoloMode()
 	}
 }
 

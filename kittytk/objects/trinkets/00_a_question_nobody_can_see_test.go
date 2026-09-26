@@ -455,3 +455,74 @@ func TestRevealingTheDesktopGivesTheSurfaceBackWithNothingToReHome(t *testing.T)
 	}
 	d.RunOn(plat)
 }
+
+// **Closing the last thing on the screen reveals the desktop.**
+//
+// The window filling the display closes, and there is no torn-off window to put on the
+// primary surface in its place -- but other applications' windows are still open, docked
+// on the desktop, which is not on the screen.
+//
+// Nothing used to happen at all. The surface went on painting the window that had just
+// closed: it looked alive, it answered the mouse through the host that was dropped, and
+// pressing its [x] again did nothing -- while the windows that WERE open sat on a
+// desktop nobody could see. Revealing the desktop is what closing the last thing on the
+// screen should do.
+func TestClosingTheLastWindowOnTheScreenRevealsTheDesktop(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	// The host filling the display, and another application's windows docked behind
+	// it on the desktop -- a different application, because tearing one app's main
+	// window takes its own followers with it.
+	solo := window.NewWindow("mew")
+	solo.SetMainRequested(true)
+	d.AddApplication(&mockApp{name: "mew", main: solo, windows: []*window.Window{solo}})
+
+	docked := window.NewWindow("KittyTK Demo")
+	sulking := window.NewWindow("Sulking Window")
+	d.AddApplication(&mockApp{
+		name: "Demo", main: docked,
+		windows: []*window.Window{docked, sulking},
+	})
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		for _, w := range []*window.Window{solo, docked, sulking} {
+			wm.AddWindow(w)
+			w.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 300, Height: 200})
+		}
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(solo)
+		primary := plat.surfaces[0]
+		if !d.IsSolo() || d.soloPrimaryHost == nil {
+			t.Fatal("harness: the display was not handed to the solo window")
+		}
+		for _, w := range []*window.Window{docked, sulking} {
+			if w.IsDetached() {
+				t.Fatalf("harness: %q is not docked, so nothing is left on the hidden desktop", w.Title())
+			}
+		}
+
+		// Its [x].
+		solo.Close()
+
+		if d.IsSolo() {
+			t.Fatal("the window filling the display closed and the desktop never came back, so the surface still shows it")
+		}
+		if _, ok := primary.handler.(*desktopSurfaceHandler); !ok {
+			t.Errorf("the surface still paints through %T, so the closed window is still on the screen",
+				primary.handler)
+		}
+		// And what was on the desktop is what is now on the screen.
+		if !docked.IsVisible() || !sulking.IsVisible() {
+			t.Error("the revealed desktop does not have the windows that were open on it")
+		}
+		d.ForceQuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
