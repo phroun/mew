@@ -100,6 +100,12 @@ func newPrimary(path string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Served BEFORE the build, the build naming it. See refusing.go.
+	if err := a.provideRefusal(); err != nil {
+		a.conn.Close()
+		return nil, fmt.Errorf("serve the refusing source: %w", err)
+	}
+
 	ui, err := a.conn.Build(mainBuildScript())
 	if err != nil {
 		a.conn.Close()

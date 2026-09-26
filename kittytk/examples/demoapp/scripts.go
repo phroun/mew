@@ -185,6 +185,8 @@ li=new tab caption="Lists" children={
 			new treeview min_width=160 min_height=160 items={` + indent(treeItemsScript, "\t\t\t\t") + `}
 		}
 	}
+	new label caption="A list whose source REFUSES -- three rows arrive and the rest is turned down:"
+	lirefused=new listview source="source:` + refusedSourceName + `" display="name" min_height=80 fill=none
 	}
 }
 
@@ -809,6 +811,7 @@ pgrtl=w.t.pg.pgv.pgrtl
 pgc=w.t.pg.pgv.pgc
 lirtl=w.t.li.liv.lirtl
 lilv=w.t.li.liv.lisp.lilp.lilv
+lirefused=w.t.li.liv.lirefused
 `)
 
 	// The menu bar and status bar are adopted as this application's
