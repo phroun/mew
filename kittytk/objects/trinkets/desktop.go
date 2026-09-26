@@ -1959,6 +1959,9 @@ func (d *Desktop) SetDesktopEnvironment(on bool) {
 // desktop environment shows itself -- that is what it is for. Anything else
 // was the frame around the application that just ended, and ends with it.
 func (d *Desktop) lastWindowClosed() {
+	if closeTracing() {
+		closeTraceFrom("lastWindowClosed: desktopEnvironment=%v", d.IsDesktopEnvironment())
+	}
 	if !d.IsDesktopEnvironment() {
 		// Nothing is left to ask -- that is the circumstance this is -- so
 		// this quit goes through rather than sweeping an empty desktop.
@@ -4090,10 +4093,15 @@ func (d *Desktop) quitApplication(app ApplicationProvider) {
 	// reason being unsaved work, asked through its close handler), and a
 	// refusal cancels the quit: the application stays on the desktop rather
 	// than being torn off it with a window still open.
+	if closeTracing() {
+		closeTraceFrom("quitApplication(%q): %d windows", app.Name(), len(app.Windows()))
+	}
 	for _, win := range app.Windows() {
 		if win == nil || win.Close() {
 			continue
 		}
+		closeTrace("quitApplication(%q): STOPPED at %s (deciding=%v)",
+			app.Name(), closeTraceWindow(win), win.Deciding())
 		// **A window still DECIDING is not a refusal.** Same as a desktop quit:
 		// one means give up, the other means not yet, and read as a refusal the
 		// application would silently fail to quit, its window would close a moment
@@ -5149,7 +5157,12 @@ func (d *Desktop) Quit() {
 // a window that already agreed is closed, so it is no longer among the windows to
 // close.
 func (d *Desktop) QuitWithCode(code int) {
+	if closeTracing() {
+		closeTraceFrom("QuitWithCode(%d)", code)
+		defer d.closeTraceDesktop("QuitWithCode: done")
+	}
 	allClosed, deciding := d.closeEveryWindow()
+	closeTrace("QuitWithCode: sweep says allClosed=%v deciding=%v", allClosed, deciding)
 	if allClosed {
 		d.mu.Lock()
 		d.quitWanted = false
@@ -5285,10 +5298,15 @@ func (d *Desktop) closeEveryWindow() (allClosed, deciding bool) {
 	}
 
 	for _, w := range all {
-		if !w.Close() {
-			return false, w.Deciding()
+		if w.Close() {
+			closeTrace("closeEveryWindow: closed %s", closeTraceWindow(w))
+			continue
 		}
+		closeTrace("closeEveryWindow: STOPPED at %s (deciding=%v); %d windows were not reached",
+			closeTraceWindow(w), w.Deciding(), len(all))
+		return false, w.Deciding()
 	}
+	closeTrace("closeEveryWindow: everything agreed (%d windows)", len(all))
 	return true, false
 }
 
