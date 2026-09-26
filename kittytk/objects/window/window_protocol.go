@@ -181,6 +181,9 @@ func init() {
 
 	protocol.RegisterType("window", &protocol.TypeSpec{
 		Events: map[string]protocol.EventDesc{
+			"window_closing": protocol.NewEventDesc("The window is closing and has NOT closed: the application decides whether it may, because it is the only one that knows there is unsaved work. Subscribing is what makes a close askable at all — a window nobody is listening about closes at once.").
+				Field("window", "uint", "The window asking.").
+				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and it closes, `do <id> deny` and it stays. It waits as long as it takes, because the answer may be a person reading a dialog."),
 			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
 				Field("window", "uint", "The closed window's object ID."),
 		},
@@ -195,10 +198,53 @@ func init() {
 				ctx.EmitEvent(protocol.NewEvent("window_closed").
 					WithUint("window", id))
 			})
+
+			// **A close the application may refuse**, which it could not before:
+			// a Go handler returning false is a veto for the host, and an
+			// application reaches the display only over the wire.
+			//
+			// Close() answers now and the application answers later, so this
+			// declines the close it cannot yet allow, and closes the window
+			// itself when the answer comes. `allowing` is how the second Close
+			// gets past this handler rather than asking the same question
+			// again; both it and the verdict are on the desktop thread, which
+			// is where a close happens and where a batch executes.
+			allowing := false
+			w.SetOnClose(func() bool {
+				if allowing {
+					allowing = false
+					return true
+				}
+				d := ctx.Deciding(
+					protocol.NewEvent("window_closing").WithUint("window", id),
+					// Never times out: what is being waited for may be a person
+					// deciding whether to save, and defaulting that after a
+					// moment would close a window over somebody's answer.
+					protocol.Whenever,
+					func(v protocol.Verdict) {
+						// Denied, or nobody said -- the connection went while
+						// the question was open. Either way it stays open,
+						// which is the safe half of an unsaved-work question.
+						if !v.Allowed {
+							return
+						}
+						allowing = true
+						w.Close()
+					})
+				// Nobody is listening, so nobody is deciding: close at once,
+				// exactly as a window with no wire binding at all does.
+				return d == nil
+			})
 		},
 		Props: props,
 		Destroy: func(t any) error {
-			t.(*Window).Close()
+			// **Destroying is not asking.** The statement came from the
+			// application, and putting its own order back to it as a question
+			// would want an answer inside the batch that gave the order. The
+			// handler goes first, so this close is the plain one.
+			w := t.(*Window)
+			w.SetOnClose(nil)
+			w.Close()
 			return nil
 		},
 	})

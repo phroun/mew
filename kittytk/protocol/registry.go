@@ -33,6 +33,17 @@ type BindContext struct {
 	// connection takes none. Objects call EmitAnswer, which is nil-safe.
 	Answer func(*Answer)
 
+	// The three things a DECISION needs of the connection it is on, and the
+	// only things: somewhere to be addressed from while it is open, a way to
+	// stop being addressable once it is decided, and the thread the connection
+	// does its own work on, so a verdict a deadline decided arrives where one an
+	// application decided would have. Adopt nil means this connection holds no
+	// decisions at all, and Deciding says so rather than opening one nothing can
+	// reach. See decisions.go.
+	Adopt func(Object)
+	Drop  func(uint64)
+	Post  func(func())
+
 	mu       sync.Mutex
 	actions  map[uint64]string
 	subs     map[uint64]map[string]bool     // trinketID -> event types ("" = all; ID 0 = all trinkets)
@@ -40,6 +51,12 @@ type BindContext struct {
 	suppress int
 	stash    map[string]any
 	refs     map[uint64]any // virtual wire objects by ID, for pointer properties
+
+	// decisions are the questions this connection is holding open, by the id
+	// the event carrying each one went out with, and gone says the application
+	// has left, so nothing is asked of it again.
+	decisions map[uint64]*Decision
+	gone      bool
 }
 
 // RegisterRef records a virtual wire object under its wire ID so

@@ -493,6 +493,13 @@ func (s *Server) serveConn(nc net.Conn) {
 		// gates an event passes: nothing has to have subscribed, and it does not
 		// wait for the suppression to lift. See protocol.BindContext.EmitAnswer.
 		Answer: func(a *protocol.Answer) { c.send(a.Encode()) },
+		// What a decision needs: an id the client can name while the question is
+		// open, and no id once it is answered. Both run on the desktop thread --
+		// a decision is minted where the thing being decided happens, and decided
+		// inside a batch, which executes there too.
+		Adopt: func(obj protocol.Object) { c.session.Register(obj) },
+		Drop:  func(id uint64) { c.session.Forget(id) },
+		Post:  func(fn func()) { s.desktop.Post(fn) },
 	}
 	c.ctx = ctx
 	c.factory = &hostFactory{inner: protocol.NewRegistryFactory(ctx)}
@@ -1039,6 +1046,11 @@ func speak(msg string) {
 // teardown runs on the UI thread at disconnect: the app and its
 // windows leave the desktop (D22 v1; reattach arrives with D4).
 func (c *conn) teardown() {
+	// **The application is gone, so it decides nothing.** First, because what
+	// follows is closing its windows, and a window that asked a departed
+	// application whether it might close would wait for ever -- leaving the
+	// application removed with its windows still on the screen.
+	c.ctx.Undecided()
 	for _, w := range c.app.Windows() {
 		w.Close()
 	}
