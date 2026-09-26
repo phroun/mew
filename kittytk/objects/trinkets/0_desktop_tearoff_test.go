@@ -110,25 +110,6 @@ type msPlatform struct {
 	// host that cannot hold a second window behaves: the desktop has to fall back
 	// to showing itself rather than giving a dialog a surface of its own.
 	noMoreSurfaces bool
-
-	// deferPosts makes Post QUEUE instead of running inline, which is what a real
-	// platform does. Inline is convenient and it means a test cannot tell work that
-	// happened now from work that was merely scheduled -- so anything that must be
-	// done by the time a call returns has to be checked with this on, and drained
-	// afterwards with drainPosts.
-	deferPosts bool
-	queued     []func()
-}
-
-// drainPosts runs what Post queued, and whatever that queues in turn.
-func (p *msPlatform) drainPosts() {
-	for len(p.queued) > 0 {
-		next := p.queued
-		p.queued = nil
-		for _, fn := range next {
-			fn()
-		}
-	}
 }
 
 func (p *msPlatform) Run(init func(platform.Platform)) int {
@@ -138,13 +119,7 @@ func (p *msPlatform) Run(init func(platform.Platform)) int {
 	}
 	return 0
 }
-func (p *msPlatform) Post(fn func()) {
-	if p.deferPosts {
-		p.queued = append(p.queued, fn)
-		return
-	}
-	fn()
-}
+func (p *msPlatform) Post(fn func())                       { fn() }
 func (p *msPlatform) PostAfter(_ time.Duration, fn func()) { p.afters = append(p.afters, fn) }
 func (p *msPlatform) Quit(int)                             { p.quitCalled = true }
 func (p *msPlatform) Clipboard() string                    { return "" }
