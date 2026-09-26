@@ -409,7 +409,24 @@ type conn struct {
 	// outbound statements; the writer goroutine owns the socket's
 	// write side.
 	out chan string
+
+	// gone is closed when this connection is finished with, and is what makes
+	// `send` safe from anywhere.
+	//
+	// **Events outlive the reader.** The reader goroutine returns when the socket
+	// does, and the desktop goes on holding this connection's trinkets for a
+	// moment longer -- closing its windows, which raises `window_closed`, which
+	// sends. Closing `out` to stop the writer therefore turned a late event into a
+	// send on a closed channel, and a panic in the display. Nothing is closed now
+	// but this, and a send after it is dropped, because there is nowhere to say it
+	// and nobody to hear it.
+	gone     chan struct{}
+	goneOnce sync.Once
 }
+
+// finish marks the connection done, which stops the writer and makes every later
+// send a no-op. Safe to call more than once.
+func (c *conn) finish() { c.goneOnce.Do(func() { close(c.gone) }) }
 
 func (s *Server) serveConn(nc net.Conn) {
 	defer nc.Close()
@@ -482,6 +499,7 @@ func (s *Server) serveConn(nc net.Conn) {
 		appName:  req.AppName,
 		solo:     solo,
 		out:      make(chan string, 1024),
+		gone:     make(chan struct{}),
 	}
 
 	// Per-connection BindContext: events encode onto the wire.
@@ -530,7 +548,9 @@ func (s *Server) serveConn(nc net.Conn) {
 	defer s.desktop.Post(func() { c.teardown() })
 
 	go c.writeLoop()
-	defer close(c.out)
+	// Before the teardown below, not after: the windows it closes raise events,
+	// and by now there is no socket to carry them.
+	defer c.finish()
 
 	// The store is an object of this connection's too, registered the same way
 	// and handed over in the same breath, so an app addresses what it has kept
@@ -1063,6 +1083,9 @@ func (c *conn) teardown() {
 // stalling the display).
 func (c *conn) send(statement string) {
 	select {
+	case <-c.gone:
+		// Nowhere to say it and nobody to hear it.
+		return
 	case c.out <- statement:
 	default:
 		// Queue full: drop the connection's socket; the reader will
@@ -1072,9 +1095,26 @@ func (c *conn) send(statement string) {
 }
 
 func (c *conn) writeLoop() {
-	for line := range c.out {
-		if _, err := c.nc.Write([]byte(line + "\n")); err != nil {
-			return
+	for {
+		select {
+		case line := <-c.out:
+			if _, err := c.nc.Write([]byte(line + "\n")); err != nil {
+				return
+			}
+		case <-c.gone:
+			// Whatever was already queued still goes: a reply the client is
+			// waiting on was written before the connection ended, and dropping it
+			// would leave that client waiting for ever.
+			for {
+				select {
+				case line := <-c.out:
+					if _, err := c.nc.Write([]byte(line + "\n")); err != nil {
+						return
+					}
+				default:
+					return
+				}
+			}
 		}
 	}
 }

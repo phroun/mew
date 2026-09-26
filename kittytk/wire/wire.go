@@ -29,6 +29,33 @@ const (
 	HostName  = "host"
 )
 
+// A DECISION is a question the display is holding open, carried as an object.
+//
+// Most events are announcements and want nothing back. A few are the display
+// saying *I am about to do this* and stopping until the application says whether it
+// may: a window asking to close is one, because only the application knows there is
+// unsaved work. Such an event carries one extra field, the id of a decision, and
+// the application answers it with the verb it already has:
+//
+//	event window_closing window=17 decision=94
+//	do 94 allow
+//
+// So nothing about events changed. No verb was added and nothing in a client had to
+// be taught: `do` was already there. The names are here, in the language, because
+// the applications that answer decisions depend on this package and not on the
+// host's -- see protocol/decisions.go for what holding one costs the display.
+//
+// Two words, because every decidable event asks the same thing. Deny is the
+// application taking the matter on itself: the window stays open, the refusal is
+// not drawn.
+const (
+	DecisionType  = "decision"
+	DecisionField = "decision"
+
+	DecisionAllow = "allow"
+	DecisionDeny  = "deny"
+)
+
 // InitVerb names the statement that follows the welcome, saying what objects
 // this connection was handed and what each is called:
 //

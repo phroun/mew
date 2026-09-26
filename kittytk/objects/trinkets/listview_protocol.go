@@ -30,7 +30,8 @@ func init() {
 			"trouble": protocol.NewEventDesc("Something this list asked for was refused — a source it named, or a scope of it. The list goes on showing what it has.").
 				Field("trinket", "uint", "The list's object ID.").
 				Field("text", "string", "Why, in the words of whoever refused it.").
-				Field("at", "int", "The row it was asking about, or -1 where it was asking about none."),
+				Field("at", "int", "The row it was asking about, or -1 where it was asking about none.").
+				Field(protocol.DecisionField, "uint", "The decision to answer about THIS refusal: `do <id> deny` and the list draws no line, because you have shown the reader yourself; `do <id> allow` and it draws its own. Answer promptly — the line waits, and appears anyway shortly if nothing comes. `trouble=false` is the same thing said once about every refusal."),
 		},
 		New: func() any { return NewListView() },
 		ID: func(t any) uint64 {
@@ -48,14 +49,25 @@ func init() {
 					WithUint("trinket", id).WithInt("selected", index))
 			})
 			// A refusal reaches the application the way everything else about this
-			// object does. It does NOT stop the list drawing its own line: being
-			// told and deciding where it shows are two decisions, and `trouble=`
-			// below is how an application makes the second one.
-			l.announceTrouble(func(t Trouble) {
-				ctx.EmitEvent(protocol.NewEvent("trouble").
-					WithUint("trinket", id).
-					WithString("text", t.Reason).
-					WithInt("at", t.At))
+			// object does, and it carries a DECISION: `trouble=` is a standing
+			// preference about every refusal, and this is about THIS one, which is
+			// what lets an application put the ones it recognises in its own status
+			// bar and let the rest draw.
+			l.announceTrouble(func(t Trouble) bool {
+				d := ctx.Deciding(
+					protocol.NewEvent("trouble").
+						WithUint("trinket", id).
+						WithString("text", t.Reason).
+						WithInt("at", t.At),
+					troubleDecision,
+					func(v protocol.Verdict) {
+						// Denied is an application saying it has shown the reader
+						// itself. Allowed, and unanswered, both draw.
+						if l.decidedTrouble(t, v.Said && !v.Allowed) {
+							l.Update()
+						}
+					})
+				return d != nil
 			})
 		},
 		Props: map[string]protocol.Property{

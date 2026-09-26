@@ -58,19 +58,19 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/phroun/kittytk/wire"
 )
 
-// DecisionType is the wire type name a decision is described under, and
-// DecisionField the event field its id travels on.
+// The names, which live in the language rather than here: an application answering
+// a decision depends on `wire` and not on this package. See wire.DecisionType for
+// what they mean.
 const (
-	DecisionType  = "decision"
-	DecisionField = "decision"
-)
+	DecisionType  = wire.DecisionType
+	DecisionField = wire.DecisionField
 
-// The two words a decision is decided with.
-const (
-	DecisionAllow = "allow"
-	DecisionDeny  = "deny"
+	DecisionAllow = wire.DecisionAllow
+	DecisionDeny  = wire.DecisionDeny
 )
 
 // Whenever is the deadline of a decision that has none: it waits as long as it

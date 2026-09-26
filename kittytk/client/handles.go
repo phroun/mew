@@ -73,6 +73,37 @@ func (h Handle) On(event string, fn func(*wire.Event)) {
 	h.c.on(h.id, event, fn)
 }
 
+// Decide answers a decision an event carried: allow and the display does the thing
+// it asked about, deny and it does not.
+//
+// A few events are questions rather than announcements -- a window asking whether it
+// may close is the one to know -- and each carries a `decision=` field naming the
+// question. This is that answer:
+//
+//	ui.Object("w").On("window_closing", func(ev *wire.Event) {
+//	    id, _ := ev.Uint(wire.DecisionField)
+//	    c.Decide(id, !unsavedWork)
+//	})
+//
+// **Answer every question you subscribe to.** A window's close waits as long as it
+// takes, having no way to know whether the answer is a person reading a dialog, so
+// one left unanswered is a window that cannot close. Nothing is owed for an event
+// that carries no `decision=`, which is nearly all of them.
+//
+// It is `do <id> allow` and nothing more; Object(id).Do(wire.DecisionAllow) is the
+// same statement said longhand.
+func (c *Conn) Decide(decision uint64, allow bool) error {
+	word := wire.DecisionDeny
+	if allow {
+		word = wire.DecisionAllow
+	}
+	return c.Object(decision).Do(word)
+}
+
+// Object is a handle on any display-side object by its id -- one a key surfaced, or
+// one an event named, which is how a decision and a store's blobs arrive.
+func (c *Conn) Object(id uint64) Handle { return Handle{c: c, id: id} }
+
 // Target returns the in-process constructed object (the real trinket).
 // IN-PROCESS ESCAPE HATCH ONLY: nil under a remote transport. Exists
 // so hybrid apps can hand a built tree to imperative code (window

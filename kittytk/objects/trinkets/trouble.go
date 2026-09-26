@@ -29,9 +29,26 @@ package trinkets
 // because it is on the screen, and decides then whether to handle it.
 
 import (
+	"time"
+
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
 )
+
+// troubleDecision is how long a view waits for an application to say it has handled
+// a refusal, before drawing the line anyway.
+//
+// **A close waits as long as it takes and this does not**, and the difference is who
+// is answering. A close may be waiting on a PERSON reading a dialog. This is waiting
+// on a PROGRAM that has everything it needs the moment it is asked: it either
+// recognises the refusal and has somewhere to put it, or it does not. Nothing here
+// is worth a reader staring at an empty area for.
+//
+// So the deadline is long enough for a round trip and far short of a reader noticing
+// -- and where it passes, the line is DRAWN. That is the safe half: an application
+// that asked to decide and then said nothing is not an application that has shown
+// the reason anywhere, and the reason is the whole point.
+const troubleDecision = 250 * time.Millisecond
 
 // A Trouble is one thing a view was told was wrong.
 //
@@ -62,13 +79,28 @@ type troubled struct {
 	// set when this view is bound to a connection. Separate from onTrouble because
 	// they belong to two different callers -- whoever built this view in Go, and
 	// whoever is holding the other end of a socket -- and either may want it.
-	announce func(Trouble)
+	//
+	// It reports whether the application is being ASKED rather than merely told,
+	// which is a thing only it can know: it holds the subscriptions.
+	announce func(Trouble) bool
 
 	// handled says the last refusal was taken off this view's hands: a handler
 	// answered that it has dealt with it, so there is nothing for the line to say.
 	// It is about THIS refusal and is reconsidered for the next one, which is what
 	// makes it different from `quiet`.
 	handled bool
+
+	// deciding says an application is being asked whether it has handled this
+	// refusal, and has not answered yet.
+	//
+	// **The line waits, rather than appearing and being taken away.** A Go handler
+	// answers inside took and there is nothing to wait for; an application answers
+	// over a wire, a round trip later, which is several frames. Drawing first and
+	// retracting would put a red line on the screen and snatch it back, for every
+	// refusal, on every application that handles its own -- and a refusal is
+	// already something that arrived asynchronously, so a line that appears a
+	// moment after it does is not late, it is the line appearing.
+	deciding bool
 
 	// quiet says somebody would rather this view did not draw its own line.
 	//
@@ -121,7 +153,29 @@ func (v *troubled) ShowsTrouble() bool { return !v.quiet }
 // announceTrouble is how the wire binding hears a refusal. Not exported: an
 // application reaches this through the `trouble` event, and a Go caller through
 // SetOnTrouble.
-func (v *troubled) announceTrouble(fn func(Trouble)) { v.announce = fn }
+//
+// fn answers whether the application is being ASKED about this refusal rather than
+// simply told -- see the `deciding` field. Only the binding can know that, because
+// only it knows whether anything subscribed.
+func (v *troubled) announceTrouble(fn func(Trouble) bool) { v.announce = fn }
+
+// decidedTrouble records what an application decided about a refusal it was asked
+// about, and reports whether the line changed -- so a caller redraws only when
+// there is something different to draw.
+//
+// **The refusal is named, because the answer may be about one that is no longer
+// true.** A view that was refused, asked, and then answered with records has
+// nothing to draw a line about, and a verdict arriving about the old refusal must
+// not bring it back.
+func (v *troubled) decidedTrouble(t Trouble, handled bool) bool {
+	if !v.deciding || v.trouble != t {
+		return false
+	}
+	was := v.showsTrouble()
+	v.deciding = false
+	v.handled = handled
+	return v.showsTrouble() != was
+}
 
 // took records a refusal and hands it on, and reports whether anything changed.
 //
@@ -135,7 +189,13 @@ func (v *troubled) took(t Trouble) bool {
 	// **Only a refusal is announced, and not its going away.** An answer arriving is
 	// the ordinary thing happening; what is news is a view being unable to show what
 	// it was asked to.
+	//
+	// Both are cleared here and not only where they are set, so that "these are
+	// about the trouble this view is holding NOW" is true at every moment and not
+	// just at the ones anybody looks. A refusal going away sets neither below,
+	// because there is nothing to announce and nobody to ask.
 	v.handled = false
+	v.deciding = false
 	if t.Any() {
 		if v.onTrouble != nil && v.onTrouble(t) {
 			// Taken off this view's hands, for this refusal. The next one is asked
@@ -143,7 +203,9 @@ func (v *troubled) took(t Trouble) bool {
 			v.handled = true
 		}
 		if v.announce != nil {
-			v.announce(t)
+			// The application may be being ASKED, and an application that is being
+			// asked has not answered yet, so the line waits for it.
+			v.deciding = v.announce(t)
 		}
 	}
 	return true
@@ -153,9 +215,11 @@ func (v *troubled) took(t Trouble) bool {
 func (v *troubled) untroubled() bool { return v.took(Trouble{}) }
 
 // showsTrouble reports whether there is a line to draw right now: something was
-// refused, nobody has asked this view to keep quiet, and nobody answered that they
-// have handled this one.
-func (v *troubled) showsTrouble() bool { return v.trouble.Any() && !v.quiet && !v.handled }
+// refused, nobody has asked this view to keep quiet, nobody answered that they have
+// handled this one, and nobody is still being asked.
+func (v *troubled) showsTrouble() bool {
+	return v.trouble.Any() && !v.quiet && !v.handled && !v.deciding
+}
 
 // troubleHeight is what the line takes out of the rows' own area, and nought where
 // there is no line.

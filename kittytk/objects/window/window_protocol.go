@@ -183,7 +183,7 @@ func init() {
 		Events: map[string]protocol.EventDesc{
 			"window_closing": protocol.NewEventDesc("The window is closing and has NOT closed: the application decides whether it may, because it is the only one that knows there is unsaved work. Subscribing is what makes a close askable at all — a window nobody is listening about closes at once.").
 				Field("window", "uint", "The window asking.").
-				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and it closes, `do <id> deny` and it stays. It waits as long as it takes, because the answer may be a person reading a dialog."),
+				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and it closes, `do <id> deny` and it stays. **It waits as long as it takes** — there is no deadline, because the answer may be a person reading a save-your-work dialog. So an application that subscribes to this must answer every one of them: one left unanswered is a window that cannot be closed until the application disconnects. Subscribe only if you mean to answer."),
 			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
 				Field("window", "uint", "The closed window's object ID."),
 		},

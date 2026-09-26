@@ -60,7 +60,8 @@ func init() {
 			"trouble": protocol.NewEventDesc("Something this tree asked for was refused — a source it named, or a scope of it. The tree goes on showing what it has.").
 				Field("trinket", "uint", "The tree's object ID.").
 				Field("text", "string", "Why, in the words of whoever refused it.").
-				Field("at", "int", "The row it was asking about, or -1 where it was asking about none."),
+				Field("at", "int", "The row it was asking about, or -1 where it was asking about none.").
+				Field(protocol.DecisionField, "uint", "The decision to answer about THIS refusal: `do <id> deny` and the tree draws no line, because you have shown the reader yourself; `do <id> allow` and it draws its own. Answer promptly — the line waits, and appears anyway shortly if nothing comes. `trouble=false` is the same thing said once about every refusal."),
 		},
 		New: func() any { return NewTreeView() },
 		ID: func(t any) uint64 {
@@ -79,14 +80,22 @@ func init() {
 					WithInt("selected", tv.CurrentIndex()))
 			}
 			// A refusal reaches the application the way everything else about this
-			// object does. It does NOT stop the tree drawing its own line: being
-			// told and deciding where it shows are two decisions, and `trouble=`
-			// is how an application makes the second one.
-			tv.announceTrouble(func(t Trouble) {
-				ctx.EmitEvent(protocol.NewEvent("trouble").
-					WithUint("trinket", id).
-					WithString("text", t.Reason).
-					WithInt("at", t.At))
+			// object does, and it carries a DECISION: `trouble=` is a standing
+			// preference about every refusal, and this is about THIS one. See the
+			// listview's, which is the same wiring.
+			tv.announceTrouble(func(t Trouble) bool {
+				d := ctx.Deciding(
+					protocol.NewEvent("trouble").
+						WithUint("trinket", id).
+						WithString("text", t.Reason).
+						WithInt("at", t.At),
+					troubleDecision,
+					func(v protocol.Verdict) {
+						if tv.decidedTrouble(t, v.Said && !v.Allowed) {
+							tv.Update()
+						}
+					})
+				return d != nil
 			})
 			tv.SetOnCurrentChanged(func(item *TreeItem) { emit("change", item) })
 			tv.SetOnItemActivated(func(item *TreeItem) { emit("activate", item) })
