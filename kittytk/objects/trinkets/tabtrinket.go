@@ -1600,13 +1600,14 @@ func (tp *stripTape) cell(x, y core.Unit, ch rune, s style.CellStyle) {
 	})
 }
 
-// nudgeBack draws the label mark at `label` and the close button just recorded
-// by units short of where they stand (see stripMark.back).
-func (tp *stripTape) nudgeBack(label int, by core.Unit) {
+// nudgeBack draws the label mark at `label`, and the close button just
+// recorded, short of where they stand (see stripMark.back): the label by
+// labelBy and the button by buttonBy.
+func (tp *stripTape) nudgeBack(label int, labelBy, buttonBy core.Unit) {
 	if label >= 0 && label < len(tp.marks) {
-		tp.marks[label].back = by
+		tp.marks[label].back = labelBy
 	}
-	tp.marks[len(tp.marks)-1].back = by
+	tp.marks[len(tp.marks)-1].back = buttonBy
 }
 
 // closeButton records a tab's close button, a cell the mouse can find again.
@@ -1822,8 +1823,9 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	// what the strip would put there when the tab has none. On the selected
 	// tab that is the cell the focus marker uses, and while the strip itself
 	// has the keyboard the marker is drawn there instead, never reaching here.
-	// On a pixel surface the label and its button stand half a cell back, so
-	// the pair sits in the middle of the tab rather than leaning on the far end.
+	// On a pixel surface the label stands half a cell back, so the pair sits
+	// in the middle of the tab rather than leaning on the far end, and the
+	// button only a quarter, leaving a little air between the two.
 	//
 	// The strip's ellipsis can later be drawn over a button, when the run is
 	// cut short at the tab after it. A press there needs no care: the dots
@@ -1835,7 +1837,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 		tape.closeButton(x, 0, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
 		if p.Graphical() {
-			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2)
+			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2, metrics.UnitsPerCellWidth/4)
 		}
 	}
 	tabWasTruncated := false
@@ -2622,7 +2624,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		}
 		tape.closeButton(x, tabY, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
 		if p.Graphical() {
-			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2)
+			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2, metrics.UnitsPerCellWidth/4)
 		}
 	}
 	tabWasTruncated := false

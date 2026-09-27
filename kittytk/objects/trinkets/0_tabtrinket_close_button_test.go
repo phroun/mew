@@ -659,8 +659,9 @@ func TestAClosedTabSaysSoOnTheWire(t *testing.T) {
 	}
 }
 
-// On a pixel surface a tab whose button shows draws its label and the button
-// half a cell back, and nothing else moves: the room each takes, and so every
+// On a pixel surface a tab whose button shows draws its label half a cell back
+// and the button a quarter of one, leaving a little air between them, and
+// nothing else moves: the room each takes, and so every
 // other mark and every press, stays where it was. A tab showing its focus
 // marker in that cell instead, or with no button at all, is drawn as it was.
 func TestAClosableTabsInkStandsHalfACellBack(t *testing.T) {
@@ -706,7 +707,7 @@ func TestAClosableTabsInkStandsHalfACellBack(t *testing.T) {
 	}
 	// The button's cell as the mouse finds it is where it was drawn.
 	for _, sp := range tt.stripSpans {
-		if sp.owner >= 0 && sp.closeX != sp.labelEnd-cell/2 {
+		if sp.owner >= 0 && sp.closeX != sp.labelEnd-cell/4 {
 			t.Errorf("tab %d's button is found at %d, its label ends at %d", sp.owner, sp.closeX, sp.labelEnd)
 		}
 	}
