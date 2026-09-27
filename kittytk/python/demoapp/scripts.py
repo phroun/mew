@@ -264,6 +264,7 @@ bt=new tab caption="Bottom Tabs" children={
 vt=new tab caption="Vertical Tabs" children={
     vtv=new panel layout=vbox spacing=8 children={
     vtclose=new checkbox caption="closable -- a close button on every tab of the window's own strip, the Bottom Tabs strip and these two side strips" halign=textnatural fill=none
+    vttrail=new checkbox caption="trailing -- the close buttons after the labels instead of before them" halign=textnatural fill=none
     vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
         vtside=new tabs position=side children={
             new tab caption="First" children={
@@ -357,6 +358,7 @@ mtab=new tab caption="MDI Demo" children={
 # they listen to (command flows regardless; toggles/changes need a sub).
 tabs=w.t
 vtclose=w.t.vt.vtv.vtclose
+vttrail=w.t.vt.vtv.vttrail
 vtside=w.t.vt.vtv.vtc.vtside
 vtopp=w.t.vt.vtv.vtc.vtopp
 btabs=w.t.bt.btabs

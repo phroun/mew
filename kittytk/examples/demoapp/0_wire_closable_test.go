@@ -35,3 +35,24 @@ func TestTheClosableSwitchReachesEveryTabStrip(t *testing.T) {
 		}
 	}
 }
+
+// The trailing switch moves the same four strips' buttons after their labels,
+// and back before them.
+func TestTheTrailingSwitchReachesEveryTabStrip(t *testing.T) {
+	ui, win, _ := openTabWithUI(t, "Vertical Tabs")
+	(&app{ui: ui}).wireClosable()
+	box, _ := ui.Object("vttrail").Target().(*trinkets.Checkbox)
+	if box == nil {
+		t.Fatal("nothing behind vttrail is a checkbox")
+	}
+	for _, leading := range []bool{false, true} {
+		box.Toggle()
+		win.Layout()
+		for _, name := range []string{"tabs", "btabs", "vtside", "vtopp"} {
+			s, _ := ui.Object(name).Target().(*trinkets.TabTrinket)
+			if s == nil || s.CloseLeading() != leading {
+				t.Errorf("after toggling, %s leading=%v, want %v", name, s != nil && s.CloseLeading(), leading)
+			}
+		}
+	}
+}

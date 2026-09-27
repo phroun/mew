@@ -69,8 +69,19 @@ func (g *closeGrid) row(y int) (string, string) {
 
 const closeGridCols = 40
 
-// closeStrip is four tabs with the third selected, on a strip 40 cells wide.
+// closeStrip is four tabs with the third selected, on a strip 40 cells wide,
+// with its buttons after the labels. Most of what a button does is the same at
+// either end, and the tests written first placed them there; leadingStrip is
+// the same strip with its buttons where they go unless told otherwise.
 func closeStrip(t *testing.T, pos TabPosition, dir core.Direction, closable bool) *TabTrinket {
+	t.Helper()
+	tt := leadingStrip(t, pos, dir, closable)
+	tt.SetCloseLeading(false)
+	return tt
+}
+
+// leadingStrip is closeStrip with its buttons before the labels.
+func leadingStrip(t *testing.T, pos TabPosition, dir core.Direction, closable bool) *TabTrinket {
 	t.Helper()
 	core.SetTextMeasurer(nil)
 	form := NewPanel()
@@ -319,18 +330,19 @@ type pixelSurface struct{ core.RenderBackend }
 func (pixelSurface) GraphicalMode() bool { return true }
 
 // Close buttons change nothing on a strip but the cells they stand in: across
-// widths, scroll positions, selections and focus, every other cell reads as it
-// does without them. Each tab drawn whole shows its button just after its
-// label, unless the strip's ellipsis was drawn over it or the focus marker
-// stands there; and a press on that cell closes the tab only when the button
-// shows.
+// widths, scroll positions, selections, focus and which end the buttons stand
+// at, every other cell reads as it does without them. Each tab drawn whole
+// shows its button just past the end of its label the buttons stand at,
+// unless the strip's ellipsis was drawn over it or the focus marker stands
+// there; and a press on that cell closes the tab only when the button shows.
 func TestCloseButtonsTouchNoOtherCell(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	core.SetTextMeasurer(nil)
-	build := func(pos TabPosition, w, sel, off int, closable, focus bool) *TabTrinket {
+	build := func(pos TabPosition, w, sel, off int, closable, focus, leading bool) *TabTrinket {
 		tt := NewTabTrinket()
 		tt.SetTabPosition(pos)
 		tt.SetClosable(closable)
+		tt.SetCloseLeading(leading)
 		for i := 0; i < 9; i++ {
 			tt.AddTab(fmt.Sprintf("T%d", i), NewPanel())
 		}
@@ -344,48 +356,60 @@ func TestCloseButtonsTouchNoOtherCell(t *testing.T) {
 		return tt
 	}
 	covered := 0
-	for _, pos := range []TabPosition{TabsTop, TabsBottom} {
-		row := 0
-		if pos == TabsBottom {
-			row = 4
-		}
-		for w := 14; w < 60; w++ {
-			for sel := -1; sel < 9; sel++ {
-				for off := 0; off < 4; off++ {
-					for _, focus := range []bool{false, true} {
-						plain, _ := paintCloseGridW(t, build(pos, w, sel, off, false, focus), w).row(row)
-						tt := build(pos, w, sel, off, true, focus)
-						got, _ := paintCloseGridW(t, tt, w).row(row)
-						p, g := []rune(padTo(plain, w)), []rune(padTo(got, w))
-						for x := range g {
-							if g[x] != p[x] && g[x] != '×' {
-								t.Fatalf("pos %v width %d selected %d scrolled %d focus %v: with close buttons\n %q\nwithout\n %q",
-									pos, w, sel, off, focus, got, plain)
+	for _, leading := range []bool{false, true} {
+		for _, pos := range []TabPosition{TabsTop, TabsBottom} {
+			row := 0
+			if pos == TabsBottom {
+				row = 4
+			}
+			for w := 14; w < 60; w++ {
+				for sel := -1; sel < 9; sel++ {
+					for off := 0; off < 4; off++ {
+						for _, focus := range []bool{false, true} {
+							plain, _ := paintCloseGridW(t, build(pos, w, sel, off, false, focus, leading), w).row(row)
+							tt := build(pos, w, sel, off, true, focus, leading)
+							got, _ := paintCloseGridW(t, tt, w).row(row)
+							p, g := []rune(padTo(plain, w)), []rune(padTo(got, w))
+							for x := range g {
+								if g[x] != p[x] && g[x] != '×' {
+									t.Fatalf("leading %v pos %v width %d selected %d scrolled %d focus %v: with close buttons\n %q\nwithout\n %q",
+										leading, pos, w, sel, off, focus, got, plain)
+								}
 							}
-						}
-						cw := tt.EffectiveCellMetrics().UnitsPerCellWidth
-						for _, sp := range tt.stripSpans {
-							cx := int(sp.labelEnd / cw)
-							if sp.owner < 0 || cx >= w {
-								continue
+							cw := tt.EffectiveCellMetrics().UnitsPerCellWidth
+							for _, sp := range tt.stripSpans {
+								// A tab cut short in a leading strip has no whole label to
+								// stand a button before, and draws none.
+								if sp.owner < 0 || (leading && sp.clipped && sp.closeW == 0) {
+									continue
+								}
+								at, marker := sp.labelEnd, '>'
+								if leading {
+									at = sp.labelEnd - tt.MeasureText(tt.TabText(sp.owner)) - cw
+									marker = '<'
+								}
+								cx := int(at / cw)
+								if cx < 0 || cx >= w {
+									continue
+								}
+								shows := g[cx] == '×'
+								switch {
+								case !sp.clipped && !shows && g[cx] != '.' && g[cx] != marker && (leading || sp.x+sp.w > sp.labelEnd):
+									t.Fatalf("leading %v pos %v width %d selected %d scrolled %d focus %v: tab %d shows no button beside its label\n %q",
+										leading, pos, w, sel, off, focus, sp.owner, got)
+								case g[cx] == '.':
+									covered++
+								}
+								closed := -1
+								tt.SetOnTabCloseRequested(func(i int) { closed = i })
+								clickStrip(tt, at+cw/2)
+								if shows != (closed == sp.owner) {
+									t.Fatalf("leading %v pos %v width %d selected %d scrolled %d focus %v: a press beside tab %d's label "+
+										"closed %d, and the cell shows %q\n %q", leading, pos, w, sel, off, focus, sp.owner, closed, g[cx], got)
+								}
+								tt.currentIndex = sel
+								tt.tabScrollOffset = off
 							}
-							shows := g[cx] == '×'
-							switch {
-							case !sp.clipped && !shows && g[cx] != '.' && g[cx] != '>' && sp.x+sp.w > sp.labelEnd:
-								t.Fatalf("pos %v width %d selected %d scrolled %d focus %v: tab %d shows no button after its label\n %q",
-									pos, w, sel, off, focus, sp.owner, got)
-							case g[cx] == '.':
-								covered++
-							}
-							closed := -1
-							tt.SetOnTabCloseRequested(func(i int) { closed = i })
-							clickStrip(tt, sp.labelEnd+cw/2)
-							if shows != (closed == sp.owner) {
-								t.Fatalf("pos %v width %d selected %d scrolled %d focus %v: a press after tab %d's label "+
-									"closed %d, and the cell shows %q\n %q", pos, w, sel, off, focus, sp.owner, closed, g[cx], got)
-							}
-							tt.currentIndex = sel
-							tt.tabScrollOffset = off
 						}
 					}
 				}
@@ -501,14 +525,18 @@ func TestALastTabDrawnWholeKeepsItsButton(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	core.SetTextMeasurer(nil)
 	for _, tc := range []struct {
-		w, sel int
-		want   string
+		w, sel  int
+		want    string
+		leading bool
 	}{
-		{17, -1, `... T7× T8×[<] >`},
-		{19, 8, `... T7×/ T8×\[<] >`},
+		{17, -1, `... T7× T8×[<] >`, false},
+		{19, 8, `... T7×/ T8×\[<] >`, false},
+		{17, -1, `...×T7 ×T8 [<] >`, true},
+		{19, 8, `...×T7_/×T8 \[<] >`, true},
 	} {
 		tt := NewTabTrinket()
 		tt.SetClosable(true)
+		tt.SetCloseLeading(tc.leading)
 		for i := 0; i < 9; i++ {
 			tt.AddTab(fmt.Sprintf("T%d", i), NewPanel())
 		}
@@ -647,7 +675,11 @@ func TestAClosedTabSaysSoOnTheWire(t *testing.T) {
 		}
 		return out
 	}
-	clickStrip(tt, 6*m.UnitsPerCellWidth+m.UnitsPerCellWidth/2) // "  Grid×"
+	for _, sp := range tt.stripSpans {
+		if sp.owner == 0 {
+			clickStrip(tt, sp.closeX+sp.closeW/2)
+		}
+	}
 	tt.SetFocus()
 	tt.HandleKeyPress(core.KeyPressEvent{Key: "Tab"})
 	tt.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
@@ -674,6 +706,7 @@ func TestAClosableTabsInkStandsHalfACellBack(t *testing.T) {
 		core.SetTextMeasurer(px)
 		tt := NewTabTrinket()
 		tt.SetClosable(closable)
+		tt.SetCloseLeading(false)
 		for _, n := range []string{"Grid", "Flex", "Limit"} {
 			tt.AddTab(n, NewPanel())
 		}
@@ -739,6 +772,193 @@ func TestAPressedButtonKeepsTheStripsLine(t *testing.T) {
 		want.Attrs |= tc.line
 		if got != want {
 			t.Errorf("pos %v: the pressed button is drawn %+v, want %+v", tc.pos, got, want)
+		}
+	}
+}
+
+// Close buttons lead unless told otherwise: each stands in the cell just
+// before its label, at the end the run starts from -- the left of a strip
+// reading left to right, the right of one reading the other way. On the
+// selected tab that is the cell the "<" focus marker uses, which keeps it
+// while the strip has the keyboard. A side strip stands its buttons in one
+// column at that end.
+func TestCloseButtonsLeadUnlessToldOtherwise(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	if !NewTabTrinket().CloseLeading() {
+		t.Fatal("a new strip's close buttons trail")
+	}
+	for _, tc := range []struct {
+		pos        TabPosition
+		dir        core.Direction
+		row        int
+		focus      bool
+		closeFocus bool
+		want, fmks string
+	}{
+		{TabsTop, core.DirLTR, 0, false, false, ` ×Grid ×Flex_/×Limit \×Fixed`, ``},
+		{TabsTop, core.DirLTR, 0, true, false, ` ×Grid ×Flex_/<Limit>\×Fixed`, `              ^^^^^^^`},
+		{TabsTop, core.DirLTR, 0, true, true, ` ×Grid ×Flex_/×Limit \×Fixed`, `              ^`},
+		{TabsTop, core.DirRTL, 0, false, false, `            Fixed×/ Limit×\_Flex× Grid×`, ``},
+		{TabsTop, core.DirRTL, 0, true, true, `            Fixed×/ Limit×\_Flex× Grid×`, `                         ^`},
+		{TabsBottom, core.DirLTR, 4, false, false, ` ×Grid ×Flex \×Limit_/×Fixed`, ``},
+		{TabsBottom, core.DirLTR, 4, true, false, ` ×Grid ×Flex \<Limit>/×Fixed`, `              ^^^^^^^`},
+		{TabsBottom, core.DirRTL, 4, true, true, `            Fixed×\_Limit×/ Flex× Grid×`, `                         ^`},
+		{TabsSide, core.DirLTR, 2, true, true, ` ×Limit`, ` ^`},
+		{TabsSide, core.DirRTL, 2, true, true, `                           Limit      ×`, `                                      ^`},
+		{TabsSideOpposite, core.DirLTR, 2, true, true, `                           ×Limit`, `                           ^`},
+		{TabsSideOpposite, core.DirRTL, 2, true, true, ` Limit      ×`, `            ^`},
+	} {
+		tt := leadingStrip(t, tc.pos, tc.dir, true)
+		if tc.focus {
+			tt.SetFocus()
+		}
+		if tc.closeFocus {
+			tt.FocusArrivingBackward()
+		}
+		got, marks := paintCloseGrid(t, tt).row(tc.row)
+		if got != tc.want || marks != tc.fmks {
+			t.Errorf("pos %v %v focus %v on the button %v:\n got  %q\n      %q\n want %q\n      %q",
+				tc.pos, tc.dir, tc.focus, tc.closeFocus, got, marks, tc.want, tc.fmks)
+		}
+	}
+}
+
+// A leading button closes its tab when pressed, and the label beside it still
+// selects: the button's cell was the separator's, and the mouse finds it as
+// the tab's own.
+func TestALeadingButtonClosesItsTab(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	for _, tc := range []struct {
+		pos       TabPosition
+		x, y      int
+		wantClose int
+		wantSel   int
+	}{
+		{TabsTop, 1, 0, 0, 2},  // " ×Grid"
+		{TabsTop, 2, 0, -1, 0}, // the label's first cell
+		{TabsTop, 7, 0, 1, 2},  // " ×Grid ×Flex": the cell was Grid's separator
+		{TabsBottom, 14, 4, 2, 2},
+		{TabsSide, 1, 1, 1, 2},
+		{TabsSide, 2, 1, -1, 1},
+	} {
+		tt := leadingStrip(t, tc.pos, core.DirLTR, true)
+		closed := -1
+		tt.SetOnTabCloseRequested(func(i int) { closed = i })
+		paintCloseGrid(t, tt)
+		m := tt.EffectiveCellMetrics()
+		x := core.Unit(tc.x)*m.UnitsPerCellWidth + m.UnitsPerCellWidth/2
+		y := core.Unit(tc.y)*m.UnitsPerCellHeight + m.UnitsPerCellHeight/2
+		tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: x, Y: y})
+		tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton, X: x, Y: y})
+		if closed != tc.wantClose || tt.CurrentIndex() != tc.wantSel {
+			t.Errorf("pos %v cell %d,%d: closed %d and selected %d, want closed %d and selected %d",
+				tc.pos, tc.x, tc.y, closed, tt.CurrentIndex(), tc.wantClose, tc.wantSel)
+		}
+	}
+}
+
+// On a pixel surface a leading button's tab draws its label half a cell on and
+// the button a quarter, the mirror of a trailing one, and the mouse finds the
+// button where it is drawn. A label pushed on reaches into the cell after it,
+// which the strip fills later, so nothing drawn after the label may land on
+// it: its tail would be cut off.
+func TestALeadingTabsInkStandsHalfACellOn(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	build := func(closable bool) (*TabTrinket, *markTape) {
+		px, err := raster.New(900, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		tt := NewTabTrinket()
+		tt.SetClosable(closable)
+		for _, n := range []string{"Grid", "Flex", "Limit"} {
+			tt.AddTab(n, NewPanel())
+		}
+		tt.SetCurrentIndex(2)
+		tt.SetBounds(core.UnitRect{Width: 40 * cell, Height: 5 * 16})
+		ink := &markTape{RenderBackend: px, graphical: true}
+		tt.Paint(core.NewPainter(ink))
+		return tt, ink
+	}
+	labelX := func(ink *markTape, name string) int {
+		for _, m := range ink.marks {
+			if strings.Contains(m, "«"+name+"»") {
+				var x, w int
+				fmt.Sscanf(strings.Fields(m)[0], "%d+%d", &x, &w)
+				return x
+			}
+		}
+		t.Fatalf("no label %q", name)
+		return 0
+	}
+	_, plain := build(false)
+	tt, ink := build(true)
+	for _, name := range []string{"Grid", "Flex", "Limit"} {
+		at := -1
+		var lx, lw int
+		for i, m := range ink.marks {
+			if strings.Contains(m, "«"+name+"»") {
+				at = i
+				fmt.Sscanf(strings.Fields(m)[0], "%d+%d", &lx, &lw)
+			}
+		}
+		for _, m := range ink.marks[at+1:] {
+			var x, w int
+			fmt.Sscanf(strings.Fields(m)[0], "%d+%d", &x, &w)
+			// The strip's own cells are what would cover it; the fills after
+			// the run are the tab's outline and the content's ground, which
+			// paint over everything on purpose.
+			if strings.Fields(m)[1] == "×" || strings.HasPrefix(strings.Fields(m)[1], "fill") {
+				continue
+			}
+			if x < lx+lw && x+w > lx {
+				t.Errorf("label %q at %d+%d is drawn over afterwards by %s", name, lx, lw, m)
+			}
+		}
+	}
+	for i, name := range []string{"Grid", "Flex", "Limit"} {
+		x0, x1 := labelX(plain, name), labelX(ink, name)
+		if x1 != x0+int(cell)/2 {
+			t.Errorf("label %q drawn at %d with its button, %d without; want half a cell on", name, x1, x0)
+		}
+		for _, sp := range tt.stripSpans {
+			if sp.owner == i && int(sp.closeX) != x0-int(cell)+int(cell)/4 {
+				t.Errorf("tab %d's button is found at %d, its label starts at %d", i, sp.closeX, x0)
+			}
+		}
+	}
+}
+
+// close_side on the wire says which end the buttons stand at.
+func TestCloseSideArrivesOverTheWire(t *testing.T) {
+	for _, tc := range []struct {
+		script  string
+		leading bool
+	}{
+		{`t=new tabs closable`, true},
+		{`t=new tabs closable close_side=trailing`, false},
+		{`t=new tabs closable close_side=trailing; set t close_side=leading`, true},
+	} {
+		f := &captureFactory{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}
+		script, err := protocol.Parse(tc.script)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.script, err)
+		}
+		if _, err := protocol.NewSession().Execute(script, f); err != nil {
+			t.Fatalf("%s: %v", tc.script, err)
+		}
+		found := false
+		for _, tg := range f.targets {
+			if tw, ok := tg.(*TabTrinket); ok {
+				found = true
+				if tw.CloseLeading() != tc.leading {
+					t.Errorf("%s: leading %v, want %v", tc.script, tw.CloseLeading(), tc.leading)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s: built no tab strip", tc.script)
 		}
 	}
 }

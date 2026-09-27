@@ -206,6 +206,16 @@ func (a *app) wireClosable() {
 	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("btabs")))
 	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtside")))
 	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtopp")))
+	for _, name := range []string{"tabs", "btabs", "vtside", "vtopp"} {
+		target := ui.Object(name)
+		ui.Checkbox("vttrail").OnToggle(func(s protocol.FlagState) {
+			side := "leading"
+			if s == protocol.FlagTrue {
+				side = "trailing"
+			}
+			_ = target.Set("close_side=" + side)
+		})
+	}
 
 	// A close button raises close with the tab's index. The tab stays: a demo
 	// has nothing to lose by keeping it, so it only says what came in.

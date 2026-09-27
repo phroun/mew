@@ -81,6 +81,23 @@ func init() {
 			"selected": intProp("selected", (*TabTrinket).SetCurrentIndex).Tip("Active tab index.").Def("0"),
 			"movable":  boolProp("movable", (*TabTrinket).SetMovable).Tip("Allow reordering tabs by drag.").Def("false"),
 			"closable": boolProp("closable", (*TabTrinket).SetClosable).Tip("Show per-tab close buttons.").Def("false"),
+			"close_side": protocol.NewProperty("enum", wprop("close_side", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
+				w, err := protocol.AsWord("close_side", v, f)
+				if err != nil {
+					return err
+				}
+				switch w {
+				case "leading":
+					tw.SetCloseLeading(true)
+				case "trailing":
+					tw.SetCloseLeading(false)
+				default:
+					return fmt.Errorf("close_side: unknown value %q", w)
+				}
+				return nil
+			})).OneOf("leading", "trailing").Def("leading").
+				Tip("Which end of its label a tab's close button stands at: leading, the end the " +
+					"run starts from, or trailing, the end it reaches last."),
 			// background paints the tab body; unlike the common `bg`
 			// style override, this drives the color the TabTrinket reports
 			// to its children. The word "default" clears it (inherit).

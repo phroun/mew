@@ -56,6 +56,10 @@ type TabTrinket struct {
 	// zero value is none.
 	closeFocus bool
 	closeHover int
+	// closeTrailing stands the close buttons after their labels rather than
+	// before them, at the end the run starts from, which is where they go
+	// unless asked otherwise.
+	closeTrailing bool
 	// closePressed is the tab whose button a press went down on, counted from
 	// 1 the same way. The press holds the pointer until it comes back up:
 	// closePressedOver says it is still over that button, which is what
@@ -593,6 +597,18 @@ func (t *TabTrinket) closeStyle(p *core.Painter, i int, tab, focused style.CellS
 		return t.GetScheme().GetHoveredTabsButton()
 	}
 	return tab
+}
+
+// CloseLeading reports whether close buttons stand before their labels.
+func (t *TabTrinket) CloseLeading() bool { return !t.closeTrailing }
+
+// SetCloseLeading stands the close buttons before their labels, at the end the
+// run starts from -- the left of a strip reading left to right, the right of
+// one reading the other way -- or, false, after them. They lead unless told
+// otherwise.
+func (t *TabTrinket) SetCloseLeading(leading bool) {
+	t.closeTrailing = !leading
+	t.Update()
 }
 
 // SetClosable sets whether tabs have close buttons.
@@ -1600,14 +1616,12 @@ func (tp *stripTape) cell(x, y core.Unit, ch rune, s style.CellStyle) {
 	})
 }
 
-// nudgeBack draws the label mark at `label`, and the close button just
-// recorded, short of where they stand (see stripMark.back): the label by
-// labelBy and the button by buttonBy.
-func (tp *stripTape) nudgeBack(label int, labelBy, buttonBy core.Unit) {
-	if label >= 0 && label < len(tp.marks) {
-		tp.marks[label].back = labelBy
+// nudgeBack draws the mark at `at` by units short of where it stands (see
+// stripMark.back); a negative distance draws it past instead.
+func (tp *stripTape) nudgeBack(at int, by core.Unit) {
+	if at >= 0 && at < len(tp.marks) {
+		tp.marks[at].back = by
 	}
-	tp.marks[len(tp.marks)-1].back = buttonBy
 }
 
 // closeButton records a tab's close button, a cell the mouse can find again.
@@ -1685,7 +1699,7 @@ func (tp *stripTape) replay(p *core.Painter, barW core.Unit, mirror bool) {
 			shift[g] = barW - hi[g] - lo[g]
 		}
 	}
-	for _, m := range tp.marks {
+	draw := func(m stripMark) {
 		r, ch := m.rect, m.ch
 		r.X -= m.back
 		if mirror {
@@ -1703,6 +1717,20 @@ func (tp *stripTape) replay(p *core.Painter, barW core.Unit, mirror bool) {
 			p.DrawText(r.X, r.Y, m.text, m.style, m.font)
 		case markFill:
 			p.FillRect(r, ch, m.style)
+		}
+	}
+	// A mark drawn past where it stands reaches into room the run filled
+	// AFTER it, and whatever went there would cover its far end. So the marks
+	// that stand on are drawn last, over the finished run; a mark drawn short
+	// only reaches back over what is already down.
+	for _, m := range tp.marks {
+		if m.back >= 0 {
+			draw(m)
+		}
+	}
+	for _, m := range tp.marks {
+		if m.back < 0 {
+			draw(m)
 		}
 	}
 }
@@ -1820,24 +1848,43 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		tape.text(x, y, text, st, font)
 	}
 	// closeOr puts tab i's close button in the cell just after its label, or
-	// what the strip would put there when the tab has none. On the selected
-	// tab that is the cell the focus marker uses, and while the strip itself
-	// has the keyboard the marker is drawn there instead, never reaching here.
-	// On a pixel surface the label stands half a cell back, so the pair sits
-	// in the middle of the tab rather than leaning on the far end, and the
-	// button only a quarter, leaving a little air between the two.
+	// what the strip would put there when the tab has none or its button
+	// leads. On the selected tab that is the cell the focus marker uses, and
+	// while the strip itself has the keyboard the marker is drawn there
+	// instead, never reaching here. On a pixel surface the label stands half a
+	// cell back, so the pair sits in the middle of the tab rather than leaning
+	// on the far end, and the button only a quarter, leaving a little air
+	// between the two.
 	//
 	// The strip's ellipsis can later be drawn over a button, when the run is
 	// cut short at the tab after it. A press there needs no care: the dots
 	// belong to the tab the run was cut short at, which is found first.
 	closeOr := func(x core.Unit, i int, ch rune, st, tabSt style.CellStyle) {
-		if !t.closableTab(i) {
+		if !t.closableTab(i) || !t.closeTrailing {
 			tape.cell(x, 0, ch, st)
 			return
 		}
 		tape.closeButton(x, 0, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
 		if p.Graphical() {
-			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2, metrics.UnitsPerCellWidth/4)
+			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2)
+			tape.nudgeBack(tape.at()-1, metrics.UnitsPerCellWidth/4)
+		}
+	}
+	// closeLead puts tab i's close button in the cell just before its label,
+	// the label starting at x, when its button leads: the mirror of closeOr.
+	// The cell was the separator's or the prefix's, drawn already, and the
+	// button goes over it -- as this tab's, so the mouse finds it here. On the
+	// selected tab it is the cell the focus marker uses, and while the strip
+	// has the keyboard the marker keeps it. On a pixel surface the label
+	// stands half a cell on and the button a quarter.
+	closeLead := func(x core.Unit, i int, tabSt style.CellStyle) {
+		if t.closeTrailing || !t.closableTab(i) || (i == t.currentIndex && hasFocus) {
+			return
+		}
+		tape.closeButton(x-metrics.UnitsPerCellWidth, 0, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
+		if p.Graphical() {
+			tape.nudgeBack(lastLabelMark, -metrics.UnitsPerCellWidth/2)
+			tape.nudgeBack(tape.at()-1, -metrics.UnitsPerCellWidth/4)
 		}
 	}
 	tabWasTruncated := false
@@ -2006,6 +2053,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					graceStyle = s.WithBg(style.ColorTransparent)
 				}
 				label(x, 0, graceRun, graceStyle)
+				closeLead(x, tabIndex, s)
 				x += t.MeasureText(graceRun)
 				lastTextEndX = x // Track where text ends
 				lastSlashX = -1  // Reset slash tracking
@@ -2267,6 +2315,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			textStyle = s.WithBg(style.ColorTransparent)
 		}
 		label(x, 0, labelRun, textStyle)
+		closeLead(x, tabIndex, s)
 		x += textWidth
 
 		// Track text end position and style for ellipsis handling
@@ -2618,13 +2667,26 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	// closeOr puts tab i's close button in the cell just after its label, as
 	// on a top strip (see paintTopTabs).
 	closeOr := func(x core.Unit, i int, ch rune, st, tabSt style.CellStyle) {
-		if !t.closableTab(i) {
+		if !t.closableTab(i) || !t.closeTrailing {
 			tape.cell(x, tabY, ch, st)
 			return
 		}
 		tape.closeButton(x, tabY, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
 		if p.Graphical() {
-			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2, metrics.UnitsPerCellWidth/4)
+			tape.nudgeBack(lastLabelMark, metrics.UnitsPerCellWidth/2)
+			tape.nudgeBack(tape.at()-1, metrics.UnitsPerCellWidth/4)
+		}
+	}
+	// closeLead puts tab i's close button in the cell just before its label,
+	// as on a top strip (see paintTopTabs).
+	closeLead := func(x core.Unit, i int, tabSt style.CellStyle) {
+		if t.closeTrailing || !t.closableTab(i) || (i == t.currentIndex && hasFocus) {
+			return
+		}
+		tape.closeButton(x-metrics.UnitsPerCellWidth, tabY, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
+		if p.Graphical() {
+			tape.nudgeBack(lastLabelMark, -metrics.UnitsPerCellWidth/2)
+			tape.nudgeBack(tape.at()-1, -metrics.UnitsPerCellWidth/4)
 		}
 	}
 	tabWasTruncated := false
@@ -2938,6 +3000,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			btextStyle = s.WithBg(style.ColorTransparent)
 		}
 		label(x, tabY, labelRun, btextStyle)
+		closeLead(x, tabIndex, s)
 		x += t.MeasureText(labelRun)
 		lastTextEndX = x // Track where text ends
 		lastSlashX = -1  // Reset slash tracking
@@ -3228,19 +3291,26 @@ func (t *TabTrinket) sideTabRoom(slotX, slotW core.Unit, closable bool) (x0, roo
 	x0, room = slotX+cw, slotW-cw*2
 	if closable {
 		room -= cw
-		if core.ChromeMirrored(t) {
+		if t.sideCloseOnLeft() {
 			x0 += cw
 		}
 	}
 	return x0, room
 }
 
+// sideCloseOnLeft says a side strip's close buttons stand at the left of their
+// slots: where the strip reads towards, or from when they lead.
+func (t *TabTrinket) sideCloseOnLeft() bool {
+	return core.ChromeMirrored(t) == t.closeTrailing
+}
+
 // sideCloseX is where a side tab's close button goes: the last cell inside the
-// padding at the end the strip reads towards, so the buttons stand in one
-// column. The padding itself is left alone, since a scrollbar can lie over it.
+// padding at the end the strip reads towards, or the first at the end it reads
+// from when the buttons lead, so the buttons stand in one column. The padding
+// itself is left alone, since a scrollbar can lie over it.
 func (t *TabTrinket) sideCloseX(slotX, slotW core.Unit) core.Unit {
 	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-	if core.ChromeMirrored(t) {
+	if t.sideCloseOnLeft() {
 		return slotX + cw
 	}
 	return slotX + slotW - cw*2

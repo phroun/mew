@@ -629,8 +629,8 @@ func TestAPressFindsThePartOfTheStripItLandedOn(t *testing.T) {
 					dir, pos, cut)
 			}
 
-			// The close button is the cell just past the label -- past the end
-			// the label ENDS at, which is the one the eye reaches last,
+			// The close button is the cell just before the label -- before the
+			// end the label BEGINS at, which is the one the eye reaches first,
 			// whichever way the strip runs. Both ends of the label select, as
 			// any tab does.
 			s = build(dir, pos, 0, true)
@@ -639,9 +639,9 @@ func TestAPressFindsThePartOfTheStripItLandedOn(t *testing.T) {
 				t.Fatalf("%v %v: the strip drew no first tab", dir, pos)
 			}
 			lw := s.tt.MeasureText("0000")
-			button, last, first := lx+lw+cell/2, lx+lw-cell/2, lx+cell/2
+			button, last, first := lx-cell/2, lx+lw-cell/2, lx+cell/2
 			if core.ChromeMirrored(s.tt) {
-				button, last, first = lx-cell/2, first, last
+				button, last, first = lx+lw+cell/2, first, last
 			}
 			clickStrip(s.tt, button)
 			if s.closed != 0 {

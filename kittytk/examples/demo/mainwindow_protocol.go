@@ -320,6 +320,7 @@ bt=new tab caption="Bottom Tabs" children={
 vt=new tab caption="Vertical Tabs" children={
 	vtv=new panel layout=vbox spacing=8 children={
 		vtclose=new checkbox caption="closable -- a close button on every tab of the window's own strip, the Bottom Tabs strip and these two side strips" halign=textnatural fill=none
+		vttrail=new checkbox caption="trailing -- the close buttons after the labels instead of before them" halign=textnatural fill=none
 		vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
 			vtside=new tabs position=side children={
 				new tab caption="First" children={
@@ -388,6 +389,7 @@ vt=new tab caption="Vertical Tabs" children={
 # flows they listen to (D20 default-closed; command flows regardless).
 tabs=w.t
 vtclose=w.t.vt.vtv.vtclose
+vttrail=w.t.vt.vtv.vttrail
 vtside=w.t.vt.vtv.vtc.vtside
 vtopp=w.t.vt.vtv.vtc.vtopp
 btabs=w.t.bt.btabs
@@ -501,6 +503,11 @@ func createMainWindow(desktop *trinkets.Desktop, application *app.Application) *
 	onToggle("vtclose", func(checked bool) {
 		for _, key := range []string{"tabs", "btabs", "vtside", "vtopp"} {
 			factory.byID[reply.IDs[key]].(*trinkets.TabTrinket).SetClosable(checked)
+		}
+	})
+	onToggle("vttrail", func(checked bool) {
+		for _, key := range []string{"tabs", "btabs", "vtside", "vtopp"} {
+			factory.byID[reply.IDs[key]].(*trinkets.TabTrinket).SetCloseLeading(!checked)
 		}
 	})
 	// A close button raises close with the tab's index. The tab stays: a demo
