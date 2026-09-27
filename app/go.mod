@@ -28,12 +28,13 @@ require (
 	github.com/gogpu/wgpu v0.30.32 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/phroun/argwild v0.0.2 // indirect
-	github.com/phroun/direct-key-handler v0.3.38 // indirect
+	github.com/phroun/direct-key-handler v0.3.39 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
 	github.com/phroun/key-sequence-processor v0.1.11 // indirect
 	github.com/phroun/khatool v0.1.2 // indirect
 	github.com/phroun/pawscript v0.2.17-alpha // indirect
 	github.com/phroun/purfecterm v0.2.55 // indirect
+	github.com/phroun/serval v0.1.2-alpha // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/image v0.45.0 // indirect

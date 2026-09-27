@@ -90,6 +90,28 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### Host suspend, after v0.1.32 (record)
+
+Brought down ahead of a tag: upstream `main` at
+[#51](https://github.com/phroun/kittytk/pull/51) (`host_suspend` and job
+control in the TUI backend) plus the direct-key-handler v0.3.39 pin from
+[#52](https://github.com/phroun/kittytk/pull/52). The subtree was v0.1.32-alpha
+plus three unsent mew-side edits (`hostcfg.Serve` in both host `main.go`
+files, one word in `patches/README.md`), so the delta was applied as a patch
+(`git diff v0.1.32-alpha <head> -- . ':(exclude)go.mod' ':(exclude)go.sum'`,
+applied with `--directory=kittytk`) rather than copied over, which would have
+reverted those edits. It applied cleanly: 15 files, no fork-boundary file
+touched.
+
+The root and app pins stay at v0.1.32-alpha until upstream tags the next
+release. direct-key-handler moved v0.3.38 -> v0.3.39 in all three modules,
+`go.sum` per module via `GOWORK=off go mod tidy`.
+
+`GOWORK=off` builds the root and `kittytk` modules. `app` does not, and did
+not before this sync either: on `main` it lacked a `serval` sum, and past that
+it pins the published mew v0.3.1-alpha, which predates pawscript v0.2.17's
+API. That needs a mew tag, not a toolkit change.
+
 ### The v0.1.31 sync (record)
 
 v0.1.30-alpha -> **v0.1.31-alpha**, the direction arc, as PR

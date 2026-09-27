@@ -47,6 +47,13 @@ const (
 	CmdGUIScaleUp         = "gui_scale_up"
 	CmdGUIScaleReset      = "gui_scale_reset"
 
+	// Suspending the host: the process holding the terminal hands it back to
+	// the shell and stops, as a job-control shell's suspend would, until the
+	// shell continues it. Every application on the host stops with it. Bound
+	// to no key by default; a host that cannot suspend (a graphical one, or
+	// a terminal with no job control) takes the command and does nothing.
+	CmdHostSuspend = "host_suspend"
+
 	// Focus, which belongs to no one trinket.
 	CmdFocusNext  = "focus_next"
 	CmdFocusPrior = "focus_prior"

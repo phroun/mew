@@ -7188,6 +7188,17 @@ func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
 			d.helpMenuFromKey()
 			return true
 		}
+	case core.CmdHostSuspend:
+		// Taken whether or not the backend can suspend: on a graphical host,
+		// or a terminal with no job control, the key does nothing rather than
+		// falling through to whatever has focus.
+		d.mu.RLock()
+		backend := d.backend
+		d.mu.RUnlock()
+		if s, ok := backend.(core.HostSuspender); ok {
+			s.SuspendHost()
+		}
+		return true
 	}
 	// Anything else may be a menu item's own command -- Quit, Hide, Exit
 	// Desktop, an application's. The key has already been resolved once, by

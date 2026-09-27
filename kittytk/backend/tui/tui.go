@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -252,6 +253,18 @@ type TUIBackend struct {
 	// never blocked while the terminal prompts the user.
 	osc52Paste      bool
 	onClipboardRead func(string)
+
+	// jobControl says this backend answers SIGTSTP and SIGCONT itself, handing
+	// the terminal back before the process stops and taking it again once it
+	// is continued (see suspend.go). From TUIOptions.JobControl.
+	jobControl bool
+	// suspendMu lets one suspend run at a time: the host_suspend command and
+	// a SIGTSTP from outside can arrive together.
+	suspendMu sync.Mutex
+	// ownConts counts the SIGCONTs this process is owed by stops it sent
+	// itself, so the watcher can tell those apart from a continue after a
+	// SIGSTOP from outside, which the suspend path never saw coming.
+	ownConts atomic.Int32
 }
 
 // TUIOptions configures the TUI backend.
@@ -304,6 +317,14 @@ type TUIOptions struct {
 	// clipboard only. Default: true.
 	OSC52Clipboard bool
 
+	// JobControl makes the backend a good citizen of a job-control shell: a
+	// SIGTSTP from outside hands the terminal back before the process stops,
+	// a SIGCONT takes it again and repaints, and SuspendHost is available to
+	// the host_suspend command. Unix only; ignored elsewhere. It does not make
+	// ^Z suspend anything: the key reader keeps the terminal in raw mode, so
+	// ^Z arrives as a key like any other. Default: true.
+	JobControl bool
+
 	// OSC52Paste enables OSC 52 clipboard read-back for Paste: query the
 	// terminal for its clipboard and use the reply, falling back to the
 	// internal clipboard when the terminal doesn't answer (many disable read
@@ -321,6 +342,7 @@ func DefaultTUIOptions() TUIOptions {
 		EnableMouse:     true,
 		AlternateScreen: true,
 		OSC52Clipboard:  true,
+		JobControl:      true,
 	}
 }
 
@@ -354,6 +376,7 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		hasUnicode: true, // Assume Unicode support
 		osc52:      opts.OSC52Clipboard,
 		osc52Paste: opts.OSC52Paste,
+		jobControl: opts.JobControl,
 		// The terminal starts on the reader's own caret colour, and so does
 		// what we believe about it -- the zero Color is black, which would let
 		// a trinket asking for black go unwritten.
@@ -592,6 +615,12 @@ func (t *TUIBackend) Init() error {
 	// Handle terminal resize
 	go t.handleResize()
 
+	// Hand the terminal back around a stop from outside, and take it again
+	// when continued (see suspend.go).
+	if t.jobControl {
+		go t.watchJobControl()
+	}
+
 	return nil
 }
 
@@ -627,45 +656,52 @@ func (t *TUIBackend) Shutdown() {
 // event loop holds and does nothing but write escapes.
 func (t *TUIBackend) RestoreTerminal() {
 	t.restored.Do(func() {
-		// Disable mouse. ?1016l first (harmless if it was never enabled) so the
-		// outer terminal drops back to cell reports before the rest go off.
-		if t.hasMouse {
-			t.writeTTY("\033[?1016l\033[?1006l\033[?1003l\033[?1002l\033[?1000l")
-		}
-
-		// Show cursor
-		t.writeTTY("\033[?25h")
-		t.cursorShown = true
-
-		// Disable bracketed paste (harmless if the terminal never enabled it).
-		t.writeTTY("\033[?2004l")
-
-		// Pop the "kitty" keyboard protocol - BEFORE leaving the alternate
-		// screen, because the flag stack is per-screen and the alternate
-		// screen's is the one Init pushed onto. Popping after the switch back
-		// would pop the MAIN screen's stack, which we never pushed, and leave
-		// our own push standing on the screen we just left.
-		//
-		// Popping an empty stack is a no-op, so this stays safe on a terminal
-		// that ignored the push. The explicit reset after it covers a terminal
-		// that honours the flags but not the stack.
-		t.writeTTY("\033[<u")
-		t.writeTTY("\033[=0;1u")
-
-		// Focus reporting off. Left on, the shell that inherits this terminal
-		// is sent CSI I and CSI O on every alt-tab and types them as text.
-		t.writeTTY("\033[?1004l")
-
-		// Leave alternate screen
-		t.writeTTY("\033[?1049l")
-
-		// Reset colors, the caret's own among them: a caret left in a colour
-		// this process chose would follow the shell that inherits the terminal.
-		t.writeTTY("\033[0m")
-		t.writeTTY("\033]112\033\\")
-
+		t.leaveTerminalModes()
 		unregisterLive(t)
 	})
+}
+
+// leaveTerminalModes turns off everything enterTerminalModes turned on, in the
+// mirror order. RestoreTerminal runs it once, at the end; a host suspend runs
+// it every time the terminal is handed back to the shell, which is why it is
+// not behind RestoreTerminal's once-only guard.
+func (t *TUIBackend) leaveTerminalModes() {
+	// Disable mouse. ?1016l first (harmless if it was never enabled) so the
+	// outer terminal drops back to cell reports before the rest go off.
+	if t.hasMouse {
+		t.writeTTY("\033[?1016l\033[?1006l\033[?1003l\033[?1002l\033[?1000l")
+	}
+
+	// Show cursor
+	t.writeTTY("\033[?25h")
+	t.cursorShown = true
+
+	// Disable bracketed paste (harmless if the terminal never enabled it).
+	t.writeTTY("\033[?2004l")
+
+	// Pop the "kitty" keyboard protocol - BEFORE leaving the alternate
+	// screen, because the flag stack is per-screen and the alternate
+	// screen's is the one Init pushed onto. Popping after the switch back
+	// would pop the MAIN screen's stack, which we never pushed, and leave
+	// our own push standing on the screen we just left.
+	//
+	// Popping an empty stack is a no-op, so this stays safe on a terminal
+	// that ignored the push. The explicit reset after it covers a terminal
+	// that honours the flags but not the stack.
+	t.writeTTY("\033[<u")
+	t.writeTTY("\033[=0;1u")
+
+	// Focus reporting off. Left on, the shell that inherits this terminal
+	// is sent CSI I and CSI O on every alt-tab and types them as text.
+	t.writeTTY("\033[?1004l")
+
+	// Leave alternate screen
+	t.writeTTY("\033[?1049l")
+
+	// Reset colors, the caret's own among them: a caret left in a colour
+	// this process chose would follow the shell that inherits the terminal.
+	t.writeTTY("\033[0m")
+	t.writeTTY("\033]112\033\\")
 }
 
 // allocateBuffers creates the screen buffers.
