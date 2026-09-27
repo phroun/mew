@@ -40,10 +40,21 @@ import (
 //	desktop_frame  =       ; themed (default) / native_titlebar / native
 //	titlebar_scale =       ; graphical title-bar height and content scale
 //	                       ;   (1.0 = classic full-cell row, the default)
+//	menu_scale     =       ; menu bar / dropdown / context menu row height and
+//	                       ;   content scale (1.0 = the default)
+//	shortcut_scale =       ; menu shortcut column size against the item text
+//	                       ;   (0.8 = the default)
+//	shortcut_native_scale = ; further reduction for Apple's face in [system]
+//	                       ;   native mode, compounded (0.8, so 0.64 together)
 //
 //	[service]          ; both hosts
 //	endpoint =             ; blank = default; tcp://host:port, tls://…, or a socket path
 //	token    =             ; optional shared secret
+//	pre_trusted_only =     ; true = admit only clients already decided about
+//	prompt_local     =     ; true = ask about same-machine connections too
+//	                       ; Both are switches in the Connections window too;
+//	                       ;   throwing one there writes the desktop's `current`
+//	                       ;   file, which is read after this one.
 //
 //	[system]           ; graphical host menu-glyph style
 //	native =               ; true=native on macOS, mac=force any OS, else compact ^X/M-x
@@ -55,6 +66,19 @@ import (
 // Environment variables still win over the file (KITTYTK_DISPLAY for the
 // endpoint, KITTYTK_TOKEN for the token), via hostcfg.Config's resolvers.
 
+// editorConfName is mew's own launch configuration file, read from ~/.mew, and
+// the word shown where a setting it carries accounts for itself.
+const editorConfName = "editor.conf"
+
+// isConfTrue reads the permissive booleans this file's dialect uses.
+func isConfTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // LoadHostConfig returns the KittyTK launch configuration for the mew hosts,
 // read from the launching user's ~/.mew/editor.conf over the built-in defaults.
 // A missing file or home directory just yields the defaults.
@@ -64,12 +88,17 @@ func LoadHostConfig() hostcfg.Config {
 	// defaults to "software"); [window] renderer= in editor.conf overrides.
 	cfg.Renderer = "webgpu"
 	if home, err := os.UserHomeDir(); err == nil {
-		path := filepath.Join(home, ".mew", "editor.conf")
+		path := filepath.Join(home, ".mew", editorConfName)
 		if data, err := os.ReadFile(path); err == nil {
 			applyHostConf(parseHostConfSections(data), &cfg)
 			cfg.Source = path
 		}
 	}
+	// What the user has since changed in the desktop itself, over the top of
+	// editor.conf. mew reads its own file rather than kittytk.ini, so it has to
+	// ask for this overlay by name -- without it a switch thrown in the
+	// Connections window would be written and never read back here.
+	cfg.ApplyCurrent()
 	// MEW_RENDERER=software|webgpu overrides config and default — a quick way to
 	// switch backends without editing editor.conf, useful where one backend's
 	// native library (wgpu_native for webgpu) is not installed.
@@ -169,6 +198,25 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 			cfg.TitleBarScale = f
 		}
 	}
+	// menu_scale: the menu bar, its dropdowns and context menus at this
+	// fraction of the classic full-cell row, on titlebar_scale's terms.
+	if v, ok := window["menu_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.MenuScale = f
+		}
+	}
+	// shortcut_scale: the menu shortcut column against the item text, and
+	// shortcut_native_scale compounded on top of it for Apple's face.
+	if v, ok := window["shortcut_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.ShortcutScale = f
+		}
+	}
+	if v, ok := window["shortcut_native_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.ShortcutNativeScale = f
+		}
+	}
 	// wallpaper: the image path plus its layout (mode / tile / align / filter /
 	// scale). Empty strings and a zero scale keep the built-in pattern and the
 	// layout defaults, so a partial [window] section need not restate them.
@@ -183,9 +231,17 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 		}
 	}
 
-	// [service] - the display endpoint and shared secret (both hosts).
+	// [service] - the display endpoint, the shared secret, and the two
+	// connection policies the Connections window also carries. A policy names
+	// this file where the window accounts for it, and is overlaid afterwards by
+	// anything the user has since changed in the window itself.
 	setStr(service, "endpoint", &cfg.Endpoint)
 	setStr(service, "token", &cfg.Token)
+	for _, name := range []string{hostcfg.PolicyPreTrustedOnly, hostcfg.PolicyPromptLocal} {
+		if v, ok := service[name]; ok && strings.TrimSpace(v) != "" {
+			cfg.SetPolicy(name, isConfTrue(v), editorConfName)
+		}
+	}
 
 	// [system] density - the PHYSICAL screen's content scale, overriding what
 	// the window system reports. Blank, zero or unparseable leaves it on auto

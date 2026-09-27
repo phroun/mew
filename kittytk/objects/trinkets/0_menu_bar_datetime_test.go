@@ -14,7 +14,6 @@ type propMeasurer struct{}
 func (propMeasurer) MeasureText(_ *core.Font, s string) core.Unit {
 	return core.Unit(len([]rune(s))) * 5
 }
-func (propMeasurer) LineHeight(_ *core.Font) core.Unit { return 16 }
 
 // The overflow ellipsis is measured through the menu bar's font (the
 // proportional path), not the monospace cell width.

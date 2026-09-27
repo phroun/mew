@@ -11,7 +11,7 @@ import (
 // cells, the same font pointer — so every pre-kit painter's output is
 // reproduced bit for bit.
 func TestTitleBarMetricsIdentityAtScaleOne(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 	tm := TitleBarMetricsFor(cell, font, true)
 	if tm.RowH != 16 || tm.CellW != 8 || tm.ButtonW != 24 || tm.YOff != 0 {
@@ -29,7 +29,7 @@ func TestTitleBarMetricsIdentityAtScaleOne(t *testing.T) {
 func TestTitleBarMetricsQuantizeOnUnitGrid(t *testing.T) {
 	t.Cleanup(func() { core.SetTitleBarScale(1) })
 	core.SetTitleBarScale(0.7)
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 	tm := TitleBarMetricsFor(cell, font, true)
 	if tm.RowH != 12 {
@@ -61,7 +61,7 @@ func TestTitleBarMetricsQuantizeOnUnitGrid(t *testing.T) {
 func TestTitleBarMetricsPinCellSurfaces(t *testing.T) {
 	t.Cleanup(func() { core.SetTitleBarScale(1) })
 	core.SetTitleBarScale(0.7)
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 	tm := TitleBarMetricsFor(cell, font, false)
 	if tm.Scale != 1 || tm.RowH != 16 || tm.CellW != 8 || tm.Font != font {
@@ -90,7 +90,7 @@ func TestDecodeTitleGeometry(t *testing.T) {
 	if _, _, _, ok := DecodeTitleGeometry(core.CmdTrinketCancel); ok {
 		t.Error("a non-geometry command decoded as geometry")
 	}
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	if dx, dy := TitleGeometryDelta("Right", false, cell); dx != 8 || dy != 0 {
 		t.Errorf("fine right = (%v,%v), want (8,0)", dx, dy)
 	}
@@ -99,33 +99,61 @@ func TestDecodeTitleGeometry(t *testing.T) {
 	}
 }
 
-// The double-click tracker fires on the second press within 400ms and a
+// The double-click tracker fires on the second CLICK within 400ms and a
 // cell, consumes on fire (no tripling), and treats a press a cell away as
 // a fresh first click.
 func TestDoubleClickTrackerConsumesOnFire(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	var tr DoubleClickTracker
 	if tr.Press(100, 50, cell) {
 		t.Error("first press fired")
 	}
+	tr.Release()
 	if !tr.Press(103, 52, cell) {
-		t.Error("second press within a cell did not fire")
+		t.Error("second click within a cell did not fire")
 	}
+	tr.Release()
 	if tr.Press(103, 52, cell) {
-		t.Error("third press fired (memory not consumed)")
+		t.Error("third click fired (memory not consumed)")
 	}
 	// A press far away is a fresh first click...
 	tr.Reset()
 	if tr.Press(100, 50, cell) {
 		t.Error("press after reset fired")
 	}
+	tr.Release()
 	if tr.Press(200, 50, cell) {
 		t.Error("press a full row away paired with the first")
 	}
 	// ...and stale timing never pairs.
-	tr = DoubleClickTracker{at: time.Now().Add(-time.Second), x: 100, y: 50}
+	tr = DoubleClickTracker{at: time.Now().Add(-time.Second), x: 100, y: 50, released: true}
 	if tr.Press(100, 50, cell) {
 		t.Error("a second press one second later fired")
+	}
+}
+
+// A double-click is press, RELEASE, press. A press delivered twice with the
+// button never coming up is one click reported twice -- a terminal echoing
+// the same button on two tracking modes, a host replaying an event -- and it
+// must not complete a double-click on its own, or EVERY single click reads as
+// one and a window maximizes and restores on each.
+func TestDoubleClickTrackerNeedsTheButtonToComeUp(t *testing.T) {
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
+	var tr DoubleClickTracker
+
+	if tr.Press(100, 50, cell) {
+		t.Error("first press fired")
+	}
+	if tr.Press(100, 50, cell) {
+		t.Error("a second press with no release between them fired")
+	}
+	if tr.Press(100, 50, cell) {
+		t.Error("a third press with no release between them fired")
+	}
+	// And once the button does come up, the next press completes the pair.
+	tr.Release()
+	if !tr.Press(100, 50, cell) {
+		t.Error("a press after the button came up did not fire")
 	}
 }
 
@@ -135,7 +163,7 @@ func TestDoubleClickTrackerConsumesOnFire(t *testing.T) {
 // that garbage straight on the frame path.
 func TestTitleBarMetricsDoesNotAllocatePerCall(t *testing.T) {
 	t.Cleanup(func() { core.SetTitleBarScale(1) })
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 
 	for _, scale := range []float64{1, 0.7} {

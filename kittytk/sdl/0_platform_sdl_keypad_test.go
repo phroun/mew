@@ -139,15 +139,15 @@ func TestTheDuplicatedPadCharactersAreToldApart(t *testing.T) {
 	seen := map[string]uint32{}
 	for scancode := range keypadKeys {
 		p, b, _, _ := keypadKey(pad(scancode, true), true)
-		if prev, dup := seen[p+b]; dup {
-			t.Errorf("scancodes %d and %d both spell themselves %q", prev, scancode, p+b)
+		if first, dup := seen[p+b]; dup {
+			t.Errorf("scancodes %d and %d both spell themselves %q", first, scancode, p+b)
 		}
 		seen[p+b] = scancode
 	}
 	for scancode := range archaicPadKeys {
 		p, b, _, _ := keypadKey(pad(scancode, true), true)
-		if prev, dup := seen[p+b]; dup {
-			t.Errorf("scancodes %d and %d both spell themselves %q", prev, scancode, p+b)
+		if first, dup := seen[p+b]; dup {
+			t.Errorf("scancodes %d and %d both spell themselves %q", first, scancode, p+b)
 		}
 		seen[p+b] = scancode
 	}

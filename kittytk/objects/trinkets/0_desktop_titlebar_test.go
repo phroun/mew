@@ -45,7 +45,7 @@ func TestThemedFrameStripsChromeAndCarriesATitleBar(t *testing.T) {
 		if surf.bordered {
 			t.Error("themed frame left the OS chrome on")
 		}
-		cell := d.EffectiveCellMetrics().CellHeight
+		cell := d.EffectiveCellMetrics().UnitsPerCellHeight
 		b := d.hostFrameInset()
 		if b <= 0 {
 			t.Fatal("themed frame reserves no border")
@@ -115,7 +115,7 @@ func TestThemedFrameTranslatesTheMenuBar(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
 		surf := plat.surfaces[0]
 		h := surf.handler
-		cell := d.EffectiveCellMetrics().CellHeight
+		cell := d.EffectiveCellMetrics().UnitsPerCellHeight
 		bx, by := d.hostChromeOffset()
 
 		// Press on the Ψ title, on the menu bar's (inset) row.
@@ -648,7 +648,7 @@ func TestScaledTitleBarShrinksTheThemedRow(t *testing.T) {
 		if got := d.TitleBarHeight(); got != 12 {
 			t.Fatalf("TitleBarHeight = %v, want ceil(0.7×16) = 12", got)
 		}
-		cell := d.EffectiveCellMetrics().CellHeight
+		cell := d.EffectiveCellMetrics().UnitsPerCellHeight
 		if got := d.ClientArea().Y; got != b+12+cell {
 			t.Errorf("ClientArea.Y = %v, want border + scaled bar + menu row (%v)", got, b+12+cell)
 		}
@@ -771,7 +771,7 @@ func TestThemedFrameLineSurvivesBesideAWindow(t *testing.T) {
 // too, which is already aligned.
 func TestMaximizedChildControlsAlignWithTheHost(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
-		cell := d.EffectiveCellMetrics().CellWidth
+		cell := d.EffectiveCellMetrics().UnitsPerCellWidth
 		if got := d.TitleControlsInset(); got != cell {
 			t.Errorf("themed desktop inset = %v, want one cell (%v)", got, cell)
 		}

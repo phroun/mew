@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/protocol"
@@ -56,9 +58,9 @@ func (a *app) wireMainWindow() {
 	})
 	ui.Checkbox("dfont").OnToggle(func(s protocol.FlagState) {
 		if s == protocol.FlagTrue {
-			_, _ = a.conn.Exec("desktopfont tuesday")
+			_ = a.conn.Host().Set("desktopfont=tuesday")
 		} else {
-			_, _ = a.conn.Exec("desktopfont default")
+			_ = a.conn.Host().Set("desktopfont=default")
 		}
 	})
 	ui.Checkbox("grid").OnToggle(func(s protocol.FlagState) {
@@ -116,24 +118,257 @@ func (a *app) wireMainWindow() {
 	ui.Object("tfms").On("toggle", setMask(`echo=password mask="*"`))
 	ui.Object("tfmh").On("toggle", setMask(`echo=password mask="#"`))
 	ui.Object("tfmn").On("toggle", setMask(`echo=normal`))
+
+	// The direction marks, on the field beside the switch. They are an editing
+	// aid, so they appear while that field is focused and the plain text comes
+	// back when it is not.
+	tfbidi := ui.Object("tfbidi")
+	ui.Object("tfbidic").On("toggle", func(ev *protocol.Event) {
+		if ev.Flag("checked") == protocol.FlagTrue {
+			_ = tfbidi.Set("show_bidi_controls")
+			return
+		}
+		_ = tfbidi.Set("!show_bidi_controls")
+	})
+
+	a.wireDenomination(win)
+	a.wireLimits()
+	a.wireDirection()
+	a.wireTerminalTab(tabs)
 }
 
-// wireMenus registers the primary application's command handlers. The
-// desktop-reaching actions (edit ops, theme, tiling, announcements) go
-// out as display app-verbs; the rest are handled here in the client.
+// wireDirection turns the Grid and Flex tabs over.
+//
+// direction is inherited, so it goes on the panel holding the demonstrations
+// and reaches everything under it -- the bands of a grid, the run of a flex,
+// and every halign a child in them carries. The checkbox itself sits OUTSIDE
+// that panel, so the control stays where the reader left it while what it
+// controls turns over.
+func (a *app) wireDirection() {
+	ui := a.ui
+	turn := func(target client.Handle) func(protocol.FlagState) {
+		return func(s protocol.FlagState) {
+			if s == protocol.FlagTrue {
+				_ = target.Set("direction=rtl")
+				return
+			}
+			_ = target.Set("direction=ltr")
+		}
+	}
+	// Written out rather than looped: a name reached through a variable is a
+	// name the surfacing check cannot read, and an unsurfaced handle is id 0,
+	// which is quiet -- the switch would look wired and do nothing.
+	ui.Checkbox("grtl").OnToggle(turn(ui.Object("grc")))   // a grid's columns
+	ui.Checkbox("fxrtl").OnToggle(turn(ui.Object("fxc")))  // a flex's runs and lines
+	ui.Checkbox("sertl").OnToggle(turn(ui.Object("serc"))) // boxes, arrows, captions
+	ui.Checkbox("ssrtl").OnToggle(turn(ui.Object("ssc")))  // a scroll area's bars
+	ui.Checkbox("slrtl").OnToggle(turn(ui.Object("slc")))  // a splitter's panes
+	ui.Checkbox("pgrtl").OnToggle(turn(ui.Object("pgc")))  // which end a bar fills from
+	// The LIST rather than the pane it sits in: the tree beside it is a later
+	// project, and turning the pane over would turn that too.
+	ui.Checkbox("lirtl").OnToggle(turn(ui.Object("lilv")))
+	// The TREE rather than the box holding it, so the switches under it stay
+	// where the reader left them. The Tags column names its own direction and
+	// keeps it either way round.
+	ui.Checkbox("drtl").OnToggle(turn(ui.Object("dtree")))
+	// One switch for every tab strip in the demo, so all three kinds can be
+	// read against each other: the two side strips move to the other edge
+	// while the window's own strip and the bottom one run the other way.
+	// Written out rather than looped, for the reason above.
+	//
+	// The window's own strip HOLDS this switch, so turning it would turn the
+	// switch too. The checkbox names its own direction to stay put -- which is
+	// the other way a control keeps its place, and the one available when it
+	// cannot sit outside what it controls.
+	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("vtc")))
+	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("tabs")))
+	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("btabs")))
+}
+
+// wireLimits drives the Limits tab: the two bounds a trinket may carry, and
+// what a layout does when they bite.
+//
+// The middle box of the run takes a maximum and a minimum, so the maximum can
+// be watched stopping it -- and then watched losing to a minimum that
+// contradicts it. The capped button below shows the other half: a maximum
+// stops it filling its cell, and where it stops short its alignment places it.
+func (a *app) wireLimits() {
+	ui := a.ui
+	mid := ui.Object("lmid")
+	capped := ui.Object("lfill")
+
+	// Written as raw toggle events, the way the other radio groups here are:
+	// a group reports every button that changed, so each handler acts only on
+	// the one that came on.
+	set := func(target client.Handle, arg string) func(*protocol.Event) {
+		return func(ev *protocol.Event) {
+			if ev.Flag("checked") == protocol.FlagTrue {
+				_ = target.Set(arg)
+			}
+		}
+	}
+
+	ui.Object("lmaxnone").On("toggle", set(mid, "max_width=-1"))
+	ui.Object("lmax200").On("toggle", set(mid, "max_width=200"))
+	ui.Object("lmax120").On("toggle", set(mid, "max_width=120"))
+	ui.Object("lmax40").On("toggle", set(mid, "max_width=40"))
+	ui.Object("lmax0").On("toggle", set(mid, "max_width=0"))
+
+	ui.Object("lmin0").On("toggle", set(mid, "min_width=0"))
+	ui.Object("lmin160").On("toggle", set(mid, "min_width=160"))
+
+	ui.Object("lhbegin").On("toggle", set(capped, "halign=textnatural"))
+	ui.Object("lhcenter").On("toggle", set(capped, "halign=center"))
+	ui.Object("lhend").On("toggle", set(capped, "halign=textopposite"))
+
+	// Filling is what the maximum interrupts, so it is worth turning off to
+	// see that the two arrive at the same placement.
+	ui.Checkbox("lhfill").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = capped.Set("fill=both")
+			return
+		}
+		_ = capped.Set("fill=none")
+	})
+}
+
+// terminalTabIndex is the Terminal tab's position in the main window's
+// strip. The change event reports an index, so the tab has to be named by
+// one; a test checks the caption at this index is still "Terminal".
+const terminalTabIndex = 15
+
+// wireTerminalTab drives the Terminal tab's surface. The PTY starts the
+// first time the tab is selected rather than at build: a shell is a child
+// process, and a tab nobody opened should not have one.
+func (a *app) wireTerminalTab(tabs client.Handle) {
+	ui := a.ui
+	term := ui.Object("mterm")
+
+	// ESC [ 2 J clears the screen, ESC [ H puts the cursor home -- fed in
+	// as if the child had written them, which is the only direction the
+	// display accepts.
+	ui.Button("mtclear").OnClick(func() {
+		_ = term.Set(`feed="\e[2J\e[H"`)
+	})
+
+	tabs.On("change", func(ev *protocol.Event) {
+		if i, ok := ev.Int("selected"); !ok || i != terminalTabIndex {
+			return
+		}
+		if a.terminalStarted {
+			return
+		}
+		a.terminalStarted = true
+		a.wireTerminal(term)
+	})
+}
+
+// What the Denomination tab will apply. One unit per cell is the floor
+// because the cell conversions divide by it -- UnitsToCellX and its row
+// counterpart -- so zero is not a small denomination, it is a division by
+// zero. The ceiling is a demo's own limit rather than the model's.
+const (
+	denomMin = 1
+	denomMax = 64
+)
+
+// wireDenomination drives the window's own column_units and row_units --
+// the per-axis D8 spelling, which is what makes X and Y independent. The
+// Selection tab's grid checkbox reaches the same machinery through the
+// window's denomination property, but that one sets the row height alone
+// and resets the column to its default.
+func (a *app) wireDenomination(win client.Handle) {
+	ui := a.ui
+	echo := ui.Object("dnecho")
+	x := ui.TextInput("dnx")
+	y := ui.TextInput("dny")
+
+	say := func(s string) {
+		_ = echo.Set("caption=" + protocol.Quote(s))
+		a.setStatus(s)
+	}
+
+	// apply reads both fields, so pressing Return in either one commits
+	// the pair the person can see rather than half of it.
+	apply := func() {
+		cx, errX := strconv.Atoi(strings.TrimSpace(x.Text()))
+		cy, errY := strconv.Atoi(strings.TrimSpace(y.Text()))
+		switch {
+		case errX != nil || errY != nil:
+			say("Denomination: X and Y must both be whole numbers.")
+			return
+		case cx < denomMin || cx > denomMax || cy < denomMin || cy > denomMax:
+			say(fmt.Sprintf("Denomination: %d x %d is out of range (%d to %d).",
+				cx, cy, denomMin, denomMax))
+			return
+		}
+		if err := win.Set(fmt.Sprintf("column_units=%d row_units=%d", cx, cy)); err != nil {
+			say("Denomination: " + err.Error())
+			return
+		}
+		say(fmt.Sprintf("Denomination is now %d x %d.", cx, cy))
+	}
+
+	// Return in either field applies, which is what complete is for: the
+	// person saying they are done with the value, not every keystroke.
+	x.OnComplete(func(string) { apply() })
+	y.OnComplete(func(string) { apply() })
+	ui.Button("dnap").OnClick(apply)
+
+	// A preset fills the fields as well as applying, so the two never
+	// disagree about what the window is showing.
+	preset := func(cx, cy int) func() {
+		return func() {
+			_ = x.SetText(strconv.Itoa(cx))
+			_ = y.SetText(strconv.Itoa(cy))
+			apply()
+		}
+	}
+	ui.Button("dnd").OnClick(preset(8, 16))
+	ui.Button("dnh").OnClick(preset(4, 8))
+	ui.Button("dnt").OnClick(preset(16, 32))
+	ui.Button("dns").OnClick(preset(16, 16))
+	ui.Button("dnn").OnClick(preset(8, 32))
+}
+
+// wireMenus registers the primary application's command handlers. The theme
+// and the desktop font are properties of the display; the other
+// desktop-reaching actions (edit ops, tiling, announcements) go out as display
+// app-verbs; the rest are handled here in the client.
 func (a *app) wireMenus() {
 	c := a.conn
 
 	// Demo menu.
 	c.OnCommand("demo.file.new", func() { a.openTerminalWindow() })
+	c.OnCommand("demo.file.bounded", func() { a.openBoundedWindow() })
+	a.wireSulking(c)
 
 	// Edit menu: Cut/Copy/Paste/Select All are supplied by the host's
 	// system Edit menu and act on the focused trinket directly; the client
 	// only contributes the custom Raw Key Input item.
-	c.OnCommand("demo.edit.rawkey", func() { _, _ = c.Exec("rawkey") })
+	c.OnCommand("demo.edit.rawkey", func() { _ = c.Host().Do("rawkey") })
 
-	// View menu.
-	c.OnCommand("demo.view.theme", func() { _, _ = c.Exec("theme") })
+	// View menu. The display's theme is a property with two values, so the item
+	// has to know which way it is set before it can turn it over: it asks, ticks
+	// itself from the answer, and keeps count from there.
+	dark := true
+	_ = c.Host().AskFor(client.AskDark, func(ans *protocol.Answer) {
+		dark = ans.Flag("dark") == protocol.FlagTrue
+		tick := "checked"
+		if !dark {
+			tick = "!checked"
+		}
+		_ = a.ui.Object("mdark").Set(tick)
+	})
+
+	c.OnCommand("demo.view.theme", func() {
+		dark = !dark
+		prop := "dark"
+		if !dark {
+			prop = "!dark"
+		}
+		_ = c.Host().Set(prop)
+	})
 	c.OnCommand("demo.view.announce", func() { _, _ = c.Exec("announce_visual") })
 	c.OnCommand("demo.view.speak", func() { _, _ = c.Exec("announce_speak") })
 
@@ -156,6 +391,10 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.nested.pick", func() { a.setStatus("Nested: ordinary item") })
 	c.OnCommand("demo.nested.deep", func() { a.setStatus("Nested: fired from level 4") })
 
+	// The Lists tab's Make trouble button: a bundle that loads and has something
+	// said about it. See trouble.go.
+	a.wireTrouble(c)
+
 	// Help menu.
 	c.OnCommand("demo.help.about", func() { a.showAbout() })
 }
@@ -170,10 +409,11 @@ func (a *app) wireMDI() {
 	status := ui.Label("mdistatus")
 
 	c.OnCommand("demo.mdi.spawn", func() { a.spawnMDIChild() })
-	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Set("tile") })
-	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Set("cascade") })
-	c.OnCommand("demo.mdi.next", func() { _ = mdi.Set("next") })
-	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Set("prior") })
+	c.OnCommand("demo.mdi.spawnbounded", func() { a.spawnBoundedMDIChild() })
+	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Do("tile") })
+	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Do("cascade") })
+	c.OnCommand("demo.mdi.next", func() { _ = mdi.Do("next") })
+	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Do("prior") })
 
 	entries := make(map[uint64]client.Handle) // window id -> dock entry
 	dropEntry := func(winID uint64) {
@@ -199,7 +439,7 @@ func (a *app) wireMDI() {
 		entry.On("click", func(*protocol.Event) {
 			// D20: our own set never echoes a restore event, so the
 			// initiator drops its own dock entry.
-			if mdi.Set(fmt.Sprintf("restore=%d", winID)) == nil {
+			if mdi.Do(fmt.Sprintf("restore window=%d", winID)) == nil {
 				dropEntry(winID)
 			}
 		})
@@ -228,17 +468,61 @@ func (a *app) wireMDI() {
 
 // spawnMDIChild appends one document window into the MDI pane and wires
 // its New/Close buttons through click events (no per-child command IDs).
+//
+// Its [x] is answerable: the document says whether it may close, and says it after
+// asking the person -- with what is typed into it deciding how the question reads.
+// See confirmClose in closing.go. The Close button inside it is `remove`, which the
+// pane does without asking, the same way `destroy` never asks: the order came from
+// the application, and handing it back as a question would want an answer inside
+// the batch that gave the order.
 func (a *app) spawnMDIChild() {
 	a.mdiCount++
-	ui, err := a.conn.Build(mdiChildScript(a.mdiCount))
+	n := a.mdiCount
+	ui, err := a.conn.Build(mdiChildScript(n))
 	if err != nil {
 		return
 	}
 	winID := ui.ID("wwin")
 	ui.Button("wnew").OnClick(func() { a.spawnMDIChild() })
 	ui.Button("wclose").OnClick(func() {
-		_ = a.ui.Object("mdi").Set(fmt.Sprintf("remove=%d", winID))
+		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
 	})
+	text := ui.TextInput("wtext")
+	a.confirmClose(ui.Window("wwin"), fmt.Sprintf("Document %d", n),
+		func() bool { return strings.TrimSpace(text.Text()) != "" })
+}
+
+// spawnBoundedMDIChild spawns a child that says how far it grows, so the
+// pane's filler has something to surround: maximize it and it centers in the
+// pane with the shaded room around it.
+func (a *app) spawnBoundedMDIChild() {
+	a.mdiCount++
+	n := a.mdiCount
+	ui, err := a.conn.Build(mdiBoundedChildScript(n))
+	if err != nil {
+		return
+	}
+	winID := ui.ID("bwwin")
+	ui.Button("bwclose").OnClick(func() {
+		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
+	})
+	// It holds nothing to lose, so its question is only whether you meant it.
+	a.confirmClose(ui.Window("bwwin"), fmt.Sprintf("Bounded %d", n),
+		func() bool { return false })
+}
+
+// openBoundedWindow builds a desktop window that says how far it grows: the
+// same behaviour one level up, where the room it declines is the desktop's.
+func (a *app) openBoundedWindow() {
+	a.mdiCount++ // reuse the counter for a unique key and offset per window
+	n := a.mdiCount
+	ui, err := a.conn.Build(boundedWindowScript(n))
+	if err != nil {
+		return
+	}
+	win := ui.Window("bwin")
+	ui.Button("bwcloser").OnClick(func() { _ = win.Close() })
+	a.watchWindow(win.ID(), "the bounded window")
 }
 
 // openProtocolWindow builds the companion window whose content is all
@@ -248,6 +532,7 @@ func (a *app) openProtocolWindow() {
 	if err != nil {
 		return
 	}
+	a.watchWindow(ui.ID("pw"), "the protocol window")
 	status := ui.Label("pstatus")
 	ui.Checkbox("pcb").OnToggle(func(s protocol.FlagState) {
 		state := "off"
@@ -284,6 +569,7 @@ func (a *app) openTerminalWindow() {
 	}
 	win := ui.Window("dwin")
 	ui.Button("dcloser").OnClick(func() { _ = win.Close() })
+	a.watchWindow(win.ID(), "the demo window")
 	a.wireTerminal(ui.Object("dterm"))
 }
 
@@ -325,7 +611,7 @@ func (a *app) wireSecondary(n int) {
 	c.OnCommand("demo.app.close", func() { _ = ui.Window("w").Close() })
 	// Cut/Copy/Paste/Select All come from the host's system Edit menu; the
 	// client only wires the custom Raw Key Input item.
-	c.OnCommand("demo.app.rawkey", func() { _, _ = c.Exec("rawkey") })
+	c.OnCommand("demo.app.rawkey", func() { _ = c.Host().Do("rawkey") })
 	c.OnCommand("demo.app.info", func() {
 		_, _ = c.Exec(fmt.Sprintf(
 			`dlg=new messagebox icon=information ok title="About App %d" text="This is Secondary Application #%d\n\nIt has its own menus and status bar."`,
@@ -403,14 +689,14 @@ func (a *app) wireDetails() {
 		if s == protocol.FlagTrue {
 			n = 2
 		}
-		_ = dtree.Set(fmt.Sprintf("fixed_left=%d", n))
+		_ = dtree.Set(fmt.Sprintf("fixed_begin=%d", n))
 	})
 	ui.Checkbox("dpinr").OnToggle(func(s protocol.FlagState) {
 		n := 0
 		if s == protocol.FlagTrue {
 			n = 1
 		}
-		_ = dtree.Set(fmt.Sprintf("fixed_right=%d", n))
+		_ = dtree.Set(fmt.Sprintf("fixed_end=%d", n))
 	})
 	ui.Checkbox("dledger").OnToggle(func(s protocol.FlagState) {
 		if s == protocol.FlagTrue {

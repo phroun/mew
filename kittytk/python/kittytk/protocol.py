@@ -39,10 +39,11 @@ class ValueKind(enum.IntEnum):
 class Value:
     kind: ValueKind
     word: str = ""
-    number: float = 0.0
+    number: float = 0.0  # an int when is_int, a float otherwise
     is_int: bool = False
     str: str = ""
     block: Optional["Script"] = None
+    blob: bool = False  # a STRING built from bytes rather than text
 
 
 @dataclass
@@ -73,6 +74,116 @@ class ParseError(Exception):
         self.msg = msg
 
 
+# --- Building and writing values (mirror of wire/encode.go) --------------
+
+def new_string(s: str) -> Value:
+    """A quoted string value."""
+    return Value(kind=ValueKind.STRING, str=s)
+
+
+def new_blob(b: bytes) -> Value:
+    """A string value carrying bytes rather than text, so every one of them is
+    escaped on the way out."""
+    return Value(kind=ValueKind.STRING, str=b.decode('latin-1'), blob=True)
+
+
+def new_word(w: str) -> Value:
+    """A bare word: an identifier, an enum, or one of the four words that are
+    values (undefined, nil, true, false)."""
+    return Value(kind=ValueKind.WORD, word=w)
+
+
+def new_int(i: int) -> Value:
+    """An exact integer value."""
+    return Value(kind=ValueKind.NUMBER, number=int(i), is_int=True)
+
+
+def new_float(f: float) -> Value:
+    """A floating-point value. A whole float written through here is still a
+    float: new_int is what says an integer was meant."""
+    return Value(kind=ValueKind.NUMBER, number=float(f), is_int=False)
+
+
+def val(v) -> Value:
+    """A Python value as a wire value. A Value passes through, None becomes the
+    word `nil`, and anything with no spelling of its own is rendered as text."""
+    if v is None:
+        return new_word(WORD_NIL)
+    if isinstance(v, Value):
+        return v
+    if isinstance(v, bool):
+        return new_word(WORD_TRUE if v else WORD_FALSE)
+    if isinstance(v, str):
+        return new_string(v)
+    if isinstance(v, (bytes, bytearray)):
+        return new_blob(bytes(v))
+    if isinstance(v, int):
+        return new_int(v)
+    if isinstance(v, float):
+        return new_float(v)
+    return new_string(str(v))
+
+
+def named(name: str, v) -> Arg:
+    """One named value, for building an event's fields or a record's."""
+    return Arg(name=name, value=val(v))
+
+
+def encode_value(v: Optional[Value]) -> str:
+    """One value as wire text."""
+    if v is None:
+        return WORD_UNDEFINED
+    if v.kind == ValueKind.WORD:
+        # Bare where the grammar can read it back as itself, and bracketed
+        # where it cannot: `(objectLibrary/figaro/3)`. A symbol holding a
+        # closing parenthesis or a newline has no spelling at all, which is no
+        # loss -- neither can be written as a symbol in PawScript either.
+        if is_word(v.word):
+            return v.word
+        return "(" + v.word + ")"
+    if v.kind == ValueKind.NUMBER:
+        if v.is_int:
+            return str(int(v.number))
+        return repr(float(v.number))
+    if v.kind == ValueKind.STRING:
+        return quote_blob(v.str.encode('latin-1', 'replace')) if v.blob else quote(v.str)
+    if v.kind == ValueKind.BLOCK:
+        body = encode_script(v.block)
+        return "{ " + body + " }" if body else "{}"
+    return WORD_UNDEFINED
+
+
+def encode_script(script: Optional["Script"]) -> str:
+    """A run of statements, separated the way a block separates them."""
+    if script is None or not script.statements:
+        return ""
+    return "; ".join(encode_statement(st) for st in script.statements)
+
+
+def encode_statement(st: "Statement") -> str:
+    """One statement: its key if it has one, its verb, and its arguments."""
+    out = []
+    if st.key:
+        out.append(st.key + "=")
+    out.append(st.verb or st.ref)
+    for a in st.args:
+        out.append(" " + encode_arg(a))
+    return ''.join(out)
+
+
+def encode_arg(a: Arg) -> str:
+    """One argument: a flag, an operand, or a named value."""
+    if a.value is None:
+        if a.flag == FlagState.FALSE:
+            return "!" + a.name
+        if a.flag == FlagState.INDETERMINATE:
+            return "?" + a.name
+        return a.name
+    if not a.name:
+        return encode_value(a.value)
+    return a.name + "=" + encode_value(a.value)
+
+
 # --- String quoting (mirror of quoteString) ------------------------------
 
 def quote(s: str) -> str:
@@ -99,6 +210,27 @@ def quote(s: str) -> str:
                 out.append('\\x%02x' % o)
             else:
                 out.append(ch)
+    out.append('"')
+    return ''.join(out)
+
+
+def quote_blob(data: bytes) -> str:
+    """Render arbitrary bytes as a protocol string literal, escaping every one
+    that is not printable ASCII.
+
+    quote() takes text and lets anything printable through, which is right for
+    text and wrong for a blob: a blob may hold NUL, and bytes that are not
+    valid UTF-8 do not survive being read back as text."""
+    out = ['"']
+    for b in data:
+        if b == 0x22:
+            out.append('\\"')
+        elif b == 0x5c:
+            out.append('\\\\')
+        elif 0x20 <= b < 0x7f:
+            out.append(chr(b))
+        else:
+            out.append('\\x%02x' % b)
     out.append('"')
     return ''.join(out)
 
@@ -187,15 +319,82 @@ class Scanner:
 # --- Parser (mirror of parser.go) ----------------------------------------
 
 def _is_word_start(ch: str) -> bool:
-    return ch == '_' or ('a' <= ch <= 'z') or ('A' <= ch <= 'Z')
+    # A word may begin with a dot, which is how a name says it is a member of
+    # something rather than a word in its own right: `.size` is the member
+    # called size, and `size` is the word size.
+    return ch == '_' or ch == '.' or ('a' <= ch <= 'z') or ('A' <= ch <= 'Z')
 
 
 def _is_word_rune(ch: str) -> bool:
-    return _is_word_start(ch) or ch == '.' or ('0' <= ch <= '9')
+    # A name carries digits and hyphens after its first character, so
+    # `kebab-case` is one name rather than a name, a minus and a number.
+    return _is_word_start(ch) or ch == '-' or ('0' <= ch <= '9')
+
+
+def _is_token_rune(ch: str) -> bool:
+    """What a bare token is made of -- a number or a symbol, which are one run
+    of characters and told apart by what they say rather than by what they start
+    with. The plus is in for the exponent's sign, `1e+21`."""
+    return _is_word_rune(ch) or ch == '+'
 
 
 def _is_number_start(ch: str) -> bool:
     return ch == '-' or ('0' <= ch <= '9')
+
+
+def _number_value(text: str):
+    """A bare token as a number, or None where the token is not one:
+
+        [+-]? digits ( "." digits )? ( [eE] [+-]? digits )?
+
+    The form is written out rather than handed to the language's own parser,
+    because three implementations have to agree on exactly where a number stops
+    and a symbol begins -- and each language's parser accepts a different set of
+    extras: infinities, not-a-numbers, hexadecimal floats, digit separators."""
+    i, n = 0, len(text)
+
+    def digits() -> bool:
+        nonlocal i
+        start = i
+        while i < n and '0' <= text[i] <= '9':
+            i += 1
+        return i > start
+
+    if i < n and text[i] in '+-':
+        i += 1
+    if not digits():
+        return None
+    dot = False
+    if i < n and text[i] == '.':
+        i += 1
+        if not digits():
+            return None
+        dot = True
+    exp = False
+    if i < n and text[i] in 'eE':
+        i += 1
+        if i < n and text[i] in '+-':
+            i += 1
+        if not digits():
+            return None
+        exp = True
+    if i != n:
+        return None
+    # A whole number is read as an integer, so an id or a nanosecond stamp
+    # arrives with every digit it was sent with. Python integers are unbounded,
+    # so nothing here has to widen.
+    if not dot and not exp:
+        return Value(kind=ValueKind.NUMBER, number=int(text), is_int=True)
+    return Value(kind=ValueKind.NUMBER, number=float(text), is_int=False)
+
+
+def is_word(s: str) -> bool:
+    """Whether a string can be written as a bare word and read back as the same
+    one. A word is encoded as itself with nothing around it, so a caller
+    building one out of text from somewhere else has to ask."""
+    if not s or s[0] in '+-':
+        return False
+    return all(_is_token_rune(c) for c in s) and _number_value(s) is None
 
 
 def _hex_val(ch: str) -> int:
@@ -269,12 +468,55 @@ class _Parser:
             return in_block
         return False
 
+    def parse_head(self) -> str:
+        """A statement's head, which is a run of word runes and may begin with
+        any of them -- a digit included.
+
+        A block is not always a list of commands. A record is written as one,
+        and a record's field names belong to the data rather than to this
+        grammar: a positional member's name is its index, so `{ 0 "a"; 1 "b" }`
+        is a record of two of them.
+
+        The digits are taken as they stand rather than read as a number: `007`
+        and `7` are different names, and a name that went out one way has to
+        come back the same way."""
+        if self.eof() or not _is_word_rune(self.peek()):
+            raise self._errf("expected a name")
+        out = []
+        while not self.eof() and _is_word_rune(self.peek()):
+            out.append(self.advance())
+        return ''.join(out)
+
     def parse_word(self) -> str:
         if self.eof() or not _is_word_start(self.peek()):
             raise self._errf("expected a name")
         out = []
         while not self.eof() and _is_word_rune(self.peek()):
             out.append(self.advance())
+        return ''.join(out)
+
+    def parse_protected_symbol(self) -> str:
+        """A symbol the grammar has no bare spelling for:
+        `(objectLibrary/figaro/3)`.
+
+        Parentheses because that is what they already mean. PawScript evaluates
+        a block written in braces and preserves what is written in parentheses
+        -- literal content, held unparsed -- and the wire's block is braces too.
+
+        There are no escapes inside, and none are needed: a symbol cannot
+        contain a closing parenthesis in PawScript either. A newline is refused
+        for the same reason it ends a statement."""
+        self.advance()  # '('
+        out = []
+        while True:
+            if self.eof() or self.peek() == '\n':
+                raise self._errf("unterminated symbol: expected ')'")
+            if self.peek() == ')':
+                self.advance()
+                break
+            out.append(self.advance())
+        if not out:
+            raise self._errf("a symbol is a name, and () is not one")
         return ''.join(out)
 
     def parse_string(self) -> str:
@@ -321,30 +563,38 @@ class _Parser:
             else:
                 out.append(ch)
 
-    def parse_number(self) -> Value:
+    def scan_token(self) -> str:
+        """The whole run of a bare token. What it is is decided after it has
+        been read, not from the character it starts with."""
         out = []
-        if self.peek() == '-':
+        while not self.eof() and _is_token_rune(self.peek()):
             out.append(self.advance())
-        digits = 0
-        dot = False
-        while not self.eof():
-            ch = self.peek()
-            if '0' <= ch <= '9':
-                digits += 1
-                out.append(self.advance())
-            elif ch == '.' and not dot:
-                dot = True
-                out.append(self.advance())
-            else:
-                break
-        if digits == 0:
-            raise self._errf("malformed number")
-        text = ''.join(out)
-        try:
-            f = float(text)
-        except ValueError:
+        return ''.join(out)
+
+    def parse_number(self) -> Value:
+        text = self.scan_token()
+        v = _number_value(text)
+        if v is None:
             raise self._errf("malformed number %r" % text)
-        return Value(kind=ValueKind.NUMBER, number=f, is_int=not dot)
+        return v
+
+    def parse_number_or_word(self) -> Value:
+        """One bare token, and what it is.
+
+        A number and a symbol are the same run of characters, so which one it is
+        cannot be decided from the first character: `2026-09-13` starts like a
+        number and is a date, and `1e+21` starts like a date and is a number.
+
+        A token written with a leading sign is a number and nothing else, so one
+        that does not measure up is refused rather than quietly becoming a
+        symbol -- `-` on its own is a mistake, not an identifier."""
+        text = self.scan_token()
+        v = _number_value(text)
+        if v is not None:
+            return v
+        if text[0] in '+-':
+            raise self._errf("malformed number %r" % text)
+        return Value(kind=ValueKind.WORD, word=text)
 
     def parse_value(self, in_block: bool) -> Value:
         self.skip_inline()
@@ -353,6 +603,8 @@ class _Parser:
         c = self.peek()
         if c == '"':
             return Value(kind=ValueKind.STRING, str=self.parse_string())
+        if c == '(':
+            return Value(kind=ValueKind.WORD, word=self.parse_protected_symbol())
         if c == '{':
             self.advance()  # '{'
             block = self.parse_script(False)
@@ -360,10 +612,8 @@ class _Parser:
                 raise self._errf("unterminated block: expected '}'")
             self.advance()  # '}'
             return Value(kind=ValueKind.BLOCK, block=block)
-        if _is_number_start(c):
-            return self.parse_number()
-        if _is_word_start(c):
-            return Value(kind=ValueKind.WORD, word=self.parse_word())
+        if _is_token_rune(c):
+            return self.parse_number_or_word()
         raise self._errf("unexpected character %r in value position" % c)
 
     def parse_args(self, in_block: bool) -> List[Arg]:
@@ -387,15 +637,17 @@ class _Parser:
                     args.append(Arg(name=name, value=val))
                 else:
                     args.append(Arg(name=name, flag=FlagState.TRUE))
-            elif _is_number_start(ch):
-                val = self.parse_number()
-                args.append(Arg(value=val))
             else:
-                raise self._errf("unexpected %r: values must be named (name=value)" % ch)
+                # An operand: a value with no name, in the order it was
+                # written. A verb that takes operands reads them by position --
+                # a target reference (`set 1042 caption=...`), a filter's field
+                # and value, a block to nest. One that does not refuses them,
+                # which is where D10's named-properties rule holds.
+                args.append(Arg(value=self.parse_value(in_block)))
         return args
 
     def parse_statement(self, in_block: bool) -> Statement:
-        first = self.parse_word()
+        first = self.parse_head()
         self.skip_inline()
         if not self.eof() and self.peek() == '=':
             self.advance()  # '='
@@ -422,7 +674,7 @@ class _Parser:
                 if top_level:
                     raise self._errf("unexpected '}'")
                 return script
-            if not _is_word_start(self.peek()):
+            if not _is_word_rune(self.peek()):
                 raise self._errf("expected a statement, found %r" % self.peek())
             script.statements.append(self.parse_statement(not top_level))
 
@@ -432,6 +684,109 @@ def parse(src: str) -> Script:
 
 
 # --- Reply ---------------------------------------------------------------
+
+# --- Goodbye -------------------------------------------------------------
+
+# A GOODBYE is the display saying it is going, and it is the last thing a
+# connection carries:
+#
+#     welcome version=1 session=6
+#     ...
+#     goodbye reason=quit
+#
+# A closed socket cannot say why it closed. The display quitting and the
+# connection breaking look identical from this end, and they call for opposite
+# things: one is over, the other is worth waiting out.
+#
+# It is advisory -- a display that is killed says nothing at all -- and it asks
+# nothing: quitting is not askable, the part an application may refuse being each
+# window's close, which has already happened by the time this goes out.
+#
+# And it is not an instruction. An application may have business of its own that
+# outlives its display, and nothing here decides otherwise.
+GOODBYE_VERB = "goodbye"
+REASON_FIELD = "reason"
+
+# The display shutting down because it was asked to. Nothing is wrong and it is
+# not coming back on its own.
+GOODBYE_QUIT = "quit"
+
+# The display going down because something went wrong -- so whatever puts it back
+# is worth waiting for, where a quit is not.
+GOODBYE_CRASH = "crash"
+
+
+def goodbye_reason(stmt: "Statement"):
+    """The word off a goodbye statement, or None where it said nothing.
+
+    A farewell with nothing to say is still a farewell.
+    """
+    if stmt is None:
+        return None
+    for a in stmt.args:
+        if a.name != REASON_FIELD or a.value is None:
+            continue
+        if a.value.kind == ValueKind.WORD:
+            return a.value.word
+        if a.value.kind == ValueKind.STRING:
+            return a.value.str
+    return None
+
+
+TROUBLE_VERB = "trouble"
+
+
+@dataclass
+class Trouble:
+    """One thing the display says went wrong without stopping the batch.
+
+    A refusal is what a batch is answered WITH, in place of its reply. This is
+    not that: the statements ran and something on the way is worth the author
+    knowing -- an optional include a bundle could not find, a hint that cannot
+    mean what it says. It travels just before the reply, so it is part of the
+    answer to the batch that caused it.
+
+    `about` is what it was about, in the words the statement used; `text` is the
+    reason, in the words of whoever reported it."""
+
+    about: str = ""
+    text: str = ""
+
+
+def encode_trouble(t: "Trouble") -> str:
+    """Render one as a wire statement."""
+    out = TROUBLE_VERB
+    if t.about:
+        out += " about=" + quote(t.about)
+    return out + " text=" + quote(t.text)
+
+
+def decode_trouble(stmt: Statement) -> "Trouble":
+    """Parse a `trouble` statement into what it says.
+
+    One with no `text=` says nothing and is refused: a reader shown a complaint
+    with no reason on it is told there is a problem and nothing else."""
+    if stmt.verb != TROUBLE_VERB:
+        raise ValueError("not a trouble statement: %r" % stmt.verb)
+    t = Trouble()
+    said = False
+    for a in stmt.args:
+        # Only the two it reads are checked. An argument this version does not
+        # know is a later version saying more, and a client that refused the whole
+        # statement over one would stop hearing complaints the day the display
+        # learned to say where they came from.
+        if a.name not in ("about", "text"):
+            continue
+        if a.value is None or a.value.kind != ValueKind.STRING:
+            raise ValueError("trouble %s: expected a string" % a.name)
+        if a.name == "about":
+            t.about = a.value.str
+        else:
+            t.text, said = a.value.str, True
+    if not said:
+        raise ValueError("trouble: no text=, so it says nothing")
+    return t
+
 
 def decode_reply(stmt: Statement) -> dict:
     """Parse a `reply` statement into a name -> id dict."""
@@ -459,10 +814,43 @@ class PropInfo:
 
 
 @dataclass
+class ArgInfo:
+    """One named argument of a question or an action, or one field of an
+    event."""
+    name: str
+    kind: str = ""
+    doc: str = ""
+
+
+@dataclass
+class CallInfo:
+    """One question a type answers or one action it performs. One shape,
+    because they are the same declaration with a different verb in front of it
+    -- the verb is the only difference there is."""
+    name: str
+    doc: str = ""
+    args: List[ArgInfo] = field(default_factory=list)
+
+
+@dataclass
+class EventInfo:
+    """One event a type raises, and what it carries."""
+    name: str
+    doc: str = ""
+    fields: List[ArgInfo] = field(default_factory=list)
+
+
+@dataclass
 class TypeInfo:
     name: str
     virtual: bool = False
+    # hosted marks a type the wire cannot construct: the host registers an
+    # instance and hands over its ID, and `new <name>` is refused.
+    hosted: bool = False
     props: List[PropInfo] = field(default_factory=list)
+    asks: List[CallInfo] = field(default_factory=list)
+    does: List[CallInfo] = field(default_factory=list)
+    events: List[EventInfo] = field(default_factory=list)
 
 
 @dataclass
@@ -496,18 +884,40 @@ def _stmt_prop_info(stmt: Statement) -> PropInfo:
     )
 
 
+def _stmt_arg_info(stmt: Statement) -> ArgInfo:
+    return ArgInfo(
+        name=_stmt_str(stmt, "name"),
+        kind=_stmt_str(stmt, "kind"),
+        doc=_stmt_str(stmt, "doc"),
+    )
+
+
 def decode_vocabulary(lines: List[str]) -> Vocabulary:
-    """Parse the flat describe stream (proptype/prop/propcommon statements,
-    one per line) into a Vocabulary. Unknown lines are ignored."""
+    """Parse the flat describe stream into a Vocabulary: proptype, prop,
+    propcommon, ask, askarg, do, doarg, event and eventfield statements, one
+    per line. Unknown lines are ignored."""
     vocab = Vocabulary()
     by_type: Dict[str, int] = {}
+
+    def calls(stmt: Statement, verb: str):
+        """The list a line belongs in: a type's questions or its actions."""
+        of = _stmt_str(stmt, "of")
+        if of not in by_type:
+            return None
+        ty = vocab.types[by_type[of]]
+        return ty.asks if verb == "ask" else ty.does
+
     for line in lines:
         if not line.strip():
             continue
         for stmt in parse(line).statements:
             if stmt.verb == "proptype":
                 name = _stmt_str(stmt, "name")
-                vocab.types.append(TypeInfo(name=name, virtual=_stmt_flag(stmt, "virtual")))
+                vocab.types.append(TypeInfo(
+                    name=name,
+                    virtual=_stmt_flag(stmt, "virtual"),
+                    hosted=_stmt_flag(stmt, "hosted"),
+                ))
                 by_type[name] = len(vocab.types) - 1
             elif stmt.verb == "propcommon":
                 vocab.common.append(_stmt_prop_info(stmt))
@@ -515,6 +925,40 @@ def decode_vocabulary(lines: List[str]) -> Vocabulary:
                 of = _stmt_str(stmt, "of")
                 if of in by_type:
                     vocab.types[by_type[of]].props.append(_stmt_prop_info(stmt))
+            elif stmt.verb in ("ask", "do"):
+                into = calls(stmt, stmt.verb)
+                if into is None:
+                    continue
+                into.append(CallInfo(
+                    name=_stmt_str(stmt, "name"),
+                    doc=_stmt_str(stmt, "doc"),
+                ))
+            elif stmt.verb in ("askarg", "doarg"):
+                verb = "ask" if stmt.verb == "askarg" else "do"
+                into = calls(stmt, verb)
+                if into is None:
+                    continue
+                named = _stmt_str(stmt, verb)
+                for call in into:
+                    if call.name == named:
+                        call.args.append(_stmt_arg_info(stmt))
+                        break
+            elif stmt.verb == "event":
+                of = _stmt_str(stmt, "of")
+                if of in by_type:
+                    vocab.types[by_type[of]].events.append(EventInfo(
+                        name=_stmt_str(stmt, "name"),
+                        doc=_stmt_str(stmt, "doc"),
+                    ))
+            elif stmt.verb == "eventfield":
+                of = _stmt_str(stmt, "of")
+                if of not in by_type:
+                    continue
+                named = _stmt_str(stmt, "event")
+                for ev in vocab.types[by_type[of]].events:
+                    if ev.name == named:
+                        ev.fields.append(_stmt_arg_info(stmt))
+                        break
     return vocab
 
 
@@ -553,6 +997,20 @@ class Event:
             return None
         return a.value.str
 
+    def blob(self, name: str):
+        """The field's bytes, for a value the host wrote with every byte
+        outside printable ASCII escaped -- a blob read back from the store,
+        say. None when the field is not a string.
+
+        Each \\xNN unescapes to one code point in 0..255, so latin-1 is what
+        turns the string back into the bytes that were sent; utf-8 would
+        re-encode everything above 0x7f into two bytes and hand back something
+        longer than what was written."""
+        s = self.text(name)
+        if s is None:
+            return None
+        return s.encode("latin-1", "replace")
+
     def word(self, name: str):
         a = self._field(name)
         if a is None or a.value is None or a.value.kind != ValueKind.WORD:
@@ -566,34 +1024,23 @@ class Event:
         return a.flag
 
     def trinket(self):
-        v = self.uint("trinket")
-        if v is not None:
-            return v
-        return self.uint("window")
+        """The ObjectID of whatever raised this, for routing it to a handler.
+
+        Window events name their source window= rather than trinket=, a
+        store's name it store=, and the display's name it host=. All of them
+        are ObjectIDs, and subscriptions key on the source whichever word
+        names it."""
+        for name in ("trinket", "window", "store", "host"):
+            v = self.uint(name)
+            if v is not None:
+                return v
+        return None
 
     def encode(self) -> str:
         out = ["event ", self.type]
         for a in self.fields:
             out.append(' ')
-            if a.value is None:
-                if a.flag == FlagState.FALSE:
-                    out.append('!')
-                elif a.flag == FlagState.INDETERMINATE:
-                    out.append('?')
-                out.append(a.name)
-                continue
-            out.append(a.name)
-            out.append('=')
-            v = a.value
-            if v.kind == ValueKind.WORD:
-                out.append(v.word)
-            elif v.kind == ValueKind.NUMBER:
-                if v.is_int:
-                    out.append(str(int(v.number)))
-                else:
-                    out.append(repr(v.number))
-            elif v.kind == ValueKind.STRING:
-                out.append(quote(v.str))
+            out.append(encode_arg(a))
         return ''.join(out)
 
 
@@ -607,3 +1054,162 @@ def parse_event(src: str) -> Event:
     if not st.args or st.args[0].value is not None or st.args[0].flag != FlagState.TRUE:
         raise ValueError("event: missing type word")
     return Event(st.args[0].name, st.args[1:])
+
+
+# --- ordering two values the same way at both ends ---------------------------
+#
+# serval's docs/ordering.md is the descriptor, testdata/compare.wire the corpus every
+# implementation of it answers. See wire/compare.go for the Go side; the two
+# must agree case for case.
+
+# The four words that are values rather than symbols.
+WORD_UNDEFINED = "undefined"
+WORD_NIL = "nil"
+WORD_TRUE = "true"
+WORD_FALSE = "false"
+
+# The collations a string may be compared under. A symbol and a blob take none.
+COLLATE_EXACT = "exact"      # codepoint order, rune by rune
+COLLATE_FOLD = "fold"        # ASCII case folded, then exact
+COLLATE_NATURAL = "natural"  # digit runs as numbers, then fold
+
+# A value's rank, which its type decides before anything in it is read.
+RANK_UNDEFINED = 0
+RANK_NIL = 1
+RANK_FALSE = 2
+RANK_TRUE = 3
+RANK_NUMBER = 4   # int and float share one rank and interleave by value
+RANK_SYMBOL = 5
+RANK_STRING = 6
+RANK_BYTES = 7
+RANK_UNORDERED = 8  # no order of its own; the sort's last level settles it
+
+
+def rank(v: Optional[Value]) -> int:
+    """Where a value sits before its contents matter."""
+    if v is None:
+        return RANK_UNDEFINED
+    if v.kind == ValueKind.WORD:
+        return {
+            WORD_UNDEFINED: RANK_UNDEFINED,
+            WORD_NIL: RANK_NIL,
+            WORD_FALSE: RANK_FALSE,
+            WORD_TRUE: RANK_TRUE,
+        }.get(v.word, RANK_SYMBOL)
+    if v.kind == ValueKind.NUMBER:
+        return RANK_NUMBER
+    if v.kind == ValueKind.STRING:
+        return RANK_BYTES if v.blob else RANK_STRING
+    return RANK_UNORDERED
+
+
+def compare(a: Optional[Value], b: Optional[Value], collation: str = COLLATE_EXACT) -> int:
+    """Order two values: -1, 0 or 1.
+
+    The collation applies to the string rank alone. Values of different ranks
+    are decided by the ranks; the ranks holding one value each, and the
+    unordered rank, compare equal and leave the answer to the sort's last level.
+    """
+    ra, rb = rank(a), rank(b)
+    if ra != rb:
+        return _sign(ra - rb)
+    if ra == RANK_NUMBER:
+        return _compare_numbers(a.number, b.number)
+    if ra == RANK_SYMBOL:
+        return _compare_runes(a.word, b.word)
+    if ra == RANK_STRING:
+        return _collate(a.str, b.str, collation)
+    if ra == RANK_BYTES:
+        return _compare_bytes(a.str, b.str)
+    return 0
+
+
+def compare_levels(a: List[Optional[Value]], b: List[Optional[Value]],
+                   levels: List[tuple]) -> int:
+    """Walk the levels in order and answer on the first that separates the two.
+
+    Each level is (descending, collation), so a level settles only what the ones
+    above it left equal. The caller appends the record's key as a final level.
+    """
+    for i, level in enumerate(levels):
+        if i >= len(a) or i >= len(b):
+            break
+        descending, collation = level
+        c = compare(a[i], b[i], collation)
+        if c == 0:
+            continue
+        return -c if descending else c
+    return 0
+
+
+def _collate(a: str, b: str, collation: str) -> int:
+    if collation == COLLATE_FOLD:
+        return _compare_folded(a, b)
+    if collation == COLLATE_NATURAL:
+        return _compare_natural(a, b)
+    return _compare_runes(a, b)
+
+
+def _compare_runes(a: str, b: str) -> int:
+    # Python strings are sequences of codepoints already.
+    return -1 if a < b else (1 if a > b else 0)
+
+
+def _fold(s: str) -> str:
+    # ASCII case only: a fold that reached further would be one two
+    # implementations could disagree about.
+    return ''.join(chr(ord(c) + 32) if 'A' <= c <= 'Z' else c for c in s)
+
+
+def _compare_folded(a: str, b: str) -> int:
+    return _compare_runes(_fold(a), _fold(b))
+
+
+def _compare_natural(a: str, b: str) -> int:
+    i = j = 0
+    while i < len(a) and j < len(b):
+        if a[i] in '0123456789' and b[j] in '0123456789':
+            si, sj = i, j
+            while i < len(a) and a[i] in '0123456789':
+                i += 1
+            while j < len(b) and b[j] in '0123456789':
+                j += 1
+            c = _compare_digit_runs(a[si:i], b[sj:j])
+            if c != 0:
+                return c
+            continue
+        x, y = _fold(a[i]), _fold(b[j])
+        if x != y:
+            return -1 if x < y else 1
+        i += 1
+        j += 1
+    return _sign((len(a) - i) - (len(b) - j))
+
+
+def _compare_digit_runs(a: str, b: str) -> int:
+    """Two runs of digits as numbers, however long: with the leading zeros gone
+    the longer run is the larger number, and equal lengths compare digit by
+    digit. Runs of the same value are then separated by the zeros themselves."""
+    sa, sb = a.lstrip('0') or '0', b.lstrip('0') or '0'
+    if len(sa) != len(sb):
+        return _sign(len(sa) - len(sb))
+    if sa != sb:
+        return -1 if sa < sb else 1
+    return _sign(len(a) - len(b))
+
+
+def _compare_bytes(a: str, b: str) -> int:
+    """Bytes compare unsigned. A blob's characters are its bytes, latin-1."""
+    ba, bb = a.encode('latin-1', 'replace'), b.encode('latin-1', 'replace')
+    return -1 if ba < bb else (1 if ba > bb else 0)
+
+
+def _compare_numbers(a, b) -> int:
+    """Exact for integers however large: Python integers are unbounded, and an
+    int against a float compares without either being converted -- Python's own
+    comparison already does that exactly."""
+    return -1 if a < b else (1 if a > b else 0)
+
+
+def _sign(n: int) -> int:
+    return -1 if n < 0 else (1 if n > 0 else 0)

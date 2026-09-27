@@ -204,7 +204,7 @@ func (k *Caret) DeleteBackwardCaptured(count int) Captured {
 	}
 	k.b.beginMutation()
 	if l, _ := k.Position(); true {
-		k.b.touchContent(l - 1) // a join at line start damages the previous line
+		k.b.touchContent(l - 1) // a join at line start damages the prior line
 	}
 	decos, _, _ := k.c.BackDeleteRunes(int64(count), false)
 	k.b.modified = true
@@ -304,11 +304,11 @@ func (b *Buffer) DeleteLineCaptured(line int) Captured {
 	if line < lineCount-1 {
 		return capture(func() error { return b.readCursor.SeekLine(int64(line), 0) }, contentRunes)
 	} else if line > 0 {
-		prevContent := b.GetLine(line - 1)
-		prevNoTerm := strings.TrimRight(prevContent, "\n\r")
-		prevLen := int64(len([]rune(prevNoTerm)))
-		termRunes := int64(len([]rune(prevContent))) - prevLen
-		return capture(func() error { return b.readCursor.SeekLine(int64(line-1), prevLen) }, termRunes+contentRunes)
+		priorContent := b.GetLine(line - 1)
+		priorNoTerm := strings.TrimRight(priorContent, "\n\r")
+		priorLen := int64(len([]rune(priorNoTerm)))
+		termRunes := int64(len([]rune(priorContent))) - priorLen
+		return capture(func() error { return b.readCursor.SeekLine(int64(line-1), priorLen) }, termRunes+contentRunes)
 	}
 	return capture(func() error { return b.readCursor.SeekByte(0) }, contentRunes)
 }

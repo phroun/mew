@@ -5,7 +5,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for RadioButton (see docs/property-vocabulary.md).
+// Wire registration for RadioButton; the wiki's RadioButton page is
+// generated from it.
 // Group membership is a plain named property: buttons sharing a
 // group= word on the same connection exclude each other. The groups
 // themselves live in the connection's stash - no container trinket,

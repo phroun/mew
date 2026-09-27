@@ -576,14 +576,14 @@ func (b *Buffer) DeleteLine(line int) {
 		b.readCursor.SeekLine(int64(line), 0)
 		b.readCursor.DeleteRunes(contentRunes, true)
 	} else if line > 0 {
-		// Last line - delete the previous line's terminator plus this line's
+		// Last line - delete the prior line's terminator plus this line's
 		// content so line-1 becomes the final, unterminated line. Compute the
 		// terminator length rather than assuming a single '\n', so a CRLF
 		// terminator ("\r\n") is removed whole instead of orphaning the '\r'.
-		prevContent := b.GetLine(line - 1)
-		prevNoTerm := strings.TrimRight(prevContent, "\n\r")
-		termRunes := int64(len([]rune(prevContent)) - len([]rune(prevNoTerm)))
-		b.readCursor.SeekLine(int64(line-1), int64(len([]rune(prevNoTerm))))
+		priorContent := b.GetLine(line - 1)
+		priorNoTerm := strings.TrimRight(priorContent, "\n\r")
+		termRunes := int64(len([]rune(priorContent)) - len([]rune(priorNoTerm)))
+		b.readCursor.SeekLine(int64(line-1), int64(len([]rune(priorNoTerm))))
 		b.readCursor.DeleteRunes(termRunes+contentRunes, true)
 	} else {
 		// line == 0 and it's the only line - just delete content
@@ -963,7 +963,7 @@ func (k *Caret) DeleteBackward(count int) {
 	}
 	k.b.beginMutation()
 	if l, _ := k.Position(); true {
-		k.b.touchContent(l - 1) // a join at line start damages the previous line
+		k.b.touchContent(l - 1) // a join at line start damages the prior line
 	}
 	k.c.BackDeleteRunes(int64(count), false)
 	k.b.modified = true

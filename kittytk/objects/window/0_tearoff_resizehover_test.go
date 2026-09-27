@@ -15,7 +15,8 @@ import (
 // do not move. A CORNER always moves at least one band, which is where it
 // shows.
 func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
-	const grip = core.Unit(4)
+	const g = core.Unit(4)
+	grip := EdgeThickness{X: g, Y: g}
 	start := core.UnitRect{Width: 100, Height: 60}
 	grown := core.UnitRect{Width: 160, Height: 90}
 
@@ -29,14 +30,14 @@ func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
 		t.Fatal("the corner's bands must move with the window; they did not")
 	}
 	// The right band tracks the new width, the bottom band the new height.
-	if after[0].X != grown.Width-grip {
-		t.Errorf("right band at X=%v, want %v", after[0].X, grown.Width-grip)
+	if after[0].X != grown.Width-g {
+		t.Errorf("right band at X=%v, want %v", after[0].X, grown.Width-g)
 	}
 	if after[0].Height != grown.Height {
 		t.Errorf("right band height %v, want the window's %v", after[0].Height, grown.Height)
 	}
-	if after[1].Y != grown.Height-grip {
-		t.Errorf("bottom band at Y=%v, want %v", after[1].Y, grown.Height-grip)
+	if after[1].Y != grown.Height-g {
+		t.Errorf("bottom band at Y=%v, want %v", after[1].Y, grown.Height-g)
 	}
 	if after[1].Width != grown.Width {
 		t.Errorf("bottom band width %v, want the window's %v", after[1].Width, grown.Width)
@@ -53,25 +54,28 @@ func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
 	}
 }
 
-// refreshResizeHover only acts during a resize, and keeps the ARMED edges —
+// refreshResizeBands only acts during a resize, and keeps the ARMED edges —
 // the pointer may have wandered off them, but the gesture still owns them.
 func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 	w := NewWindow("t")
+	// A torn window is an OS window, standing on no cell grid: its bounds are
+	// exactly what the OS gives it (see Window.gridded).
+	w.SetSmoothPositioning(true)
 	small := core.UnitRect{Width: 100, Height: 60}
 	w.SetBounds(small)
 	h := &TearOffHost{win: w, graphicalFrames: true}
 
 	h.resizing = false
 	h.resizeEdges = resizeRight
-	w.SetResizeHoverEdges(0, 0)
-	h.refreshResizeHover()
-	if len(w.resizeHoverBands(small)) != 0 {
+	w.SetResizeBandEdges(0, EdgeThickness{})
+	h.refreshResizeBands()
+	if len(w.resizeBands(small)) != 0 {
 		t.Fatal("no highlight should be set when no resize is in flight")
 	}
 
 	h.resizing = true
-	h.refreshResizeHover()
-	if got := w.resizeHoverBands(small); len(got) != 1 {
+	h.refreshResizeBands()
+	if got := w.resizeBands(small); len(got) != 1 {
 		t.Fatalf("the armed edge should be highlighted; got %d bands", len(got))
 	}
 }
@@ -82,23 +86,25 @@ func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 // stretching a window to the right leaves its band stranded mid-frame.
 func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 	w := NewWindow("t")
+	// A torn window is an OS window, standing on no cell grid: its bounds are
+	// exactly what the OS gives it (see Window.gridded).
+	w.SetSmoothPositioning(true)
 	w.SetBounds(core.UnitRect{Width: 100, Height: 60})
 	h := &TearOffHost{win: w, graphicalFrames: true}
 	h.resizing = true
 	h.resizeEdges = resizeRight
-	h.refreshResizeHover()
+	h.refreshResizeBands()
 
 	// The window's own bounds are deliberately left STALE here: this is the
 	// state a live resize is in when the frame is painted.
 	grown := core.UnitRect{Width: 300, Height: 60}
-	got := w.resizeHoverBands(grown)
+	got := w.resizeBands(grown)
 	if len(got) != 1 {
 		t.Fatalf("want one band, got %d", len(got))
 	}
-	// The band spans the effective grip (the resize sliver plus the painted
-	// frame border), the same width the grab zone uses — so it is measured from
-	// the painted width, not the stale bounds.
-	wantX := grown.Width - h.effectiveGrip()
+	// The band spans the affordance thickness (half a column plus the painted
+	// frame border) — measured from the painted width, not the stale bounds.
+	wantX := grown.Width - h.affordanceBand().X
 	if got[0].X != wantX {
 		t.Errorf("band at X=%v, want %v — it is pinned to the old width, not the painted one",
 			got[0].X, wantX)
@@ -109,8 +115,8 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 
 	// Explicit rectangles (the older setter) are still honoured verbatim.
 	w2 := NewWindow("t2")
-	w2.SetResizeHoverRects([]core.UnitRect{{X: 1, Y: 2, Width: 3, Height: 4}})
-	if got := w2.resizeHoverBands(grown); len(got) != 1 || got[0].X != 1 {
+	w2.SetResizeBandRects([]core.UnitRect{{X: 1, Y: 2, Width: 3, Height: 4}})
+	if got := w2.resizeBands(grown); len(got) != 1 || got[0].X != 1 {
 		t.Errorf("explicit rects should pass through unchanged: %+v", got)
 	}
 }
@@ -122,6 +128,9 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 // so every handle stays reachable.
 func TestEdgeAtSplitsOverlappingGrips(t *testing.T) {
 	w := NewWindow("t")
+	// A torn window is an OS window, standing on no cell grid: its bounds are
+	// exactly what the OS gives it (see Window.gridded).
+	w.SetSmoothPositioning(true)
 	// A window small enough that the grab zones overlap. The hit grip is the
 	// rule's width (3 units here: 3 device pixels at ppu 1 beats a quarter of
 	// an 8-unit cell), NOT the configured resizeGrip, which now only says

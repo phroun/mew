@@ -19,6 +19,7 @@ import (
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/platform"
 )
 
@@ -270,6 +271,13 @@ type timerEntry struct {
 // New creates an SDL platform with the specified renderer backend.
 // rendererType should be "software" or "webgpu".
 func New(title string, widthPx, heightPx int, rendererType string) (*Platform, error) {
+	// This host draws natively, so it reports itself rather than the terminal it
+	// happened to be LAUNCHED from -- whose quirks are about what that terminal
+	// does with what it is sent, and nothing reaches it. Left unpinned, an app
+	// started from a terminal that reorders its input would turn its own
+	// right-to-left text back for a reordering that is never going to happen.
+	hostterm.Override(hostterm.TerminalSDL)
+
 	// Create renderer
 	renderer, err := NewRenderer(rendererType, true) // vsync default true
 	if err != nil {
@@ -373,7 +381,7 @@ func (p *Platform) SetFontSize(size int) {
 }
 
 func (p *Platform) applyMetrics(b *raster.Backend) {
-	if p.metrics.CellWidth > 0 && p.metrics.CellHeight > 0 {
+	if p.metrics.UnitsPerCellWidth > 0 && p.metrics.UnitsPerCellHeight > 0 {
 		b.SetCellMetrics(p.metrics)
 	}
 	if p.fontSize > 0 {
@@ -1048,9 +1056,24 @@ func (p *Platform) scheduleAnimationFrame(s *sdlSurface) {
 	if !animating {
 		animating = time.Since(p.rotationDeactivationTime).Seconds() < 0.5
 	}
+	if !animating {
+		// A layer part way through a fade owes another frame, which is what
+		// runs a fade at the surface's own rate rather than at a timer's.
+		if a, ok := p.renderer.(layerAnimator); ok {
+			animating = a.LayersAnimating()
+		}
+	}
 	if animating {
 		s.Invalidate(core.UnitRect{})
 	}
+}
+
+// layerAnimator is a renderer that draws layers which change of their own
+// accord between frames -- a fading overlay -- and so needs the next frame
+// asked for even when nothing else on the screen has changed. A renderer with
+// nothing of the sort does not implement it.
+type layerAnimator interface {
+	LayersAnimating() bool
 }
 
 // frameDebug reports slow presents under KITTYTK_FRAME_DEBUG. It used to
@@ -1967,7 +1990,7 @@ func (p *Platform) mainSurface() *sdlSurface {
 // cell), matching what every surface's backend reports: the configured
 // override or the default 8x16.
 func (p *Platform) rootDenomination() (int, int) {
-	w, h := int(p.metrics.CellWidth), int(p.metrics.CellHeight)
+	w, h := int(p.metrics.UnitsPerCellWidth), int(p.metrics.UnitsPerCellHeight)
 	if w < 1 {
 		w = 8
 	}
@@ -2382,6 +2405,157 @@ const (
 	scanInternational6 = 140 // a PC-98's comma, in the bottom row beside the period
 )
 
+// The main cluster, by the same HID usage IDs. The letters run alphabetically
+// from scanA, which is a fact about the HID table and is what lets gridKeys
+// build that row rather than list it.
+const (
+	scanA = 4
+	scanZ = 29
+
+	scan1            = 30
+	scan9            = 38
+	scan0            = 39
+	scanMinus        = 45
+	scanEquals       = 46
+	scanLeftBracket  = 47
+	scanRightBracket = 48
+	scanBackslash    = 49
+	scanZig          = 50 // ISO, beside Return
+	scanSemicolon    = 51
+	scanApostrophe   = 52
+	scanGrave        = 53
+	scanComma        = 54
+	scanPeriod       = 55
+	scanSlash        = 56
+	scanZag          = 100 // ISO, between LeftShift and Z
+	scanRo           = 135 // JIS, beside RightShift
+	scanYen          = 137 // JIS, beside Delete
+)
+
+// The keys that carry a name and no character at all.
+const (
+	scanCapsLock    = 57
+	scanPrintScreen = 70
+	scanScrollLock  = 71
+	scanPause       = 72
+	scanMenu        = 101 // HID calls the cap Application
+	scanPower       = 102
+	scanKanaLock    = 136
+	scanHenkan      = 138
+	scanMuhenkan    = 139
+	scanHangulLock  = 144
+	scanHanja       = 145
+)
+
+// gridKey is one key of the main cluster: what it is CALLED, in both layers.
+//
+// shown says the name is a character rather than a name, which decides how the
+// layers are spelled. A shown key spends Shift on its second character -- "1"
+// and "!" are the two names of one key -- while a named one takes "S-" like
+// every other named key, because it has no second character to spend it on.
+type gridKey struct {
+	regular string
+	shifted string
+	shown   bool
+}
+
+// layerName is what this key is called with the held layer applied.
+func (g gridKey) layerName(shift bool) string {
+	if shift && g.shown {
+		return g.shifted
+	}
+	return g.regular
+}
+
+// letter reports whether this key is one of a-z, which is the set Control is
+// spelled with the caret against.
+func (g gridKey) letter() bool {
+	return len(g.regular) == 1 && g.regular[0] >= 'a' && g.regular[0] <= 'z'
+}
+
+// gridKeys is the main cluster by SCANCODE, for the reason keypadKeys is: a
+// KeyName is defined by the key's POSITION, and a scancode is the position.
+//
+// The two layers are the Regular Keys and Shifted Keys tables in the
+// direct-key-handler wiki, which give a name for every row and column. They do
+// not vary: the key at Row-2 column -4 is "1", and "!" with Shift, whatever the
+// attached keyboard happens to print on that cap. Sym cannot do the job -- it
+// is layout-mapped, so it answers with what the layout prints, which is a
+// different name on every layout and therefore no name at all.
+//
+// Zig, Zag, Ro and Yen are the positions the grid has no character for. They do
+// print one, but it belongs to another position -- Zag prints "<" and ">" on a
+// German board, which are Shift+comma and Shift+period -- so naming them is the
+// only way a keymap can tell the two apart. A key that prints nothing at all is
+// in silentKeys instead.
+var gridKeys = buildGridKeys()
+
+func buildGridKeys() map[uint32]gridKey {
+	g := map[uint32]gridKey{
+		scanGrave:        {"`", "~", true},
+		scanMinus:        {"-", "_", true},
+		scanEquals:       {"=", "+", true},
+		scanLeftBracket:  {"[", "{", true},
+		scanRightBracket: {"]", "}", true},
+		scanBackslash:    {"\\", "|", true},
+		scanSemicolon:    {";", ":", true},
+		scanApostrophe:   {"'", "\"", true},
+		scanComma:        {",", "<", true},
+		scanPeriod:       {".", ">", true},
+		scanSlash:        {"/", "?", true},
+
+		scanZig: {"Zig", "Zig", false},
+		scanZag: {"Zag", "Zag", false},
+		scanRo:  {"Ro", "Ro", false},
+		scanYen: {"Yen", "Yen", false},
+	}
+	// The number row. HID runs 1 through 9 and then 0, which is the order the
+	// caps are in; the shifted layer is the row's own line of symbols.
+	shiftedDigits := "!@#$%^&*()"
+	for i := 0; i <= scan9-scan1; i++ {
+		g[uint32(scan1+i)] = gridKey{string(rune('1' + i)), string(shiftedDigits[i]), true}
+	}
+	g[scan0] = gridKey{"0", string(shiftedDigits[9]), true}
+	// The three letter rows, alphabetically from scanA.
+	for i := 0; i <= scanZ-scanA; i++ {
+		lower := rune('a' + i)
+		g[uint32(scanA+i)] = gridKey{string(lower), string(lower - 'a' + 'A'), true}
+	}
+	return g
+}
+
+// silentKeys are the positions that are keys and type nothing, by SCANCODE for
+// the reason gridKeys is. Every modifier goes on as a prefix, since there is no
+// character for a caret or a case change to act on.
+//
+// Four of them LATCH a mode and are named for the lock they are. A latch never
+// becomes a prefix — folding one into a key name would make every keystroke
+// typed under it miss its binding — so the lock is a key here and nothing more.
+// NumLock is the one that is NOT: it decides what eleven keypad caps are called,
+// so alone it is eaten and moves the lock, and only a modifier makes it the key
+// named "Clear" (see padlock.go). The remaining input-method keys fire once —
+// Henkan converts the pending kana, Muhenkan commits it unconverted, Hanja
+// converts the preceding Hangul.
+//
+// Power and those three are ones nothing in the terminal host can produce:
+// there is no escape sequence and no "kitty" keycode for them, so
+// direct-key-handler carries their names for this direction alone — a host that
+// reads a scancode and needs a canonical spelling to hand over. Inventing a word
+// here is what those names exist to prevent.
+var silentKeys = map[uint32]string{
+	scanCapsLock:    "CapsLock",
+	scanScrollLock:  "ScrollLock",
+	scanPrintScreen: "PrintScreen",
+	scanPause:       "Pause",
+	scanMenu:        "Menu",
+	scanPower:       "Power",
+	scanKanaLock:    "KanaLock",
+	scanHangulLock:  "HangulLock",
+	scanHenkan:      "Henkan",
+	scanMuhenkan:    "Muhenkan",
+	scanHanja:       "Hanja",
+}
+
 // padKey is one keypad cap. Dual-legend caps carry two keys and NumLock decides
 // which: locked gives the digit, unlocked gives the navigation action. That is
 // the rule the caps themselves are printed with.
@@ -2549,8 +2723,8 @@ func translateKey(sym sdl3.Keysym) string {
 	return encodeKey(sym, ctrl, alt, shift, gui, hyper)
 }
 
-// bareKey returns the unmodified key token for a keysym: a special-key name,
-// or the printable character (upper-cased when Shift is held, so the caseful
+// bareKey returns the unmodified key token for a keysym: a special-key name, or
+// the name of the position it sits at, in the layer that is held (so the caseful
 // hyphenated-modifier convention — H-a unshifted, H-A shifted — holds).
 //
 // The bare name, with no modifier prefix on it at all. Tests use it to state
@@ -2570,38 +2744,19 @@ func bareKey(sym sdl3.Keysym, shift bool) string {
 	if name, ok := specialKeys[sym.Sym]; ok {
 		return name
 	}
-	if sym.Sym >= 32 && sym.Sym < 127 {
-		return layerAdjustedKeyName(rune(sym.Sym), shift)
+	if g, ok := gridKeys[sym.Scancode]; ok {
+		return g.layerName(shift)
+	}
+	if name, ok := silentKeys[sym.Scancode]; ok {
+		return name
 	}
 	return ""
 }
 
-// layerAdjustedKeyName names a printable key with its held layer applied: Shift
-// spent on the letter's case rather than stated as a prefix, which is how this
-// vocabulary spells every key that is SHOWN rather than named.
-//
-// Shift is the only layer it applies today, and the name says where it grows.
-//
-// One function, called by the press and by the bare name, so the two cannot
-// drift into naming the same key differently.
-func layerAdjustedKeyName(ch rune, shift bool) string {
-	if shift && ch >= 'a' && ch <= 'z' {
-		return string(ch - 'a' + 'A')
-	}
-	return string(ch)
-}
-
-// shiftedShownKey asks the layout what a physical key shows with Shift held,
-// returning 0 when it shows no character. A variable so a test can answer for
-// itself: the real one calls into SDL, which a test has not initialised.
-var shiftedShownKey = func(scancode uint32) rune {
-	return sdl3.ShiftedKey(scancode, sdl3.KMOD_SHIFT)
-}
-
 // encodeKey maps a keysym plus its effective modifier set to a D3 key string,
-// or "" when the SDLTextInput path owns it (plain printable characters). The
-// modifier booleans are passed in rather than read from sym.Mod so translateKey
-// can strip the modifiers it has already spent on a Hyper promotion.
+// or "" for a key this host has no name for. The modifier booleans are passed
+// in rather than read from sym.Mod so translateKey can strip the modifiers it
+// has already spent on a Hyper promotion.
 //
 // Hyper is one of them, and comes in rather than being glued on afterwards: it
 // outranks nothing and is outranked by M- and S-, so a caller prepending it to
@@ -2645,45 +2800,63 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 		return prefix + pad + base
 	}
 
-	// Ctrl+Space is the exception: it is the C0 byte NUL, spelled "^@" by the
-	// printable branch below to match the terminal backend, so the name is left
-	// to it. Every other spelling of the space bar takes the name.
-	if name, ok := specialKeys[sym.Sym]; ok && !(ctrl && sym.Sym == ' ') {
+	// Ctrl+Space is the exception among the named keys: it is the C0 byte NUL,
+	// which this vocabulary writes "^@" to match the terminal backend. Every
+	// other spelling of the space bar takes the name.
+	if ctrl && sym.Sym == ' ' {
+		return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + "^@"
+	}
+	// specialKeys is keyed by Sym rather than by scancode, which the main
+	// cluster below cannot be: the keys in it are the ones whose Sym is the
+	// same under every layout, so there is nothing for a layout to get wrong.
+	if name, ok := specialKeys[sym.Sym]; ok {
 		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + name
 	}
 
-	// Letters and printable symbols.
-	if sym.Sym >= 32 && sym.Sym < 127 {
-		ch := rune(sym.Sym)
-		isLetter := ch >= 'a' && ch <= 'z'
+	// The positions that are keys and type nothing (see silentKeys). Named, so
+	// every modifier goes on as a prefix.
+	if name, silent := silentKeys[sym.Scancode]; silent {
+		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + name
+	}
 
-		// Control-punctuation combinations that produce C0 control
-		// bytes on a terminal keep their caret spellings so key
-		// strings match the TUI backend (byte 0x1C = "^\\", etc.).
-		// SDL keycodes are unshifted, hence the shifted trio for the
-		// US-layout ^, _, and @ positions.
+	// The main cluster, by position (see gridKeys).
+	if g, onGrid := gridKeys[sym.Scancode]; onGrid {
+		base := g.layerName(shift)
+
+		if !g.shown {
+			// Zig, Zag, Ro and Yen: positions with no character on the grid, so
+			// they are named, and a named key takes every modifier as a prefix.
+			return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + base
+		}
+
+		// The positions that produce a C0 control byte on a terminal keep their
+		// caret spellings, so key strings match the TUI backend (byte 0x1C is
+		// "^\\", and so on -- the control table in the direct-key-handler wiki
+		// lists the set).
+		//
+		// Switched on the LAYER's name, so each layer picks its own spelling
+		// from the one table: "^" is the shifted 6 and takes "^^", while the
+		// unshifted 6 falls through to "^6".
 		if ctrl {
 			name := ""
-			switch {
-			case ch == '\\':
-				name = "^\\"
-			case ch == ']':
-				name = "^]"
-			case ch == '[':
+			switch base {
+			case "[":
 				name = "Escape"
-			case ch == ' ':
-				name = "^@"
-			case shift && ch == '6':
+			case "\\":
+				name = "^\\"
+			case "]":
+				name = "^]"
+			case "^":
 				name = "^^"
-			case shift && ch == '-':
+			case "_":
 				name = "^_"
-			case ch == '/':
+			case "@":
+				name = "^@"
+			case "/":
 				name = "^_" // Ctrl+/ collapses onto ^_ (byte 0x1F), the terminal
 				// convention (xterm), so Ctrl+/ reaches a terminal app instead of
-				// being dropped. Without this the unshifted-punctuation path names
-				// it "C-/", which purfecterm's key encoder has no byte for.
-			case shift && ch == '2':
-				name = "^@"
+				// being dropped. Shifted, the position is "?" and keeps "^?",
+				// which the wiki names apart from both.
 			}
 			if name != "" {
 				// Shift is already spent choosing the name (^^ and ^_ are the
@@ -2693,7 +2866,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 		}
 
 		switch {
-		case ctrl && isLetter:
+		case ctrl && g.letter():
 			// Control is spelled with the caret when the key it pairs with is
 			// one the caret is natural for — a letter — and that choice
 			// follows the BASE KEY, never what else is held. So Ctrl+Shift+A
@@ -2705,7 +2878,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// can report this chord at all — a legacy terminal sends Ctrl+A's
 			// ASCII control code for both, with no room for a Shift bit.
 			return keyMods{mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() +
-				"^" + string(ch-'a'+'A')
+				"^" + g.shifted
 		case ctrl:
 			// Control on a SHOWN key takes the caret, against the character the
 			// key shows: Ctrl+5 is "^5" and Ctrl+Shift+5 is "^%". Shift is
@@ -2713,23 +2886,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// which is how this vocabulary spells every key that is shown
 			// rather than named — a named key takes prefixes instead ("C-Down",
 			// "S-Tab"), and that is the branch above.
-			//
-			// This said "C-" + the unshifted character, so Ctrl+Shift+5 came
-			// out "C-S-5": a spelling nothing else in the system produces or
-			// reads, invented here.
-			//
-			// The shown character comes from the LAYOUT, not from a table. Sym
-			// is unshifted, and a map turning '5' into '%' is a US keyboard
-			// written down — right there and wrong everywhere else.
-			shown := ch
-			if shift {
-				if r := shiftedShownKey(sym.Scancode); r >= 32 && r < 127 {
-					shown = r
-				}
-			}
-			// Shift is absorbed into the shown character above, so it is not
-			// spelled again here.
-			return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + "^" + string(shown)
+			return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + "^" + base
 		case alt:
 			// The chord is named HERE, from the physical key and the modifier
 			// that is held — on every platform, macOS included.
@@ -2741,24 +2898,25 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// already in hand. The composition is not thrown away: the event
 			// loop holds this chord until it arrives, dispatches the two
 			// together, and remembers the pairing (see macoption_sdl.go).
-			return keyMods{mega: true, super: gui, hyper: hyper}.prefix() + string(ch)
+			return keyMods{mega: true, super: gui, hyper: hyper}.prefix() + base
 		case gui:
 			// Command-modified printables never arrive via SDLTextInput;
-			// "s-" is the toolkit's Meta/Cmd prefix.
-			return keyMods{ctrl: ctrl, shift: shift, super: true, hyper: hyper}.prefix() + string(ch)
+			// "s-" is the toolkit's Meta/Cmd prefix. Shift is absorbed into the
+			// layer's own name, the same as everywhere else a shown key is
+			// spelled, so it is not stated again.
+			return keyMods{ctrl: ctrl, super: true, hyper: hyper}.prefix() + base
 		default:
-			// Plain (possibly shifted) printable, named here like every other
-			// key — from the key.
+			// Plain (possibly shifted) shown key, named from its position like
+			// every other branch here.
 			//
 			// Identity is not text: the press already knows which key it is,
-			// and every other branch here names it from the key. Taking the
-			// name from the character instead would make an ordinary letter
-			// nameless until a text event followed it.
+			// and a name taken from the character instead would leave an
+			// ordinary letter nameless until a text event followed it.
 			//
 			// Hyper can be the only modifier left when this is reached, since
 			// translateKey spends the doubled pair that formed it, so the
 			// prefix goes on here where the canonical order puts it.
-			return keyMods{hyper: hyper}.prefix() + layerAdjustedKeyName(ch, shift)
+			return keyMods{hyper: hyper}.prefix() + base
 		}
 	}
 	return ""
@@ -3085,8 +3243,8 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 	}
 	m := b.Metrics()
 	x0, y0 := b.UnitToPxX(x), b.UnitToPxY(y)
-	wPx := b.UnitToPxX(x+m.CellWidth) - x0
-	hPx := b.UnitToPxY(y+m.CellHeight) - y0
+	wPx := b.UnitToPxX(x+m.UnitsPerCellWidth) - x0
+	hPx := b.UnitToPxY(y+m.UnitsPerCellHeight) - y0
 	if wPx <= 0 {
 		wPx = 1
 	}

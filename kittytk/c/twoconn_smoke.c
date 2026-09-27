@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
 
     /* Hammer conn2 with more request/replies to stress read+write overlap. */
     for (int i = 0; i < 20; i++) {
-        if (kt_exec(c2, "tile") != 0) { fprintf(stderr, "exec2 failed at %d\n", i); return 1; }
+        if (kt_exec(c2, "do host tile") != 0) { fprintf(stderr, "exec2 failed at %d\n", i); return 1; }
     }
 
     printf("OK\n");

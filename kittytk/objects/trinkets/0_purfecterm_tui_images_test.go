@@ -55,7 +55,7 @@ func (c *cellSurface) Init() error         { return nil }
 func (c *cellSurface) Shutdown()           {}
 func (c *cellSurface) Size() core.UnitSize { return core.UnitSize{Width: 640, Height: 400} }
 func (c *cellSurface) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (c *cellSurface) BeginFrame()           {}
 func (c *cellSurface) EndFrame()             {}
@@ -68,7 +68,7 @@ func (c *cellSurface) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {
 func (c *cellSurface) DrawText(core.Unit, core.Unit, string, style.CellStyle, *core.Font) core.Unit {
 	return 0
 }
-func (c *cellSurface) DrawTextAligned(core.UnitRect, string, core.Alignment, core.Alignment, style.CellStyle, *core.Font) {
+func (c *cellSurface) DrawTextAligned(core.UnitRect, string, core.HSide, core.VAlign, style.CellStyle, *core.Font) {
 }
 func (c *cellSurface) FillRect(core.UnitRect, rune, style.CellStyle)                     {}
 func (c *cellSurface) DrawRect(core.UnitRect, style.BorderStyle, style.CellStyle)        {}

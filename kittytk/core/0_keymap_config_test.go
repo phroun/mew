@@ -150,13 +150,13 @@ var referenceDefaultBindings = []Binding{
 
 	{"Up", []string{CmdWindowMoveFineUp, CmdWindowSizeFineUp, CmdTrinketItemUp, CmdTrinketItemPrior}},
 	{"Down", []string{CmdWindowMoveFineDown, CmdWindowSizeFineDown, CmdTrinketItemDown, CmdTrinketItemNext}},
-	{"Left", []string{CmdWindowMoveFineLeft, CmdWindowSizeFineLeft, CmdTrinketItemLeft, CmdTrinketItemPrior}},
-	{"Right", []string{CmdWindowMoveFineRight, CmdWindowSizeFineRight, CmdTrinketItemRight, CmdTrinketItemNext}},
+	{"Left", []string{CmdWindowMoveFineLeft, CmdWindowSizeFineLeft, CmdTrinketItemLeft}},
+	{"Right", []string{CmdWindowMoveFineRight, CmdWindowSizeFineRight, CmdTrinketItemRight}},
 
 	{"S-Up", []string{CmdWindowSizeFineUp, CmdTrinketSelUp, CmdTerminalScrollUp}},
 	{"S-Down", []string{CmdWindowSizeFineDown, CmdTrinketSelDown, CmdTerminalScrollDown}},
-	{"S-Left", []string{CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketCollapseOrEnclosing, CmdTrinketItemLeft}},
-	{"S-Right", []string{CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketExpandOrDescend, CmdTrinketItemRight}},
+	{"S-Left", []string{CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketCollapseLeftOrEnclosing, CmdTrinketExpandLeftOrDescend, CmdTrinketItemLeft}},
+	{"S-Right", []string{CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketCollapseRightOrEnclosing, CmdTrinketExpandRightOrDescend, CmdTrinketItemRight}},
 
 	{"Home", []string{CmdTrinketBeg}},
 	{"End", []string{CmdTrinketEnd}},

@@ -107,7 +107,7 @@ func trinketID(w core.Trinket) uint64 {
 // connection (called once at construction); events describes what that
 // wiring emits, and is passed beside it so the pair is changed together.
 func regTrinket(name string, construct func() core.Trinket, props map[string]protocol.Property, events map[string]protocol.EventDesc, appendFn func(parent, child core.Trinket) error, bind func(ctx *protocol.BindContext, w core.Trinket)) {
-	spec := &protocol.TypeSpec{
+	descriptor := &protocol.TypeSpec{
 		New:    func() any { return construct() },
 		Props:  props,
 		Events: events,
@@ -127,24 +127,32 @@ func regTrinket(name string, construct func() core.Trinket, props map[string]pro
 			return destroyTrinket(w)
 		},
 	}
+	// A type that adopts trinkets gets the `children` collection, unless it
+	// registered one of its own -- a type whose children are a particular
+	// kind names them, and says so in its own words.
 	if appendFn != nil {
-		spec.Append = func(p, c any) error {
-			pw, ok1 := p.(core.Trinket)
-			cw, ok2 := c.(core.Trinket)
-			if !ok1 || !ok2 {
-				return fmt.Errorf("%s: children must be trinkets", name)
+		if _, own := descriptor.Props["children"]; !own {
+			if descriptor.Props == nil {
+				descriptor.Props = map[string]protocol.Property{}
 			}
-			return appendFn(pw, cw)
+			descriptor.Props["children"] = protocol.NewCollection(func(p, c any) error {
+				pw, ok1 := p.(core.Trinket)
+				cw, ok2 := c.(core.Trinket)
+				if !ok1 || !ok2 {
+					return fmt.Errorf("%s: children must be trinkets", name)
+				}
+				return appendFn(pw, cw)
+			}).Tip("Trinkets this one contains.")
 		}
 	}
 	if bind != nil {
-		spec.Bind = func(ctx *protocol.BindContext, t any) {
+		descriptor.Bind = func(ctx *protocol.BindContext, t any) {
 			if w, ok := t.(core.Trinket); ok {
 				bind(ctx, w)
 			}
 		}
 	}
-	protocol.RegisterType(name, spec)
+	protocol.RegisterType(name, descriptor)
 }
 
 func init() {
@@ -159,11 +167,13 @@ func init() {
 
 	protocol.RegisterCommonProperty("min_width", sizeProp("min_width", true, true).Tip("Minimum width, in units."))
 	protocol.RegisterCommonProperty("min_height", sizeProp("min_height", true, false).Tip("Minimum height, in units."))
-	protocol.RegisterCommonProperty("max_width", sizeProp("max_width", false, true).Tip("Maximum width, in units."))
-	protocol.RegisterCommonProperty("max_height", sizeProp("max_height", false, false).Tip("Maximum height, in units."))
+	protocol.RegisterCommonProperty("max_width", sizeProp("max_width", false, true).Def("-1").
+		Tip("Widest this trinket grows, in units. -1 is no limit; 0 collapses it while it keeps its place."))
+	protocol.RegisterCommonProperty("max_height", sizeProp("max_height", false, false).Def("-1").
+		Tip("Tallest this trinket grows, in units. -1 is no limit; 0 collapses it while it keeps its place."))
 
-	protocol.RegisterCommonProperty("column_units", unitsProp("column_units", true).Def("inherited").Tip("Units one grid column spans (denomination override)."))
-	protocol.RegisterCommonProperty("row_units", unitsProp("row_units", false).Def("inherited").Tip("Units one grid row spans (denomination override)."))
+	protocol.RegisterCommonProperty("column_units", unitsProp("column_units", true).Def("inherited").Tip("Horizontal unit divisions within one character cell."))
+	protocol.RegisterCommonProperty("row_units", unitsProp("row_units", false).Def("inherited").Tip("Vertical unit divisions within one character cell."))
 
 	protocol.RegisterCommonProperty("font", protocol.NewProperty("enum", wprop("font", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		s, err := protocol.AsString("font", v, f)
@@ -210,10 +220,10 @@ func init() {
 		return fmt.Errorf("acc_name: not supported by this type")
 	})).Tip("Accessibility name announced by screen readers."))
 
-	// Layout hints live on the child (vocabulary decision 2026-07-05):
-	// the parent's layout manager consults them at attach time, so in
-	// scripts they must precede the trinket's placement in children={}
-	// (property application order already guarantees that).
+	// Layout hints live on the child (vocabulary decision 2026-07-05), and
+	// the parent's layout manager reads them where it uses them rather than
+	// when the child was attached -- so one set on a trinket an earlier build
+	// already placed reaches the layout on its next pass.
 	protocol.RegisterCommonProperty("stretch", protocol.NewProperty("int", wprop("stretch", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt("stretch", v, f)
 		if err != nil {
@@ -226,29 +236,56 @@ func init() {
 		return fmt.Errorf("stretch: not supported by this type")
 	})).Def("0").Tip("Layout stretch factor relative to siblings."))
 
-	protocol.RegisterCommonProperty("align", protocol.NewProperty("enum", wprop("align", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
-		word, err := protocol.AsWord("align", v, f)
+	registerAlignmentProperties()
+	registerLayoutProperties()
+
+	protocol.RegisterCommonProperty("direction", protocol.NewProperty("enum", wprop("direction", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+		word, err := protocol.AsWord("direction", v, f)
 		if err != nil {
 			return err
 		}
-		a, ok := map[string]core.Alignment{
-			"fill":   core.AlignFill,
-			"left":   core.AlignLeft,
-			"center": core.AlignCenter,
-			"right":  core.AlignRight,
-			"top":    core.AlignTop,
-			"middle": core.AlignMiddle,
-			"bottom": core.AlignBottom,
-		}[word]
-		if !ok {
-			return fmt.Errorf("align: unknown value %q", word)
+		d, err := directionWord("direction", word)
+		if err != nil {
+			return err
 		}
-		if h, ok := w.(interface{ SetLayoutAlignment(core.Alignment) }); ok {
-			h.SetLayoutAlignment(a)
+		if h, ok := w.(interface{ SetDirection(core.Direction) }); ok {
+			h.SetDirection(d)
 			return nil
 		}
-		return fmt.Errorf("align: not supported by this type")
-	})).OneOf("fill", "left", "center", "right", "top", "middle", "bottom").Tip("Layout alignment of this item in its cell."))
+		return fmt.Errorf("direction: not supported by this type")
+	})).OneOf("inherit", "ltr", "rtl").Def("inherit").
+		Tip("Side text begins on and a row runs from, here and below; inherit takes it from the container."))
+
+	// elide takes a word for WHERE the cut goes, and the flag form for whether
+	// there is one at all: !elide leaves the text whole and lets the surface
+	// clip it. Text that fits is never cut either way, so this is only ever
+	// about a trinket given less room than it asked for.
+	protocol.RegisterCommonProperty("elide", protocol.NewProperty("enum", wprop("elide", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+		mode := core.ElideEnd
+		switch {
+		case f == protocol.FlagFalse:
+			mode = core.ElideOff
+		case f == protocol.FlagTrue || v == nil:
+			mode = core.ElideEnd
+		default:
+			word, err := protocol.AsWord("elide", v, f)
+			if err != nil {
+				return err
+			}
+			m, ok := core.ParseElideMode(word)
+			if !ok {
+				return fmt.Errorf("elide: %q is not end, middle, start or off", word)
+			}
+			mode = m
+		}
+		h, ok := w.(interface{ SetElideMode(core.ElideMode) })
+		if !ok {
+			return fmt.Errorf("elide: not supported by this type")
+		}
+		h.SetElideMode(mode)
+		return nil
+	})).OneOf("end", "middle", "start", "off").Def("end").
+		Tip("Where text too long for its room is cut: end (default), middle, start, or off to leave it whole."))
 
 	// Colors (vocabulary decision 2026-07-05): named colors as bare
 	// words, RGB as quoted "#rrggbb". fg/bg build on the trinket's
@@ -331,11 +368,23 @@ func colorProp(name string, isFg bool) protocol.Property {
 	}))
 }
 
+// sizeProp is one axis of a trinket's minimum or maximum, in units.
+//
+// A minimum is a size and nothing else. A maximum may also be absent, which is
+// core.Unbounded rather than zero -- a maximum of zero is a real answer, and
+// collapses the trinket while it keeps its place.
 func sizeProp(name string, min, isWidth bool) protocol.Property {
 	return protocol.NewProperty("units", wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt(name, v, f)
 		if err != nil {
 			return err
+		}
+		floor := core.Unit(0)
+		if !min {
+			floor = core.Unbounded
+		}
+		if core.Unit(n) < floor {
+			return fmt.Errorf("%s: %d is below %d", name, n, floor)
 		}
 		if min {
 			s := w.MinimumSize()
@@ -378,9 +427,9 @@ func unitsProp(name string, isColumn bool) protocol.Property {
 			m = *ov
 		}
 		if isColumn {
-			m.CellWidth = core.Unit(n)
+			m.UnitsPerCellWidth = core.Unit(n)
 		} else {
-			m.CellHeight = core.Unit(n)
+			m.UnitsPerCellHeight = core.Unit(n)
 		}
 		mw.SetCellMetrics(&m)
 		return nil

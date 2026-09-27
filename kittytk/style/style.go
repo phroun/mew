@@ -140,6 +140,25 @@ const (
 	StyleFraktur  // ECMA-48 fraktur (SGR 20) — emitted to the terminal (real VT fraktur)
 )
 
+// DimIntensity is how much of a foreground StyleDim keeps, the rest being
+// the background behind it, on a renderer that has to do the dimming itself.
+//
+// A terminal is told StyleDim as SGR 2 and renders the reduced intensity on
+// its own. A pixel surface is told nothing -- there is no attribute to send,
+// only colours to choose -- so it works the reduction out here. Three fifths
+// reads as reduced beside its neighbours without becoming unreadable against
+// the background it is let down toward.
+const DimIntensity = 0.6
+
+// Dim returns fg let down toward bg by DimIntensity: what StyleDim means to
+// a renderer that draws pixels rather than sending attributes.
+func Dim(fr, fg, fb, br, bg, bb uint8) (r, g, b uint8) {
+	mix := func(f, k uint8) uint8 {
+		return uint8(float64(f)*DimIntensity + float64(k)*(1-DimIntensity) + 0.5)
+	}
+	return mix(fr, br), mix(fg, bg), mix(fb, bb)
+}
+
 // Code returns the ANSI codes for text style.
 func (s TextStyle) Code() string {
 	if s == StyleNormal {

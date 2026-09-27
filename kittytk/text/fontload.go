@@ -147,13 +147,29 @@ func (db *fontDB) indexLookup(norm string) []string {
 }
 
 // buildNameIndex walks dirs for font files and maps each face's normalized
-// family name to the files that provide it. Parse failures are skipped; a
-// per-call cap bounds pathological directories.
+// family name to the files that provide it. A file it cannot name is skipped.
+//
+// The names are read from each file's name table rather than by parsing the
+// font (see fontnames.go). Parsing every font on the machine to learn what
+// each is called cost over a second here for 49 files, nearly all of it
+// reading bytes that say nothing about the name; reading the one table is
+// three orders of magnitude cheaper and answers the same.
+//
+// What was read is remembered between runs (see fontcache.go), so a file whose
+// size and time have not changed is not opened at all. Only what the walk turns
+// up is kept, and the cache is written again only when it says something new.
+//
+// There is no cap on how many files are looked at. There was one, at six
+// thousand, because parsing that many would have been unbearable -- and it
+// meant a family past the cap was silently unfindable, which is a worse
+// failure than a slow start.
 func buildNameIndex(dirs []string) map[string][]string {
-	const maxFiles = 6000
 	index := map[string][]string{}
+	known := readFontCache(fontCachePath())
+	found := make(map[string]fontNames, len(known))
 	seenFile := map[string]bool{}
-	scanned := 0
+	asRemembered := true
+
 	for _, dir := range dirs {
 		if dir == "" {
 			continue
@@ -171,16 +187,28 @@ func buildNameIndex(dirs []string) map[string][]string {
 				return nil
 			}
 			seenFile[path] = true
-			if scanned >= maxFiles {
-				return filepath.SkipAll
-			}
-			scanned++
-			faces, err := loadFaces(path)
+			info, err := d.Info()
 			if err != nil {
 				return nil
 			}
-			for _, f := range faces {
-				norm := gtfont.NormalizeFamily(f.Describe().Family)
+			names := fontNames{size: info.Size(), modified: info.ModTime().UnixNano()}
+			was, remembered := known[path]
+			if remembered && was.size == names.size && was.modified == names.modified {
+				names.families = was.families
+			} else {
+				families, err := familiesIn(path)
+				if err != nil {
+					// A file that cannot be named is not written down: it may
+					// be one this cannot read today and can tomorrow, and a
+					// chmod does not change the time the cache compares.
+					return nil
+				}
+				names.families = families
+				asRemembered = false
+			}
+			found[path] = names
+			for _, family := range names.families {
+				norm := gtfont.NormalizeFamily(family)
 				if norm == "" {
 					continue
 				}
@@ -188,6 +216,10 @@ func buildNameIndex(dirs []string) map[string][]string {
 			}
 			return nil
 		})
+	}
+
+	if !asRemembered || len(found) != len(known) {
+		writeFontCache(fontCachePath(), found)
 	}
 	return index
 }

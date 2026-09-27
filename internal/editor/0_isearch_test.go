@@ -174,7 +174,7 @@ func TestIsearchDirectionKeys(t *testing.T) {
 
 	e.executeCommand("search_reverse")
 	if got := w.CursorPos(); got.Line != 0 || got.Rune != 0 {
-		t.Fatalf("after search_reverse: caret %v, want previous cat at 0:0", got)
+		t.Fatalf("after search_reverse: caret %v, want prior cat at 0:0", got)
 	}
 	if w.Find.Options != "b" {
 		t.Fatalf("find options = %q, want b committed", w.Find.Options)

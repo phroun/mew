@@ -1,9 +1,15 @@
 // Package protocol implements the KittyTK display-protocol command
-// language (plan decisions D10-D17): named properties (nothing
-// positional), alias dictionaries, correlation keys with hierarchical
-// scoping and explicit surfacing, three-valued boolean flags,
-// children blocks, macro templates, and the six-type value system
-// (flag, enum, numeric, identifier, {}, "string").
+// language (plan decisions D10-D17): named properties, alias
+// dictionaries, correlation keys with hierarchical scoping and
+// explicit surfacing, three-valued boolean flags, children blocks,
+// macro templates, and the six-type value system (flag, enum,
+// numeric, identifier, {}, "string").
+//
+// A value may also be written with no name, as an operand of the verb:
+// a target reference, a filter's field and what it is matched against.
+// D10's rule is about PROPERTIES -- a property always travels under its
+// name, which is what makes the alias dictionaries worth having -- and
+// a property statement refuses an operand (Session.applyArgs).
 //
 // This package is transport-agnostic: it parses command text into
 // records. Sessions, sockets, alias application, and template
@@ -50,10 +56,17 @@ const (
 type Value struct {
 	Kind   ValueKind
 	Word   string  // WordValue
-	Number float64 // NumberValue
-	IsInt  bool    // NumberValue: no fractional part written
+	Number float64 // NumberValue: as a float, which is exact only below 2^53
+	Int    int64   // NumberValue: the exact value, when IsInt says there is one
+	IsInt  bool    // NumberValue: written with no fractional part, and it fits
 	Str    string  // StringValue (unescaped)
 	Block  *Script // BlockValue
+
+	// Blob marks a StringValue built from arbitrary bytes rather than text,
+	// so encoding escapes every one of them (QuoteBlob) instead of writing
+	// the printable ones through. It is set by the builder, never by the
+	// parser: what comes off the wire is already the bytes that were sent.
+	Blob bool
 }
 
 // Arg is one argument of a statement: either a flag (bare name with
@@ -72,11 +85,19 @@ type Arg struct {
 //	verb args...             (Key="", Verb=verb)
 //	key=verb args...         (Key=key, Verb=verb)
 //	key=path                 (Key=key, Verb="", Ref=path - D15 surfacing)
+//	key=id                   (Key=key, Verb="", RefID=id - D15 surfacing)
+//
+// The two surfacing forms name the same thing from the two directions a
+// client can already reach an object: a key path it built, or an id the
+// host handed it (the app and the store arrive in the handshake as bare
+// numbers). Either way the name goes in the session's key table, so what
+// follows addresses it the way it addresses anything else.
 type Statement struct {
-	Key  string
-	Verb string
-	Ref  string
-	Args []*Arg
+	Key   string
+	Verb  string
+	Ref   string
+	RefID uint64
+	Args  []*Arg
 }
 
 // Script is a sequence of statements (a request body or a {} block).
@@ -182,12 +203,24 @@ func hexVal(ch rune) int {
 	return -1
 }
 
+// A word may begin with a dot, which is how a name says it is a member of
+// something rather than a word in its own right: `.size` is the member called
+// size, and `size` is the word size.
 func isWordStart(ch rune) bool {
-	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+	return ch == '_' || ch == '.' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
+// A name carries digits and hyphens after its first character, so `kebab-case`
+// is one name rather than a name, a minus and a number.
 func isWordRune(ch rune) bool {
-	return isWordStart(ch) || ch == '.' || (ch >= '0' && ch <= '9')
+	return isWordStart(ch) || ch == '-' || (ch >= '0' && ch <= '9')
+}
+
+// isTokenRune is what a bare token is made of -- a number or a symbol, which
+// are one run of characters and told apart by what they say rather than by what
+// they start with. The plus is in for the exponent's sign, `1e+21`.
+func isTokenRune(ch rune) bool {
+	return isWordRune(ch) || ch == '+'
 }
 
 func isNumberStart(ch rune) bool {
@@ -210,6 +243,29 @@ func (p *parser) atStatementEnd(inBlock bool) bool {
 	return false
 }
 
+// parseHead reads a statement's head, which is a run of word runes and may
+// begin with any of them -- a digit included.
+//
+// A block is not always a list of commands. A record is written as one, and a
+// record's field names belong to the data rather than to this grammar: a
+// positional member's name is its index, so `{ 0 "a"; 1 "b" }` is a record of
+// two of them. EncodeStatement has always written that, and until now nothing
+// could read it back.
+//
+// The digits are taken as they stand rather than read as a number. `007` and
+// `7` are different names, and a name that went out one way has to come back
+// the same way.
+func (p *parser) parseHead() (string, error) {
+	if p.eof() || !isWordRune(p.peek()) {
+		return "", p.errf("expected a name")
+	}
+	var sb strings.Builder
+	for !p.eof() && isWordRune(p.peek()) {
+		sb.WriteRune(p.advance())
+	}
+	return sb.String(), nil
+}
+
 func (p *parser) parseWord() (string, error) {
 	if p.eof() || !isWordStart(p.peek()) {
 		return "", p.errf("expected a name")
@@ -217,6 +273,38 @@ func (p *parser) parseWord() (string, error) {
 	var sb strings.Builder
 	for !p.eof() && isWordRune(p.peek()) {
 		sb.WriteRune(p.advance())
+	}
+	return sb.String(), nil
+}
+
+// parseProtectedSymbol reads a symbol the grammar has no bare spelling for:
+// `(objectLibrary/figaro/3)`.
+//
+// Parentheses because that is what they already mean. PawScript evaluates a
+// block written in braces and preserves what is written in parentheses --
+// literal content, held unparsed -- and the wire's block is braces too. So the
+// two languages say the same thing with the same brackets: braces for what is
+// read, parentheses for what is kept as it stands.
+//
+// There are no escapes inside, and none are needed: a symbol cannot contain a
+// closing parenthesis in PawScript either, so nothing that can be written there
+// is unwritable here. A newline is refused for the same reason it ends a
+// statement -- an identifier does not hold one.
+func (p *parser) parseProtectedSymbol() (string, error) {
+	p.advance() // '('
+	var sb strings.Builder
+	for {
+		if p.eof() || p.peek() == '\n' {
+			return "", p.errf("unterminated symbol: expected ')'")
+		}
+		if p.peek() == ')' {
+			p.advance()
+			break
+		}
+		sb.WriteRune(p.advance())
+	}
+	if sb.Len() == 0 {
+		return "", p.errf("a symbol is a name, and () is not one")
 	}
 	return sb.String(), nil
 }
@@ -282,33 +370,107 @@ func (p *parser) parseString() (string, error) {
 	}
 }
 
-func (p *parser) parseNumber() (*Value, error) {
+// scanToken takes the whole run of a bare token. What it is is decided after
+// it has been read, not from the character it starts with.
+func (p *parser) scanToken() string {
 	var sb strings.Builder
-	if p.peek() == '-' {
+	for !p.eof() && isTokenRune(p.peek()) {
 		sb.WriteRune(p.advance())
 	}
-	digits := 0
+	return sb.String()
+}
+
+func (p *parser) parseNumber() (*Value, error) {
+	text := p.scanToken()
+	v := numberValue(text)
+	if v == nil {
+		return nil, p.errf("malformed number %q", text)
+	}
+	return v, nil
+}
+
+// parseNumberOrWord reads one bare token and says what it is.
+//
+// A number and a symbol are the same run of characters, so which one it is
+// cannot be decided from the first character: `2026-09-13` starts like a number
+// and is a date, and `1e+21` starts like a date and is a number. The token is
+// read whole and then measured against the numeric form; anything that is not
+// one is a symbol.
+//
+// A token written with a leading sign is a number and nothing else, so one that
+// does not measure up is refused rather than quietly becoming a symbol -- `-`
+// on its own is a mistake, not an identifier.
+func (p *parser) parseNumberOrWord() (*Value, error) {
+	text := p.scanToken()
+	if v := numberValue(text); v != nil {
+		return v, nil
+	}
+	if text[0] == '+' || text[0] == '-' {
+		return nil, p.errf("malformed number %q", text)
+	}
+	return &Value{Kind: WordValue, Word: text}, nil
+}
+
+// numberValue reads a bare token as a number, and is nil where the token is not
+// one:
+//
+//	[+-]? digits ( "." digits )? ( [eE] [+-]? digits )?
+//
+// The form is written out rather than handed to the language's own parser,
+// because three implementations have to agree on exactly where a number stops
+// and a symbol begins -- and each language's parser accepts a different set of
+// extras: infinities, not-a-numbers, hexadecimal floats, digit separators.
+func numberValue(text string) *Value {
+	i, n := 0, len(text)
+	digits := func() bool {
+		start := i
+		for i < n && text[i] >= '0' && text[i] <= '9' {
+			i++
+		}
+		return i > start
+	}
+	if i < n && (text[i] == '+' || text[i] == '-') {
+		i++
+	}
+	if !digits() {
+		return nil
+	}
 	dot := false
-	for !p.eof() {
-		ch := p.peek()
-		if ch >= '0' && ch <= '9' {
-			digits++
-			sb.WriteRune(p.advance())
-		} else if ch == '.' && !dot {
-			dot = true
-			sb.WriteRune(p.advance())
-		} else {
-			break
+	if i < n && text[i] == '.' {
+		i++
+		if !digits() {
+			return nil
+		}
+		dot = true
+	}
+	exp := false
+	if i < n && (text[i] == 'e' || text[i] == 'E') {
+		i++
+		if i < n && (text[i] == '+' || text[i] == '-') {
+			i++
+		}
+		if !digits() {
+			return nil
+		}
+		exp = true
+	}
+	if i != n {
+		return nil
+	}
+	// A whole number is read as an integer first, so an id or a nanosecond
+	// stamp arrives with every digit it was sent with -- a float64 stops being
+	// able to tell two integers apart at 2^53. One too large even for an
+	// int64 is a float, and says so: IsInt means the exact value is there.
+	if !dot && !exp {
+		if v, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return &Value{Kind: NumberValue, Number: float64(v), Int: v, IsInt: true}
 		}
 	}
-	if digits == 0 {
-		return nil, p.errf("malformed number")
-	}
-	f, err := strconv.ParseFloat(sb.String(), 64)
+	f, err := strconv.ParseFloat(text, 64)
 	if err != nil {
-		return nil, p.errf("malformed number %q", sb.String())
+		return nil
 	}
-	return &Value{Kind: NumberValue, Number: f, IsInt: !dot}, nil
+	return &Value{Kind: NumberValue, Number: f}
 }
 
 func (p *parser) parseValue(inBlock bool) (*Value, error) {
@@ -323,6 +485,12 @@ func (p *parser) parseValue(inBlock bool) (*Value, error) {
 			return nil, err
 		}
 		return &Value{Kind: StringValue, Str: s}, nil
+	case p.peek() == '(':
+		w, err := p.parseProtectedSymbol()
+		if err != nil {
+			return nil, err
+		}
+		return &Value{Kind: WordValue, Word: w}, nil
 	case p.peek() == '{':
 		p.advance() // '{'
 		block, err := p.parseScript(false)
@@ -334,14 +502,8 @@ func (p *parser) parseValue(inBlock bool) (*Value, error) {
 		}
 		p.advance() // '}'
 		return &Value{Kind: BlockValue, Block: block}, nil
-	case isNumberStart(p.peek()):
-		return p.parseNumber()
-	case isWordStart(p.peek()):
-		w, err := p.parseWord()
-		if err != nil {
-			return nil, err
-		}
-		return &Value{Kind: WordValue, Word: w}, nil
+	case isTokenRune(p.peek()):
+		return p.parseNumberOrWord()
 	default:
 		return nil, p.errf("unexpected character %q in value position", p.peek())
 	}
@@ -380,27 +542,25 @@ func (p *parser) parseArgs(inBlock bool) ([]*Arg, error) {
 			} else {
 				args = append(args, &Arg{Name: name, Flag: FlagTrue})
 			}
-		case isNumberStart(ch):
-			// A bare number is an anonymous argument. The only legal
-			// use is as a verb's target reference (D19: `set 1042
-			// caption=...`); interpreters reject it anywhere else, so
-			// D10's nothing-positional rule still holds for
-			// properties.
-			val, err := p.parseNumber()
+		default:
+			// An operand: a value with no name, in the order it was
+			// written. A verb that takes operands reads them by
+			// position -- a target reference (`set 1042 caption=...`),
+			// a filter's field and value, a block to nest. One that
+			// does not refuses them, which is where D10's
+			// named-properties rule holds: see Session.applyArgs.
+			val, err := p.parseValue(inBlock)
 			if err != nil {
 				return nil, err
 			}
 			args = append(args, &Arg{Value: val})
-		default:
-			// D10: nothing positional - bare values are not allowed.
-			return nil, p.errf("unexpected %q: values must be named (name=value)", ch)
 		}
 	}
 	return args, nil
 }
 
 func (p *parser) parseStatement(inBlock bool) (*Statement, error) {
-	first, err := p.parseWord()
+	first, err := p.parseHead()
 	if err != nil {
 		return nil, err
 	}
@@ -410,6 +570,23 @@ func (p *parser) parseStatement(inBlock bool) (*Statement, error) {
 	if !p.eof() && p.peek() == '=' {
 		p.advance() // '='
 		p.skipInline()
+		// key=id: a name for an object the host handed over as a number.
+		// Nothing follows it - an id is not a verb, so there is nothing
+		// for arguments to apply to.
+		if !p.eof() && isNumberStart(p.peek()) {
+			v, err := p.parseNumber()
+			if err != nil {
+				return nil, err
+			}
+			if !v.IsInt || v.Int < 0 {
+				return nil, p.errf("%q= expected an object id", first)
+			}
+			if !p.atStatementEnd(inBlock) {
+				return nil, p.errf("%q=%d takes nothing after it: an id is not a command",
+					first, uint64(v.Int))
+			}
+			return &Statement{Key: first, RefID: uint64(v.Int)}, nil
+		}
 		if p.eof() || !isWordStart(p.peek()) {
 			return nil, p.errf("expected command or reference after %q=", first)
 		}
@@ -453,7 +630,7 @@ func (p *parser) parseScript(topLevel bool) (*Script, error) {
 			}
 			return script, nil
 		}
-		if !isWordStart(p.peek()) {
+		if !isWordRune(p.peek()) {
 			return nil, p.errf("expected a statement, found %q", p.peek())
 		}
 		stmt, err := p.parseStatement(!topLevel)

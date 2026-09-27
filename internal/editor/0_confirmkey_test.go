@@ -87,7 +87,7 @@ func TestConfirmArrowUpEnterChoosesOption(t *testing.T) {
 // blank input line above it — the default; a newline landing mid-list reads
 // the option line above the caret.
 func TestConfirmInsertedNewlineDefaultAndOption(t *testing.T) {
-	// End-of-buffer newline: previous line is the blank input line -> default.
+	// End-of-buffer newline: prior line is the blank input line -> default.
 	e, _ := newTestEditor(t, "")
 	e.KeyProcessor.MapKey("F35", "insert '\\n'")
 	res := openConfirm(e, true)
@@ -96,7 +96,7 @@ func TestConfirmInsertedNewlineDefaultAndOption(t *testing.T) {
 		t.Fatalf("end newline: result = %+v, want the default (yes)", res)
 	}
 
-	// Mid-list newline after arrowing up: previous line is the chosen option.
+	// Mid-list newline after arrowing up: prior line is the chosen option.
 	e2, _ := newTestEditor(t, "")
 	e2.KeyProcessor.MapKey("F35", "insert '\\n'")
 	res2 := openConfirm(e2, false) // "Y\nN\n": two ups land at end of "Y"
@@ -138,8 +138,15 @@ func TestConfirmShrinkCancels(t *testing.T) {
 
 // The LOSE CHANGES confirmation on viewport_close answers to a single n:
 // the buffer stays open.
+//
+// Closing the LAST buffer quits rather than removing a viewport, so a
+// confirmed yes here stops the editor and leaves the viewport where it was.
+// Running is therefore what tells the two answers apart; the focus check alone
+// holds either way. Run() is what normally sets it, and the test editor does
+// not run, so it is set here to give the flag something to change.
 func TestLoseChangesSingleKey(t *testing.T) {
 	e, w := newTestEditor(t, "hello\n")
+	e.Running = true
 	e.executeCommand("insert 'x'")
 	e.executeCommand("viewport_close")
 	if focusedPrompt(e) == nil {
@@ -151,7 +158,101 @@ func TestLoseChangesSingleKey(t *testing.T) {
 	if focusedPrompt(e) != nil {
 		t.Fatal("prompt should be closed")
 	}
+	if !e.Running {
+		t.Fatal("declining threw the changes away and quit")
+	}
 	if e.ViewportManager.GetFocusedViewport() != w {
 		t.Fatal("declining should keep the buffer open and focused")
+	}
+}
+
+// A key that is not an answer cancels; it never stands in for the default.
+//
+// One keystroke settles this prompt, so every key on the keyboard arrives here
+// as a candidate answer. Reading an unrecognized one as the default lets a
+// mistyped key ACT -- and on "04: LOSE CHANGES TO x?", whose default is yes,
+// acting means the changes are gone. Cancel costs nothing to be wrong about.
+func TestConfirmUnrecognizedKeyCancels(t *testing.T) {
+	for _, def := range []bool{true, false} {
+		e, _ := newTestEditor(t, "")
+		res := openConfirm(e, def)
+
+		e.dispatchKey("k")
+
+		if !res.settled {
+			t.Fatalf("default %v: an unrecognized key left the prompt open", def)
+		}
+		if res.accepted {
+			t.Fatalf("default %v: result = %+v, want cancelled", def, res)
+		}
+		if focusedPrompt(e) != nil {
+			t.Fatalf("default %v: prompt should be closed", def)
+		}
+	}
+}
+
+// The dangerous case in full: a mistyped key at the LOSE CHANGES prompt, whose
+// default is yes.
+//
+// Closing the LAST buffer quits instead of removing a viewport, so what a
+// confirmed yes does here is stop the editor -- which is why the assertion is
+// on Running and not on the viewport. Run() is what normally sets it, and the
+// test editor does not run, so it is set here to give the flag something to
+// change.
+func TestLoseChangesDoesNotQuitOnAMistypedKey(t *testing.T) {
+	e, w := newTestEditor(t, "hello\n")
+	e.Running = true
+	e.executeCommand("insert 'x'")
+	e.executeCommand("viewport_close")
+	if focusedPrompt(e) == nil {
+		t.Fatal("LOSE CHANGES prompt should be open")
+	}
+
+	e.dispatchKey("k")
+
+	if focusedPrompt(e) != nil {
+		t.Fatal("prompt should be closed")
+	}
+	if !e.Running {
+		t.Fatal("a mistyped key threw the changes away and quit")
+	}
+	if e.ViewportManager.GetFocusedViewport() != w {
+		t.Fatal("the buffer should still be focused")
+	}
+}
+
+// The default sits one arrow-up from the input line, in both confirmations.
+//
+// PromptForConfirmationTop seeded the same two answers whichever way round the
+// default was, so arrowing up reached "n" even when the prompt was offering Y.
+func TestArrowUpReachesTheDefault(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		open func(*Editor, *confirmResult, bool)
+	}{
+		{"confirmation", func(e *Editor, res *confirmResult, def bool) {
+			e.PromptMgr.PromptForConfirmation("Q?", def, func(accepted, confirmed bool) {
+				res.settled, res.accepted, res.confirmed = true, accepted, confirmed
+			})
+		}},
+		{"top confirmation", func(e *Editor, res *confirmResult, def bool) {
+			e.PromptMgr.PromptForConfirmationTop("top", "Q?", def, func(accepted, confirmed bool) {
+				res.settled, res.accepted, res.confirmed = true, accepted, confirmed
+			})
+		}},
+	} {
+		for _, def := range []bool{true, false} {
+			e, _ := newTestEditor(t, "")
+			res := &confirmResult{}
+			c.open(e, res, def)
+
+			e.dispatchKey("up")
+			e.dispatchKey("return")
+
+			if !res.settled || !res.accepted || res.confirmed != def {
+				t.Errorf("%s, default %v: result = %+v, want the default back",
+					c.what, def, res)
+			}
+		}
 	}
 }

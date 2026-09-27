@@ -7,7 +7,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for TextInput (see docs/property-vocabulary.md).
+// Wire registration for TextInput; the wiki's TextInput page is
+// generated from it.
 //
 // cursor, selection_start and selection_end are NOT here: they are deferred,
 // with the reasoning in d2-read-audit.md (C2 exception 3). The vocabulary doc
@@ -48,6 +49,10 @@ func init() {
 				}
 				t.SetMaskChar(r[0])
 			}).Tip("The single character echo=password paints for each rune. Blank restores the default bullet; only the first character is used.").Def("•"),
+			"show_bidi_controls": boolProp("show_bidi_controls", (*TextInput).SetShowBidiControls).
+				Tip("Mark where the line's reading turns and which way each piece of it goes, while the field is focused. An editing aid: an unfocused field shows the plain text. On unless it is turned off.").Def("true"),
+			"show_ahead": intProp("show_ahead", (*TextInput).SetShowAhead).
+				Tip("How much of the content stays visible past the caret, in characters, when the field is scrolled.").Def("2"),
 		},
 		map[string]protocol.EventDesc{
 			"change": protocol.NewEventDesc("The content changed through user editing — a typed character, a deletion, a paste, or a committed composition. A set from the client does not raise it.").

@@ -52,7 +52,7 @@ wwin=mdi.d1
 		entry := entryUI.Object("we")
 		entry.On("click", func(*protocol.Event) {
 			// D20: our own set never echoes; drop the entry here.
-			if mdiH.Set(fmt.Sprintf("restore=%d", id)) == nil {
+			if mdiH.Do(fmt.Sprintf("restore window=%d", id)) == nil {
 				drop(id)
 			}
 		})

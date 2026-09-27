@@ -81,6 +81,16 @@ func main() {
 	// and controls scaled to match. 1.0 is the default. (TUI stays 1.0 —
 	// a terminal cannot subdivide a character cell.)
 	core.SetTitleBarScale(cfg.TitleBarScale)
+	// [window] menu_scale: the menu bar, the dropdowns it opens and context
+	// menus at this fraction of the classic full-cell row, fonts and the
+	// cell-based gutters scaled to match. 1.0 is the default, and the TUI
+	// stands down to it for the same reason.
+	core.SetMenuScale(cfg.MenuScale)
+	// [window] shortcut_scale sizes a menu's shortcut column against the item
+	// text; shortcut_native_scale takes Apple's face down again on top of it
+	// in native mode. They compound to 0.64 at the defaults.
+	core.SetShortcutScale(cfg.ShortcutScale)
+	core.SetShortcutNativeScale(cfg.ShortcutNativeScale)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {
@@ -99,11 +109,6 @@ func main() {
 		Graphical: true,
 		Desktop:   cfg.HostType, // [window] host_type, or blank to detect
 	})
-
-	// Free the host's built-in accelerators before the desktop is created: the Ψ
-	// system menu is built inside NewDesktop and never rebuilt, so its Exit
-	// Desktop shortcut must be cleared first.
-	mewhost.ClearHostShortcuts()
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font

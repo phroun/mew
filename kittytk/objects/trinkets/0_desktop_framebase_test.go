@@ -8,6 +8,7 @@ import (
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/platform"
+	"github.com/phroun/kittytk/style"
 )
 
 // paintProbe records whether a window's content painted.
@@ -305,7 +306,7 @@ func newCaretProbe(x, y core.Unit) *caretProbe {
 	return p
 }
 
-func (c *caretProbe) Paint(p *core.Painter) { p.RequestTextCaret(c.x, c.y, 2) }
+func (c *caretProbe) Paint(p *core.Painter) { p.RequestTextCaret(c.x, c.y, 2, style.ColorDefault) }
 
 // FrameBase must NOT apply the caret itself. Child windows, menus and
 // popups paint on compositor layers of their own and any of them may

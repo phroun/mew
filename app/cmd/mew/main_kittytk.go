@@ -100,11 +100,6 @@ func main() {
 		Desktop:   cfg.HostType, // [window] host_type, or blank to detect
 	})
 
-	// Free the host's built-in accelerators before the desktop is created: the Ψ
-	// system menu is built inside NewDesktop and never rebuilt, so its Exit
-	// Desktop shortcut must be cleared first.
-	mewhost.ClearHostShortcuts()
-
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tui.NewTUIBackend(tuiOpts))
 

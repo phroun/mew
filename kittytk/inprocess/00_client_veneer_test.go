@@ -28,7 +28,7 @@ func TestReplicaMirrorsUserChanges(t *testing.T) {
 root=new panel layout=vbox children={
 	cb=new checkbox caption="c" tristate
 	inp=new textinput text="start"
-	combo=new combobox children={new item caption="A"; new item caption="B"} selected=0
+	combo=new combobox items={new item caption="A"; new item caption="B"} selected=0
 }
 wcb=root.cb
 winp=root.inp

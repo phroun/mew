@@ -377,7 +377,7 @@ func TestNeedsRepaint(t *testing.T) {
 		{"subtree repainted", changed(func(s *paintSignature) { s.revision++ }), true},
 		{"resized", changed(func(s *paintSignature) { s.widthPx = 401 }), true},
 		{"font zoom", changed(func(s *paintSignature) { s.fontSize = 14 }), true},
-		{"denomination change", changed(func(s *paintSignature) { s.metrics.CellWidth = 99 }), true},
+		{"denomination change", changed(func(s *paintSignature) { s.metrics.UnitsPerCellWidth = 99 }), true},
 		{"reports no revision", changed(func(s *paintSignature) { s.hasRevision = false }), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

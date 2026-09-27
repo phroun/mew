@@ -2,10 +2,29 @@ package window
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
 )
+
+// closeDecision is how long an application gets to answer whether one of its
+// windows may close, before the display asks the person instead.
+//
+// **There is no such thing as waiting long enough.** An application that
+// subscribed to `window_closing` and has not answered may be holding a
+// save-your-work dialog in front of somebody, in which case no deadline is long
+// enough; or it may be in a loop and never going to answer, in which case no
+// deadline is short enough. The two are indistinguishable from here.
+//
+// So this is not a guess at how long deciding takes. It is how long the display
+// waits before admitting it cannot tell, and asking somebody who can -- see
+// Desktop.AskForceClose. Long enough that an application which is merely thinking
+// is never interrupted, short enough that a hung one does not look like a window
+// that simply will not close.
+//
+// A var, so a test of what happens when it passes need not take five seconds.
+var closeDecision = 5 * time.Second
 
 // Wire registration for Window. Per D12, behavior flags are
 // individual named flags, never bitsets:
@@ -104,7 +123,7 @@ func init() {
 			return nil
 		}).Tip("Window font override (\"default\" clears)"),
 		// denomination overrides the window's row height in units (its
-		// content re-grids to it); 0 clears the override.
+		// content lays out against it); 0 clears the override.
 		"denomination": protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			n, err := protocol.AsInt("denomination", v, f)
 			if err != nil {
@@ -115,7 +134,7 @@ func init() {
 				w.SetCellMetrics(nil)
 			} else {
 				m := core.DefaultCellMetrics()
-				m.CellHeight = core.Unit(n)
+				m.UnitsPerCellHeight = core.Unit(n)
 				w.SetCellMetrics(&m)
 			}
 			return nil
@@ -146,8 +165,8 @@ func init() {
 		}).Tip("Window " + dim + " in desktop units")
 	}
 
-	for name, spec := range windowFlagProps {
-		name, flag, doc := name, spec.flag, spec.doc
+	for name, descriptor := range windowFlagProps {
+		name, flag, doc := name, descriptor.flag, descriptor.doc
 		props[name] = protocol.NewProperty("flag", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			b, err := protocol.AsBool(name, v, f)
 			if err != nil {
@@ -163,8 +182,28 @@ func init() {
 		}).Tip(doc).Def("false")
 	}
 
+	props["children"] = protocol.NewCollection(func(parent, child any) error {
+		w, ok := parent.(*Window)
+		if !ok {
+			return fmt.Errorf("window: wrong parent type %T", parent)
+		}
+		cw, ok := child.(core.Trinket)
+		if !ok {
+			return fmt.Errorf("window: content must be a trinket, got %T", child)
+		}
+		if w.Content() != nil {
+			return fmt.Errorf("window: only one content trinket (wrap several in a panel)")
+		}
+		w.SetContent(cw)
+		return nil
+	}).Tip("The one trinket this window shows.")
+
 	protocol.RegisterType("window", &protocol.TypeSpec{
 		Events: map[string]protocol.EventDesc{
+			"window_closing": protocol.NewEventDesc("The window is closing and has NOT closed: the application decides whether it may, because it is the only one that knows there is unsaved work. Subscribing is what makes a close askable at all — a window nobody is listening about closes at once.").
+				Field("window", "uint", "The window asking.").
+				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and it closes, `do <id> deny` and it stays. Answer inside `within`, or say `do <id> waiting` while a person reads a dialog — not because deciding must be quick, but because the display cannot tell an application that is still thinking from one that is never going to answer. Past that it asks the person whether to force the window closed, and says which application did not respond. Answering, even to say `deny`, is what keeps your name out of that dialog.").
+					Field(protocol.DecisionWithinField, "uint", "How many milliseconds the display will wait for the answer. Putting your own question in front of somebody takes longer than this: send `do <id> waiting` every half of it while your dialog is up, and the display goes on waiting instead of asking whether to force the window closed."),
 			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
 				Field("window", "uint", "The closed window's object ID."),
 		},
@@ -175,29 +214,159 @@ func init() {
 		Bind: func(ctx *protocol.BindContext, target any) {
 			w := target.(*Window)
 			id := uint64(w.ObjectID())
-			w.SetOnCloseComplete(func() {
+			// **An OBSERVER, not the close-complete slot.** That slot holds one
+			// handler and belongs to whatever is holding the window: the window
+			// manager removes it from its list there, the MDI pane and the
+			// tear-off host do the same for theirs. All three are assigned when
+			// the window is ADOPTED, which is after it is built -- so a binding
+			// that took the slot had it taken back a moment later, and the
+			// application was never told its window closed. Every window an
+			// application creates is adopted by one of those three.
+			//
+			// Nothing noticed because nothing in the display needs this event:
+			// it is the only way an APPLICATION learns its own window went, and
+			// what it costs is an application that waits for a window that has
+			// already gone. The demo did exactly that -- its main window closed
+			// by the desktop's own quit, and it sat there.
+			//
+			// Observers accumulate and always run. The owning Application drops
+			// the window from its list through one for this same reason.
+			w.AddOnClosed(func() {
 				ctx.EmitEvent(protocol.NewEvent("window_closed").
 					WithUint("window", id))
 			})
+
+			// **A close the application may refuse**, which it could not before:
+			// a Go handler returning false is a veto for the host, and an
+			// application reaches the display only over the wire.
+			//
+			// Close() answers now and the application answers later, so this
+			// declines the close it cannot yet allow, and closes the window
+			// itself when the answer comes. `allowing` is how the second Close
+			// gets past this handler rather than asking the same question
+			// again; both it and the verdict are on the desktop thread, which
+			// is where a close happens and where a batch executes.
+			allowing := false
+			w.SetOnClose(func() bool {
+				if allowing {
+					allowing = false
+					return true
+				}
+				// settle ends this close for good: do what was decided, stop
+				// being a question, and tell a sweep that stopped here -- a
+				// quit -- that it may carry on. Exactly once, however the
+				// answer arrived.
+				settle := func(mayClose bool) {
+					// **Cleared FIRST**, before the close it permits: closing runs
+					// the observer below, and a window still marked as deciding
+					// would be settled there as well as here.
+					w.SetDeciding(false)
+					// What actually HAPPENED, which is not the same as what was
+					// allowed: a child window of this one can still refuse, and
+					// then the close ends with everything still on the screen.
+					closed := false
+					if mayClose {
+						// The handler above clears `allowing` as it lets this
+						// close through, so it is already false again here.
+						allowing = true
+						closed = w.Close()
+					}
+					w.CloseSettled(closed)
+				}
+				d := ctx.Deciding(
+					protocol.NewEvent("window_closing").WithUint("window", id),
+					closeDecision,
+					func(v protocol.Verdict) {
+						switch {
+						case v.Allowed:
+							closeTrace("window_closing allowed for %q", w.Title())
+							settle(true)
+						case v.Said:
+							// Denied. It stays open, which is what was asked
+							// for.
+							settle(false)
+						default:
+							// **Nobody answered, and the display cannot tell
+							// why.** An application that subscribed may be
+							// holding a save-your-work dialog in front of
+							// somebody, or may be in a loop and never going to
+							// answer. Both look exactly alike from here.
+							//
+							// So it stops guessing and asks the one party that
+							// can tell, who is looking at the screen.
+							//
+							// It stays DECIDING while they read the question:
+							// the close is still unresolved, and a quit that
+							// stopped at this window should go on waiting
+							// rather than give up on somebody mid-answer.
+							//
+							// **Two things are asked nothing.** A window that has
+							// already gone -- destroyed while the seconds ran --
+							// was settled by the observer below, and a question
+							// about it is a question about nothing. And an
+							// application that DISCONNECTED did not fail to
+							// answer, it left: its windows are about to be closed
+							// for it, and naming it in a dialog would blame it for
+							// going.
+							if !w.Deciding() {
+								// Gone already, and the observer below settled it when it
+								// went. Settling again here would report the same close a
+								// second time, and report it as NOT having happened.
+								return
+							}
+							closeTrace("window_closing NOT answered for %q; deciding=%v connectionGone=%v",
+								w.Title(), w.Deciding(), ctx.Gone())
+							if ctx.Gone() {
+								// The application left rather than failing to answer. The
+								// window stays, and the teardown closing it is next.
+								settle(false)
+								return
+							}
+							closeTrace("asking the person about %q", w.Title())
+							w.AskForceClose(settle)
+						}
+					})
+				// Nobody is listening, so nobody is deciding: close at once,
+				// exactly as a window with no wire binding at all does.
+				if d == nil {
+					return true
+				}
+				// A question is outstanding, which is NOT a refusal -- see
+				// Window.SetDeciding for why the difference matters.
+				w.SetDeciding(true)
+				closeTrace("window_closing asked about %q(id=%d); waiting %v for an answer",
+					w.Title(), w.ObjectID(), closeDecision)
+				return false
+			})
+
+			// **A window can close while the question about closing it is open**:
+			// the application destroys it, or disconnects and has it closed for
+			// it. The question is then about nothing -- and a MODAL question about
+			// nothing is worse than none, because it blocks the desktop over a
+			// window nobody can point at.
+			//
+			// Registered once, here, rather than per close, so it never piles up.
+			// It does nothing for an ordinary close: settle clears the flag before
+			// the close it permits, exactly so this finds nothing to do.
+			w.AddOnClosed(func() {
+				if !w.Deciding() {
+					return
+				}
+				w.SetDeciding(false)
+				// It IS closed, whoever closed it, so a sweep waiting on this
+				// window carries on rather than treating it as a refusal.
+				w.CloseSettled(true)
+			})
 		},
 		Props: props,
-		Append: func(parent, child any) error {
-			w, ok := parent.(*Window)
-			if !ok {
-				return fmt.Errorf("window: wrong parent type %T", parent)
-			}
-			cw, ok := child.(core.Trinket)
-			if !ok {
-				return fmt.Errorf("window: content must be a trinket, got %T", child)
-			}
-			if w.Content() != nil {
-				return fmt.Errorf("window: only one content trinket (wrap several in a panel)")
-			}
-			w.SetContent(cw)
-			return nil
-		},
 		Destroy: func(t any) error {
-			t.(*Window).Close()
+			// **Destroying is not asking.** The statement came from the
+			// application, and putting its own order back to it as a question
+			// would want an answer inside the batch that gave the order. The
+			// handler goes first, so this close is the plain one.
+			w := t.(*Window)
+			w.SetOnClose(nil)
+			w.Close()
 			return nil
 		},
 	})

@@ -41,16 +41,16 @@ func TestCursorAtResolvesEdgeAndContent(t *testing.T) {
 	content := &ibeamContent{}
 	content.TrinketBase = *core.NewTrinketBase()
 	w.SetContent(content)
-	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120})
+	w.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 200, Height: 128})
 	m.AddWindow(w)
 	w.Layout()
 
 	// Over the right edge -> horizontal resize cursor.
-	if got := m.CursorAt(299, 160); got != core.CursorResizeH {
+	if got := m.CursorAt(295, 160); got != core.CursorResizeH {
 		t.Errorf("right edge cursor = %v, want CursorResizeH", got)
 	}
 	// Over the content interior -> the text I-beam from the content trinket.
-	if got := m.CursorAt(200, 160); got != core.CursorText {
+	if got := m.CursorAt(196, 160); got != core.CursorText {
 		t.Errorf("content cursor = %v, want CursorText", got)
 	}
 	// Off any window -> the default arrow.
@@ -62,19 +62,19 @@ func TestCursorAtResolvesEdgeAndContent(t *testing.T) {
 // A registered popup (combobox dropdown, context menu) floats above the
 // windows: over it CursorAt is the plain arrow - no resize cursor from a
 // window edge and no I-beam from window content underneath - and
-// updateResizeHover sets no edge highlight on the window beneath.
+// updateResizeBands sets no edge highlight on the window beneath.
 func TestOverlaySuppressesCursorAndResizeHover(t *testing.T) {
 	m := NewWindowManager()
 	w := NewWindow("w")
 	content := &ibeamContent{}
 	content.TrinketBase = *core.NewTrinketBase()
 	w.SetContent(content)
-	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120})
+	w.SetBounds(core.UnitRect{X: 96, Y: 96, Width: 200, Height: 128})
 	m.AddWindow(w)
 	w.Layout()
 
 	// Sanity: with no popup, the right edge and interior resolve as usual.
-	if got := m.CursorAt(299, 160); got != core.CursorResizeH {
+	if got := m.CursorAt(295, 160); got != core.CursorResizeH {
 		t.Fatalf("precondition: right edge cursor = %v, want CursorResizeH", got)
 	}
 
@@ -84,22 +84,22 @@ func TestOverlaySuppressesCursorAndResizeHover(t *testing.T) {
 		Bounds: core.UnitRect{X: 150, Y: 140, Width: 200, Height: 100},
 	})
 
-	if got := m.CursorAt(299, 160); got != core.CursorDefault {
+	if got := m.CursorAt(295, 160); got != core.CursorDefault {
 		t.Errorf("cursor over popup (edge) = %v, want CursorDefault", got)
 	}
-	if got := m.CursorAt(200, 160); got != core.CursorDefault {
+	if got := m.CursorAt(196, 160); got != core.CursorDefault {
 		t.Errorf("cursor over popup (content) = %v, want CursorDefault", got)
 	}
 
 	// The edge highlight must not appear under the popup either.
-	m.updateResizeHover(299, 160)
-	if len(w.ResizeHoverRects()) != 0 {
-		t.Errorf("resize highlight showed under popup: %v", w.ResizeHoverRects())
+	m.updateResizeBands(295, 160)
+	if len(w.ResizeBandRects()) != 0 {
+		t.Errorf("resize highlight showed under popup: %v", w.ResizeBandRects())
 	}
 
 	// Outside the popup, the edge highlight returns.
-	m.updateResizeHover(299, 110)
-	if len(w.ResizeHoverRects()) == 0 {
+	m.updateResizeBands(295, 110)
+	if len(w.ResizeBandRects()) == 0 {
 		t.Error("resize highlight should show on the edge outside the popup")
 	}
 }
@@ -174,12 +174,13 @@ func TestTornCursorForEdge(t *testing.T) {
 func TestTornEdgeRects(t *testing.T) {
 	b := core.UnitRect{Width: 200, Height: 120}
 	// tornEdgeRects is pure geometry: it takes whatever thickness it is
-	// handed. The torn host now derives that from ResizeOverlayGrip rather
+	// handed. The torn host now derives that from ResizeAffordanceBand rather
 	// than a constant, so pick a width here and assert the shape.
 	const g core.Unit = 6
+	gr := EdgeThickness{X: g, Y: g}
 
 	// Bottom-right corner -> right band + bottom band.
-	got := tornEdgeRects(b, resizeRight|resizeBottom, g)
+	got := tornEdgeRects(b, resizeRight|resizeBottom, gr)
 	if len(got) != 2 {
 		t.Fatalf("corner: want 2 rects, got %d", len(got))
 	}
@@ -193,7 +194,7 @@ func TestTornEdgeRects(t *testing.T) {
 	}
 
 	// Top-left corner -> left band + top band.
-	got = tornEdgeRects(b, resizeLeft|resizeTop, g)
+	got = tornEdgeRects(b, resizeLeft|resizeTop, gr)
 	if len(got) != 2 {
 		t.Fatalf("top corner: want 2 rects, got %d", len(got))
 	}

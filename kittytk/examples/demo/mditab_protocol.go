@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/client"
-	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
@@ -13,14 +13,14 @@ import (
 
 // The MDI Demo tab, converted: the pane, its background control
 // panel, and the dock are protocol objects; spawning documents is
-// `set mdi children={new window …}`; Tile/Cascade/Next/Prev are
+// `set mdi children={new window …}`; Tile/Cascade/Next/Prior are
 // action properties; and the dock choreography (minimize -> entry,
 // click -> restore) runs entirely over pane/dock events.
 
 const mdiTabScript = `
 sp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 	sa=new scrollarea children={
-		mdi=new mdipane fill="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
+		mdi=new mdipane background_char="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
 			cp=new panel layout=vbox spacing=8 children={
 				new label caption="MDIPane Trinket Demo"
 				new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."
@@ -67,10 +67,10 @@ func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ an
 	// Window-management buttons: pure wire actions.
 	commands := application.Commands()
 	commands.Register("demo.mdi.spawn", func() { spawnMDIChild(conn, mdiH) })
-	commands.Register("demo.mdi.tile", func() { _ = mdiH.Set("tile") })
-	commands.Register("demo.mdi.cascade", func() { _ = mdiH.Set("cascade") })
-	commands.Register("demo.mdi.next", func() { _ = mdiH.Set("next") })
-	commands.Register("demo.mdi.prior", func() { _ = mdiH.Set("prior") })
+	commands.Register("demo.mdi.tile", func() { _ = mdiH.Do("tile") })
+	commands.Register("demo.mdi.cascade", func() { _ = mdiH.Do("cascade") })
+	commands.Register("demo.mdi.next", func() { _ = mdiH.Do("next") })
+	commands.Register("demo.mdi.prior", func() { _ = mdiH.Do("prior") })
 
 	// Dock choreography over events: minimize -> add an entry;
 	// restore/remove -> destroy it; entry click -> restore.
@@ -98,7 +98,7 @@ func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ an
 		entry.On("click", func(*protocol.Event) {
 			// D20: our own set never echoes a restore event, so the
 			// initiator drops its dock entry itself.
-			if mdiH.Set(fmt.Sprintf("restore=%d", winID)) == nil {
+			if mdiH.Do(fmt.Sprintf("restore window=%d", winID)) == nil {
 				dropEntry(winID)
 			}
 		})
@@ -163,6 +163,6 @@ wclose=mdi.d%d.p.bp.cl
 	winID := ui.ID("wwin")
 	ui.Button("wnew").OnClick(func() { spawnMDIChild(conn, mdiH) })
 	ui.Button("wclose").OnClick(func() {
-		_ = mdiH.Set(fmt.Sprintf("remove=%d", winID))
+		_ = mdiH.Do(fmt.Sprintf("remove window=%d", winID))
 	})
 }

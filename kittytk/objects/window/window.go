@@ -35,13 +35,15 @@ const (
 	WindowFlagNoTitleWhenMaximized                         // No title bar (and no frame) WHILE maximized; normal chrome when restored
 )
 
-// windowCornerRadius is the corner radius (in units) of the graphical
-// window frame's single rounded-rect surface. Kept below the frame's
-// one-cell inset (8 units) so titlebar buttons and content never
-// overlap the curve; cell surfaces ignore it entirely.
+// windowCornerRadius is the corner radius of the graphical window frame's
+// single rounded-rect surface, in SCREEN units: the rounded-rect painter
+// transforms the rectangle but passes the radius straight through, so this
+// is stated in the surface's own denomination and never re-expressed into a
+// window's. Kept below the frame's one-cell inset (8 units) so titlebar
+// buttons and content never overlap the curve; cell surfaces ignore it.
 const windowCornerRadius core.Unit = 6
 
-// FrameCornerRadius reports the graphical frame's corner radius in
+// FrameCornerRadius reports the graphical frame's corner radius in screen
 // units, for hosts that shape OS windows around torn-off frames.
 func FrameCornerRadius() core.Unit { return windowCornerRadius }
 
@@ -79,8 +81,18 @@ type Window struct {
 
 	// Window properties
 	title string
-	flags WindowFlags
-	state WindowState
+	// titleCut records that the last paint had to cut the title short, and
+	// titleBandH how tall the bar it was drawn in is: what the bar can show
+	// depends on the buttons beside the name and the room the frame leaves,
+	// so the paint is what knows.
+	titleCut   bool
+	titleBandH core.Unit
+	// titleTextAt is where the name was drawn, in the window's own units. A
+	// title bar centres its name, so a note anchored to the whole band would
+	// stand at the far left of the window rather than on the name.
+	titleTextAt core.UnitRect
+	flags       WindowFlags
+	state       WindowState
 
 	// windowType classifies the window's role (main, normal, mdichild,
 	// dialog, modal, toolpalette). owner is the resolved non-overlay window a
@@ -103,6 +115,11 @@ type Window struct {
 	// surfaces drag/resize at unit granularity, cell surfaces snap.
 	// Nested hosts (MDI panes) inherit it via FindSmoothPositioning.
 	smoothPositioning bool
+
+	// askedBounds is the last rectangle SetBounds was given, before it was
+	// put on the cell grid. The grid answer is re-derived from it whenever
+	// the surface's granularity changes.
+	askedBounds core.UnitRect
 
 	// Position before maximization (for restore)
 	normalBounds core.UnitRect
@@ -136,6 +153,10 @@ type Window struct {
 	minHeight core.Unit
 	maxWidth  core.Unit
 	maxHeight core.Unit
+
+	// deciding says an answer about whether this window may close is still
+	// coming, which is the one thing onClose's bool cannot say. See SetDeciding.
+	deciding bool
 
 	// Callbacks
 	onClose       func() bool // Return false to prevent close
@@ -171,20 +192,22 @@ type Window struct {
 	// never be in the way of a lock the caller already holds.
 	repaintRev atomic.Uint64
 
-	// resizeHoverRects are window-local rectangles (one per hovered resize
-	// edge, two for a corner) that the frame highlights while the pointer
-	// is over a size-sensitive edge. Set by the window manager on hover.
-	resizeHoverRects []core.UnitRect
+	// resizeBandRects are window-local rectangles (one per lit resize edge,
+	// two for a corner) that the frame fills with the translucent cue. Cue
+	// only: what responds to a press is the resize edge, computed fresh from
+	// ResizeHitGrip, which never reads these. The host decides when to set
+	// them -- on a hover, and during a drag as well.
+	resizeBandRects []core.UnitRect
 
-	// resizeHoverEdges is the same highlight expressed as the EDGE MASK
-	// instead, with the grip thickness that sizes it. Preferred, because the
+	// resizeBandEdges is the same highlight expressed as the EDGE MASK
+	// instead, with the band thickness that sizes it. Preferred, because the
 	// bands are derived from the window's bounds and those change under a
 	// live resize: computing rectangles up front bakes in whatever size the
 	// window had when the gesture began, and a window that then grows leaves
 	// its bands stranded mid-frame. The paint resolves the mask against the
 	// bounds it is actually painting, which cannot be stale.
-	resizeHoverEdges int
-	resizeHoverGrip  core.Unit
+	resizeBandEdges     int
+	resizeBandThickness EdgeThickness
 
 	// Detached main-window chrome, set by the desktop when the window is
 	// torn off: a menu bar between the title bar and content, and a
@@ -222,6 +245,7 @@ type Window struct {
 	onBoundsRequest       func(core.UnitRect) bool // Takes title-focus keyboard geometry whole (torn-off hosts)
 	onCloseComplete       func()                   // Called when window is closed, to remove from manager
 	onClosedObservers     []func()                 // Additional close observers (survive onCloseComplete reassignment)
+	closed                bool                     // Terminal: this window has been through its close. See attemptClose.
 	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
 	getDisplayBounds      func() core.UnitRect     // Returns where the container DRAWS this window (the corral)
 	popupController       core.PopupController     // Popup controller for ComboBox etc.
@@ -346,10 +370,20 @@ func (w *Window) NativeRequested() bool {
 
 // SetSmoothPositioning is stamped by the hosting manager from the
 // surface capability.
+//
+// It re-derives the window's geometry, because the answer depends on it: a
+// window placed before it joined its manager was put on the cell grid by the
+// safe default, and a pixel surface wants the rect that was actually asked
+// for (see Window.gridded).
 func (w *Window) SetSmoothPositioning(smooth bool) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	changed := w.smoothPositioning != smooth
 	w.smoothPositioning = smooth
+	asked := w.askedBounds
+	w.mu.Unlock()
+	if changed && (asked != core.UnitRect{}) {
+		w.SetBounds(asked)
+	}
 }
 
 // SmoothWindowPositioning implements core.SmoothPositioningProvider,
@@ -493,6 +527,196 @@ func (w *Window) removeChildWindow(child *Window) {
 // window manager's drag-to-top snap.
 func canMaximize(flags WindowFlags) bool {
 	return flags&WindowFlagNoMaximize == 0 && flags&WindowFlagNoResize == 0
+}
+
+// CanMaximize reports whether this window may be maximized, so a host outside
+// this package asks the same question its own chrome does.
+func (w *Window) CanMaximize() bool {
+	return canMaximize(w.Flags())
+}
+
+// MaximizedFrameRect is where a maximized window's frame sits inside the
+// surface it was given, in that surface's own coordinates.
+//
+// The whole of it, unless the window says how far it grows -- then it takes
+// what it may and sits in the middle. Which is what lets a window with a
+// maximum be maximized at all: the alternative is refusing the gesture, and a
+// window the person asked to maximize should do something.
+//
+// The maximum is capped first and the minimum raised after, so where the two
+// conflict the minimum wins, as it does wherever else they meet.
+func MaximizedFrameRect(win *Window, surface core.UnitSize) core.UnitRect {
+	out := core.UnitRect{Width: surface.Width, Height: surface.Height}
+	if win == nil {
+		return out
+	}
+	max, min := win.MaximumSize(), win.MinimumSize()
+
+	width := surface.Width
+	if max.Width >= 0 && max.Width < width {
+		width = max.Width
+	}
+	if width < min.Width {
+		width = min.Width
+	}
+	if width < surface.Width {
+		out.X = (surface.Width - width) / 2
+		out.Width = width
+	}
+
+	height := surface.Height
+	if max.Height >= 0 && max.Height < height {
+		height = max.Height
+	}
+	if height < min.Height {
+		height = min.Height
+	}
+	if height < surface.Height {
+		out.Y = (surface.Height - height) / 2
+		out.Height = height
+	}
+
+	// A cell surface renders a frame nowhere but the cell grid. Drawing
+	// rounds and hit-testing does not, so a frame centred between two rows
+	// draws in one and answers the mouse in the other -- the title bar of a
+	// bounded maximized window looking dead to a click that lands on it.
+	//
+	// The origin floors onto the grid; the size is left as stated, since a
+	// maximum is a maximum. A smooth surface has no grid to stand off.
+	if !core.FindSmoothPositioning(win) {
+		m := win.frameCellMetrics()
+		out.X = m.RoundDownToCellX(out.X)
+		out.Y = m.RoundDownToCellY(out.Y)
+	}
+	return out
+}
+
+// frameRect is where this window's frame sits inside its own bounds, in
+// window-local coordinates. The whole of them for every window but one: a
+// MAXIMIZED window that says how far it grows takes the whole room as its
+// surface -- it is really maximized -- and paints its frame in the middle of
+// it, shading the room it declined.
+//
+// Everything inside a window is measured from this rect, not from the bounds:
+// Paint offsets onto it once, and the mouse handlers subtract it once on the
+// way in, so nothing between the two has to know about it.
+func (w *Window) frameRect() core.UnitRect {
+	b := w.Bounds()
+	if !w.IsMaximized() {
+		return core.UnitRect{Width: b.Width, Height: b.Height}
+	}
+	return MaximizedFrameRect(w, b.Size())
+}
+
+// FrameRect is where this window's frame sits inside its own bounds, in
+// window-local coordinates -- the whole of them, unless a maximized window's
+// growth is capped and it is holding room it shaded instead (see frameRect).
+// A host placing or hit-testing the window's chrome measures from this.
+func (w *Window) FrameRect() core.UnitRect { return w.frameRect() }
+
+// buttonAtWindowPoint is buttonAtPosition for a caller holding a point in the
+// window's own coordinates rather than its frame's.
+func (w *Window) buttonAtWindowPoint(x, y core.Unit) TitleButton {
+	lx, ly, on := w.frameLocal(x, y)
+	if !on {
+		return TitleButtonNone
+	}
+	return w.buttonAtPosition(lx, ly)
+}
+
+// frameLocal converts a window-local point into the frame's own coordinates,
+// reporting false where it lands on the shade around a capped maximized
+// window instead of on the frame. The two are the same point for every other
+// window, where the frame is the whole surface.
+func (w *Window) frameLocal(x, y core.Unit) (core.Unit, core.Unit, bool) {
+	fr := w.frameRect()
+	if fr.X == 0 && fr.Y == 0 {
+		return x, y, true
+	}
+	x, y = x-fr.X, y-fr.Y
+	return x, y, x >= 0 && y >= 0 && x < fr.Width && y < fr.Height
+}
+
+// frameLocalOrOut is frameLocal for the handlers that take an out-of-bounds
+// point as "the pointer is not over me" -- a move or a release on the shade
+// is over nothing, and says so in the one spelling they already understand.
+func (w *Window) frameLocalOrOut(x, y core.Unit) (core.Unit, core.Unit) {
+	if x < 0 || y < 0 {
+		return x, y
+	}
+	lx, ly, on := w.frameLocal(x, y)
+	if !on {
+		return -1, -1
+	}
+	return lx, ly
+}
+
+// paintShade fills the room a maximized window declined, in window-local
+// coordinates, and reports whether there was any.
+//
+// The room is painted in the window's own title-bar colour taken a quarter of
+// the way to black -- near enough the frame to belong to the window, dark
+// enough to read as room the window declined rather than as desktop showing
+// through, which is what makes the gesture look like it worked.
+//
+// On a cell surface there is no alpha to take it down with, so the quarter is
+// spent as ink: the light-shade block, which is a quarter covered, in black
+// over the same frame colour.
+func (w *Window) paintShade(p *core.Painter, bounds core.UnitRect, frame core.UnitRect, active bool) bool {
+	rects := shadeRects(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, frame)
+	if len(rects) == 0 {
+		return false
+	}
+	st := w.GetScheme().GetWindowTitle(active)
+	for _, r := range rects {
+		if p.Graphical() {
+			p.FillRect(r, ' ', st)
+			p.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
+				p.UnitSpanPxX(r.X, r.X+r.Width),
+				p.UnitSpanPxY(r.Y, r.Y+r.Height),
+				0, 0, 0, modalDimAlpha)
+			continue
+		}
+		p.FillRect(r, shadedFillerChar, shadeInk(st))
+	}
+	return true
+}
+
+// shadeInk is the cell surface's shade: the light-shade block in black over
+// the frame's own colour.
+//
+// The frame's attributes go with it. A title bar is BOLD, and a terminal
+// renders bold black as BRIGHT black -- so the shade came out grey on blue
+// instead of black on blue. Nothing here is text, so it carries no attribute
+// at all.
+func shadeInk(frame style.CellStyle) style.CellStyle {
+	return frame.WithFg(style.ColorBlack).WithAttrs(style.StyleNormal)
+}
+
+// shadedFillerChar is the light-shade block: a quarter of the cell covered,
+// which is the cell surface's way of spending the quarter of black the
+// graphical path lays over the frame colour.
+const shadedFillerChar = '\u2591'
+
+// shadeRects is the part of surface that inner does not cover: up to four
+// rectangles around it, in surface's own coordinates. Empty where inner fills
+// it, which is the ordinary case.
+func shadeRects(surface, inner core.UnitRect) []core.UnitRect {
+	var out []core.UnitRect
+	add := func(r core.UnitRect) {
+		if r.Width > 0 && r.Height > 0 {
+			out = append(out, r)
+		}
+	}
+	add(core.UnitRect{X: surface.X, Y: surface.Y,
+		Width: surface.Width, Height: inner.Y - surface.Y})
+	add(core.UnitRect{X: surface.X, Y: inner.Y + inner.Height,
+		Width: surface.Width, Height: surface.Y + surface.Height - (inner.Y + inner.Height)})
+	add(core.UnitRect{X: surface.X, Y: inner.Y,
+		Width: inner.X - surface.X, Height: inner.Height})
+	add(core.UnitRect{X: inner.X + inner.Width, Y: inner.Y,
+		Width: surface.X + surface.Width - (inner.X + inner.Width), Height: inner.Height})
+	return out
 }
 
 // hasTitleBar reports whether the window shows a title bar in the given state,
@@ -827,11 +1051,37 @@ func (w *Window) Close() bool {
 // reports the innermost window that declined.
 func (w *Window) attemptClose() (bool, *Window) {
 	w.mu.RLock()
+	already := w.closed
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
 	observers := append([]func(){}, w.onClosedObservers...)
 	title := w.title
 	w.mu.RUnlock()
+
+	// **A window that has closed is closed**, and saying so is the answer to what
+	// the caller is actually asking: is this window out of the way? It is -- it
+	// went earlier.
+	//
+	// Nothing prevents a second close. A sweep takes a snapshot and then closes
+	// each window in turn, and closing a parent takes its children with it -- so it
+	// reaches a child it has already closed, still in the list. An application
+	// tidying up after a window the person closed does the same thing with
+	// `destroy`.
+	//
+	// And this ran the whole path again, handler included, which for a window
+	// whose application is consulted about closing meant a fresh `window_closing`
+	// with a fresh deadline -- about a window that is gone. It came back false, the
+	// sweep read that as a refusal, and a quit parked itself waiting for an answer
+	// about something nobody could see. An application that says nothing would have
+	// had a person asked whether to force closed a window that was not there.
+	//
+	// Being visible is not the test: Hide is somewhere to come back from, and this
+	// is the other thing. It is terminal -- a closed window has been dropped by its
+	// manager and by the application that owned it, and there is nothing left for
+	// showing it again to mean.
+	if already {
+		return true, nil
+	}
 
 	if handler != nil && !handler() {
 		return false, w
@@ -859,6 +1109,13 @@ func (w *Window) attemptClose() (bool, *Window) {
 		parent.removeChildWindow(w)
 	}
 
+	// **Closed before anything is told**, so that a close reaching back in here --
+	// an observer, or a manager's removal, closing this window again -- finds it
+	// done rather than starting over.
+	w.mu.Lock()
+	w.closed = true
+	w.mu.Unlock()
+
 	w.Hide()
 
 	// Notify manager to remove this window
@@ -880,6 +1137,98 @@ func (w *Window) attemptClose() (bool, *Window) {
 // so the dependency stays one-way.
 type windowSurfacer interface {
 	SurfaceWindow(win *Window)
+}
+
+// closeCoordinator is the desktop again, and for the same reason as the surfacer:
+// what it does about a close is desktop-wide, and a window cannot do it.
+//
+// It is asked when an application that wanted a say in this window closing has not
+// answered, and told when a close that was being decided has resolved. See
+// Desktop.AskForceClose and Desktop.CloseDecided.
+type closeCoordinator interface {
+	AskForceClose(win *Window, then func(force bool))
+	CloseDecided(win *Window, closed bool)
+}
+
+// findCloseCoordinator walks up for the desktop.
+//
+// A window on the desktop has the desktop as its direct parent -- AddWindow sets it,
+// so capability lookups reach it -- and a window torn onto its own surface keeps that
+// parent, because leaving the manager does not change whose desktop it is on. So this
+// usually finds it at the first step; it walks because nothing guarantees that, and a
+// window nested under something else still has to be able to ask.
+func (w *Window) findCloseCoordinator() closeCoordinator {
+	var current any = w.Parent()
+	for current != nil {
+		if c, ok := current.(closeCoordinator); ok {
+			return c
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
+}
+
+// AskForceClose puts that question to whatever can ask a person, and answers false
+// where nothing can -- a window with no desktop under it has nobody to ask, and
+// leaving it open is the half of the answer that loses no work.
+//
+// Exported because the close handler that needs it is installed from outside this
+// package, by the wire binding in window_protocol.go.
+func (w *Window) AskForceClose(then func(force bool)) {
+	if then == nil {
+		return
+	}
+	w.traceCoordinator()
+	if c := w.findCloseCoordinator(); c != nil {
+		c.AskForceClose(w, then)
+		return
+	}
+	then(false)
+}
+
+// SetDeciding records whether somebody is being asked whether this window may
+// close, and Deciding reads it back.
+//
+// **It is the third answer Close has no room for.** Close reports a bool: closed, or
+// not closed. Once an application can be consulted, "not closed" covers two quite
+// different things -- a refusal, which is final, and an answer still coming, which is
+// not. A sweep over several windows has to tell them apart: a refusal abandons a
+// quit, and a pending answer means try the quit again when it lands.
+//
+// Set by whoever asks -- the wire binding in window_protocol.go -- because it is the
+// only thing that knows a question is outstanding.
+func (w *Window) SetDeciding(deciding bool) {
+	w.mu.Lock()
+	w.deciding = deciding
+	w.mu.Unlock()
+}
+
+// Deciding reports whether an answer about closing this window is still coming.
+func (w *Window) Deciding() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.deciding
+}
+
+// CloseSettled says a close that was being decided has finished being decided, and
+// whether the window actually went.
+//
+// A sweep that stopped at this window did not treat it as a refusal; it is waiting
+// for exactly this. **And it needs to know which way**: a window that closed means
+// carry on to the next one, and a window that did not means the sweep is over. Told
+// the outcome rather than just the fact, or a refused close would send the sweep back
+// round to put the same question to an application that has already answered it.
+//
+// Called after the window has done whatever the answer said, so a sweep that resumes
+// sees the result rather than the question.
+func (w *Window) CloseSettled(closed bool) {
+	if c := w.findCloseCoordinator(); c != nil {
+		c.CloseDecided(w, closed)
+	}
 }
 
 // surfaceBlockingChain brings the window that refused back into view, together
@@ -1207,12 +1556,24 @@ func (w *Window) chromeHeights() (menuTop, statusBottom core.Unit) {
 	if !detached {
 		return 0, 0
 	}
-	metrics := w.frameCellMetrics()
+	outer := w.frameCellMetrics()
+	interior := core.FindEffectiveCellMetrics(w.Self())
 	if mb != nil && mbVis {
-		menuTop = metrics.CellHeight
+		// A bar that states its own row (core.MenuRowProvider) answers in ITS
+		// denomination -- the interior one it paints through, see paintChrome
+		// -- and its row is whatever core.MenuScale left it, which is not
+		// always a whole cell. The reservation is in the frame's currency, so
+		// the two exchange. Reserving a cell for a shortened bar leaves a dead
+		// strip below it that the bar does not answer for.
+		menuTop = outer.UnitsPerCellHeight
+		if rp, ok := mb.(core.MenuRowProvider); ok {
+			if h := rp.MenuRowHeight(); h > 0 {
+				menuTop = core.ExchangeY(h, interior, outer)
+			}
+		}
 	}
 	if sb != nil && sbVis {
-		statusBottom = metrics.CellHeight
+		statusBottom = outer.UnitsPerCellHeight
 	}
 	return
 }
@@ -1298,6 +1659,15 @@ func (w *Window) requestTear() {
 	if handler != nil {
 		handler()
 	}
+}
+
+// IsClosed reports whether this window has been through its close. Terminal, and not
+// the inverse of IsVisible: a hidden window is somewhere to come back to, and this is
+// the other thing.
+func (w *Window) IsClosed() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.closed
 }
 
 // SetOnCloseComplete sets the callback for when the window is fully closed.
@@ -1506,14 +1876,23 @@ func (w *Window) frameCellMetrics() core.CellMetrics {
 // FRAME denomination its chrome lays out in (the title bar sits above the
 // content area and is never sized in the interior denomination).
 func (w *Window) titleBarMetrics() TitleBarMetrics {
-	return TitleBarMetricsFor(w.frameCellMetrics(), w.EffectiveFont(), core.FindGraphicalFrames(w))
+	tm := TitleBarMetricsFor(w.frameCellMetrics(), w.EffectiveFont(), core.FindGraphicalFrames(w))
+	tm.Dir = core.FindEffectiveDirection(w.Self())
+	return tm
+}
+
+// frameBorder is the reserved frame border in the FRAME denomination, one
+// count per axis. The desktop reports the border in its own units; the two
+// are the same number only for a window the desktop itself holds.
+func (w *Window) frameBorder() (x, y core.Unit) {
+	return core.FindFrameBorderUnitsIn(w, w.frameCellMetrics())
 }
 
 // contentBounds returns the bounds for the content area. When the window
 // is detached and carries its own chrome, the menu bar (top) and status
 // bar (bottom) rows are reserved out of it (see reserveChrome).
 func (w *Window) contentBounds() core.UnitRect {
-	bounds := w.Bounds()
+	bounds := w.frameRect()
 	metrics := w.frameCellMetrics()
 
 	w.mu.RLock()
@@ -1532,7 +1911,7 @@ func (w *Window) contentBounds() core.UnitRect {
 		top := core.Unit(0)
 		if hasTitleBar(flags, state) {
 			// The (possibly scaled) title row height, from the kit —
-			// CellHeight at scale 1.0 and on every cell surface.
+			// UnitsPerCellHeight at scale 1.0 and on every cell surface.
 			top = w.titleBarMetrics().RowH
 		}
 		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
@@ -1545,15 +1924,15 @@ func (w *Window) contentBounds() core.UnitRect {
 		// border AND the titlebar row; the sides and bottom reserve just
 		// the border. A thicker border shrinks the interior rather than
 		// overlapping it.
-		b := core.FindFrameBorderUnits(w)
-		top := b + w.titleBarMetrics().RowH
+		bx, by := w.frameBorder()
+		top := by + w.titleBarMetrics().RowH
 		if flags&WindowFlagNoTitle != 0 {
-			top = b
+			top = by
 		}
-		cb = core.UnitRect{X: b, Y: top, Width: bounds.Width - 2*b, Height: bounds.Height - top - b}
+		cb = core.UnitRect{X: bx, Y: top, Width: bounds.Width - 2*bx, Height: bounds.Height - top - by}
 	default:
 		// Cell frames: the border occupies a full cell on every side.
-		left, top, right, bottom := metrics.CellWidth, metrics.CellHeight, metrics.CellWidth, metrics.CellHeight
+		left, top, right, bottom := metrics.UnitsPerCellWidth, metrics.UnitsPerCellHeight, metrics.UnitsPerCellWidth, metrics.UnitsPerCellHeight
 		cb = core.UnitRect{X: left, Y: top, Width: bounds.Width - left - right, Height: bounds.Height - top - bottom}
 	}
 
@@ -1595,10 +1974,12 @@ func (w *Window) ClientAreaOffset() core.UnitPoint {
 	return core.UnitPoint{X: cb.X, Y: cb.Y}
 }
 
-// ContentBounds returns the window-local rectangle available to the content
-// trinket, inside the title bar and frame (and any detached chrome). Callers
+// ContentBounds returns the rectangle available to the content trinket,
+// inside the title bar and frame (and any detached chrome), in the frame's
+// own coordinates -- which are the window's own except for a capped maximized
+// window, whose frame is inset in the room it holds (see FrameRect). Callers
 // that size a window to fit its content use it to learn how much room the
-// chrome takes: chrome = window bounds minus ContentBounds.
+// chrome takes: chrome = frame size minus ContentBounds.
 func (w *Window) ContentBounds() core.UnitRect {
 	return w.contentBounds()
 }
@@ -1611,18 +1992,29 @@ func (w *Window) ContentBounds() core.UnitRect {
 // instead of overflowing. Mirrors the desktop's ClientArea contract so
 // the same menu-bar height logic works on a torn window.
 func (w *Window) ClientArea() core.UnitRect {
-	b := w.Bounds()
+	b := w.frameRect()
 	mbr := w.menuBarRect()
-	top := w.frameCellMetrics().CellHeight
+	top := w.frameCellMetrics().UnitsPerCellHeight
 	// Bottom edge of the surface in menu-bar-local coordinates.
 	bottom := b.Height - mbr.Y
 	if bottom < top {
 		bottom = top
 	}
-	return core.UnitRect{Y: top, Height: bottom - top}
+	// Bounds and the chrome rect are in the window's OUTER currency; the bar
+	// and its dropdown work in the interior one, which is what "that menu
+	// bar's local coordinate space" above means. Handing the outer number
+	// over unconverted let the dropdown divide a height in one currency by a
+	// row height in another, so it decided how many items fit -- and whether
+	// to scroll at all -- from a row count that was out by the ratio between
+	// them.
+	outer, interior := w.denominations()
+	return core.UnitRect{
+		Y:      core.ExchangeY(top, outer, interior),
+		Height: core.ExchangeY(bottom-top, outer, interior),
+	}
 }
 
-// denominations returns the grid-metrics currency of the window's own
+// denominations returns the cell-metrics currency of the window's own
 // coordinate space (outer: the parent's, in which bounds and chrome
 // live) and of its content area (interior: honoring a per-window
 // override). Equal unless an override is set on this window.
@@ -1715,6 +2107,12 @@ func (w *Window) ChildAt(pos core.UnitPoint) core.Trinket {
 }
 
 // Layout implements core.Container.
+// IsLayoutRoot marks a window as where a child's change stops climbing: a
+// window is the size the manager or the user gave it, not the size of what it
+// holds, so a caption growing inside one rearranges the window and nothing
+// beyond it.
+func (w *Window) IsLayoutRoot() bool { return true }
+
 func (w *Window) Layout() {
 	w.layoutContent()
 
@@ -1736,7 +2134,6 @@ func (w *Window) Layout() {
 func (w *Window) Paint(p *core.Painter) {
 	w.mu.RLock()
 	flags := w.flags
-	state := w.state
 	title := w.title
 	border := w.borderStyle
 	content := w.content
@@ -1744,6 +2141,7 @@ func (w *Window) Paint(p *core.Painter) {
 	quasiActive := w.quasiActive
 	w.mu.RUnlock()
 
+	state := w.State()
 	bounds := w.Bounds()
 	metrics := p.Metrics()
 	scheme := w.GetScheme()
@@ -1792,6 +2190,19 @@ func (w *Window) Paint(p *core.Painter) {
 	if aw := w.nearestAncestorWindow(); aw != nil && !aw.isLit() {
 		focused = false
 		isPassive = false
+	}
+
+	// A maximized window that says how far it grows holds the whole room and
+	// paints its frame in the middle: the shade goes down over the surface
+	// first, and everything after this draws in the frame's own coordinates.
+	// The shade belongs to the window, and so does the layer it lands on -- a
+	// compositing host gives each window a layer of its own and repaints it
+	// when the window changes, which is exactly when the room around it does.
+	if fr := w.frameRect(); fr.Width < bounds.Width || fr.Height < bounds.Height {
+		w.paintShade(p, bounds, fr, focused || isPassive)
+		p = p.WithOffset(fr.X, fr.Y)
+		bounds = core.UnitRect{X: bounds.X + fr.X, Y: bounds.Y + fr.Y,
+			Width: fr.Width, Height: fr.Height}
 	}
 
 	// Get styles from scheme based on focus state
@@ -1892,29 +2303,28 @@ func (w *Window) Paint(p *core.Painter) {
 		}
 	}
 
-	// Resize-edge hover highlight: translucent white bands along the
-	// size-sensitive edge(s) under the pointer, clipped to the frame's
-	// rounded corners.
-	w.paintResizeHover(p, localBounds)
+	// Resize-edge cue: translucent white bands along the size-sensitive
+	// edge(s) the host has lit, clipped to the frame's rounded corners.
+	w.paintResizeBands(p, localBounds)
 }
 
-// ResizeHoverAlpha is the opacity of the resize-edge hover highlight,
-// shared with the desktop's own edge bands so the two read as one system.
-const ResizeHoverAlpha = 0.25
+// ResizeBandAlpha is the opacity of the resize-edge cue, shared with the
+// desktop's own edge bands so the two read as one system.
+const ResizeBandAlpha = 0.25
 
-// SetResizeHoverRects sets the window-local rectangles highlighted while
-// the pointer hovers a resize edge (empty clears the highlight). Returns
+// SetResizeBandRects sets the window-local rectangles the cue fills
+// (empty clears it). Returns
 // true when the set changed, so the caller can repaint only on change.
 //
-// Prefer SetResizeHoverEdges: rectangles fixed here go stale the moment the
+// Prefer SetResizeBandEdges: rectangles fixed here go stale the moment the
 // window resizes under the gesture that is drawing them.
-func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
+func (w *Window) SetResizeBandRects(rects []core.UnitRect) bool {
 	w.mu.Lock()
-	if sameRects(w.resizeHoverRects, rects) {
+	if sameRects(w.resizeBandRects, rects) {
 		w.mu.Unlock()
 		return false
 	}
-	w.resizeHoverRects = rects
+	w.resizeBandRects = rects
 	w.mu.Unlock()
 
 	// This changes what the window paints, and unlike most such setters
@@ -1926,7 +2336,7 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	return true
 }
 
-// SetResizeHoverEdges sets the highlight as an edge MASK plus the grip
+// SetResizeBandEdges sets the highlight as an edge MASK plus the band
 // thickness, to be resolved against the window's bounds at paint time. Zero
 // edges clears it. Returns true when the state changed.
 //
@@ -1934,22 +2344,22 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 // back asynchronously, so any rectangle computed while the pointer moves is
 // built from the PREVIOUS bounds — which is how a growing window ends up with
 // its bands stranded in the middle of the frame.
-func (w *Window) SetResizeHoverEdges(edges int, grip core.Unit) bool {
+func (w *Window) SetResizeBandEdges(edges int, band EdgeThickness) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.resizeHoverEdges == edges && w.resizeHoverGrip == grip {
+	if w.resizeBandEdges == edges && w.resizeBandThickness == band {
 		return false
 	}
-	w.resizeHoverEdges, w.resizeHoverGrip = edges, grip
+	w.resizeBandEdges, w.resizeBandThickness = edges, band
 	return true
 }
 
-// ResizeHoverRects returns the window-local resize-edge highlight
+// ResizeBandRects returns the window-local resize-edge highlight
 // rectangles currently set (nil when the overlay is off).
-func (w *Window) ResizeHoverRects() []core.UnitRect {
+func (w *Window) ResizeBandRects() []core.UnitRect {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.resizeHoverRects
+	return w.resizeBandRects
 }
 
 func sameRects(a, b []core.UnitRect) bool {
@@ -2055,11 +2465,11 @@ func (w *Window) PaintModalDim(p *core.Painter, localBounds core.UnitRect) {
 		0, 0, 0, modalDimAlpha)
 }
 
-// paintResizeHover fills the hovered resize edges with a translucent white
+// paintResizeBands fills the lit resize edges with a translucent white
 // band, clipped to the window's rounded corner radius. No-op on cell
 // surfaces (FillRectPixelsAlpha returns false there).
-func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
-	rects := w.resizeHoverBands(localBounds)
+func (w *Window) paintResizeBands(p *core.Painter, localBounds core.UnitRect) {
+	rects := w.resizeBands(localBounds)
 	if len(rects) == 0 {
 		return
 	}
@@ -2072,7 +2482,7 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 		// the geometry paints on, so the band reaches exactly the far edge.
 		rp.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
 			p.UnitSpanPxX(r.X, r.X+r.Width), p.UnitSpanPxY(r.Y, r.Y+r.Height),
-			255, 255, 255, ResizeHoverAlpha)
+			255, 255, 255, ResizeBandAlpha)
 	}
 }
 
@@ -2147,21 +2557,54 @@ func (w *Window) MenuDropdownLayer() (bounds, anchor core.UnitRect, paint func(*
 	return toLocal(menuBounds), toLocal(dd.ActiveMenuTitleBounds()), paint, true
 }
 
-// resizeHoverBands is the highlight resolved for a given window-local
+// resizeBands is the highlight resolved for a given window-local
 // bounds. An edge MASK is resolved here, against the bounds the caller is
 // actually painting — that is the whole point of storing a mask: a rectangle
 // fixed earlier carries the size the window had when the gesture began, and a
 // live resize is precisely when that stops being true. Explicit rectangles
 // (the older setter) are returned as they were given.
-func (w *Window) resizeHoverBands(localBounds core.UnitRect) []core.UnitRect {
+func (w *Window) resizeBands(localBounds core.UnitRect) []core.UnitRect {
 	w.mu.RLock()
-	rects := w.resizeHoverRects
-	edges, grip := w.resizeHoverEdges, w.resizeHoverGrip
+	rects := w.resizeBandRects
+	edges, band := w.resizeBandEdges, w.resizeBandThickness
 	w.mu.RUnlock()
 	if edges != 0 {
-		return tornEdgeRects(localBounds, edges, grip)
+		return tornEdgeRects(localBounds, edges, band)
 	}
 	return rects
+}
+
+// inInterior restates a chrome rect's size in the interior denomination.
+//
+// The rect comes from the window's own geometry, which is in outer units,
+// and the bar that receives it paints through WithDenomination(outer,
+// interior) -- so handing the size over unconverted gives the bar a width
+// in one currency and a painter in another. A bar told it was 400 units
+// wide at an interior denomination of 16 against an outer 8 painted its
+// background across half the window.
+//
+// Only the size crosses: the position is applied by WithOffset in outer
+// units, before the denomination changes.
+func inInterior(r core.UnitRect, outer, interior core.CellMetrics) core.UnitRect {
+	return core.UnitRect{
+		Width:  core.ExchangeX(r.Width, outer, interior),
+		Height: core.ExchangeY(r.Height, outer, interior),
+	}
+}
+
+// chromeLocal converts a window-local mouse position into the coordinates
+// a chrome trinket in rect r actually works in: past the rect's origin,
+// then out of the outer denomination and into the interior one.
+//
+// It is the mirror of what paintChrome does -- WithOffset in outer units,
+// then WithDenomination -- and both halves are needed. Subtracting the
+// origin alone hands the bar a position in the window's currency while its
+// own geometry is in the interior's, so a click lands on whichever item
+// happens to sit at the same NUMBER in the wrong currency. The content path
+// has always exchanged; the chrome path did not.
+func chromeLocal(x, y core.Unit, r core.UnitRect, outer, interior core.CellMetrics) (core.Unit, core.Unit) {
+	return core.ExchangeX(x-r.X, outer, interior),
+		core.ExchangeY(y-r.Y, outer, interior)
 }
 
 // paintChrome paints the detached window's menu bar and status bar in
@@ -2173,14 +2616,14 @@ func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) 
 	w.mu.RUnlock()
 
 	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
-		mb.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
+		mb.SetBounds(inInterior(r, outer, interior))
 		mp := p.WithOffset(r.X, r.Y).
 			WithClip(core.UnitRect{Width: r.Width, Height: r.Height}).
 			WithDenomination(outer, interior)
 		mb.Paint(mp)
 	}
 	if r := w.statusBarRect(); sb != nil && !r.IsEmpty() {
-		sb.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
+		sb.SetBounds(inInterior(r, outer, interior))
 		sp := p.WithOffset(r.X, r.Y).
 			WithClip(core.UnitRect{Width: r.Width, Height: r.Height}).
 			WithDenomination(outer, interior)
@@ -2261,6 +2704,12 @@ func (w *Window) TitleControlsInset() core.Unit {
 // has no border to align across, and the TUI stays exactly as it was.
 func (w *Window) maximizedControlInset() core.Unit {
 	if !core.FindGraphicalFrames(w) {
+		return 0
+	}
+	// A capped maximized window's frame sits in the middle of the room it
+	// holds rather than at the room's corner, so the host's own controls are
+	// nowhere near it and there is nothing there to line up with.
+	if fr := w.frameRect(); fr.X != 0 || fr.Y != 0 {
 		return 0
 	}
 	if host, ok := w.Parent().(TitleControlsInsetProvider); ok && host != nil {
@@ -2367,7 +2816,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// stand in for it - so it isn't shoved aside; it returns on the next
 	// Tab / Shift+Tab focus change.
 	if titleFocus != TitleFocusTitle {
-		tearTitleW := tm.Font.MeasureText(title)
+		tearTitleW := tm.TitleWidth(title)
 		controlX = w.paintTearHandle(p, scheme, titleStyle, tm, controlX, bounds.Width, tearTitleW, buttonActive, titleFocus)
 	}
 
@@ -2381,7 +2830,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		if titleFocus == TitleFocusBlur {
 			rightLimit = bounds.Width - buttonWidth
 		}
-		PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
+		cut, at := PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
+		w.noteTitleCut(cut, at, tm)
 	}
 
 	// Draw blur button on far right when blur item is focused
@@ -2402,14 +2852,18 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 // active border color - one tab-stroke weight thick - sits just inside it.
 // No-op on cell surfaces.
 func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRect, st style.CellStyle) {
-	b := core.FindFrameBorderUnits(w)
+	bx, by := w.frameBorder()
 	inner := core.UnitRect{
-		X:      b,
-		Y:      b,
-		Width:  localBounds.Width - 2*b,
-		Height: localBounds.Height - 2*b,
+		X:      bx,
+		Y:      by,
+		Width:  localBounds.Width - 2*bx,
+		Height: localBounds.Height - 2*by,
 	}
-	radius := windowCornerRadius - b
+	// The radius is screen-space (StrokeRoundedRectWeight transforms the
+	// rect and passes the radius through), so the border it steps in by is
+	// the provider's own count -- not the frame-denominated bx above, which
+	// insets a rectangle the painter will transform.
+	radius := windowCornerRadius - core.FindFrameBorderUnits(w)
 	if radius < 0 {
 		radius = 0
 	}
@@ -2478,13 +2932,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 		// Draw corners in active color
 		p.DrawCell(0, 0, topLeft, activeFrameStyle)
-		p.DrawCell(localBounds.Width-metrics.CellWidth, 0, topRight, activeFrameStyle)
-		p.DrawCell(0, localBounds.Height-metrics.CellHeight, bottomLeft, activeFrameStyle)
-		p.DrawCell(localBounds.Width-metrics.CellWidth, localBounds.Height-metrics.CellHeight, bottomRight, activeFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.UnitsPerCellWidth, 0, topRight, activeFrameStyle)
+		p.DrawCell(0, localBounds.Height-metrics.UnitsPerCellHeight, bottomLeft, activeFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.UnitsPerCellWidth, localBounds.Height-metrics.UnitsPerCellHeight, bottomRight, activeFrameStyle)
 
 		// Draw top edge - first and last chars adjacent to corners in active color, rest dashed
-		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
-			if x == metrics.CellWidth || x == localBounds.Width-2*metrics.CellWidth {
+		for x := metrics.UnitsPerCellWidth; x < localBounds.Width-metrics.UnitsPerCellWidth; x += metrics.UnitsPerCellWidth {
+			if x == metrics.UnitsPerCellWidth || x == localBounds.Width-2*metrics.UnitsPerCellWidth {
 				// Adjacent to corner - use active style with normal horizontal line
 				p.DrawCell(x, 0, horizLine, activeFrameStyle)
 			} else {
@@ -2493,23 +2947,23 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		}
 
 		// Draw bottom edge - first and last chars adjacent to corners in active color, rest dashed
-		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
-			if x == metrics.CellWidth || x == localBounds.Width-2*metrics.CellWidth {
+		for x := metrics.UnitsPerCellWidth; x < localBounds.Width-metrics.UnitsPerCellWidth; x += metrics.UnitsPerCellWidth {
+			if x == metrics.UnitsPerCellWidth || x == localBounds.Width-2*metrics.UnitsPerCellWidth {
 				// Adjacent to corner - use active style with normal horizontal line
-				p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizLine, activeFrameStyle)
+				p.DrawCell(x, localBounds.Height-metrics.UnitsPerCellHeight, horizLine, activeFrameStyle)
 			} else {
-				p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizDash, blurFrameStyle)
+				p.DrawCell(x, localBounds.Height-metrics.UnitsPerCellHeight, horizDash, blurFrameStyle)
 			}
 		}
 
 		// Draw left edge - all dashed
-		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
+		for y := metrics.UnitsPerCellHeight; y < localBounds.Height-metrics.UnitsPerCellHeight; y += metrics.UnitsPerCellHeight {
 			p.DrawCell(0, y, vertDash, blurFrameStyle)
 		}
 
 		// Draw right edge - all dashed
-		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
-			p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertDash, blurFrameStyle)
+		for y := metrics.UnitsPerCellHeight; y < localBounds.Height-metrics.UnitsPerCellHeight; y += metrics.UnitsPerCellHeight {
+			p.DrawCell(localBounds.Width-metrics.UnitsPerCellWidth, y, vertDash, blurFrameStyle)
 		}
 	} else {
 		p.DrawRect(localBounds, border, frameStyle)
@@ -2522,8 +2976,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// the border over it (clipped to the rounded outline so the top corners
 	// stay round). The cell path keeps the border color in those areas.
 	if rounded && flags&WindowFlagNoTitle == 0 {
-		b := core.FindFrameBorderUnits(w)
-		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + w.titleBarMetrics().RowH}
+		_, by := w.frameBorder()
+		titleRect := core.UnitRect{Width: localBounds.Width, Height: by + w.titleBarMetrics().RowH}
 		fillStyle := titleStyle
 		if titleFocus == TitleFocusBlur {
 			// Blur item focused: the whole bar reads inactive on the graphical
@@ -2579,12 +3033,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// The titlebar chrome (title text + buttons) sits INSIDE the frame
 		// border: shift it in by the border and use the inner width. On cell
 		// surfaces the border reservation is 0, so this is a no-op.
-		b := core.FindFrameBorderUnits(w)
+		bx, by := w.frameBorder()
 		tp := p
 		innerW := bounds.Width
-		if b > 0 {
-			tp = p.WithOffset(b, b)
-			innerW = bounds.Width - 2*b
+		if bx > 0 || by > 0 {
+			tp = p.WithOffset(bx, by)
+			innerW = bounds.Width - 2*bx
 		}
 		// Draw window controls on the LEFT: [x][.][^] or [x][.][o] — each
 		// through its own kit function (deliberately distinct per button;
@@ -2629,7 +3083,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// brackets stand in for it - so it isn't shoved aside; it returns on
 		// the next Tab / Shift+Tab focus change.
 		if titleFocus != TitleFocusTitle {
-			tearTitleW := tm.Font.MeasureText(title)
+			tearTitleW := tm.TitleWidth(title)
 			// On the graphical path a blur-focused bar reads fully inactive, so
 			// the tear/redock handle and the space around it take the inactive
 			// title colors too (matching a real inactive window frame).
@@ -2658,7 +3112,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			if titleFocus == TitleFocusBlur {
 				rightLimit = innerW - tm.CellW - buttonWidth
 			}
-			PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
+			cut, at := PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
+			// tp is the frame's inner painter; the note is placed in the
+			// window's own coordinates, so the border comes back on.
+			at.X += bx
+			at.Y += by
+			w.noteTitleCut(cut, at, tm)
 		}
 
 		// Draw blur button on far right when blur item is focused
@@ -2695,13 +3154,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 // EllipsizeToWidth is ellipsizeToWidth for callers outside the package:
 // the desktop's themed title bar lays out like a window title and trims
 // with the same ellipsis.
-func EllipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
-	return ellipsizeToWidth(s, avail, font)
+func EllipsizeToWidth(s string, avail core.Unit, font *core.Font, metrics core.CellMetrics) string {
+	return ellipsizeToWidth(s, avail, font, metrics)
 }
 
-func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
+func ellipsizeToWidth(s string, avail core.Unit, font *core.Font, metrics core.CellMetrics) string {
 	const ell = "..."
-	if font.MeasureText(s) <= avail {
+	if font.MeasureTextIn(s, metrics) <= avail {
 		return s
 	}
 	runes := []rune(s)
@@ -2715,7 +3174,7 @@ func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 	lo, hi := 0, len(runes) // lo fits (as ""), hi does not
 	for lo < hi-1 {
 		mid := (lo + hi) / 2
-		if font.MeasureText(string(runes[:mid])+ell) <= avail {
+		if font.MeasureTextIn(string(runes[:mid])+ell, metrics) <= avail {
 			lo = mid
 		} else {
 			hi = mid
@@ -2724,7 +3183,7 @@ func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 	if lo == 0 {
 		// Not even one character plus the ellipsis: the ellipsis alone
 		// only shows if it fits by itself.
-		if font.MeasureText(ell) <= avail {
+		if font.MeasureTextIn(ell, metrics) <= avail {
 			return ell
 		}
 		return ""
@@ -2746,7 +3205,7 @@ func tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth core.Unit) cor
 
 // paintTearHandle draws the tear-off handle (the %/# glyph) in a
 // button-width slot floating immediately left of the (centered) title,
-// and returns the leftUsed value paintTitleText expects (its +CellWidth
+// and returns the leftUsed value paintTitleText expects (its +UnitsPerCellWidth
 // gap lands the title just past the handle slot). The glyph carries the
 // button foreground over the title-bar background; when the handle is
 // the focused title element it draws [%]/[#] in the focused-button
@@ -2789,12 +3248,12 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	// The titlebar chrome sits inside the frame border (maximized has no
 	// side border); shift the hit-test into the same inner coordinate
 	// system paintNormalFrame draws it in.
-	inset := core.Unit(0)
+	insetX, insetY := core.Unit(0), core.Unit(0)
 	if state != WindowStateMaximized {
-		inset = core.FindFrameBorderUnits(w)
+		insetX, insetY = w.frameBorder()
 	}
-	x -= inset
-	y -= inset
+	x -= insetX
+	y -= insetY
 
 	// Must be in titlebar (the kit's possibly-scaled row)
 	if !hasTitleBar(flags, state) || y < 0 || y >= tm.RowH {
@@ -2841,9 +3300,9 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	// The handle is hidden while the title is focused, so it isn't hittable
 	// then.
 	if flags&WindowFlagTearable != 0 && hasTitleBar(flags, state) && titleFocus != TitleFocusTitle {
-		titleW := tm.Font.MeasureText(title)
+		titleW := tm.TitleWidth(title)
 		// Inner width: the paint centers within the border-inset titlebar.
-		handleX := tearHandleSlotX(w.Bounds().Width-2*inset, controlX, titleW, buttonWidth)
+		handleX := tearHandleSlotX(w.Bounds().Width-2*insetX, controlX, titleW, buttonWidth)
 		if x >= handleX && x < handleX+buttonWidth {
 			return TitleButtonTear
 		}
@@ -3029,16 +3488,16 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 		return true
 
 	case core.CmdFocusPrior:
-		// Move to previous title element, or loop to content's last trinket
-		prev := w.prevTitleFocus(titleFocus)
-		if prev == titleFocus {
+		// Move to prior title element, or loop to content's last trinket
+		prior := w.priorTitleFocus(titleFocus)
+		if prior == titleFocus {
 			// At first title element, loop to content's last trinket
 			w.SetTitleFocus(TitleFocusNone)
 			if fm := w.FocusManager(); fm != nil {
 				fm.FocusLast()
 			}
 		} else {
-			w.SetTitleFocus(prev)
+			w.SetTitleFocus(prior)
 		}
 		return true
 
@@ -3117,11 +3576,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 		// hasShift is what the bodies below call "this is a resize", which is
 		// what the shifted arrow always meant.
 		hasShift := resize
-		horizStep := metrics.CellWidth
-		vertStep := metrics.CellHeight
+		horizStep := metrics.UnitsPerCellWidth
+		vertStep := metrics.UnitsPerCellHeight
 		if coarse {
-			horizStep = metrics.CellWidth * 10
-			vertStep = metrics.CellHeight * 4
+			horizStep = metrics.UnitsPerCellWidth * 10
+			vertStep = metrics.UnitsPerCellHeight * 4
 		}
 
 		// A non-resizable window ignores keyboard resize (Shift is the
@@ -3401,12 +3860,12 @@ func ClampWindowToClientArea(bounds, clientArea core.UnitRect, metrics core.Cell
 // dock/status bar - the client area already excludes them), and at
 // least minVisibleColumns of width within it on each side.
 func clampWindowToClientArea(bounds, clientArea core.UnitRect, metrics core.CellMetrics) core.UnitRect {
-	minVisible := metrics.CellWidth * minVisibleColumns
+	minVisible := metrics.UnitsPerCellWidth * minVisibleColumns
 
 	if bounds.Y < clientArea.Y {
 		bounds.Y = clientArea.Y
 	}
-	maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
+	maxY := clientArea.Y + clientArea.Height - metrics.UnitsPerCellHeight
 	if bounds.Y > maxY {
 		bounds.Y = maxY
 	}
@@ -3459,8 +3918,8 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 	return TitleFocusNone
 }
 
-// prevTitleFocus returns the previous title bar element before the given one.
-func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
+// priorTitleFocus returns the prior title bar element before the given one.
+func (w *Window) priorTitleFocus(current TitleFocus) TitleFocus {
 	w.mu.RLock()
 	flags := w.flags
 	w.mu.RUnlock()
@@ -3714,8 +4173,8 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 					break // Not at first trinket
 				}
 			}
-			// Not at first trinket, move to previous
-			return fm.FocusPrevious()
+			// Not at first trinket, move to prior
+			return fm.FocusPrior()
 		}
 
 		// Regular Tab - check if at last trinket
@@ -3782,6 +4241,15 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleMousePress handles mouse clicks.
 func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
+	x, y, onFrame := w.frameLocal(event.X, event.Y)
+	if !onFrame {
+		// The shade around a capped maximized window's frame is the window's
+		// own surface: the press belongs to it (the host has already raised
+		// it) and must not fall through to whatever is underneath.
+		return true
+	}
+	event.X, event.Y = x, y
+
 	w.mu.RLock()
 	content := w.content
 	flags := w.flags
@@ -3793,10 +4261,11 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	// coordinates - not [0, RowH). Missing the border here would leave the
 	// bottom of the visible titlebar (and the bottoms of the titlebar
 	// buttons) routed to content. Maximized has no side border. RowH is the
-	// kit's (possibly scaled) title row height — CellHeight at scale 1.0.
+	// kit's (possibly scaled) title row height — UnitsPerCellHeight at scale 1.0.
 	titleBand := w.titleBarMetrics().RowH
 	if state != WindowStateMaximized {
-		titleBand += core.FindFrameBorderUnits(w)
+		_, by := w.frameBorder()
+		titleBand += by
 	}
 
 	// Check for title bar clicks
@@ -3820,9 +4289,9 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	// Detached-window chrome (menu bar / status bar) claims the click
 	// before content, and an open menu claims all clicks.
 	if target, r, owns := w.chromeMouseTarget(event.X, event.Y); owns {
+		outer, interior := w.denominations()
 		le := event
-		le.X -= r.X
-		le.Y -= r.Y
+		le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 		target.HandleMousePress(le)
 		return true
 	}
@@ -3857,6 +4326,12 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement.
 func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
+	event.X, event.Y = w.frameLocalOrOut(event.X, event.Y)
+
+	// A window answers moves itself, so it makes for its own title bar the
+	// offer the base makes for everything that does not.
+	w.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
+
 	w.mu.RLock()
 	content := w.content
 	pressedButton := w.pressedButton
@@ -3933,11 +4408,11 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// an out-of-bounds move so its hover doesn't stick - chromeMouseTarget
 	// only forwards while the pointer is actually over the chrome.
 	w.mu.Lock()
-	prevChrome := w.lastChromeHover
+	previousChrome := w.lastChromeHover
 	w.lastChromeHover = chromeTarget
 	w.mu.Unlock()
-	if prevChrome != nil && prevChrome != chromeTarget {
-		if h, ok := prevChrome.(interface {
+	if previousChrome != nil && previousChrome != chromeTarget {
+		if h, ok := previousChrome.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
 			h.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
@@ -3947,9 +4422,9 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if h, ok := target.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
+			outer, interior := w.denominations()
 			le := event
-			le.X -= r.X
-			le.Y -= r.Y
+			le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 			h.HandleMouseMove(le)
 		}
 		return true
@@ -3976,6 +4451,8 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse button release.
 func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	event.X, event.Y = w.frameLocalOrOut(event.X, event.Y)
+
 	w.mu.RLock()
 	content := w.content
 	pressedButton := w.pressedButton
@@ -4048,9 +4525,9 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		if h, ok := target.(interface {
 			HandleMouseRelease(core.MouseReleaseEvent) bool
 		}); ok {
+			outer, interior := w.denominations()
 			le := event
-			le.X -= r.X
-			le.Y -= r.Y
+			le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 			h.HandleMouseRelease(le)
 		}
 		return true
@@ -4075,14 +4552,60 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	return false
 }
 
+// gridded is where the surface can actually render a window.
+//
+// A cell surface draws by dividing units by the cell size and hit-tests in
+// units, so a window standing off the grid draws in one cell and answers the
+// mouse in another -- a title bar that looks dead to a click that lands on
+// it. Every route to a window's geometry passes through SetBounds, so this is
+// the one place the whole class is settled: a script naming any position it
+// likes, a Go caller, a drag, a re-fit.
+//
+// The origin floors and the extent ceils (CellMetrics.GridRect). A smooth
+// surface has no grid to stand off and is left exactly as asked.
+func (w *Window) gridded(bounds core.UnitRect) core.UnitRect {
+	if core.FindSmoothPositioning(w) {
+		return bounds
+	}
+	return w.frameCellMetrics().GridRect(bounds)
+}
+
 // SetBounds sets the window bounds and triggers layout.
 func (w *Window) SetBounds(bounds core.UnitRect) {
-	oldSize := w.Bounds().Size()
+	// What was asked for is kept as asked: the surface's granularity can
+	// change under a window (it is stamped when the window joins a manager,
+	// and again when it is torn onto an OS surface), and the rect is
+	// re-derived from the ask rather than from an answer already rounded.
+	w.mu.Lock()
+	w.askedBounds = bounds
+	w.mu.Unlock()
+
+	bounds = w.gridded(bounds)
+	old := w.Bounds()
 	w.TrinketBase.SetBounds(bounds)
-	newSize := bounds.Size()
+	if old != bounds {
+		w.clearTitleButtonHover()
+	}
 	// Manually call our HandleResize since embedded SetBounds won't do it
-	if oldSize != newSize {
-		w.HandleResize(oldSize, newSize)
+	if old.Size() != bounds.Size() {
+		w.HandleResize(old.Size(), bounds.Size())
+	}
+}
+
+// clearTitleButtonHover drops the highlight on a title-bar button.
+//
+// A highlight says the pointer is over that button, and only a move can say
+// so. A window that moves out from under a stationary pointer -- restoring
+// from maximized, being placed after it was created, tiled, cascaded -- takes
+// its buttons somewhere else without a move to notice, and the highlight
+// stays lit on a button nothing is pointing at until the pointer next stirs.
+func (w *Window) clearTitleButtonHover() {
+	w.mu.Lock()
+	lit := w.hoveredButton != TitleButtonNone
+	w.hoveredButton = TitleButtonNone
+	w.mu.Unlock()
+	if lit {
+		w.Update()
 	}
 }
 
@@ -4121,8 +4644,8 @@ func (w *Window) SizeHint() core.UnitSize {
 
 	// Add frame
 	if flags&WindowFlagFrameless == 0 {
-		width += metrics.CellWidth * 2   // Left and right borders
-		height += metrics.CellHeight * 2 // Top and bottom borders
+		width += metrics.UnitsPerCellWidth * 2   // Left and right borders
+		height += metrics.UnitsPerCellHeight * 2 // Top and bottom borders
 	}
 
 	// Ensure minimum size
@@ -4144,6 +4667,12 @@ var _ core.Container = (*Window)(nil)
 // HandleMouseWheel forwards a wheel event to the content (in the
 // window's interior denomination).
 func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	x, y, onFrame := w.frameLocal(event.X, event.Y)
+	if !onFrame {
+		return true // the shade scrolls nothing, and nothing below it either
+	}
+	event.X, event.Y = x, y
+
 	w.mu.RLock()
 	content := w.content
 	mb := w.menuBar
@@ -4161,9 +4690,9 @@ func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
 				open = o.IsMenuOpen()
 			}
 			if r := w.menuBarRect(); open || (!r.IsEmpty() && r.Contains(core.UnitPoint{X: event.X, Y: event.Y})) {
+				outer, interior := w.denominations()
 				le := event
-				le.X -= r.X
-				le.Y -= r.Y
+				le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 				if wh.HandleMouseWheel(le) {
 					return true
 				}
@@ -4260,4 +4789,35 @@ func (w *Window) KeyContext() *core.KeyContext {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.keyContext
+}
+
+// noteTitleCut records that the title bar had to cut the window's name short,
+// which is what makes the bar worth asking about: the name is the one thing a
+// title bar is for, and a cut one is the thing a reader cannot make out.
+func (w *Window) noteTitleCut(cut bool, at core.UnitRect, tm TitleBarMetrics) {
+	w.mu.Lock()
+	w.titleCut = cut
+	w.titleBandH = tm.RowH
+	w.titleTextAt = at
+	w.mu.Unlock()
+}
+
+// TooltipAt implements core.TooltipSource: the window answers for its own
+// title bar, and only when the name there was cut short. Everything below the
+// bar is content, and the trinkets in it answer for themselves.
+func (w *Window) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	w.mu.RLock()
+	cut, bandH, title, at := w.titleCut, w.titleBandH, w.title, w.titleTextAt
+	w.mu.RUnlock()
+	if !cut || title == "" || bandH <= 0 {
+		return "", core.UnitRect{}, false
+	}
+	band := core.UnitRect{Width: w.Bounds().Width, Height: bandH}
+	if !band.Contains(local) {
+		return "", core.UnitRect{}, false
+	}
+	if at.Width <= 0 {
+		at = band
+	}
+	return title, at, true
 }

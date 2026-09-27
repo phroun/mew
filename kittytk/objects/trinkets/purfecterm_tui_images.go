@@ -136,13 +136,13 @@ func (t *PurfecTerm) renderImagesTUI(p *core.Painter, buf *purfecterm.Buffer, me
 	}
 	scrollOffset := buf.GetEffectiveScrollOffset()
 	horizOffset := buf.GetHorizOffset()
-	// A fresh slice, not prev[:0]: they would share one backing array and
+	// A fresh slice, not previous[:0]: they would share one backing array and
 	// each append would overwrite the entry it is about to be compared with.
-	prev := t.tuiImgCache
-	t.tuiImgCache = make([]tuiImgEntry, 0, len(prev)+len(below)+len(above))
+	previous := t.tuiImgCache
+	t.tuiImgCache = make([]tuiImgEntry, 0, len(previous)+len(below)+len(above))
 	for _, band := range [][]*purfecterm.PlacedImage{below, above} {
 		for _, im := range band {
-			img := t.tuiImageFor(im, prev)
+			img := t.tuiImageFor(im, previous)
 			if img == nil {
 				continue
 			}
@@ -184,12 +184,12 @@ func (t *PurfecTerm) renderImagesTUI(p *core.Painter, buf *purfecterm.Buffer, me
 // pointer the surface has never seen, so it would re-transmit every picture
 // down the pty forever for no change at all. Holding the pointer steady is what
 // lets that comparison mean "unchanged".
-func (t *PurfecTerm) tuiImageFor(im *purfecterm.PlacedImage, prev []tuiImgEntry) *image.RGBA {
+func (t *PurfecTerm) tuiImageFor(im *purfecterm.PlacedImage, previous []tuiImgEntry) *image.RGBA {
 	key := tuiImgKeyFor(im)
-	for i := range prev {
-		if prev[i].key == key {
-			t.tuiImgCache = append(t.tuiImgCache, prev[i])
-			return prev[i].img
+	for i := range previous {
+		if previous[i].key == key {
+			t.tuiImgCache = append(t.tuiImgCache, previous[i])
+			return previous[i].img
 		}
 	}
 	built := t.imageForBlitGfx(im)

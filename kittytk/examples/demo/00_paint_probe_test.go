@@ -32,7 +32,7 @@ func newGridBackend(w, h int) *gridBackend {
 func (g *gridBackend) Init() error { return nil }
 func (g *gridBackend) Shutdown()   {}
 func (g *gridBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (g *gridBackend) Size() core.UnitSize {
 	return core.UnitSize{Width: core.Unit(g.w * 8), Height: core.Unit(g.h * 16)}
@@ -60,7 +60,7 @@ func (g *gridBackend) DrawText(x, y core.Unit, text string, _ style.CellStyle, _
 	}
 	return core.Unit(len([]rune(text)) * 8)
 }
-func (g *gridBackend) DrawTextAligned(b core.UnitRect, text string, _, _ core.Alignment, s style.CellStyle, f *core.Font) {
+func (g *gridBackend) DrawTextAligned(b core.UnitRect, text string, _ core.HSide, _ core.VAlign, s style.CellStyle, f *core.Font) {
 	g.DrawText(b.X, b.Y, text, s, f)
 }
 func (g *gridBackend) FillRect(r core.UnitRect, ch rune, _ style.CellStyle) {

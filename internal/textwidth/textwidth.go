@@ -12,7 +12,7 @@ import (
 
 // Rune returns the number of terminal columns a printable rune occupies:
 // 0 for combining and zero-width characters (they overlay or attach to the
-// previous cell), 2 for wide and fullwidth characters (CJK, emoji), and 1
+// preceding cell), 2 for wide and fullwidth characters (CJK, emoji), and 1
 // for everything else. Tabs and control characters are not handled here —
 // their display width is mew-specific (tab stops, ^X substitutes) and is
 // decided at the call sites.
@@ -83,9 +83,9 @@ func scriptOf(r rune) string {
 }
 
 // DefectiveMark reports whether the combining mark r is one mew must NOT paint
-// as zero-width after the base character prev. Two cases:
+// as zero-width after the base character it follows. Two cases:
 //
-//   - No base at all (prev == 0): the mark opens the line with nothing to
+//   - No base at all (base == 0): the mark opens the line with nothing to
 //     anchor onto.
 //   - The mark is SCRIPT-SPECIFIC and the base belongs to a different script:
 //     a Hebrew accent over a CJK ideograph, niqqud on a Latin letter, an NKo
@@ -113,14 +113,14 @@ func scriptOf(r rune) string {
 // General diacritics (script=Inherited/Common — the U+0300..U+036F block, the
 // Arabic vowel marks, the kana voicing marks) belong to no script and
 // legitimately attach to any base, so they are never defective on this rule.
-func DefectiveMark(prev, r rune) bool {
+func DefectiveMark(base, r rune) bool {
 	if !IsMark(r) {
 		return false
 	}
-	if prev == 0 {
+	if base == 0 {
 		return true // nothing to anchor onto
 	}
-	if prev == MarkAnchor {
+	if base == MarkAnchor {
 		// A DOTTED CIRCLE the user actually typed is a legitimate base — it is the
 		// Unicode character for carrying an isolated mark. So a mark on it is
 		// well-formed: it composes onto that circle (in the normal text colour),
@@ -132,7 +132,7 @@ func DefectiveMark(prev, r rune) bool {
 		return false // general diacritic: attaches to any base
 	}
 	// Script-specific mark: well-formed only on a base of its own script.
-	return scriptOf(prev) != markScript
+	return scriptOf(base) != markScript
 }
 
 // AnchorMark reports whether a defective mark should be shown ANCHORED on a
@@ -153,18 +153,18 @@ func DefectiveMark(prev, r rune) bool {
 // answering a question about the wrong font. What both surfaces do get is a
 // definite one-cell budget anchored by U+25CC, which every bundled face
 // carries and every terminal font in practice does too.
-func AnchorMark(prev, r rune) bool {
-	return DefectiveMark(prev, r)
+func AnchorMark(base, r rune) bool {
+	return DefectiveMark(base, r)
 }
 
 // MarkAnchor is the base character an anchored mark is composed onto.
 const MarkAnchor = '◌' // DOTTED CIRCLE
 
-// PrevBase returns the cluster base for the rune at index i: the nearest
+// PrecedingBase returns the cluster base for the rune at index i: the nearest
 // preceding rune that is not itself a combining mark, or 0 when there is none.
-// It is what DefectiveMark wants for prev — a mark rides the last real
+// It is what DefectiveMark wants for its base — a mark rides the last real
 // character, not the mark in front of it.
-func PrevBase(runes []rune, i int) rune {
+func PrecedingBase(runes []rune, i int) rune {
 	for j := i - 1; j >= 0; j-- {
 		if !IsMark(runes[j]) {
 			return runes[j]
@@ -173,7 +173,7 @@ func PrevBase(runes []rune, i int) rune {
 	return 0
 }
 
-// RidesPreviousCell reports whether runes[i] is drawn INTO the cell before it
+// RidesPrecedingCell reports whether runes[i] is drawn INTO the cell before it
 // rather than taking one of its own — a well-formed combining mark, a joiner, a
 // zero-width space.
 //
@@ -187,7 +187,7 @@ func PrevBase(runes []rune, i int) rune {
 //
 // Controls are excluded for the same reason: mew paints them as ^X or hex, which
 // takes cells, whatever their nominal width.
-func RidesPreviousCell(runes []rune, i int) bool {
+func RidesPrecedingCell(runes []rune, i int) bool {
 	if i < 0 || i >= len(runes) {
 		return false
 	}
@@ -195,7 +195,7 @@ func RidesPreviousCell(runes []rune, i int) bool {
 	if r == '\t' || IsControl(r) || Rune(r) != 0 {
 		return false
 	}
-	return !DefectiveMark(PrevBase(runes, i), r)
+	return !DefectiveMark(PrecedingBase(runes, i), r)
 }
 
 // isBidiControl mirrors bidi.IsDirectionControl. It is duplicated here rather

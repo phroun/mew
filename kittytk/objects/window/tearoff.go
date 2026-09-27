@@ -2,7 +2,6 @@ package window
 
 import (
 	"math"
-	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
@@ -75,6 +74,11 @@ type TearOffHost struct {
 	dragIsHandle bool
 	dragMoved    bool
 
+	// dragGY is where the pointer was, in global pixels, when the drag began.
+	// A zoomed window comes down for travel FROM there.
+	dragGY      int
+	dragGYValid bool
+
 	// Edge-resize drag: the OS window resizes with the pointer.
 	resizing    bool
 	resizeEdges int // resizeLeft | resizeRight | resizeBottom
@@ -101,11 +105,9 @@ type TearOffHost struct {
 	// clearly left the top strip.
 	dragRestored bool
 
-	// Double-click tracking for the title bar (zoom toggle), matching
-	// the in-surface manager's maximize double-click.
-	lastClickAt time.Time
-	lastClickX  core.Unit
-	lastClickY  core.Unit
+	// Double-click tracking for the title bar (zoom toggle), the same kit
+	// the in-surface manager's maximize double-click uses.
+	titleClicks DoubleClickTracker
 
 	// Popup overlays (combobox dropdowns, context menus) opened by
 	// trinkets inside the torn window: they belong to THIS surface.
@@ -183,13 +185,19 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, graphicalFrames: true}
 	h.native, _ = surf.(platform.NativeSurface)
+	// A torn window IS an OS window, addressed and sized in device pixels on
+	// the hardened cell pitch. It stands on no cell grid, so its bounds are
+	// left exactly where the OS puts them (see Window.gridded). The manager
+	// it came from stamped this the other way for a cell desktop, and the
+	// window carries that stamp out here unless it is corrected.
+	win.SetSmoothPositioning(true)
 	// The OS-side floor, matching what resizeMove clamps to: a resize we
 	// do not drive (the window manager's own keyboard resize or tiling)
 	// answers only to the OS.
 	if ms, ok := surf.(platform.NativeMinimumSizer); ok {
 		metrics := core.DefaultCellMetrics()
-		ms.SetMinimumSizePx(h.pxHardX(metrics.CellWidth*MinHostCols),
-			h.pxHardY(metrics.CellHeight*MinHostRows))
+		ms.SetMinimumSizePx(h.pxHardX(metrics.UnitsPerCellWidth*MinHostCols),
+			h.pxHardY(metrics.UnitsPerCellHeight*MinHostRows))
 	}
 	h.minimizeKeys.SetCommands(core.CmdAppMinimize)
 	h.minimizeKeys.SetKeyOwner(win) // the torn window's own keymap, if it has one
@@ -273,6 +281,11 @@ func (h *TearOffHost) BeginDrag(grabX, grabY core.Unit) {
 	h.dragMoved = false
 	h.grabX, h.grabY = grabX, grabY
 	h.grabPxValid = false
+	h.dragGYValid = false
+	if h.global != nil {
+		_, h.dragGY = h.global()
+		h.dragGYValid = true
+	}
 }
 
 // beginDragAt is DESCRIPTIVE: the pointer is already at (x, y) — a real
@@ -354,7 +367,7 @@ func (h *TearOffHost) blockedTitleDragStart(x, y core.Unit) bool {
 	if h.edgeAt(x, y) != 0 {
 		return false
 	}
-	if h.win.buttonAtPosition(x, y) != TitleButtonNone {
+	if h.win.buttonAtWindowPoint(x, y) != TitleButtonNone {
 		return false
 	}
 	return h.inTitleBar(x, y)
@@ -390,15 +403,17 @@ func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 // edgeAt returns the resize-edge bitmask for a window-local point, or 0
 // when the point starts no resize - mirroring beginResize (no resize in
 // the title row, on a non-resizable or zoomed window).
-// effectiveGrip is the AFFORDANCE thickness: the whole painted frame border
-// plus half a column beyond it, matching docked windows (ResizeOverlayGrip).
-// What a press actually grabs is narrower and border-inclusive — see
+// affordanceBand is how thick the translucent band is, per axis: the whole
+// painted frame border plus half a column beyond it, matching docked windows
+// (ResizeAffordanceBand).
+// What a press actually grabs is a separate quantity and narrower — see
 // ResizeHitGrip, used by edgeAt. FindFrameBorderUnits needs the desktop in the
 // parent chain, which a detached window lacks, so derive the border straight
 // from the live pixels-per-unit exactly as the desktop's
 // WindowFrameBorderUnits does (ceil(scaled border px / ppu)).
-func (h *TearOffHost) effectiveGrip() core.Unit {
-	return ResizeOverlayGrip(h.graphicalFrames, core.DefaultCellMetrics(), h.frameBorderUnits())
+func (h *TearOffHost) affordanceBand() EdgeThickness {
+	border := h.frameBorderUnits()
+	return ResizeAffordanceBand(h.graphicalFrames, core.DefaultCellMetrics(), border, border)
 }
 
 // frameBorderUnits is the painted frame-border thickness in units, derived from
@@ -435,21 +450,21 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 		return 0
 	}
 	b := h.win.Bounds()
-	// The HIT zone follows the grab rule; effectiveGrip stays the affordance
-	// overlay's, which must not move. A detached window has no desktop in its
+	// The HIT zone follows the grab rule; affordanceBand stays the painted
+	// band's, which must not move. A detached window has no desktop in its
 	// parent chain, so the border comes from its own live pixels-per-unit.
 	metrics := core.DefaultCellMetrics()
 	border := h.frameBorderUnits()
-	grip := ResizeHitGrip(h.graphicalFrames, metrics, h.pxPerUnit(), border)
-	corner := ResizeOverlayGrip(h.graphicalFrames, metrics, border)
+	grip := ResizeHitGrip(h.graphicalFrames, metrics, h.pxPerUnit(), border, border)
+	reach := ResizeAffordanceBand(h.graphicalFrames, metrics, border, border)
 	edges := 0
 
-	// Corners reach as far as the AFFORDANCE, not as far as the grab: a
-	// diagonal target only as wide as the side zone is one nobody can hit.
-	// Same rule the docked path applies in ResizeEdgeAt.
-	if corner > grip {
-		nearL, nearR := x < corner, x >= b.Width-corner
-		nearT, nearB := y < corner, y >= b.Height-corner
+	// Corners reach further in than the side zones do: a diagonal target only
+	// as wide as a side zone is one nobody can hit. Same rule the docked path
+	// applies in ResizeEdgeAt.
+	if reach.X > grip.X || reach.Y > grip.Y {
+		nearL, nearR := x < reach.X, x >= b.Width-reach.X
+		nearT, nearB := y < reach.Y, y >= b.Height-reach.Y
 		if nearL && nearR {
 			nearL, nearR = 2*x < b.Width, 2*x >= b.Width
 		}
@@ -476,8 +491,8 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	// and bottom. Rather than letting one side always win, the pointer's half
 	// decides: past the 50% line the far edge (right / bottom) takes it, before
 	// it the near edge (left / top) does — so both handles stay reachable.
-	leftZone := x < grip
-	rightZone := x >= b.Width-grip
+	leftZone := x < grip.X
+	rightZone := x >= b.Width-grip.X
 	if leftZone && rightZone {
 		if 2*x >= b.Width {
 			leftZone = false
@@ -492,8 +507,8 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 		edges |= resizeRight
 	}
 
-	topZone := y < grip
-	bottomZone := y >= b.Height-grip
+	topZone := y < grip.Y
+	bottomZone := y >= b.Height-grip.Y
 	if topZone && bottomZone {
 		if 2*y >= b.Height {
 			topZone = false
@@ -505,7 +520,7 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 		edges |= resizeTop
 	} else if bottomZone {
 		edges |= resizeBottom
-	} else if y < core.DefaultCellMetrics().CellHeight {
+	} else if y < core.DefaultCellMetrics().UnitsPerCellHeight {
 		// Title row below the top grip: drag, not resize.
 		return 0
 	}
@@ -534,35 +549,35 @@ func tornCursorForEdge(edges int) core.CursorShape {
 }
 
 // tornEdgeRects returns the window-local highlight bands for the given
-// resize edges (one per edge, two for a corner), each the width of the
-// resize grip.
-func tornEdgeRects(b core.UnitRect, edges int, grip core.Unit) []core.UnitRect {
+// resize edges (one per edge, two for a corner), each the thickness of the
+// affordance band.
+func tornEdgeRects(b core.UnitRect, edges int, band EdgeThickness) []core.UnitRect {
 	var rects []core.UnitRect
 	if edges&resizeLeft != 0 {
-		rects = append(rects, core.UnitRect{Width: grip, Height: b.Height})
+		rects = append(rects, core.UnitRect{Width: band.X, Height: b.Height})
 	}
 	if edges&resizeRight != 0 {
-		rects = append(rects, core.UnitRect{X: b.Width - grip, Width: grip, Height: b.Height})
+		rects = append(rects, core.UnitRect{X: b.Width - band.X, Width: band.X, Height: b.Height})
 	}
 	if edges&resizeBottom != 0 {
-		rects = append(rects, core.UnitRect{Y: b.Height - grip, Width: b.Width, Height: grip})
+		rects = append(rects, core.UnitRect{Y: b.Height - band.Y, Width: b.Width, Height: band.Y})
 	}
 	if edges&resizeTop != 0 {
-		rects = append(rects, core.UnitRect{Width: b.Width, Height: grip})
+		rects = append(rects, core.UnitRect{Width: b.Width, Height: band.Y})
 	}
 	return rects
 }
 
-// refreshResizeHover re-arms the resize-edge highlight while a resize is in
+// refreshResizeBands re-arms the resize-edge highlight while a resize is in
 // flight (the hover path that normally sets it is skipped then). It publishes
 // the armed EDGES, not rectangles: the window's new size arrives back from
 // the OS asynchronously, so anything measured here would be a frame behind,
 // and the paint resolves the mask against the bounds it actually has.
-func (h *TearOffHost) refreshResizeHover() {
+func (h *TearOffHost) refreshResizeBands() {
 	if !h.resizing || h.resizeEdges == 0 {
 		return
 	}
-	h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
+	h.win.SetResizeBandEdges(h.resizeEdges, h.affordanceBand())
 }
 
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
@@ -575,7 +590,7 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	for _, p := range h.popups {
 		b := p.Bounds
 		if x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
-			h.win.SetResizeHoverEdges(0, 0)
+			h.win.SetResizeBandEdges(0, EdgeThickness{})
 			h.applyCursor(core.CursorDefault)
 			return
 		}
@@ -586,17 +601,17 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	// for free from CursorAt's ActiveMenuBounds test).
 	if b, _, _, ok := h.win.MenuDropdownLayer(); ok &&
 		x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
-		h.win.SetResizeHoverEdges(0, 0)
+		h.win.SetResizeBandEdges(0, EdgeThickness{})
 		h.applyCursor(core.CursorDefault)
 		return
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
-		h.win.SetResizeHoverEdges(edges, h.effectiveGrip())
+		h.win.SetResizeBandEdges(edges, h.affordanceBand())
 		h.applyCursor(tornCursorForEdge(edges))
 		return
 	}
-	h.win.SetResizeHoverEdges(0, 0)
+	h.win.SetResizeBandEdges(0, EdgeThickness{})
 	h.applyCursor(h.win.CursorShapeAt(x, y))
 }
 
@@ -636,6 +651,8 @@ func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 		// read as one piece).
 		Anchor:             request.Anchor,
 		Paint:              request.Paint,
+		Inert:              request.Inert,
+		Fade:               request.Fade,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
@@ -682,6 +699,11 @@ func (h *TearOffHost) popupsHandleMouse(ev core.Event) (handled bool) {
 	case core.MousePressEvent:
 		for i := len(h.popups) - 1; i >= 0; i-- {
 			popup := h.popups[i]
+			// An inert popup is not there as far as the pointer is
+			// concerned (see core.PopupRequest).
+			if popup.Inert {
+				continue
+			}
 			if popup.Bounds.Contains(core.UnitPoint{X: e.X, Y: e.Y}) {
 				if popup.HandleMousePress != nil {
 					return popup.HandleMousePress(e)
@@ -947,26 +969,33 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// The '#' handle is host-managed: a drag re-docks over the
 		// desktop, a click re-docks in place. Grab it before the window
 		// tracks it as a button.
-		if e.Button == core.LeftButton && h.win.buttonAtPosition(e.X, e.Y) == TitleButtonTear {
+		if e.Button == core.LeftButton && h.win.buttonAtWindowPoint(e.X, e.Y) == TitleButtonTear {
 			h.beginDragAt(e.X, e.Y)
 			h.dragIsHandle = true
 			handled = true
 			break
 		}
 		handled = h.win.HandleMousePress(e)
-		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
+		if handled || !h.inTitleBar(e.X, e.Y) {
+			// Anything but a plain click on the title bar disarms the
+			// tracker: a press the window took (a caption button) or one
+			// that landed elsewhere is not half of a double-click, and
+			// leaving it armed lets the NEXT title click pair with it.
+			h.titleClicks.Reset()
+		}
+		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) &&
+			!h.win.CanMaximize() {
+			// A window that may not be maximized may not be zoomed either:
+			// the gesture is the same one. Fall through to the drag rather
+			// than swallowing the press.
+			h.beginDragAt(e.X, e.Y)
+			handled = true
+		} else if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
 			// Double-click on the title bar toggles the zoom, exactly
 			// as it toggles maximize in-surface.
-			metrics := core.DefaultCellMetrics()
-			now := time.Now()
-			if now.Sub(h.lastClickAt) < 400*time.Millisecond &&
-				e.X-h.lastClickX < metrics.CellWidth && h.lastClickX-e.X < metrics.CellWidth &&
-				e.Y-h.lastClickY < metrics.CellHeight && h.lastClickY-e.Y < metrics.CellHeight {
-				h.lastClickAt = time.Time{}
+			if h.titleClicks.Press(e.X, e.Y, core.DefaultCellMetrics()) {
 				h.ToggleZoom()
 			} else {
-				h.lastClickAt = now
-				h.lastClickX, h.lastClickY = e.X, e.Y
 				h.beginDragAt(e.X, e.Y)
 			}
 			handled = true
@@ -1003,7 +1032,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			// to move (the left and top bands are anchored at 0), which is why
 			// dragging a CORNER, where at least one band always moves, is
 			// where it shows.
-			h.refreshResizeHover()
+			h.refreshResizeBands()
 		} else if h.dragging {
 			handled = h.dragMove()
 		} else if e.Buttons == 0 {
@@ -1022,9 +1051,12 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			// A button is held (a drag begun elsewhere passing over the frame):
 			// forward it and drop any lingering edge band.
 			handled = h.win.HandleMouseMove(e)
-			h.win.SetResizeHoverEdges(0, 0)
+			h.win.SetResizeBandEdges(0, EdgeThickness{})
 		}
 	case core.MouseReleaseEvent:
+		// The button coming up is what makes the NEXT press a second click
+		// rather than a repeat of this one.
+		h.titleClicks.Release()
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
 			handled = true
 			break
@@ -1056,7 +1088,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// reset the cursor. A live resize/drag keeps driving from the global
 		// pointer, so leave its highlight alone.
 		if !h.resizing && !h.dragging {
-			h.win.SetResizeHoverEdges(0, 0)
+			h.win.SetResizeBandEdges(0, EdgeThickness{})
 			h.win.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 			h.applyCursor(core.CursorDefault)
 		}
@@ -1089,13 +1121,25 @@ func (h *TearOffHost) dragMove() bool {
 	}
 	_, way, ww, wh := h.native.WorkAreaPx()
 	if h.zoomed {
-		// A zoomed window doesn't slide; dragging its title below the
-		// work area's top restores it, with the grab point staying
-		// proportionally placed on the narrower title bar.
+		// A zoomed window doesn't slide; it comes down when it is PULLED
+		// down, and the grab point stays proportionally placed on the
+		// narrower title bar.
+		//
+		// Its top edge is the work area's top already, so where the window
+		// would sit is at or below that from the moment it is grabbed. The
+		// travel from the grab is what says the window is being pulled rather
+		// than clicked on.
 		_, gpy := h.grabPx()
-		if gy-gpy >= way {
-			if ww > 0 {
-				h.grabX = core.Unit(float64(h.grabX) * float64(h.zoomSaved[2]) / float64(ww))
+		pull := h.pxHardY(core.FindEffectiveCellMetrics(h.win).UnitsPerCellHeight)
+		if gy-gpy >= way && (!h.dragGYValid || gy-h.dragGY >= pull) {
+			// The grab was on the FRAME being held, which on a capped window
+			// sits in the middle of the surface it fills. Re-express it there
+			// before scaling: measured from the surface's corner it carries
+			// the frame's own inset, which is nowhere near the title bar.
+			fr := h.win.FrameRect()
+			h.grabX, h.grabY = h.grabX-fr.X, h.grabY-fr.Y
+			if fw := h.pxHardX(fr.Width); fw > 0 {
+				h.grabX = core.Unit(float64(h.grabX) * float64(h.zoomSaved[2]) / float64(fw))
 			}
 			h.zoomed = false
 			h.dragRestored = true
@@ -1111,7 +1155,7 @@ func (h *TearOffHost) dragMove() bool {
 		}
 		return true
 	}
-	if h.dragRestored && gy >= way+h.px(core.DefaultCellMetrics().CellHeight) {
+	if h.dragRestored && gy >= way+h.px(core.DefaultCellMetrics().UnitsPerCellHeight) {
 		// Pointer clearly below the top strip: re-arm the snap.
 		h.dragRestored = false
 	}
@@ -1341,13 +1385,38 @@ func (h *TearOffHost) resizeMove() bool {
 	gx, gy := h.global()
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
-	// The shared host minimum, on the hardened cell pitch this host sizes by.
-	minW := h.pxHardX(metrics.CellWidth * MinHostCols)
-	minH := h.pxHardY(metrics.CellHeight * MinHostRows)
+	// The shared host minimum, on the hardened cell pitch this host sizes by,
+	// raised by whatever the window states for itself.
+	minW := h.pxHardX(metrics.UnitsPerCellWidth * MinHostCols)
+	minH := h.pxHardY(metrics.UnitsPerCellHeight * MinHostRows)
+	winMin, winMax := h.win.MinimumSize(), h.win.MaximumSize()
+	if px := h.pxHardX(winMin.Width); px > minW {
+		minW = px
+	}
+	if px := h.pxHardY(winMin.Height); px > minH {
+		minH = px
+	}
+	// A window that says how far it grows stops there, and the floor still
+	// wins where the two limits cross.
+	maxW, maxH := -1, -1
+	if winMax.Width >= 0 {
+		if maxW = h.pxHardX(winMax.Width); maxW < minW {
+			maxW = minW
+		}
+	}
+	if winMax.Height >= 0 {
+		if maxH = h.pxHardY(winMax.Height); maxH < minH {
+			maxH = minH
+		}
+	}
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {
 		w -= dx
+		if maxW >= 0 && w > maxW {
+			dx += w - maxW
+			w = maxW
+		}
 		if w < minW {
 			dx -= minW - w
 			w = minW
@@ -1356,18 +1425,28 @@ func (h *TearOffHost) resizeMove() bool {
 	}
 	if h.resizeEdges&resizeRight != 0 {
 		w += dx
+		if maxW >= 0 && w > maxW {
+			w = maxW
+		}
 		if w < minW {
 			w = minW
 		}
 	}
 	if h.resizeEdges&resizeBottom != 0 {
 		ht += dy
+		if maxH >= 0 && ht > maxH {
+			ht = maxH
+		}
 		if ht < minH {
 			ht = minH
 		}
 	}
 	if h.resizeEdges&resizeTop != 0 {
 		ht -= dy
+		if maxH >= 0 && ht > maxH {
+			dy += ht - maxH
+			ht = maxH
+		}
 		if ht < minH {
 			dy -= minH - ht
 			ht = minH
@@ -1413,7 +1492,10 @@ func (h *TearOffHost) ZoomToFill() {
 }
 
 func (h *TearOffHost) ToggleZoom() {
-	if h.native == nil {
+	// Zooming is what maximizing means out here, so a window that may not be
+	// maximized may not be zoomed. ZoomToFill is deliberately not guarded:
+	// solo mode makes the torn window the whole display whatever it says.
+	if h.native == nil || !h.win.CanMaximize() {
 		return
 	}
 	if h.zoomed {
@@ -1453,12 +1535,42 @@ func (h *TearOffHost) zoomToWorkArea() {
 	h.zoomSaved = [4]int{x, y, h.paintablePxX(pw), h.paintablePxY(ph)}
 	h.zoomed = true
 	h.win.Maximize()
+
+	// The OS window takes the WHOLE work area, whatever maximum the window
+	// carries: maximizing means filling the room here as it does on the
+	// desktop, and a window that says how far it grows draws its frame in the
+	// middle of that room and shades the rest itself (Window.frameRect).
+	// Capping the OS window instead left the frame sitting on the display
+	// with nothing around it -- and a window that was not, in the end,
+	// maximized at all, since a surface below the work area reads as a window
+	// the OS resized out of it (healMaximizedDivergence).
+	//
+	// A minimum still raises it: an OS window smaller than the window will
+	// draw is a window with its own edges off the surface.
+	wx, wy, ww, wh = h.zoomRectPx(wx, wy, ww, wh)
+
 	h.native.SetScreenPositionPx(wx, wy)
 	// The work-area size itself is NOT rounded: a maximized window draws no
 	// rounded frame (window.go's graphicalFrame excludes WindowStateMaximized,
 	// as hostFrameInset does for the desktop), so there is no outer stroke to
 	// protect here — and shrinking it would leave the screen edge uncovered.
 	h.native.SetScreenSizePx(ww, wh)
+}
+
+// zoomRectPx is the work area an OS window zooms into: the whole of it,
+// raised by the window's own minimum. A maximum does not enter here -- the
+// window paints its frame at that size in the middle of the surface and
+// shades the rest. All in device pixels, on the hardened pitch the frame is
+// drawn against.
+func (h *TearOffHost) zoomRectPx(wx, wy, ww, wh int) (int, int, int, int) {
+	min := h.win.MinimumSize()
+	if px := h.pxHardX(min.Width); ww < px {
+		ww = px
+	}
+	if px := h.pxHardY(min.Height); wh < px {
+		wh = px
+	}
+	return wx, wy, ww, wh
 }
 
 // applyKeyboardBounds maps a title-focus keyboard geometry change
@@ -1495,14 +1607,19 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 // top cell row, excluding nothing else - button clicks were already
 // offered to the window and declined.
 func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
-	b := h.win.Bounds()
+	// Measured against the FRAME, which is the whole surface except on a
+	// zoomed window whose growth is capped: that one draws itself in the
+	// middle of the surface and shades the rest, and the shade is no more a
+	// title bar than the desktop is.
+	fr := h.win.FrameRect()
+	x, y = x-fr.X, y-fr.Y
 	// The title bar is painted BELOW the top frame border, so its zone runs to
-	// frameBorder + CellHeight — matching the WindowManager (titleTop +
-	// CellHeight). Without the border term a wide border_width left only a thin
+	// frameBorder + UnitsPerCellHeight — matching the WindowManager (titleTop +
+	// UnitsPerCellHeight). Without the border term a wide border_width left only a thin
 	// draggable/double-click strip. The top resize grip (checked before this)
 	// owns the overlap at the very top.
-	th := core.DefaultCellMetrics().CellHeight + h.frameBorderUnits()
-	return x >= 0 && x < b.Width && y >= 0 && y < th
+	th := core.DefaultCellMetrics().UnitsPerCellHeight + h.frameBorderUnits()
+	return x >= 0 && x < fr.Width && y >= 0 && y < th
 }
 
 // Resized implements platform.SurfaceHandler: the window tracks the
@@ -1538,7 +1655,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// recomputed accurately — otherwise they stay at the pre-resize position
 	// until the next hover recomputes them.
 	if h.resizing {
-		h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
+		h.win.SetResizeBandEdges(h.resizeEdges, h.affordanceBand())
 	}
 	h.surf.Invalidate(core.UnitRect{})
 }

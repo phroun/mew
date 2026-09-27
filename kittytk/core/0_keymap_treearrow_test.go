@@ -8,19 +8,21 @@ import "testing"
 // existed both spellings resolved to trinket_item_left and nothing but the
 // Shift bit could tell them apart.
 func TestTreeArrowsResolveDistinctly(t *testing.T) {
-	// The movement subset a TreeView declares.
+	// The movement subset a TreeView reading left to right declares. Both
+	// meanings of each shifted arrow are bound to it; declaring one of them
+	// is what settles which the key reaches.
 	declared := []string{
 		CmdTrinketItemLeft, CmdTrinketItemRight,
 		CmdTrinketItemPrior, CmdTrinketItemNext,
-		CmdTrinketCollapseOrEnclosing, CmdTrinketExpandOrDescend,
+		CmdTrinketCollapseLeftOrEnclosing, CmdTrinketExpandRightOrDescend,
 		CmdTrinketCollapse, CmdTrinketExpand,
 	}
 	r := DefaultKeyRegistry()
 	for key, want := range map[string]string{
 		"Left":    CmdTrinketItemLeft,
 		"Right":   CmdTrinketItemRight,
-		"S-Left":  CmdTrinketCollapseOrEnclosing,
-		"S-Right": CmdTrinketExpandOrDescend,
+		"S-Left":  CmdTrinketCollapseLeftOrEnclosing,
+		"S-Right": CmdTrinketExpandRightOrDescend,
 		"Minus":   CmdTrinketCollapse,
 		"Plus":    CmdTrinketExpand,
 	} {

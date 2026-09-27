@@ -7,7 +7,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for Splitter (see docs/property-vocabulary.md).
+// Wire registration for Splitter; the wiki's Splitter page is
+// generated from it.
 // The first child becomes the first pane, the second the second pane;
 // a third is an error.
 func init() {

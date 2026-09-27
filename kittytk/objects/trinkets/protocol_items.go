@@ -11,8 +11,8 @@ import (
 // entries, listview rows, and treeview nodes are all items; trees nest
 // them with children={} blocks:
 //
-//	new treeview children={
-//	    fruit=new item caption="Fruit" expanded children={
+//	new treeview items={
+//	    fruit=new item caption="Fruit" expanded items={
 //	        new item caption="Apple"
 //	        new item caption="Pear"
 //	    }
@@ -28,6 +28,7 @@ type wireItem struct {
 	id       uint64
 	caption  string
 	expanded bool
+	readOnly bool
 	children []*wireItem
 
 	// Live backrefs, filled in when a treeview adopts the item.
@@ -63,6 +64,17 @@ func init() {
 				}
 				return nil
 			})).Tip("Row or node display text."),
+			"editable": protocol.NewProperty("flag", wprop("editable", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
+				b, err := protocol.AsBool("editable", v, f)
+				if err != nil {
+					return err
+				}
+				it.readOnly = !b
+				if it.node != nil {
+					it.node.ReadOnly = it.readOnly
+				}
+				return nil
+			})).Tip("Whether this row joins the row editor; !editable holds one row out of a column that is otherwise editable.").Def("true"),
 			"expanded": protocol.NewProperty("flag", wprop("expanded", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("expanded", v, f)
 				if err != nil {
@@ -75,21 +87,21 @@ func init() {
 				}
 				return nil
 			})).Tip("Node expanded (tree nodes).").Def("false"),
-		},
-		Append: func(parent, child any) error {
-			p := parent.(*wireItem)
-			c, ok := child.(*wireItem)
-			if !ok {
-				return fmt.Errorf("item: children must be items, got %T", child)
-			}
-			p.children = append(p.children, c)
-			if p.node != nil {
-				// Late append onto an already-live item (set k
-				// children={...}): grow the real tree too.
-				p.node.AddChild(c.bind(p.view))
-				p.refresh()
-			}
-			return nil
+			"items": protocol.NewCollection(func(parent, child any) error {
+				p := parent.(*wireItem)
+				c, ok := child.(*wireItem)
+				if !ok {
+					return fmt.Errorf("item: items must be items, got %T", child)
+				}
+				p.children = append(p.children, c)
+				if p.node != nil {
+					// Late append onto an already-live item (set k
+					// children={...}): grow the real tree too.
+					p.node.AddChild(c.bind(p.view))
+					p.refresh()
+				}
+				return nil
+			}).Members("item").Tip("Nested items, which make this one a tree node."),
 		},
 		Destroy: func(t any) error {
 			it := t.(*wireItem)
@@ -116,6 +128,7 @@ func (it *wireItem) bind(view *TreeView) *TreeItem {
 		node.ID = core.ObjectID(it.id)
 	}
 	node.Expanded = it.expanded
+	node.ReadOnly = it.readOnly
 	it.node = node
 	it.view = view
 	for _, c := range it.children {
@@ -128,7 +141,7 @@ func (it *wireItem) refresh() {
 	if it.view != nil {
 		// Structure or expansion changed: the flattened row list must
 		// be rebuilt before the next paint or index-based selection.
-		it.view.rebuildFlatList()
+		it.view.moved()
 		it.view.Update()
 	}
 }

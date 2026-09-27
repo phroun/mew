@@ -341,7 +341,7 @@ func TestHostedSurfaceClipNeverCutsContent(t *testing.T) {
 
 			// Over-reveal stays bounded: within one host cell + the pad on
 			// each side, not swallowing the neighbours.
-			cellPxX := p.UnitSpanPxX(0, core.Unit(core.DefaultCellMetrics().CellWidth))
+			cellPxX := p.UnitSpanPxX(0, core.Unit(core.DefaultCellMetrics().UnitsPerCellWidth))
 			slack := cellPxX + 4
 			if cLeft-kLeft > slack || kRight-cRight > slack {
 				t.Errorf("size %d %v: clip [%d,%d] overshoots content [%d,%d] by more than a host cell",
@@ -659,7 +659,7 @@ func TestHostedScrubIsSmoothAndProportional(t *testing.T) {
 	// page-jump bug moved the content by the TRACK-JUMP amount instead.
 	span := track.H - thumb.H
 	perPx := float64(upper-page) / span
-	prevVal := upper - page - (child.Terminal().Buffer().GetScrollOffset())
+	priorVal := upper - page - (child.Terminal().Buffer().GetScrollOffset())
 	for step := 1; step <= 6; step++ {
 		py := pointerY + core.Unit(step)*ch // one cell down per event
 		e.notePointer(pointerX+core.Unit(col-1)*cw, py+core.Unit(row-1)*ch+3)
@@ -667,8 +667,8 @@ func TestHostedScrubIsSmoothAndProportional(t *testing.T) {
 			Col: cellCol, Row: cellRow + step, Action: mew.TerminalMouseMotion,
 		})
 		val := upper - page - child.Terminal().Buffer().GetScrollOffset()
-		delta := val - prevVal
-		prevVal = val
+		delta := val - priorVal
+		priorVal = val
 		// One cell of pointer = ch*kyppu px of thumb = that many lines
 		// scaled by perPx. Two cells of slack: the first event also carries
 		// the press's sub-cell offset. The bug this guards against — the

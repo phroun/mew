@@ -32,7 +32,7 @@ func TestMDITitleBarDragCoversBorderOffset(t *testing.T) {
 
 	win := window.NewWindow("child")
 	pane.AddWindow(win)
-	win.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 320, Height: 240})
+	win.SetBounds(core.UnitRect{X: 40, Y: 32, Width: 320, Height: 240})
 
 	metrics := pane.EffectiveCellMetrics()
 	border := core.FindFrameBorderUnits(win)
@@ -41,10 +41,10 @@ func TestMDITitleBarDragCoversBorderOffset(t *testing.T) {
 	}
 
 	// A point in the bottom strip of the titlebar: below the old cutoff
-	// (bounds.Y + CellHeight) but within the real titlebar
-	// (bounds.Y + border + CellHeight). Mid-width so it is not a resize
+	// (bounds.Y + UnitsPerCellHeight) but within the real titlebar
+	// (bounds.Y + border + UnitsPerCellHeight). Mid-width so it is not a resize
 	// grip.
-	y := 40 + metrics.CellHeight + border - 1
+	y := 32 + metrics.UnitsPerCellHeight + border - 1
 	pane.HandleMousePress(core.MousePressEvent{X: 40 + 160, Y: y, Button: core.LeftButton})
 
 	if pane.dragging != win {
@@ -67,7 +67,7 @@ func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
 
 	win := window.NewWindow("child")
 	pane.AddWindow(win)
-	win.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 320, Height: 240})
+	win.SetBounds(core.UnitRect{X: 40, Y: 32, Width: 320, Height: 240})
 	pane.ActivateWindow(win)
 
 	metrics := pane.EffectiveCellMetrics()
@@ -77,8 +77,8 @@ func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
 	// Minimize is the second control button after the close button; both
 	// sit inside the left border, offset by the frame border on graphical
 	// frames. Aim at its center.
-	bx := 40 + border + metrics.CellWidth + bw + bw/2
-	by := 40 + border + metrics.CellHeight/2
+	bx := 40 + border + metrics.UnitsPerCellWidth + bw + bw/2
+	by := 32 + border + metrics.UnitsPerCellHeight/2
 
 	pane.HandleMousePress(core.MousePressEvent{X: bx, Y: by, Button: core.LeftButton})
 	pane.HandleMouseRelease(core.MouseReleaseEvent{X: bx, Y: by, Button: core.LeftButton})
@@ -92,7 +92,7 @@ func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
 }
 
 // Resizing an MDI child window shows the translucent white edge overlay
-// (SetResizeHoverRects), the same one desktop windows get, and drops it on
+// (SetResizeBandRects), the same one desktop windows get, and drops it on
 // release.
 func TestMDIResizeShowsEdgeOverlay(t *testing.T) {
 	stub := &graphicalFrameStub{Panel: NewPanel(), border: 2}
@@ -109,17 +109,17 @@ func TestMDIResizeShowsEdgeOverlay(t *testing.T) {
 	bx := win.Bounds().X + win.Bounds().Width - 1
 	by := win.Bounds().Y + win.Bounds().Height - 1
 	pane.HandleMousePress(core.MousePressEvent{X: bx, Y: by, Button: core.LeftButton})
-	if len(win.ResizeHoverRects()) == 0 {
+	if len(win.ResizeBandRects()) == 0 {
 		t.Fatal("starting an MDI resize did not set the edge overlay")
 	}
 
 	// Drag keeps it; release drops it.
 	pane.HandleMouseMove(core.MouseMoveEvent{X: bx + 20, Y: by + 20, Buttons: core.LeftButton})
-	if len(win.ResizeHoverRects()) == 0 {
+	if len(win.ResizeBandRects()) == 0 {
 		t.Error("overlay vanished mid-resize")
 	}
 	pane.HandleMouseRelease(core.MouseReleaseEvent{X: bx + 20, Y: by + 20, Button: core.LeftButton})
-	if len(win.ResizeHoverRects()) != 0 {
+	if len(win.ResizeBandRects()) != 0 {
 		t.Error("overlay not cleared after the resize ended")
 	}
 }

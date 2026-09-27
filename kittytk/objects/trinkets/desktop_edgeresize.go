@@ -15,8 +15,9 @@ import (
 // the desktop surface now behaves like any window edge: the grab rule is
 // ResizeHitGrip with the frame border the surface actually carries — the
 // themed frame's reserved border, or zero where the OS chrome sits outside
-// the client area — the hover affordance is the same translucent band at
-// ResizeOverlayGrip width, and the corners reach as far as the affordance.
+// the client area — the cue is the same translucent band at
+// ResizeAffordanceBand thickness, and the corners reach further in than the
+// side zones.
 //
 // The press is applied the way TearOffHost applies one — global pointer
 // deltas onto the OS window's pixel geometry through platform.NativeSurface
@@ -29,7 +30,7 @@ import (
 // solo mode the primary surface is driven by a TearOffHost handler, whose
 // edges already work, so this path never sees those events.
 
-// hostEdgeState is the desktop-edge resize gesture and its hover affordance.
+// hostEdgeState is the desktop-edge resize gesture and the cue for it.
 // Guarded by Desktop.mu: events arrive on the platform loop but the bands
 // paint from wherever the renderer runs.
 type hostEdgeState struct {
@@ -126,8 +127,8 @@ func (d *Desktop) paintableSurfacePx(px int, vertical bool) int {
 // point: the same geometry a child window's edges use, with the frame
 // border the surface actually carries — the reserved themed border, or
 // zero under an OS title bar — so the grab zone is the border plus a
-// quarter column (floored at 3 device pixels) and the corners reach as
-// far as the affordance bands, exactly the window rule.
+// quarter column (floored at 3 device pixels) and the corners reach
+// further in than the side zones, exactly the window rule.
 func (d *Desktop) hostEdgeAt(x, y core.Unit) int {
 	if _, _, ok := d.hostResizeParts(); !ok {
 		return 0
@@ -135,10 +136,10 @@ func (d *Desktop) hostEdgeAt(x, y core.Unit) int {
 	b := d.Bounds()
 	border := d.hostFrameInset()
 	metrics := d.EffectiveCellMetrics()
-	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), border)
-	corner := window.ResizeOverlayGrip(true, metrics, border)
+	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), border, border)
+	reach := window.ResizeAffordanceBand(true, metrics, border, border)
 	return window.ResizeEdgeAt(core.UnitRect{Width: b.Width, Height: b.Height},
-		x, y, metrics, grip, corner)
+		x, y, metrics, grip, reach)
 }
 
 // hostResizeBegin arms a desktop-edge resize when the press lands in the
@@ -283,13 +284,13 @@ func applyHostResize(edges, startX, startY, startW, startH, dx, dy, minW, minH i
 func (d *Desktop) hostHoverUpdate(x, y core.Unit) {
 	d.mu.RLock()
 	active := d.hostEdge.active
-	prev := d.hostEdge.hover
+	previous := d.hostEdge.hover
 	d.mu.RUnlock()
 	if active {
 		return
 	}
 	edges := d.hostEdgeAt(x, y)
-	if edges == prev {
+	if edges == previous {
 		return
 	}
 	d.mu.Lock()
@@ -309,7 +310,8 @@ func (d *Desktop) hostHoverClear() {
 	}
 }
 
-// hostHoverEdges is what the cursor and the bands show right now.
+// hostHoverEdges is the edge the pointer is over: what the cursor and the
+// bands are showing right now.
 func (d *Desktop) hostHoverEdges() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -333,34 +335,35 @@ func (d *Desktop) applyHostCursor(shape core.CursorShape) {
 // and a click on it could go somewhere else entirely. Better a dark strip
 // that resizes than a lit one that lies.
 
-// paintHostEdgeHover draws the desktop's own resize affordance: the same
+// paintHostEdgeBands draws the desktop's own resize affordance: the same
 // translucent bands a window edge shows, along the hovered edges of the
 // surface itself. Painted last in the desktop's own pass, so the bands lie
 // over the chrome; in compositor mode child windows still composite above
 // the base layer, so a window corralled hard against the edge can cover
 // part of a band — the grab beneath it still works.
-func (d *Desktop) paintHostEdgeHover(p *core.Painter, bounds core.UnitRect) {
+func (d *Desktop) paintHostEdgeBands(p *core.Painter, bounds core.UnitRect) {
 	edges := d.hostHoverEdges()
 	if edges == 0 {
 		return
 	}
-	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), d.hostFrameInset())
+	inset := d.hostFrameInset()
+	band := window.ResizeAffordanceBand(true, d.EffectiveCellMetrics(), inset, inset)
 	var rects []core.UnitRect
 	if edges&window.ResizeEdgeLeft != 0 {
-		rects = append(rects, core.UnitRect{Width: band, Height: bounds.Height})
+		rects = append(rects, core.UnitRect{Width: band.X, Height: bounds.Height})
 	}
 	if edges&window.ResizeEdgeRight != 0 {
-		rects = append(rects, core.UnitRect{X: bounds.Width - band, Width: band, Height: bounds.Height})
+		rects = append(rects, core.UnitRect{X: bounds.Width - band.X, Width: band.X, Height: bounds.Height})
 	}
 	if edges&window.ResizeEdgeTop != 0 {
-		rects = append(rects, core.UnitRect{Width: bounds.Width, Height: band})
+		rects = append(rects, core.UnitRect{Width: bounds.Width, Height: band.Y})
 	}
 	if edges&window.ResizeEdgeBottom != 0 {
-		rects = append(rects, core.UnitRect{Y: bounds.Height - band, Width: bounds.Width, Height: band})
+		rects = append(rects, core.UnitRect{Y: bounds.Height - band.Y, Width: bounds.Width, Height: band.Y})
 	}
 	for _, r := range rects {
 		p.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
 			p.UnitSpanPxX(r.X, r.X+r.Width), p.UnitSpanPxY(r.Y, r.Y+r.Height),
-			255, 255, 255, window.ResizeHoverAlpha)
+			255, 255, 255, window.ResizeBandAlpha)
 	}
 }

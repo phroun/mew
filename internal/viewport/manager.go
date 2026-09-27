@@ -300,7 +300,7 @@ type Viewport struct {
 	Priority    int
 	Visible     bool
 
-	// CanFocus gates the focus SWITCHER (FocusNextViewport / FocusPrevViewport):
+	// CanFocus gates the focus SWITCHER (FocusNextViewport / FocusPriorViewport):
 	// a viewport with CanFocus=false is skipped when cycling focus, though it can
 	// still be focused explicitly (SetFocus, a mouse click, help_open). Defaults
 	// to true; the editor drops it to false for a viewport that should not be a
@@ -1381,7 +1381,7 @@ type Manager struct {
 	mainFocusHook func(id string)
 
 	// cycleVisible, when set, further gates which focus-eligible viewports the
-	// focus SWITCHER (FocusNextViewport / FocusPrevViewport) stops on: it must
+	// focus SWITCHER (FocusNextViewport / FocusPriorViewport) stops on: it must
 	// return true for a viewport to be a cycle stop. The editor uses it to keep
 	// the switcher to viewports currently ON SCREEN (a main viewport only when a
 	// tile shows it), so cycling never lands on an untiled background buffer.
@@ -2066,10 +2066,10 @@ func (m *Manager) FocusNextViewport() bool {
 	return m.SetFocus(target)
 }
 
-// FocusPrevViewport cycles focus to the previous focusable viewport. The switch is
+// FocusPriorViewport cycles focus to the prior focusable viewport. The switch is
 // routed through SetFocus so focus tracking and events behave identically to
 // any other focus change.
-func (m *Manager) FocusPrevViewport() bool {
+func (m *Manager) FocusPriorViewport() bool {
 	target := m.focusCycleTarget(-1)
 	if target == "" {
 		return false
@@ -2088,9 +2088,9 @@ func (m *Manager) FocusNextInZone() bool {
 	return m.SetFocus(target)
 }
 
-// FocusPrevInZone cycles focus to the previous focusable viewport within the
+// FocusPriorInZone cycles focus to the prior focusable viewport within the
 // current main's zone (ViewportSet), wrapping inside that set.
-func (m *Manager) FocusPrevInZone() bool {
+func (m *Manager) FocusPriorInZone() bool {
 	target := m.zoneCycleTarget(-1)
 	if target == "" {
 		return false

@@ -69,7 +69,13 @@ func TestHyperIsPlacedNotPrepended(t *testing.T) {
 		{sym: sdl3.K_DOWN, hyper: true, want: "H-Down",
 			what: "Hyper alone"},
 	} {
-		got := encodeKey(sdl3.Keysym{Sym: tc.sym}, tc.ctrl, tc.alt, tc.shift, tc.gui, tc.hyper)
+		// The shown key needs its position, which is what names it; a named key
+		// is found by Sym and takes no scancode here.
+		scancode := uint32(0)
+		if tc.sym == 'x' {
+			scancode = hidX
+		}
+		got := encodeKey(sdl3.Keysym{Sym: tc.sym, Scancode: scancode}, tc.ctrl, tc.alt, tc.shift, tc.gui, tc.hyper)
 		if got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.what, got, tc.want)
 		}

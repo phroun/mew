@@ -172,7 +172,7 @@ func TestCompositionIsUnderlined(t *testing.T) {
 // tall thin bar.
 func countRules(f *composeFixture, c style.Color) int {
 	p := f.p
-	lineH := p.UnitsToPx(f.ti.EffectiveFont().LineHeight())
+	lineH := p.UnitSpanPxY(0, f.ti.EffectiveCellMetrics().UnitsPerCellHeight)
 	n := 0
 	for _, fill := range f.rec.fills {
 		if fill.bg == c && fill.hPx <= p.DeviceScale() && fill.wPx > fill.hPx &&

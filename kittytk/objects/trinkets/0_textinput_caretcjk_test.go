@@ -46,7 +46,7 @@ func caretPx(t *testing.T, text string, pos int) int {
 	p := core.NewPainter(rec)
 	ti.Paint(p)
 
-	lineH := p.UnitsToPx(ti.EffectiveFont().LineHeight())
+	lineH := p.UnitSpanPxY(0, ti.EffectiveCellMetrics().UnitsPerCellHeight)
 	x := -1
 	for _, f := range rec.fills {
 		if f.hPx >= lineH/2 && f.wPx > 0 && f.wPx <= p.DeviceScale()*2 {

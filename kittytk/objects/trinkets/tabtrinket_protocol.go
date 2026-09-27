@@ -36,18 +36,18 @@ func init() {
 				t.caption = s
 				return nil
 			})).Tip("Tab label text."),
-		},
-		Append: func(parent, child any) error {
-			t := parent.(*wireTab)
-			w, ok := child.(core.Trinket)
-			if !ok {
-				return fmt.Errorf("tab: content must be a trinket, got %T", child)
-			}
-			if t.content != nil {
-				return fmt.Errorf("tab: only one content trinket (wrap several in a panel)")
-			}
-			t.content = w
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				t := parent.(*wireTab)
+				w, ok := child.(core.Trinket)
+				if !ok {
+					return fmt.Errorf("tab: content must be a trinket, got %T", child)
+				}
+				if t.content != nil {
+					return fmt.Errorf("tab: only one content trinket (wrap several in a panel)")
+				}
+				t.content = w
+				return nil
+			}).Tip("The one trinket this tab shows."),
 		},
 	})
 
@@ -90,38 +90,61 @@ func init() {
 				tw.Update()
 				return nil
 			})).Tip("Tab body background color."),
+			"align": protocol.NewProperty("enum", wprop("align", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
+				w, err := protocol.AsWord("align", v, f)
+				if err != nil {
+					return err
+				}
+				a, ok := map[string]TabAlign{
+					"natural":  TabsAlignNatural,
+					"center":   TabsAlignCenter,
+					"opposite": TabsAlignOpposite,
+				}[w]
+				if !ok {
+					return fmt.Errorf("align: unknown value %q", w)
+				}
+				tw.SetTabAlign(a)
+				return nil
+			})).OneOf("natural", "center", "opposite").Def("natural").
+				Tip("Where the tabs sit along a strip with room to spare: packed at the end " +
+					"the run starts from, centred, or packed at the far end. A strip that has " +
+					"to scroll has no slack to place and ignores this."),
 			"position": protocol.NewProperty("enum", wprop("position", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("position", v, f)
 				if err != nil {
 					return err
 				}
 				pos, ok := map[string]TabPosition{
-					"top":    TabsTop,
-					"bottom": TabsBottom,
-					"left":   TabsLeft,
-					"right":  TabsRight,
+					"top":          TabsTop,
+					"bottom":       TabsBottom,
+					"side":         TabsSide,
+					"sideopposite": TabsSideOpposite,
+					"opticalleft":  TabsOpticalLeft,
+					"opticalright": TabsOpticalRight,
 				}[w]
 				if !ok {
 					return fmt.Errorf("position: unknown value %q", w)
 				}
 				tw.SetTabPosition(pos)
 				return nil
-			})).OneOf("top", "bottom", "left", "right").Tip("Tab strip edge."),
-		},
-		Append: func(parent, child any) error {
-			tw, ok := parent.(*TabTrinket)
-			if !ok {
-				return fmt.Errorf("tabs: wrong parent type %T", parent)
-			}
-			t, ok := child.(*wireTab)
-			if !ok {
-				return fmt.Errorf("tabs: children must be tab, got %T", child)
-			}
-			if t.content == nil {
-				return fmt.Errorf("tabs: tab %q has no content", t.caption)
-			}
-			tw.AddTab(t.caption, t.content)
-			return nil
+			})).OneOf("top", "bottom", "side", "sideopposite", "opticalleft", "opticalright").
+				Tip("Which edge the tab strip stands on. side is the edge the direction reads from " +
+					"and sideopposite the far one; the optical pair names a side of the screen outright."),
+			"children": protocol.NewCollection(func(parent, child any) error {
+				tw, ok := parent.(*TabTrinket)
+				if !ok {
+					return fmt.Errorf("tabs: wrong parent type %T", parent)
+				}
+				t, ok := child.(*wireTab)
+				if !ok {
+					return fmt.Errorf("tabs: children must be tab, got %T", child)
+				}
+				if t.content == nil {
+					return fmt.Errorf("tabs: tab %q has no content", t.caption)
+				}
+				tw.AddTab(t.caption, t.content)
+				return nil
+			}).Members("tab").Tip("The tabs on the strip, in order."),
 		},
 		Destroy: func(t any) error {
 			return destroyTrinket(t.(*TabTrinket))

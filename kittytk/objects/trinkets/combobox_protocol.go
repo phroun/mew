@@ -7,11 +7,12 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for ComboBox (see docs/property-vocabulary.md).
+// Wire registration for ComboBox; the wiki's ComboBox page is
+// generated from it.
 // Per D13's unification, combobox entries are children of the shared
 // virtual `item` type (items_protocol.go):
 //
-//	new combobox children={new item caption="A"; new item caption="B"} selected=1
+//	new combobox items={new item caption="A"; new item caption="B"} selected=1
 //
 // Note: selected must follow the items that make it valid (properties
 // apply in order).
@@ -40,21 +41,21 @@ func init() {
 			"editable":    boolProp("editable", (*ComboBox).SetEditable).Tip("Allow typing a custom value.").Def("false"),
 			"placeholder": stringProp("placeholder", (*ComboBox).SetPlaceholder).Tip("Empty-field hint text."),
 			"max_visible": intProp("max_visible", (*ComboBox).SetMaxVisibleItems).Tip("Max dropdown rows shown."),
-		},
-		Append: func(parent, child any) error {
-			c, ok := parent.(*ComboBox)
-			if !ok {
-				return fmt.Errorf("combobox: wrong parent type %T", parent)
-			}
-			it, ok := child.(*wireItem)
-			if !ok {
-				return fmt.Errorf("combobox: children must be items, got %T", child)
-			}
-			if len(it.children) != 0 {
-				return fmt.Errorf("combobox: items cannot nest")
-			}
-			c.AddItem(it.caption)
-			return nil
+			"items": protocol.NewCollection(func(parent, child any) error {
+				c, ok := parent.(*ComboBox)
+				if !ok {
+					return fmt.Errorf("combobox: wrong parent type %T", parent)
+				}
+				it, ok := child.(*wireItem)
+				if !ok {
+					return fmt.Errorf("combobox: items must be items, got %T", child)
+				}
+				if len(it.children) != 0 {
+					return fmt.Errorf("combobox: items cannot nest")
+				}
+				c.AddItem(it.caption)
+				return nil
+			}).Members("item").Tip("The choices in the dropdown."),
 		},
 	})
 }

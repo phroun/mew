@@ -33,8 +33,8 @@ func TestWindowDenominationLayoutInvariance(t *testing.T) {
 	outer.AddChild(lbl)
 	outer.AddChild(split)
 	outer.SetLayoutManager(ol)
-	ol.ItemAt(0).WithAlign(core.AlignFill)
-	ol.ItemAt(1).WithAlign(core.AlignFill)
+	ol.ItemAt(0).WithAlign(core.DefaultAlignment())
+	ol.ItemAt(1).WithAlign(core.DefaultAlignment())
 
 	tabs.AddTab("Sel", outer)
 	win.SetContent(tabs)
@@ -45,8 +45,8 @@ func TestWindowDenominationLayoutInvariance(t *testing.T) {
 	paneRows := func() (topRows, splitRows core.Unit) {
 		split.Layout()
 		m := core.FindEffectiveCellMetrics(split)
-		return top.Bounds().Height / m.CellHeight,
-			split.Bounds().Height / m.CellHeight
+		return top.Bounds().Height / m.UnitsPerCellHeight,
+			split.Bounds().Height / m.UnitsPerCellHeight
 	}
 
 	topBefore, splitBefore := paneRows()
@@ -54,7 +54,7 @@ func TestWindowDenominationLayoutInvariance(t *testing.T) {
 		t.Fatalf("degenerate baseline: top=%d split=%d rows", topBefore, splitBefore)
 	}
 
-	dense := core.CellMetrics{CellWidth: 8, CellHeight: 32}
+	dense := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32}
 	win.SetCellMetrics(&dense)
 	topAfter, splitAfter := paneRows()
 
@@ -102,7 +102,7 @@ func TestMDIPaneDenominationBoundary(t *testing.T) {
 	}
 
 	// Override: 32 units per row inside the pane (outer stays 16).
-	dense := core.CellMetrics{CellWidth: 8, CellHeight: 32}
+	dense := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32}
 	pane.SetCellMetrics(&dense)
 
 	// ClientArea re-denominates: same physical area, interior units.

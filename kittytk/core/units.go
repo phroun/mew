@@ -6,6 +6,23 @@ package core
 // In graphics mode, units could map directly to pixels or be scaled.
 type Unit int
 
+// A size nobody gave a value carries -1, never zero.
+//
+// Zero is a real size: a maximum of zero collapses a trinket to nothing while
+// it keeps its place in the layout, which is a thing an author may want to
+// say. So the ABSENCE of a size needs a spelling of its own, and -1 is it
+// throughout the toolkit -- for a maximum that does not bound, and for a flex
+// basis taken from the child rather than stated.
+//
+// Indices and counts keep their own -1 for "none", which is the same idea
+// arrived at from the other side: there, zero is the first one.
+const (
+	// Unbounded is a maximum that does not bound.
+	Unbounded Unit = -1
+	// BasisAuto is a flex basis taken from the child rather than stated.
+	BasisAuto Unit = -1
+)
+
 // UnitPoint represents a 2D coordinate in abstract units.
 type UnitPoint struct {
 	X, Y Unit
@@ -100,28 +117,56 @@ func (m UnitMargins) Vertical() Unit {
 	return m.Top + m.Bottom
 }
 
-// CellMetrics defines how abstract units map to character cells (or pixels in GUI mode).
-// For text mode: a character cell might be 8x16 units (mimicking pixel dimensions).
-// For graphics mode: units might map 1:1 to pixels, or be scaled.
-type CellMetrics struct {
-	// CellWidth is the width of one character cell in units.
-	// Default for TUI: 8 (like a typical 8-pixel wide character)
-	CellWidth Unit
-
-	// CellHeight is the height of one character cell in units.
-	// Default for TUI: 16 (like a typical 16-pixel tall character)
-	CellHeight Unit
+// StyleInsetProvider is the optional capability a trinket implements when part
+// of the size it asks for is DECORATION rather than content: a button's drop
+// shadow, and whatever else grows one later -- a glow, an outer stroke.
+//
+// The insets are what the trinket RESERVES, which is not what it paints. A
+// button reserves a whole cell to the right and a whole row below on both
+// surfaces, while the pixel path draws a softer shadow half a cell out. The
+// reservation is the number layout wants: it is the same on both surfaces, so a
+// row of trinkets lands identically whichever one is drawing, and it is a whole
+// row so the things beside it stay on whole cells.
+//
+// In UNITS, not in cells, so a subtler decoration than a whole cell can be
+// stated when one arrives.
+type StyleInsetProvider interface {
+	StyleInsets() UnitMargins
 }
 
-// DefaultCellMetrics returns standard 8x16 cell metrics (typical terminal font proportions).
+// FindStyleInsets is what a trinket reserves for decoration, or nothing.
+func FindStyleInsets(w Trinket) UnitMargins {
+	if p, ok := w.(StyleInsetProvider); ok {
+		return p.StyleInsets()
+	}
+	return UnitMargins{}
+}
+
+// CellMetrics is a denomination: how many units subdivide one character cell.
+// A cell is a fixed physical size at a given zoom; the denomination says how
+// finely a layout may address inside it, and is set per subtree by the
+// column_units and row_units properties. 8x16 is only what a subtree gets when
+// nothing above it says otherwise.
+type CellMetrics struct {
+	// UnitsPerCellWidth is the horizontal unit divisions within one
+	// character cell. The column_units property sets it.
+	UnitsPerCellWidth Unit
+
+	// UnitsPerCellHeight is the vertical unit divisions within one
+	// character cell. The row_units property sets it.
+	UnitsPerCellHeight Unit
+}
+
+// DefaultCellMetrics returns standard 8x16 cell metrics (the proportions of a
+// character cell twice as tall as it is wide).
 func DefaultCellMetrics() CellMetrics {
-	return CellMetrics{CellWidth: 8, CellHeight: 16}
+	return CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 
 // SquareCellMetrics returns 1:1 cell metrics (each unit = one character cell).
 // Use this for simple text-mode layouts where you don't need sub-cell precision.
 func SquareCellMetrics() CellMetrics {
-	return CellMetrics{CellWidth: 1, CellHeight: 1}
+	return CellMetrics{UnitsPerCellWidth: 1, UnitsPerCellHeight: 1}
 }
 
 // UnitsToCell converts a unit coordinate to a cell coordinate.
@@ -135,63 +180,63 @@ func (m CellMetrics) UnitsToCell(units Unit, cellSize Unit) int {
 
 // UnitsToCellX converts a unit X coordinate to a cell column.
 func (m CellMetrics) UnitsToCellX(x Unit) int {
-	return m.UnitsToCell(x, m.CellWidth)
+	return m.UnitsToCell(x, m.UnitsPerCellWidth)
 }
 
 // UnitsToCellY converts a unit Y coordinate to a cell row.
 func (m CellMetrics) UnitsToCellY(y Unit) int {
-	return m.UnitsToCell(y, m.CellHeight)
+	return m.UnitsToCell(y, m.UnitsPerCellHeight)
 }
 
 // CellToUnitsX converts a cell column to unit X coordinate.
 func (m CellMetrics) CellToUnitsX(col int) Unit {
-	return Unit(col) * m.CellWidth
+	return Unit(col) * m.UnitsPerCellWidth
 }
 
 // CellToUnitsY converts a cell row to unit Y coordinate.
 func (m CellMetrics) CellToUnitsY(row int) Unit {
-	return Unit(row) * m.CellHeight
+	return Unit(row) * m.UnitsPerCellHeight
 }
 
 // UnitsToSize converts a unit size to cell dimensions (rounding up).
 func (m CellMetrics) UnitsToSize(size UnitSize) (cols, rows int) {
-	cols = int((size.Width + m.CellWidth - 1) / m.CellWidth)
-	rows = int((size.Height + m.CellHeight - 1) / m.CellHeight)
+	cols = int((size.Width + m.UnitsPerCellWidth - 1) / m.UnitsPerCellWidth)
+	rows = int((size.Height + m.UnitsPerCellHeight - 1) / m.UnitsPerCellHeight)
 	return
 }
 
 // CellsToUnits converts cell dimensions to unit size.
 func (m CellMetrics) CellsToUnits(cols, rows int) UnitSize {
 	return UnitSize{
-		Width:  Unit(cols) * m.CellWidth,
-		Height: Unit(rows) * m.CellHeight,
+		Width:  Unit(cols) * m.UnitsPerCellWidth,
+		Height: Unit(rows) * m.UnitsPerCellHeight,
 	}
 }
 
 // TextWidth returns the width in units needed to display text with given character count.
 func (m CellMetrics) TextWidth(charCount int) Unit {
-	return Unit(charCount) * m.CellWidth
+	return Unit(charCount) * m.UnitsPerCellWidth
 }
 
 // TextHeight returns the height in units for a given number of lines.
 func (m CellMetrics) TextHeight(lineCount int) Unit {
-	return Unit(lineCount) * m.CellHeight
+	return Unit(lineCount) * m.UnitsPerCellHeight
 }
 
 // CharsForWidth returns how many characters fit in the given width.
 func (m CellMetrics) CharsForWidth(width Unit) int {
-	if m.CellWidth <= 0 {
+	if m.UnitsPerCellWidth <= 0 {
 		return 0
 	}
-	return int(width / m.CellWidth)
+	return int(width / m.UnitsPerCellWidth)
 }
 
 // LinesForHeight returns how many lines fit in the given height.
 func (m CellMetrics) LinesForHeight(height Unit) int {
-	if m.CellHeight <= 0 {
+	if m.UnitsPerCellHeight <= 0 {
 		return 0
 	}
-	return int(height / m.CellHeight)
+	return int(height / m.UnitsPerCellHeight)
 }
 
 // RoundDownToCell rounds a unit value down to the nearest cell boundary.
@@ -204,12 +249,54 @@ func (m CellMetrics) RoundDownToCell(units Unit, cellSize Unit) Unit {
 
 // RoundDownToCellX rounds an X coordinate down to the nearest cell boundary.
 func (m CellMetrics) RoundDownToCellX(x Unit) Unit {
-	return m.RoundDownToCell(x, m.CellWidth)
+	return m.RoundDownToCell(x, m.UnitsPerCellWidth)
 }
 
 // RoundDownToCellY rounds a Y coordinate down to the nearest cell boundary.
 func (m CellMetrics) RoundDownToCellY(y Unit) Unit {
-	return m.RoundDownToCell(y, m.CellHeight)
+	return m.RoundDownToCell(y, m.UnitsPerCellHeight)
+}
+
+// RoundUpToCell rounds a unit value up to the nearest cell boundary. It is
+// what an EXTENT does: a box a fraction of a cell wide still needs the whole
+// cell to draw in, and rounding down would clip its far edge.
+func (m CellMetrics) RoundUpToCell(units Unit, cellSize Unit) Unit {
+	if cellSize <= 0 {
+		return units
+	}
+	if r := units % cellSize; r != 0 {
+		if units < 0 {
+			return units - r
+		}
+		return units + (cellSize - r)
+	}
+	return units
+}
+
+// RoundUpToCellX rounds a width up to the nearest cell boundary.
+func (m CellMetrics) RoundUpToCellX(w Unit) Unit {
+	return m.RoundUpToCell(w, m.UnitsPerCellWidth)
+}
+
+// RoundUpToCellY rounds a height up to the nearest cell boundary.
+func (m CellMetrics) RoundUpToCellY(h Unit) Unit {
+	return m.RoundUpToCell(h, m.UnitsPerCellHeight)
+}
+
+// GridRect puts a rectangle where a cell surface can render it: the ORIGIN
+// floors onto a whole cell and the EXTENT ceils onto one.
+//
+// The two rules differ because the two quantities do. A position never ceils
+// -- rounding it up moves the thing away from where it was asked to be, past
+// whatever it was aligned against. An extent never floors -- rounding it down
+// clips the far edge of something that was asked to be that big.
+func (m CellMetrics) GridRect(r UnitRect) UnitRect {
+	return UnitRect{
+		X:      m.RoundDownToCellX(r.X),
+		Y:      m.RoundDownToCellY(r.Y),
+		Width:  m.RoundUpToCellX(r.Width),
+		Height: m.RoundUpToCellY(r.Height),
+	}
 }
 
 // AlignSize aligns width and height to cell boundaries (rounding down).
@@ -230,11 +317,44 @@ func (m CellMetrics) AlignRect(r UnitRect) UnitRect {
 	}
 }
 
+// DragTravel is how far a drag has come, at the granularity the surface can
+// place things at: whole cells on a cell surface, exact units where a surface
+// can address inside one.
+//
+// Under the kitty protocol the pointer reports where it is INSIDE a cell, so a
+// travel measured in units carries a fraction of a cell that a cell surface
+// can never place. Rounded away when the window lands, that fraction is the
+// gap between where the pointer is and where the edge it is dragging got to.
+func DragTravel(from, to UnitPoint, m CellMetrics, snap bool) (Unit, Unit) {
+	if !snap {
+		return to.X - from.X, to.Y - from.Y
+	}
+	return m.RoundDownToCellX(to.X) - m.RoundDownToCellX(from.X),
+		m.RoundDownToCellY(to.Y) - m.RoundDownToCellY(from.Y)
+}
+
+// DragOrigin is where a dragged window's top-left goes for a pointer at `at`,
+// grabbed `offset` in from that corner.
+//
+// On a cell surface the pointer and the offset are both taken to the cell they
+// are in, so the cell under the pointer is the same cell of the window for the
+// whole gesture. Carrying the sub-cell part of either is what let the pointer
+// run ahead of the window it was dragging.
+func DragOrigin(at, offset UnitPoint, m CellMetrics, snap bool) UnitPoint {
+	if !snap {
+		return UnitPoint{X: at.X - offset.X, Y: at.Y - offset.Y}
+	}
+	return UnitPoint{
+		X: m.RoundDownToCellX(at.X) - m.RoundDownToCellX(offset.X),
+		Y: m.RoundDownToCellY(at.Y) - m.RoundDownToCellY(offset.Y),
+	}
+}
+
 // CellMetricsProvider is implemented by trinkets that can provide a
-// grid-metrics override. Grid metrics are a per-container layout
-// vocabulary: each container may define how many units a virtual
-// row/column occupies, inherited through the container chain like
-// fonts (see FontProvider), rooted at the display service's default.
+// cell-metrics override. Cell metrics are a per-container layout
+// vocabulary: each container may define how finely a unit divides its
+// character cell, inherited through the container chain like fonts
+// (see FontProvider), rooted at the display service's default.
 type CellMetricsProvider interface {
 	// CellMetricsOverride returns the metrics set on this provider,
 	// or nil to inherit from the parent chain.
@@ -242,7 +362,7 @@ type CellMetricsProvider interface {
 }
 
 // FindEffectiveCellMetrics walks up the trinket tree to find the
-// effective grid metrics, mirroring FindEffectiveFont. It checks the
+// effective cell metrics, mirroring FindEffectiveFont. It checks the
 // trinket, then its ancestors (window, MDI pane, desktop). Returns
 // DefaultCellMetrics() if no override is set anywhere in the chain.
 func FindEffectiveCellMetrics(w Trinket) CellMetrics {
@@ -277,19 +397,19 @@ func FindEffectiveCellMetrics(w Trinket) CellMetrics {
 // `to` metrics: the same number of columns, re-expressed. Identity when
 // the denominations match.
 func ExchangeX(v Unit, from, to CellMetrics) Unit {
-	if from.CellWidth == to.CellWidth || from.CellWidth <= 0 || to.CellWidth <= 0 {
+	if from.UnitsPerCellWidth == to.UnitsPerCellWidth || from.UnitsPerCellWidth <= 0 || to.UnitsPerCellWidth <= 0 {
 		return v
 	}
-	return Unit(float64(v) * float64(to.CellWidth) / float64(from.CellWidth))
+	return Unit(float64(v) * float64(to.UnitsPerCellWidth) / float64(from.UnitsPerCellWidth))
 }
 
 // ExchangeY converts a Y-axis value denominated in `from` metrics into
 // `to` metrics: the same number of rows, re-expressed.
 func ExchangeY(v Unit, from, to CellMetrics) Unit {
-	if from.CellHeight == to.CellHeight || from.CellHeight <= 0 || to.CellHeight <= 0 {
+	if from.UnitsPerCellHeight == to.UnitsPerCellHeight || from.UnitsPerCellHeight <= 0 || to.UnitsPerCellHeight <= 0 {
 		return v
 	}
-	return Unit(float64(v) * float64(to.CellHeight) / float64(from.CellHeight))
+	return Unit(float64(v) * float64(to.UnitsPerCellHeight) / float64(from.UnitsPerCellHeight))
 }
 
 // ExchangeSize converts a size between denominations.

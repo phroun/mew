@@ -213,8 +213,8 @@ type FocusableTrinket interface {
 	NextFocusTrinket() Trinket
 	SetNextFocusTrinket(w Trinket)
 
-	// PrevFocusTrinket returns the previous trinket in the focus chain.
-	PrevFocusTrinket() Trinket
+	// PriorFocusTrinket returns the prior trinket in the focus chain.
+	PriorFocusTrinket() Trinket
 	SetPrevFocusTrinket(w Trinket)
 }
 
@@ -257,6 +257,23 @@ type PopupRequest struct {
 	Anchor UnitRect
 	// Paint function to render the popup
 	Paint func(p *Painter)
+	// Fade is how solid this popup is drawn over time, for one that comes
+	// and goes rather than appearing outright. Nil is solid.
+	//
+	// The compositor asks it what it comes to at the instant of each frame
+	// and keeps drawing frames until it is done, so a fade runs at the
+	// surface's own rate rather than at any timer's.
+	Fade *Fade
+	// Inert marks a popup that is drawn and nothing else: the pointer
+	// passes through it to whatever it is lying over, so a press inside
+	// its bounds reaches the thing underneath instead of being swallowed
+	// by an overlay that has nothing to do with the click. A tooltip is
+	// the case for it -- it sits ON the text it stands for, and the
+	// reader clicking that text means the text.
+	//
+	// An inert popup is still cleared by a press like any other: the
+	// pointer has stopped resting, so what it was resting on is answered.
+	Inert bool
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event MousePressEvent) bool
 	// HandleMouseMove function to handle mouse movement (returns true if handled)
@@ -366,9 +383,25 @@ type TrinketBase struct {
 	sizePolicy SizePolicyPair
 	margins    UnitMargins
 
-	layoutStretch  int
-	layoutAlign    Alignment
-	layoutAlignSet bool
+	elide            ElideMode
+	tooltip          string // what this trinket was told to say when asked
+	cutText          string // the whole of what it last had to cut short
+	tooltipShown     string // what it is currently offering, if anything
+	tooltipSide      TooltipSide
+	layoutStretch    int
+	layoutStretchSet bool
+	layoutAlign      Alignment
+	layoutAlignSet   bool
+
+	// Hints one layout manager each reads; see layouthints.go.
+	gridPlacement    GridPlacement
+	gridPlacementSet bool
+	flexHints        FlexHints
+	flexHintsSet     bool
+
+	// direction is the side text begins on for this trinket and everything
+	// below it. DirInherit -- the zero value -- takes it from the ancestors.
+	direction Direction
 
 	visible bool
 	enabled bool
@@ -395,7 +428,7 @@ func NewTrinketBase() *TrinketBase {
 		focusPolicy: NoFocus,
 		scheme:      style.SchemeInherit, // -1 = inherit from container
 		sizePolicy:  NewSizePolicy(SizePreferred, SizePreferred),
-		maxSize:     UnitSize{Width: 1<<30 - 1, Height: 1<<30 - 1},
+		maxSize:     UnitSize{Width: Unbounded, Height: Unbounded},
 	}
 }
 
@@ -603,11 +636,24 @@ func (w *TrinketBase) LayoutStretch() int {
 	return w.layoutStretch
 }
 
+// LayoutStretchHint returns the stretch factor and whether one was stated.
+//
+// The flag is what tells a stretch of zero -- "take none of the leftover" --
+// from one nobody wrote, which is the same distinction FlexHints.ShrinkSet
+// makes and for the same reason: without it a child could be given a stretch
+// but never have it taken away again.
+func (w *TrinketBase) LayoutStretchHint() (int, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.layoutStretch, w.layoutStretchSet
+}
+
 // SetLayoutStretch sets the stretch factor hint.
 func (w *TrinketBase) SetLayoutStretch(stretch int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.layoutStretch = stretch
+	w.layoutStretchSet = true
 }
 
 // LayoutAlignment returns the trinket's alignment hint and whether one
@@ -624,6 +670,30 @@ func (w *TrinketBase) SetLayoutAlignment(a Alignment) {
 	defer w.mu.Unlock()
 	w.layoutAlign = a
 	w.layoutAlignSet = true
+}
+
+// Direction returns the direction named on this trinket, or DirInherit to
+// take it from the parent chain. See FindEffectiveDirection.
+func (w *TrinketBase) Direction() Direction {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.direction
+}
+
+// SetDirection names the side text begins on for this trinket and everything
+// below it; DirInherit hands the question back to the ancestors.
+//
+// Everything under it is placed against this, so the tree below repaints -- and
+// anything down there holding an answer it derived from the direction is told,
+// because what it derived that answer from has just moved.
+func (w *TrinketBase) SetDirection(d Direction) {
+	w.mu.Lock()
+	w.direction = d
+	w.needsRepaint = true
+	w.mu.Unlock()
+
+	NotifyDirectionChanged(w.Self())
+	w.notifyAncestorsOfRepaint()
 }
 
 // Margins returns the margins.
@@ -906,10 +976,12 @@ func (p *scrollRectProxy) Pos() UnitPoint      { return UnitPoint{X: p.rect.X, Y
 func (p *scrollRectProxy) Size() UnitSize {
 	return UnitSize{Width: p.rect.Width, Height: p.rect.Height}
 }
-func (p *scrollRectProxy) SetPos(UnitPoint)                {}
-func (p *scrollRectProxy) SetSize(UnitSize)                {}
-func (p *scrollRectProxy) MinimumSize() UnitSize           { return UnitSize{} }
-func (p *scrollRectProxy) MaximumSize() UnitSize           { return UnitSize{} }
+func (p *scrollRectProxy) SetPos(UnitPoint)      {}
+func (p *scrollRectProxy) SetSize(UnitSize)      {}
+func (p *scrollRectProxy) MinimumSize() UnitSize { return UnitSize{} }
+func (p *scrollRectProxy) MaximumSize() UnitSize {
+	return UnitSize{Width: Unbounded, Height: Unbounded}
+}
 func (p *scrollRectProxy) SetMinimumSize(UnitSize)         {}
 func (p *scrollRectProxy) SetMaximumSize(UnitSize)         {}
 func (p *scrollRectProxy) SizeHint() UnitSize              { return p.Size() }
@@ -1082,7 +1154,7 @@ func (w *TrinketBase) EffectiveFont() *Font {
 	return FindEffectiveFont(w.Self())
 }
 
-// CellMetricsOverride returns the grid metrics explicitly set on this
+// CellMetricsOverride returns the cell metrics explicitly set on this
 // trinket, or nil if inheriting.
 func (w *TrinketBase) CellMetricsOverride() *CellMetrics {
 	w.mu.RLock()
@@ -1090,7 +1162,7 @@ func (w *TrinketBase) CellMetricsOverride() *CellMetrics {
 	return w.cellMetrics
 }
 
-// SetCellMetrics sets explicit grid metrics for this trinket/container.
+// SetCellMetrics sets explicit cell metrics for this trinket/container.
 // Set to nil to inherit from parent/window/desktop.
 func (w *TrinketBase) SetCellMetrics(m *CellMetrics) {
 	w.mu.Lock()
@@ -1113,7 +1185,23 @@ func (w *TrinketBase) SetCellMetrics(m *CellMetrics) {
 	w.Update()
 }
 
-// EffectiveCellMetrics returns the grid metrics to use for this trinket.
+// CellRun is CellRun for this trinket: the run prepared for a cell target in
+// the direction this trinket reads in. Measure and draw the SAME prepared run
+// -- see CellRun for why the two cannot be different strings.
+func (w *TrinketBase) CellRun(text string) string {
+	return CellRun(text, FindEffectiveDirection(w.Self()))
+}
+
+// MeasureText measures text in THIS trinket's denomination -- how many of
+// its units the text occupies. A trinket laying itself out against text it
+// will paint wants this rather than Font.MeasureText, which answers at the
+// default denomination and is therefore only correct for a subtree that
+// carries no override.
+func (w *TrinketBase) MeasureText(text string) Unit {
+	return w.EffectiveFont().MeasureTextIn(text, w.EffectiveCellMetrics())
+}
+
+// EffectiveCellMetrics returns the cell metrics to use for this trinket.
 // It checks this trinket, then walks up the parent chain, falling back
 // to DefaultCellMetrics.
 func (w *TrinketBase) EffectiveCellMetrics() CellMetrics {
@@ -1274,6 +1362,10 @@ func (w *TrinketBase) HandleMouseRelease(event MouseReleaseEvent) bool {
 
 // HandleMouseMove handles mouse movement (override in subclasses).
 func (w *TrinketBase) HandleMouseMove(event MouseMoveEvent) bool {
+	// The default answer to a pointer passing over is to offer what this
+	// trinket could not show. It is not "handled": a move is news, not a
+	// request, and everything else that wants to hear it still does.
+	w.TrackTooltipHover(UnitPoint{X: event.X, Y: event.Y})
 	return false
 }
 

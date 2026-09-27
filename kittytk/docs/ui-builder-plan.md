@@ -376,4 +376,4 @@ on the document text and the built trinket tree — see
   `objects/trinkets/treeview_protocol.go`.
 - A complete UI-as-script to study first: `examples/demoapp/scripts.go`.
 - Naming/type-system conventions the builder must respect:
-  `docs/property-vocabulary.md` (D17 typing, D18 case namespaces).
+  `docs/graphical-mode-plan.md` (D17 typing, D18 case namespaces).

@@ -49,7 +49,7 @@ func TestComboPopupOpensAtControlBottom(t *testing.T) {
 	panel.AddChild(combo)
 	win.SetContent(panel)
 	d.WindowManager().AddWindow(win)
-	win.SetBounds(core.UnitRect{X: 4 * m.CellWidth, Y: 2 * m.CellHeight, Width: 50 * m.CellWidth, Height: 20 * m.CellHeight})
+	win.SetBounds(core.UnitRect{X: 4 * m.UnitsPerCellWidth, Y: 2 * m.UnitsPerCellHeight, Width: 50 * m.UnitsPerCellWidth, Height: 20 * m.UnitsPerCellHeight})
 	win.Layout()
 
 	rec := &recPC{metrics: m, screen: core.UnitRect{Width: 1280, Height: 900}}
@@ -61,7 +61,7 @@ func TestComboPopupOpensAtControlBottom(t *testing.T) {
 	}
 	// The combobox's true on-screen top and bottom.
 	top := window.MapTrinketToScreen(combo, core.UnitPoint{X: 0, Y: 0})
-	wantBottom := window.MapTrinketToScreen(combo, core.UnitPoint{X: 0, Y: m.CellHeight})
+	wantBottom := window.MapTrinketToScreen(combo, core.UnitPoint{X: 0, Y: m.UnitsPerCellHeight})
 
 	// It must map inside the window, not rescaled toward the origin: the
 	// combobox sits at the window's left + the client-area offset (frame
@@ -76,7 +76,7 @@ func TestComboPopupOpensAtControlBottom(t *testing.T) {
 		t.Errorf("popup at %+v, want top-left %+v (control bottom)", got, wantBottom)
 	}
 	// Four items, one cell row each - not doubled.
-	if want := 4 * m.CellHeight; rec.popup.Bounds.Height != want {
+	if want := 4 * m.UnitsPerCellHeight; rec.popup.Bounds.Height != want {
 		t.Errorf("popup height = %d, want %d (4 rows)", rec.popup.Bounds.Height, want)
 	}
 }

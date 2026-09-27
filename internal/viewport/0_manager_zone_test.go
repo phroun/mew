@@ -36,8 +36,8 @@ func TestZoneScopedCycleStaysInZone(t *testing.T) {
 		t.Fatalf("next-in-zone from doc2 should wrap to doc1, got %v", focusedID(m))
 	}
 	// Backward wraps the other way, still inside the zone.
-	if !m.FocusPrevInZone() || m.GetFocusedViewport() != d2 {
-		t.Fatalf("prev-in-zone from doc1 should wrap to doc2, got %v", focusedID(m))
+	if !m.FocusPriorInZone() || m.GetFocusedViewport() != d2 {
+		t.Fatalf("prior-in-zone from doc1 should wrap to doc2, got %v", focusedID(m))
 	}
 }
 

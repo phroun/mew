@@ -1,0 +1,79 @@
+# The corpus every implementation of an `answer` reads.
+#
+# `ask` is answered by `answer`, the third of the three pairs. Three client
+# libraries take one apart, and they have to arrive at the same structure from
+# the same text or the same answer means three things.
+#
+# Each case is two lines. The first is what arrived:
+#
+#   answer <the arguments after the verb>
+#
+# The second is what it has to come out as, written back from the structure:
+#
+#   want <the same thing, in canonical spelling>
+#   bad          (the text must be refused)
+#
+# `want` is the structure rendered again, so a part dropped on the way in is a
+# part missing on the way out.
+#
+# The ENVELOPE is what is agreed here: which question is being answered, whether
+# this is the last piece, and whether it is a refusal. The payload is the
+# question's own and no implementation reads it -- whoever asked knows what the
+# answer to that question looks like -- so what the cases check about it is that
+# it survives untouched and in order.
+#
+# See wire/answer.go.
+
+# --- the envelope, at its smallest ---
+answer complete
+want complete
+
+# A bare terminator is NOT read as the question it is answering. `result` puts
+# its query id bare and gets away with it because a query id is a number; a
+# correlation key is a name, so this would take `complete` for one -- and an
+# answer ending a question nobody asked is dropped, leaving the real asker
+# waiting for good.
+answer to=q1 complete
+want to=q1 complete
+
+# --- the question's own arguments, kept in order and untouched ---
+answer to=q1 id=42 how=altered fields={ kind "Archive" }
+want to=q1 id=42 how=altered fields={ kind "Archive" }
+
+answer to=q1 id=42 how=replaced record={ name "a.txt"; size 1024 }
+want to=q1 id=42 how=replaced record={ name "a.txt"; size 1024 }
+
+# A removal carries neither: the record is gone, so there is nothing of it to
+# state, and members left on one would be written out as though in force.
+answer to=q1 id=9 how=removed
+want to=q1 id=9 how=removed
+
+# A flag among the payload is a flag, not an envelope argument.
+answer to=q1 id=3 how=added clashed
+want to=q1 id=3 how=added clashed
+
+# --- the payload and the terminator on one statement ---
+answer to=q1 count=2 complete
+want to=q1 count=2 complete
+
+# --- an unkeyed ask is answered without a correlation ---
+answer count=0 complete
+want count=0 complete
+
+# --- a refusal is still an answer, and it completes ---
+#
+# Written back with the terminator before the reason, which is the canonical
+# order whichever order arrived: the envelope reads correlation, then payload,
+# then end, then why. What is compared is the structure.
+answer to=q1 error="no question called amendments" complete
+want to=q1 complete error="no question called amendments"
+
+# --- the envelope's names are not the question's to use ---
+answer to=1
+bad
+answer to="q1"
+bad
+answer complete="yes"
+bad
+answer error=nothing
+bad

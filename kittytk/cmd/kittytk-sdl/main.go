@@ -19,7 +19,6 @@ import (
 	"github.com/phroun/argwild"
 
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
@@ -87,6 +86,11 @@ func main() {
 	// configure the app without the command line. Env vars still override.
 	cfg := hostcfg.Load()
 
+	// [options] rtlMarkMode / rtlCombining. Both are answered only where a cell
+	// target is drawing, so applying them here costs the graphical host nothing
+	// and keeps one place that reads the file.
+	hostcfg.ApplyText(cfg)
+
 	// The [mappings] section and [window] accelerator_chord overlay the
 	// toolkit's own keymap: the file says what it changes rather than
 	// restating the whole table.
@@ -140,6 +144,19 @@ func main() {
 	// to the frame denomination's unit grid, and the TUI host stays at 1.0
 	// regardless — a terminal cannot subdivide a character cell.
 	core.SetTitleBarScale(cfg.TitleBarScale)
+
+	// [window] menu_scale: the menu bar, its dropdowns and context menus at
+	// this fraction of the classic full-cell row, fonts and cell-based
+	// gutters scaled to match. Quantizes and stands down on the TUI host for
+	// the same reasons.
+	core.SetMenuScale(cfg.MenuScale)
+
+	// [window] shortcut_scale sizes a menu's shortcut column against the item
+	// text, and shortcut_native_scale takes Apple's face down again on top of
+	// it in native mode. They compound: 0.8 and 0.8 put a native shortcut at
+	// 0.64 of the body.
+	core.SetShortcutScale(cfg.ShortcutScale)
+	core.SetShortcutNativeScale(cfg.ShortcutNativeScale)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {
@@ -213,11 +230,7 @@ func main() {
 
 	// Start the display service: applications appear as they connect.
 	desktop.SetOnStartup(func() {
-		dcfg := display.DefaultConfig(desktop, cfg.ResolveEndpoint())
-		if dcfg.Token == "" {
-			dcfg.Token = cfg.ResolveToken()
-		}
-		srv, err := display.ServeConfig(desktop, dcfg)
+		srv, err := hostcfg.Serve(desktop, cfg)
 		if sb := desktop.StatusBar(); sb != nil {
 			switch {
 			case err != nil:

@@ -33,6 +33,8 @@ func TestMain(m *testing.M) {
 	set(client.KnownHostsEnv, filepath.Join(dir, "known_hosts"))
 	set(display.HostIdentityEnv, filepath.Join(dir, "host_identity.pem"))
 	set(display.AuthStoreEnv, filepath.Join(dir, "authorizations"))
+	set(display.NicknameStoreEnv, filepath.Join(dir, "nicknames"))
+	set(display.KnownStoreEnv, filepath.Join(dir, "known"))
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -100,7 +102,7 @@ func TestTCPLoopback(t *testing.T) {
 	// it by exec so we don't need to find the trinket.
 	// (The unix test already proves event plumbing; here we just prove
 	// the transport carries a full session.)
-	if _, err := conn.Exec("theme"); err != nil {
+	if err := conn.Host().Set("dark"); err != nil {
 		t.Fatalf("exec over tcp: %v", err)
 	}
 }

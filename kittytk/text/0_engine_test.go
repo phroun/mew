@@ -88,7 +88,7 @@ func TestWrapParagraph(t *testing.T) {
 		}
 		pos = line.Runes.End
 		if line.Baseline <= lastBaseline {
-			t.Errorf("line %d baseline %d not below previous %d", i, line.Baseline, lastBaseline)
+			t.Errorf("line %d baseline %d not below prior %d", i, line.Baseline, lastBaseline)
 		}
 		lastBaseline = line.Baseline
 	}
@@ -119,12 +119,12 @@ func TestBidiRunStructure(t *testing.T) {
 	}
 
 	var sawRTL bool
-	prevX := core.Unit(-1)
+	priorX := core.Unit(-1)
 	for _, r := range line.Runs {
-		if r.X <= prevX {
-			t.Errorf("runs not in visual order: X %d after %d", r.X, prevX)
+		if r.X <= priorX {
+			t.Errorf("runs not in visual order: X %d after %d", r.X, priorX)
 		}
-		prevX = r.X
+		priorX = r.X
 		if r.RTL {
 			sawRTL = true
 			// The RTL run must cover the Hebrew range.
@@ -162,13 +162,13 @@ func TestCaretLTR(t *testing.T) {
 	if x := line.CaretX(0); x != 0 {
 		t.Errorf("caret before 'a' at %d, want 0", x)
 	}
-	prev := core.Unit(-1)
+	prior := core.Unit(-1)
 	for i := 0; i <= 3; i++ {
 		x := line.CaretX(i)
-		if x <= prev {
-			t.Errorf("caret not monotonic at %d: %d after %d", i, x, prev)
+		if x <= prior {
+			t.Errorf("caret not monotonic at %d: %d after %d", i, x, prior)
 		}
-		prev = x
+		prior = x
 	}
 	if end := line.CaretX(3); end != line.Width {
 		t.Errorf("caret after 'c' at %d, want line width %d", end, line.Width)
@@ -202,13 +202,13 @@ func TestCaretRTL(t *testing.T) {
 		t.Errorf("RTL caret after last rune at %d, want 0", x)
 	}
 	// Monotonically decreasing.
-	prev := line.Width + 1
+	prior := line.Width + 1
 	for i := 0; i <= 3; i++ {
 		x := line.CaretX(i)
-		if x >= prev {
-			t.Errorf("RTL caret not decreasing at %d: %d after %d", i, x, prev)
+		if x >= prior {
+			t.Errorf("RTL caret not decreasing at %d: %d after %d", i, x, prior)
 		}
-		prev = x
+		prior = x
 	}
 	for i := 0; i <= 3; i++ {
 		if got := line.RuneForX(line.CaretX(i)); got != i {

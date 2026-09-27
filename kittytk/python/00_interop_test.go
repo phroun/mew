@@ -29,6 +29,7 @@ import (
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/wire"
 )
 
 // nullBackend is a headless RenderBackend (copy; test-only, as elsewhere).
@@ -37,7 +38,7 @@ type nullBackend struct{ mu sync.Mutex }
 func (n *nullBackend) Init() error { return nil }
 func (n *nullBackend) Shutdown()   {}
 func (n *nullBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (n *nullBackend) Size() core.UnitSize {
 	return core.UnitSize{Width: 8 * 120, Height: 16 * 40}
@@ -50,7 +51,7 @@ func (n *nullBackend) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {}
 func (n *nullBackend) DrawText(x, y core.Unit, t string, s style.CellStyle, f *core.Font) core.Unit {
 	return 0
 }
-func (n *nullBackend) DrawTextAligned(core.UnitRect, string, core.Alignment, core.Alignment, style.CellStyle, *core.Font) {
+func (n *nullBackend) DrawTextAligned(core.UnitRect, string, core.HSide, core.VAlign, style.CellStyle, *core.Font) {
 }
 func (n *nullBackend) FillRect(core.UnitRect, rune, style.CellStyle)                     {}
 func (n *nullBackend) DrawRect(core.UnitRect, style.BorderStyle, style.CellStyle)        {}
@@ -253,4 +254,78 @@ func runBuildSmoke(t *testing.T, name string, argv ...string) {
 
 func TestPythonDemoBuildsOverService(t *testing.T) {
 	runBuildSmoke(t, "python", "python3", "demoapp_smoke.py")
+}
+
+// **What a non-Go application hears when its display goes.**
+//
+// The display says `goodbye reason=quit` and hangs up, because a closed socket
+// cannot say why it closed: a display that quit and a connection that broke are
+// the same silence from the far end, and they call for opposite things. A client
+// that cannot read that word is one whose applications have to guess.
+//
+// So this is the farewell crossing the wire into Python: a real display, a real
+// socket, and the reason read back off the client's own connection.
+func TestPythonClientHearsTheFarewell(t *testing.T) {
+	farewellSmoke(t, "python", wire.GoodbyeQuit, "python3", "goodbye_smoke.py")
+}
+
+// farewellSmoke runs a client that waits to be hung up on, quits the desktop under
+// it, and checks which word the client heard.
+func farewellSmoke(t *testing.T, name, want string, argv ...string) {
+	t.Helper()
+	desktop, sock, stop := startService(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	full := append(argv, sock)
+	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("%s: stdout pipe: %v", name, err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("%s: start: %v", name, err)
+	}
+
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+
+	await := func(prefix string, dur time.Duration) string {
+		deadline := time.After(dur)
+		for {
+			select {
+			case ln, ok := <-lines:
+				if !ok {
+					t.Fatalf("%s: client exited before %q (stderr: %s)", name, prefix, stderr.String())
+				}
+				t.Logf("%s > %s", name, ln)
+				if strings.HasPrefix(ln, prefix) {
+					return ln
+				}
+			case <-deadline:
+				t.Fatalf("%s: timed out waiting for %q (stderr: %s)", name, prefix, stderr.String())
+			}
+		}
+	}
+
+	await("READY", 15*time.Second)
+	desktop.Quit()
+
+	said := await("GOODBYE", 15*time.Second)
+	if got := strings.TrimSpace(strings.TrimPrefix(said, "GOODBYE")); got != want {
+		t.Errorf("%s heard %q, want %q", name, got, want)
+	}
+	await("DONE", 10*time.Second)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("%s: exited non-zero: %v (stderr: %s)", name, err, stderr.String())
+	}
 }

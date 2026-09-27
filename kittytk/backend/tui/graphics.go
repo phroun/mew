@@ -305,10 +305,10 @@ func (t *TUIBackend) flushImagesLocked() {
 	for _, p := range imgs {
 		blocks = append(blocks, t.visibleBlocksLocked(p)...)
 	}
-	prev := t.shownImages
+	previous := t.shownImages
 	t.shownImages = blocks
 
-	if proto == GraphicsNone || (len(blocks) == 0 && len(prev) == 0) {
+	if proto == GraphicsNone || (len(blocks) == 0 && len(previous) == 0) {
 		return
 	}
 
@@ -319,11 +319,11 @@ func (t *TUIBackend) flushImagesLocked() {
 		return a.col == b.col && a.row == b.row && sameImage(a.img, b.img)
 	}
 	fresh := make([]bool, len(blocks))
-	setChanged := len(blocks) != len(prev)
+	setChanged := len(blocks) != len(previous)
 	for i := range blocks {
 		seen := false
-		for j := range prev {
-			if same(blocks[i], prev[j]) {
+		for j := range previous {
+			if same(blocks[i], previous[j]) {
 				seen = true
 				break
 			}
@@ -361,7 +361,7 @@ func (t *TUIBackend) flushImagesLocked() {
 		// purpose and starting over is cheaper. Full-frame video reaches that
 		// bound immediately and simply keeps sending frames, which is correct
 		// — every pixel really did change.
-		if patches, ok := t.patchPlanLocked(blocks, prev); ok {
+		if patches, ok := t.patchPlanLocked(blocks, previous); ok {
 			for _, v := range patches {
 				id := t.nextKittyIDLocked()
 				t.kittyPatchIDs = append(t.kittyPatchIDs, id)
@@ -904,8 +904,8 @@ func (t *TUIBackend) nextKittyIDLocked() uint32 {
 // Each block is then compared pixel for pixel with what was sent, and the
 // changed region rounded out to whole cells. A block with nothing changed
 // contributes nothing at all.
-func (t *TUIBackend) patchPlanLocked(blocks, prev []placedImage) ([]placedImage, bool) {
-	if len(blocks) == 0 || len(blocks) != len(prev) || len(t.kittyBaseIDs) != len(blocks) {
+func (t *TUIBackend) patchPlanLocked(blocks, previous []placedImage) ([]placedImage, bool) {
+	if len(blocks) == 0 || len(blocks) != len(previous) || len(t.kittyBaseIDs) != len(blocks) {
 		return nil, false
 	}
 	if len(t.kittyPatchIDs) >= maxPatchCount {
@@ -919,7 +919,7 @@ func (t *TUIBackend) patchPlanLocked(blocks, prev []placedImage) ([]placedImage,
 	var patches []placedImage
 	area, full := 0, 0
 	for i := range blocks {
-		a, b := prev[i], blocks[i]
+		a, b := previous[i], blocks[i]
 		if a.col != b.col || a.row != b.row || a.img.Bounds().Size() != b.img.Bounds().Size() {
 			return nil, false
 		}

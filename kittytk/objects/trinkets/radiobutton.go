@@ -53,6 +53,7 @@ func (r *RadioButton) SetText(text string) {
 	r.text = text
 	r.SetAccessibleName(text)
 	r.Update()
+	r.InvalidateLayout()
 }
 
 // IsChecked returns whether the radio button is checked.
@@ -99,16 +100,16 @@ func (r *RadioButton) WordWrap() bool {
 func (r *RadioButton) SetWordWrap(wrap bool) {
 	r.wordWrap = wrap
 	r.Update()
+	r.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.
 func (r *RadioButton) SizeHint() core.UnitSize {
 	metrics := r.EffectiveCellMetrics()
-	font := r.EffectiveFont()
-	// Indicator is decorative (3 cells), space is 1 cell, text uses font
-	indicatorWidth := metrics.CellWidth * 3 // "( )" = 3 cells
-	spaceWidth := metrics.CellWidth         // " " = 1 cell
-	textWidth := font.MeasureText(r.text)
+	// Indicator is decorative (3 cells), space is 1 cell, text is measured
+	indicatorWidth := metrics.UnitsPerCellWidth * 3 // "( )" = 3 cells
+	spaceWidth := metrics.UnitsPerCellWidth         // " " = 1 cell
+	textWidth := r.MeasureText(r.CellRun(r.text))
 	return core.UnitSize{
 		Width:  indicatorWidth + spaceWidth + textWidth,
 		Height: metrics.TextHeight(1),
@@ -128,11 +129,11 @@ func (r *RadioButton) HeightForWidth(width core.Unit) core.Unit {
 	}
 	metrics := r.EffectiveCellMetrics()
 	font := r.EffectiveFont()
-	lineCount := len(wrapText(r.text, width-metrics.CellWidth*4, font))
+	lineCount := len(wrapText(r.text, width-metrics.UnitsPerCellWidth*4, font, metrics))
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	return core.Unit(lineCount) * metrics.CellHeight
+	return core.Unit(lineCount) * metrics.UnitsPerCellHeight
 }
 
 // IsInlineTrinket returns true to indicate this is a text-style trinket
@@ -178,41 +179,67 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	} else {
 		middle = ' '
 	}
-	p.DrawCell(0, 0, '(', indicatorStyle)
-	p.DrawCell(metrics.CellWidth, 0, middle, indicatorStyle)
-	p.DrawCell(metrics.CellWidth*2, 0, ')', indicatorStyle)
+	// The indicator sits on the LEADING edge with the caption running away
+	// from it (see Checkbox.Paint): the three cells keep their order inside
+	// the group, since the brackets are a pair.
+	box := r.Bounds().Width
+	indicatorWidth := metrics.UnitsPerCellWidth * 3
+	ind := core.LeadingX(r, box, 0, indicatorWidth)
+	p.DrawCell(ind, 0, '(', indicatorStyle)
+	p.DrawCell(ind+metrics.UnitsPerCellWidth, 0, middle, indicatorStyle)
+	p.DrawCell(ind+metrics.UnitsPerCellWidth*2, 0, ')', indicatorStyle)
 
 	// Draw space (decorative, 1 cell) and text (font-based)
-	p.DrawCell(metrics.CellWidth*3, 0, ' ', labelStyle) // Space after indicator
-	x := metrics.CellWidth * 4                          // After indicator + space (4 cells)
+	p.DrawCell(core.LeadingX(r, box, indicatorWidth, metrics.UnitsPerCellWidth), 0, ' ', labelStyle)
+	x := metrics.UnitsPerCellWidth * 4 // After indicator + space (4 cells)
 
 	if !r.wordWrap {
-		p.DrawText(x, 0, r.text, labelStyle, font)
+		// The label has the room left over from the indicator and its space.
+		shown, _ := r.ElideText(r.text, box-x)
+		run := r.CellRun(shown)
+		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(run)), 0, run, labelStyle, font)
 		return
 	}
 
 	// Word wrap: the indicator is chrome anchored to the top line;
 	// wrapped lines hang under the text column.
-	textWidth := r.Bounds().Width - x
+	textWidth := box - x
 	y := core.Unit(0)
-	for _, line := range wrapText(r.text, textWidth, font) {
-		p.DrawText(x, y, line, labelStyle, font)
-		y += metrics.CellHeight
+	for _, line := range wrapText(r.text, textWidth, font, metrics) {
+		run := r.CellRun(line)
+		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(run)), y, run, labelStyle, font)
+		y += metrics.UnitsPerCellHeight
 	}
 }
 
 // HandleKeyPress handles keyboard input.
 func (r *RadioButton) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch r.KeyCommand(event.Key) {
+	// A group laid out in a row runs the way its form reads, so the left
+	// arrow walks back through it where that is left to right and on through
+	// it where it is not. Up and down cross a column, which no direction
+	// turns over, and prior and next name the sequence outright.
+	cmd := r.KeyCommand(event.Key)
+	if cmd == core.CmdTrinketItemLeft || cmd == core.CmdTrinketItemRight {
+		onward := cmd == core.CmdTrinketItemRight
+		if core.ChromeMirrored(r) {
+			onward = !onward
+		}
+		cmd = core.CmdTrinketItemPrior
+		if onward {
+			cmd = core.CmdTrinketItemNext
+		}
+	}
+
+	switch cmd {
 	case core.CmdTrinketActivate:
 		r.SetChecked(true)
 		return true
-	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp, core.CmdTrinketItemLeft:
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if r.group != nil {
-			r.group.SelectPrevious()
+			r.group.SelectPrior()
 			return true
 		}
-	case core.CmdTrinketItemNext, core.CmdTrinketItemDown, core.CmdTrinketItemRight:
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		if r.group != nil {
 			r.group.SelectNext()
 			return true
@@ -400,8 +427,8 @@ func (g *RadioGroup) SelectNext() {
 	}
 }
 
-// SelectPrevious selects the previous button in the group.
-func (g *RadioGroup) SelectPrevious() {
+// SelectPrior selects the prior button in the group.
+func (g *RadioGroup) SelectPrior() {
 	g.mu.RLock()
 	buttons := g.buttons
 	selected := g.selected
@@ -419,12 +446,12 @@ func (g *RadioGroup) SelectPrevious() {
 		}
 	}
 
-	// Find previous enabled button
+	// Find prior enabled button
 	for i := 1; i <= len(buttons); i++ {
-		prevIdx := (currentIdx - i + len(buttons)) % len(buttons)
-		if buttons[prevIdx].IsEnabled() {
-			buttons[prevIdx].SetFocus()
-			g.selectButton(buttons[prevIdx])
+		priorIdx := (currentIdx - i + len(buttons)) % len(buttons)
+		if buttons[priorIdx].IsEnabled() {
+			buttons[priorIdx].SetFocus()
+			g.selectButton(buttons[priorIdx])
 			return
 		}
 	}

@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -104,6 +105,36 @@ type msPlatform struct {
 	afters     []func() // PostAfter callbacks, fired by the script
 	gx, gy     int
 	quitCalled bool
+
+	// noMoreSurfaces makes CreateSurface refuse after the first, which is how a
+	// host that cannot hold a second window behaves: the desktop has to fall back
+	// to showing itself rather than giving a dialog a surface of its own.
+	noMoreSurfaces bool
+
+	// deferPosts makes Post QUEUE rather than run inline, which is what a real
+	// platform does. Inline is convenient, and it means a test cannot tell work that
+	// HAPPENED from work that was merely scheduled -- so anything that must be done
+	// by the time a call returns has to be checked with this on.
+	deferPosts bool
+	queued     []func()
+
+	// reentrantCreate makes CreateSurface drain the queue before it returns, which
+	// is what SDL does: creating an OS window fires a resize event-watch that runs
+	// the queue synchronously. createTornHost's `tearing` claim exists for exactly
+	// this. Without it a test cannot see what re-entrant work does to state the
+	// caller is in the middle of changing.
+	reentrantCreate bool
+}
+
+// drainPosts runs what Post queued, and whatever that queues in turn.
+func (p *msPlatform) drainPosts() {
+	for len(p.queued) > 0 {
+		next := p.queued
+		p.queued = nil
+		for _, fn := range next {
+			fn()
+		}
+	}
 }
 
 func (p *msPlatform) Run(init func(platform.Platform)) int {
@@ -113,7 +144,14 @@ func (p *msPlatform) Run(init func(platform.Platform)) int {
 	}
 	return 0
 }
-func (p *msPlatform) Post(fn func())                       { fn() }
+func (p *msPlatform) Post(fn func()) {
+	if p.deferPosts {
+		p.queued = append(p.queued, fn)
+		return
+	}
+	fn()
+}
+
 func (p *msPlatform) PostAfter(_ time.Duration, fn func()) { p.afters = append(p.afters, fn) }
 func (p *msPlatform) Quit(int)                             { p.quitCalled = true }
 func (p *msPlatform) Clipboard() string                    { return "" }
@@ -122,6 +160,13 @@ func (p *msPlatform) Beep()                                {}
 func (p *msPlatform) SupportsMultipleSurfaces() bool       { return true }
 func (p *msPlatform) GlobalPointerPx() (int, int)          { return p.gx, p.gy }
 func (p *msPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
+	if p.reentrantCreate {
+		// SDL drains the queue from inside here, before the caller gets its surface.
+		p.drainPosts()
+	}
+	if p.noMoreSurfaces && len(p.surfaces) > 0 {
+		return nil, fmt.Errorf("this host holds one surface")
+	}
 	s := &msSurface{opts: o, x: o.XPx, y: o.YPx, opacity: 1, bordered: !o.Borderless}
 	if len(p.surfaces) == 0 {
 		// The desktop window: 800x480 units at 50,60 px, scale 1. It owns
@@ -882,7 +927,7 @@ func TestExitSoloModeRevealsDesktop(t *testing.T) {
 		// frame border), so the app's chrome peeks out rather than being fully
 		// covered by the desktop on top.
 		torn := plat.surfaces[1]
-		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(main))
+		off := d.unitToPx(d.EffectiveCellMetrics().UnitsPerCellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(main))
 		if off <= 0 {
 			t.Fatalf("cascade offset should be positive, got %d", off)
 		}
@@ -1022,10 +1067,10 @@ func TestTornWindowTabComboboxPopupController(t *testing.T) {
 	d.RunOn(plat)
 }
 
-// The system menu's "Exit Desktop" command promotes a remaining app back
-// to solo rather than quitting: with a desktop revealed and a torn app on
-// it, ExitDesktop re-solos that app; with nothing left it quits the host.
-func TestExitDesktopReSolosOrQuits(t *testing.T) {
+// **An application torn out of the desktop is not inside it**, so exiting the desktop
+// asks nothing about it: it keeps running, and takes the primary surface as the desktop
+// leaves it. Form 3 becoming Form 2.
+func TestExitDesktopWithOnlyTornAppsAsksNothing(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
@@ -1047,25 +1092,43 @@ func TestExitDesktopReSolosOrQuits(t *testing.T) {
 		d.EnterSoloMode(main)
 		d.ExitSoloMode() // desktop revealed, main is a torn window on it
 
-		// Exit Desktop with an app still present -> promote it back to solo.
 		d.ExitDesktop()
+
+		d.mu.RLock()
+		asking := d.quitConfirm
+		d.mu.RUnlock()
+		if asking != nil {
+			t.Error("Exit Desktop asked about an application it was not going to close")
+		}
 		if !d.IsSolo() {
-			t.Error("Exit Desktop did not re-solo the remaining app")
+			t.Error("the desktop did not close")
+		}
+		if !main.IsVisible() {
+			t.Error("the torn-out application was closed by the desktop exiting")
 		}
 		if plat.quitCalled {
-			t.Error("Exit Desktop quit the host while an app remained")
+			t.Error("the host quit although an application was still running")
 		}
-
-		// Back on a desktop with the app gone, Exit Desktop quits.
-		d.ExitSoloMode()
-		main.Close()
-		d.ExitDesktop()
-		if !plat.quitCalled {
-			t.Error("Exit Desktop did not quit with no app windows left")
-		}
-		d.QuitWithCode(0)
+		d.ForceQuitWithCode(0)
 	}
 
+	d.RunOn(plat)
+}
+
+// With nothing left to take the primary surface, closing the desktop ends the host.
+func TestExitDesktopWithNothingRunningQuitsAtOnce(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.ExitDesktop()
+		if !plat.quitCalled {
+			t.Error("an empty desktop asked a question nobody needed and did not quit")
+		}
+	}
 	d.RunOn(plat)
 }
 

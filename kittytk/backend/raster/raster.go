@@ -124,7 +124,7 @@ func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
 		h:        heightPx,
 		scale:    scale,
 		fontSize: 12,
-		metrics:  core.CellMetrics{CellWidth: 8, CellHeight: 16},
+		metrics:  core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
 	}
 	return b, nil
 }
@@ -154,8 +154,8 @@ func (b *Backend) cellPx(denom int) int {
 	return n * b.scale
 }
 
-func (b *Backend) cellWPx() int { return b.cellPx(int(b.metrics.CellWidth)) }
-func (b *Backend) cellHPx() int { return b.cellPx(int(b.metrics.CellHeight)) }
+func (b *Backend) cellWPx() int { return b.cellPx(int(b.metrics.UnitsPerCellWidth)) }
+func (b *Backend) cellHPx() int { return b.cellPx(int(b.metrics.UnitsPerCellHeight)) }
 
 // snapAxis converts a unit coordinate/length to device pixels along one
 // axis: whole denomination-cells map to exact cellPx multiples, the
@@ -173,10 +173,10 @@ func snapAxis(u core.Unit, denom, cellPx int) int {
 // pxX / pxY are the cell-snapped unit-to-pixel conversions for the two
 // axes. Positions and cell-aligned rect edges go through these.
 func (b *Backend) pxX(u core.Unit) int {
-	return b.snapOPxX + snapAxis(u-b.snapOX, int(b.metrics.CellWidth), b.cellWPx())
+	return b.snapOPxX + snapAxis(u-b.snapOX, int(b.metrics.UnitsPerCellWidth), b.cellWPx())
 }
 func (b *Backend) pxY(u core.Unit) int {
-	return b.snapOPxY + snapAxis(u-b.snapOY, int(b.metrics.CellHeight), b.cellHPx())
+	return b.snapOPxY + snapAxis(u-b.snapOY, int(b.metrics.UnitsPerCellHeight), b.cellHPx())
 }
 
 // SetSnapOrigin anchors cell snapping at unit (ux, uy): that point keeps
@@ -191,11 +191,11 @@ func (b *Backend) pxY(u core.Unit) int {
 // exact for a top-level window whose surface origin is 0; nested snap
 // origins are not composed.
 func (b *Backend) SetSnapOrigin(ux, uy core.Unit) (core.Unit, core.Unit) {
-	prevX, prevY := b.snapOX, b.snapOY
+	previousX, previousY := b.snapOX, b.snapOY
 	b.snapOX, b.snapOY = ux, uy
-	b.snapOPxX = snapAxis(ux, int(b.metrics.CellWidth), b.cellWPx())
-	b.snapOPxY = snapAxis(uy, int(b.metrics.CellHeight), b.cellHPx())
-	return prevX, prevY
+	b.snapOPxX = snapAxis(ux, int(b.metrics.UnitsPerCellWidth), b.cellWPx())
+	b.snapOPxY = snapAxis(uy, int(b.metrics.UnitsPerCellHeight), b.cellHPx())
+	return previousX, previousY
 }
 
 // pxPerUnit is the unsnapped device pixels covered by one unit, equal on
@@ -204,6 +204,14 @@ func (b *Backend) SetSnapOrigin(ux, uy core.Unit) (core.Unit, core.Unit) {
 // not cell-aligned - use this instead of the snapped conversions.
 func (b *Backend) pxPerUnit() float64 {
 	return float64(b.scale) * float64(b.fontSize) / 12
+}
+
+// pxCeil is pxLen for a length that must not fall SHORT: a background's
+// trailing edge, which the next thing painted beside it begins from. Rounding
+// an extent down opens a seam; ceiling it can only overlap by less than a
+// pixel, which nothing can see.
+func (b *Backend) pxCeil(u core.Unit) int {
+	return int(math.Ceil(float64(u) * b.pxPerUnit()))
 }
 
 // pxLen rounds an axis-agnostic length (radius, stroke) to device pixels.
@@ -318,11 +326,11 @@ func (b *Backend) Metrics() core.CellMetrics {
 // non-default root denomination. Call before Desktop.SetBackend so the
 // whole trinket tree picks it up.
 func (b *Backend) SetCellMetrics(m core.CellMetrics) {
-	if m.CellWidth < 1 {
-		m.CellWidth = 1
+	if m.UnitsPerCellWidth < 1 {
+		m.UnitsPerCellWidth = 1
 	}
-	if m.CellHeight < 1 {
-		m.CellHeight = 1
+	if m.UnitsPerCellHeight < 1 {
+		m.UnitsPerCellHeight = 1
 	}
 	b.metrics = m
 }
@@ -350,8 +358,8 @@ func unSnapAxisFloor(px, denom, cellPx int) int {
 // clock) landed past the true edge and clipped.
 func (b *Backend) Size() core.UnitSize {
 	return core.UnitSize{
-		Width:  core.Unit(unSnapAxisFloor(b.w, int(b.metrics.CellWidth), b.cellWPx())),
-		Height: core.Unit(unSnapAxisFloor(b.h, int(b.metrics.CellHeight), b.cellHPx())),
+		Width:  core.Unit(unSnapAxisFloor(b.w, int(b.metrics.UnitsPerCellWidth), b.cellWPx())),
+		Height: core.Unit(unSnapAxisFloor(b.h, int(b.metrics.UnitsPerCellHeight), b.cellHPx())),
 	}
 }
 
@@ -378,8 +386,8 @@ func unSnapAxisNearest(px, denom, cellPx int) int {
 // unit size round-trips exactly instead of shedding up to a unit per zoom.
 func (b *Backend) SizeRounded() core.UnitSize {
 	return core.UnitSize{
-		Width:  core.Unit(unSnapAxisNearest(b.w, int(b.metrics.CellWidth), b.cellWPx())),
-		Height: core.Unit(unSnapAxisNearest(b.h, int(b.metrics.CellHeight), b.cellHPx())),
+		Width:  core.Unit(unSnapAxisNearest(b.w, int(b.metrics.UnitsPerCellWidth), b.cellWPx())),
+		Height: core.Unit(unSnapAxisNearest(b.h, int(b.metrics.UnitsPerCellHeight), b.cellHPx())),
 	}
 }
 
@@ -389,11 +397,11 @@ func (b *Backend) SizeRounded() core.UnitSize {
 // surface's device-pixel size back to units through these, so a surface
 // sized to UnitToPxX(W) reports exactly W. Implements core.UnitPixelUnmapper.
 func (b *Backend) PxToUnitX(px int) core.Unit {
-	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellWidth), b.cellWPx()))
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.UnitsPerCellWidth), b.cellWPx()))
 }
 
 func (b *Backend) PxToUnitY(px int) core.Unit {
-	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellHeight), b.cellHPx()))
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.UnitsPerCellHeight), b.cellHPx()))
 }
 
 func (b *Backend) BeginFrame() {}
@@ -555,6 +563,18 @@ func (b *Backend) defaultColor(isFg bool) color.RGBA {
 func (b *Backend) styleColors(s style.CellStyle) (fg, bg color.RGBA) {
 	fg = b.rgba(s.Fg, true)
 	bg = b.rgba(s.Bg, false)
+	// StyleDim is an instruction a terminal carries out for itself, sent as
+	// SGR 2. There is no attribute to send here, only colours to choose, so
+	// the reduction is worked out: the ink let down toward the background
+	// behind it. Everything that asked for dim on this surface -- the
+	// desktop's fill, an inactive title, a button's shadow, a menu's shortcut
+	// column -- was drawing at full strength because nothing read the bit.
+	//
+	// Before the reverse swap, so what is dimmed is the INK, not whatever
+	// ends up behind it.
+	if s.Attrs&style.StyleDim != 0 {
+		fg.R, fg.G, fg.B = style.Dim(fg.R, fg.G, fg.B, bg.R, bg.G, bg.B)
+	}
 	if s.Attrs&style.StyleReverse != 0 {
 		fg, bg = bg, fg
 	}
@@ -774,6 +794,13 @@ func (b *Backend) MeasureText(f *core.Font, s string) core.Unit {
 	return engine().Measure(f, s)
 }
 
+// MeasureTextIn implements core.DenominatedTextMeasurer: the same shaped
+// advance, counted in the units of the denomination asked for. Converting
+// inside the engine keeps it to one rounding.
+func (b *Backend) MeasureTextIn(f *core.Font, s string, m core.CellMetrics) core.Unit {
+	return engine().MeasureIn(f, s, m)
+}
+
 // MeasureTextPx implements core.TextPixelMeasurer: the advance in device
 // pixels, rounded once at the pixel rather than at the unit and again at the
 // pixel. It is what DrawTextPx lays its glyphs out by, so a caret measured
@@ -782,10 +809,24 @@ func (b *Backend) MeasureTextPx(s string, f *core.Font) int {
 	return engine().MeasurePx(f, s, b.pxPerUnit())
 }
 
-// LineHeight implements core.TextMeasurer: Size * 4/3 units by the
-// engine's denomination (12pt = 16 units = one default cell row).
+// LineHeight is the font's line budget in default-denomination units
+// (Size * 4/3, so 12pt = 16 = one default cell row). It is a font metric,
+// not a layout answer: how many units a LINE occupies is the denomination's
+// UnitsPerCellHeight (see core.LineUnits).
 func (b *Backend) LineHeight(f *core.Font) core.Unit {
 	return engine().LineHeight(f)
+}
+
+// Baseline implements core.BaselineMeasurer: the face's own baseline below
+// the top of its line, in default-denomination units.
+func (b *Backend) Baseline(f *core.Font) core.Unit {
+	return engine().Baseline(f)
+}
+
+// CapHeight implements core.CapHeightMeasurer: how far a capital's ink
+// reaches above the baseline, in default-denomination units.
+func (b *Backend) CapHeight(f *core.Font) core.Unit {
+	return engine().CapHeight(f)
 }
 
 // cellAdvance is the terminal-region advance for one rune: one cell of
@@ -793,9 +834,9 @@ func (b *Backend) LineHeight(f *core.Font) core.Unit {
 // only by the cell primitives (DrawCell, glyph tiling), never by
 // DrawText. At the default 8x16 denomination this is 8 (16 wide).
 func (b *Backend) cellAdvance(ch rune) core.Unit {
-	adv := b.metrics.CellWidth
+	adv := b.metrics.UnitsPerCellWidth
 	if isWide(ch) {
-		adv += b.metrics.CellWidth
+		adv += b.metrics.UnitsPerCellWidth
 	}
 	return adv
 }
@@ -859,7 +900,7 @@ func (b *Backend) drawRune(x, y core.Unit, ch rune, adv, cellH core.Unit, fg, bg
 // DrawText's shaped path below.
 func (b *Backend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
-	b.drawRune(x, y, ch, b.cellAdvance(ch), b.metrics.CellHeight, fg, bg,
+	b.drawRune(x, y, ch, b.cellAdvance(ch), b.metrics.UnitsPerCellHeight, fg, bg,
 		s.Attrs&style.StyleUnderline != 0, s.Bg == style.ColorTransparent)
 }
 
@@ -896,9 +937,9 @@ type textKey struct {
 // visible string.
 var textImageCache = struct {
 	sync.Mutex
-	epoch     uint64
-	cur, prev map[textKey]textImage
-}{cur: map[textKey]textImage{}, prev: map[textKey]textImage{}}
+	epoch             uint64
+	current, previous map[textKey]textImage
+}{current: map[textKey]textImage{}, previous: map[textKey]textImage{}}
 
 const textImageCacheMax = 512
 
@@ -923,22 +964,22 @@ func (b *Backend) cachedTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 	if e := engine().Epoch(); e != textImageCache.epoch {
 		// Font set changed: shaped output may differ - flush.
 		textImageCache.epoch = e
-		textImageCache.cur = map[textKey]textImage{}
-		textImageCache.prev = map[textKey]textImage{}
+		textImageCache.current = map[textKey]textImage{}
+		textImageCache.previous = map[textKey]textImage{}
 	}
-	ti, ok := textImageCache.cur[key]
+	ti, ok := textImageCache.current[key]
 	if !ok {
-		if ti, ok = textImageCache.prev[key]; ok {
-			textImageCache.cur[key] = ti // keep the working set warm
+		if ti, ok = textImageCache.previous[key]; ok {
+			textImageCache.current[key] = ti // keep the working set warm
 		}
 	}
 	if !ok {
 		ti = b.renderTextImage(f, s, fg, bg, underline, opaque)
-		if len(textImageCache.cur) >= textImageCacheMax {
-			textImageCache.prev = textImageCache.cur
-			textImageCache.cur = map[textKey]textImage{}
+		if len(textImageCache.current) >= textImageCacheMax {
+			textImageCache.previous = textImageCache.current
+			textImageCache.current = map[textKey]textImage{}
 		}
-		textImageCache.cur[key] = ti
+		textImageCache.current[key] = ti
 	}
 	return ti
 }
@@ -951,7 +992,15 @@ func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 	h := engine().LineHeight(f)
 	// Proportional text is not cell-aligned: size and rasterize it at the
 	// unsnapped fractional pixels-per-unit.
-	img := image.NewRGBA(image.Rect(0, 0, b.pxLen(w), b.pxLen(h)))
+	//
+	// The image's WIDTH is an extent, and an extent ceils. It is also this
+	// run's BACKGROUND, and the advance DrawTextPx hands back for placing
+	// whatever comes next: rounded, a run whose width fell short left the
+	// surface showing in the seam between itself and the segment after it.
+	// Ceiled, the next segment starts at or before this one's right edge, so
+	// their backgrounds meet whatever the two rates do. The ink is free to
+	// fall where it falls -- what must not gap is the background.
+	img := image.NewRGBA(image.Rect(0, 0, b.pxCeil(w), b.pxLen(h)))
 	if opaque {
 		for i := range img.Pix {
 			switch i % 4 {
@@ -1166,10 +1215,20 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 
 	ti := b.cachedTextImage(f, s, fg, bg, underline, opaque)
 
+	x0, y0 := b.pxX(x), b.pxY(y)
 	if ti.opaque {
-		b.blitRGBA(b.pxX(x), b.pxY(y), ti.img)
+		b.blitRGBA(x0, y0, ti.img)
+		// A run placed after this one goes at x + the advance returned here,
+		// which lands on the SNAPPED pixel of that unit -- and snapping can
+		// put it past this image's right edge. Carry the background out to
+		// meet it, so the two runs' backgrounds abut however the rates
+		// diverge. The ink may fall a fraction from where a unit measurement
+		// would put it; the background may not gap.
+		if end := b.pxX(x + ti.width); end > x0+ti.img.Bounds().Dx() {
+			b.fillPx(x0+ti.img.Bounds().Dx(), y0, end, y0+ti.img.Bounds().Dy(), bg)
+		}
 	} else {
-		b.compositeRGBA(b.pxX(x), b.pxY(y), ti.img)
+		b.compositeRGBA(x0, y0, ti.img)
 	}
 	return ti.width
 }
@@ -1222,14 +1281,14 @@ func (b *Backend) DrawTextPxClipped(xPx, yPx int, s string, st style.CellStyle, 
 	return ti.img.Bounds().Dx()
 }
 
-func (b *Backend) DrawTextAligned(bounds core.UnitRect, s string, hAlign, vAlign core.Alignment, st style.CellStyle, f *core.Font) {
+func (b *Backend) DrawTextAligned(bounds core.UnitRect, s string, hSide core.HSide, vAlign core.VAlign, st style.CellStyle, f *core.Font) {
 	w := engine().Measure(f, s)
 	h := engine().LineHeight(f)
 	x := bounds.X
-	switch hAlign {
-	case core.AlignCenter:
+	switch hSide {
+	case core.SideCenter:
 		x += (bounds.Width - w) / 2
-	case core.AlignRight:
+	case core.SideRight:
 		x += bounds.Width - w
 	}
 	y := bounds.Y
@@ -1273,7 +1332,7 @@ func (b *Backend) FillRect(r core.UnitRect, ch rune, s style.CellStyle) {
 			return
 		}
 		// Arbitrary fill character: tile the glyph one cell at a time.
-		cw, chH := b.metrics.CellWidth, b.metrics.CellHeight
+		cw, chH := b.metrics.UnitsPerCellWidth, b.metrics.UnitsPerCellHeight
 		for y := r.Y; y < r.Y+r.Height; y += chH {
 			for x := r.X; x < r.X+r.Width; x += cw {
 				b.drawRune(x, y, ch, cw, chH, fg, bg, false, s.Bg == style.ColorTransparent)

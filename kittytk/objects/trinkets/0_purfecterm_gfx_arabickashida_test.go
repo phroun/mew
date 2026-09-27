@@ -9,7 +9,7 @@ import (
 )
 
 // The gfx renderer joins cursive Arabic by mapping each cell (and its
-// neighbours) back to base letters, then shaping a window — prev + tatweel +
+// neighbours) back to base letters, then shaping a window — preceding + tatweel +
 // letter + tatweel + next — as ONE run so the font's GSUB produces the true
 // joined forms, and cutting this cell's piece out by cluster position.
 //
@@ -227,7 +227,7 @@ func TestArabicBaseCharInvertsShaper(t *testing.T) {
 	} {
 		// Every neighbour combination exercises isolated/initial/medial/final.
 		for _, l := range []rune{0, 0x0628} { // no next / dual next
-			for _, r := range []rune{0, 0x0628} { // no prev / dual prev
+			for _, r := range []rune{0, 0x0628} { // no preceding / dual preceding
 				form, suppress := purfecterm.ShapeArabicCellVisual(l, base, r)
 				if suppress || form == 0 {
 					continue

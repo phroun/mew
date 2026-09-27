@@ -37,13 +37,20 @@ type ComboBox struct {
 	popupScreenMetrics core.CellMetrics
 
 	// Mouse interaction state
-	mouseDown       bool      // Mouse button is held down
-	dragging        bool      // Actually dragging (mouse moved while down)
-	clickMode       bool      // True = click-to-open mode (popup stays open), False = hold-and-drag mode
-	mouseDownX      core.Unit // Initial mouse X position
-	mouseDownY      core.Unit // Initial mouse Y position
-	originalIndex   int       // Index before popup opened (for cancel on release outside)
-	scrollHoverZone int       // -1 = hovering top scroll, 1 = bottom scroll, 0 = none
+	mouseDown  bool      // Mouse button is held down
+	dragging   bool      // Actually dragging (mouse moved while down)
+	clickMode  bool      // True = click-to-open mode (popup stays open), False = hold-and-drag mode
+	mouseDownX core.Unit // Initial mouse X position, in the BOX's own space
+	mouseDownY core.Unit // Initial mouse Y position, in the BOX's own space
+
+	// popupDownX/Y is the same grab point in SCREEN space, which is where the
+	// drop-down's own handlers work: a popup is a desktop overlay and the
+	// events routed to it carry screen coordinates. Measuring a drag needs
+	// both ends of the measurement in one space.
+	popupDownX      core.Unit
+	popupDownY      core.Unit
+	originalIndex   int // Index before popup opened (for cancel on release outside)
+	scrollHoverZone int // -1 = hovering top scroll, 1 = bottom scroll, 0 = none
 
 	// Scrollbar interaction state (click mode only)
 	scrollbarDragging   bool // Whether scrollbar thumb is being dragged
@@ -89,6 +96,37 @@ func (c *ComboBox) SetEmbedHost(host core.Trinket, origin func() core.UnitPoint)
 	c.embedOrigin = origin
 }
 
+// EmbedHost is the trinket standing in for a parent this box does not have,
+// which is who draws it and therefore who a repaint has to reach.
+func (c *ComboBox) EmbedHost() core.Trinket { return c.embedHost }
+
+// markPopupGrab records where a press on the BOX landed, in the screen space
+// the drop-down's own handlers work in. Without a controller to map through
+// there is no drop-down either, and the box's own space is the best answer.
+func (c *ComboBox) markPopupGrab(localX, localY core.Unit) {
+	if pc := c.findPopupController(); pc != nil {
+		p := c.mapToScreen(pc, core.UnitPoint{X: localX, Y: localY})
+		c.popupDownX, c.popupDownY = p.X, p.Y
+		return
+	}
+	c.popupDownX, c.popupDownY = localX, localY
+}
+
+// ancestor is the trinket whose ancestry answers for this box: itself when it
+// is parented, and its embed host when it is not.
+//
+// An embedded box -- a tree's cell editor -- is deliberately unparented, so
+// every question asked up the chain from it (what surface am I on, what
+// denomination is in force) answers with the default rather than the truth.
+// SetEmbedHost is what lends it the chain; this is where the chain is picked
+// up for the questions that are not the popup controller's.
+func (c *ComboBox) ancestor() core.Trinket {
+	if c.embedHost != nil {
+		return c.embedHost
+	}
+	return c.Self()
+}
+
 // mapToScreen maps a box-local point to screen space, through the
 // embed host when one is set.
 func (c *ComboBox) mapToScreen(pc core.PopupController, local core.UnitPoint) core.UnitPoint {
@@ -121,7 +159,10 @@ func NewComboBox() *ComboBox {
 	)
 	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
-	c.SetAccessibleRole(core.RoleComboBox)
+	// One line of text tall, and it cannot be more: given a row three deep it
+	// sits in it rather than stretching to it. Across is another matter -- a
+	// field is meant to take the width it is given.
+	c.SetSizePolicy(core.NewSizePolicy(core.SizePreferred, core.SizeFixed))
 	return c
 }
 
@@ -319,6 +360,7 @@ func (c *ComboBox) AddItem(text string) {
 		c.SetCurrentIndex(0)
 	}
 	c.Update()
+	c.InvalidateLayout() // the widest item is what the box asks to be
 }
 
 // AddItems adds multiple items to the combo box.
@@ -344,6 +386,7 @@ func (c *ComboBox) InsertItem(index int, text string) {
 		c.currentIndex++
 	}
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // RemoveItem removes an item at the given index.
@@ -364,6 +407,7 @@ func (c *ComboBox) RemoveItem(index int) {
 		c.currentIndex--
 	}
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // Clear removes all items.
@@ -372,6 +416,7 @@ func (c *ComboBox) Clear() {
 	c.currentIndex = -1
 	c.editText = ""
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // Count returns the number of items.
@@ -576,7 +621,7 @@ func (c *ComboBox) popupID() string {
 // overlay: its geometry, painting, and input all speak the screen's
 // currency, not the combobox's (possibly re-denominated) interior.
 func (c *ComboBox) screenMetrics() core.CellMetrics {
-	if c.popupScreenMetrics.CellWidth > 0 && c.popupScreenMetrics.CellHeight > 0 {
+	if c.popupScreenMetrics.UnitsPerCellWidth > 0 && c.popupScreenMetrics.UnitsPerCellHeight > 0 {
 		return c.popupScreenMetrics
 	}
 	return core.DefaultCellMetrics()
@@ -601,7 +646,7 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 
 	// Get the trinket's positions on screen (the local point is in the
 	// trinket's own denomination; MapToScreen exchanges at boundaries)
-	trinketBottomPos := c.mapToScreen(pc, core.UnitPoint{X: 0, Y: metrics.CellHeight})
+	trinketBottomPos := c.mapToScreen(pc, core.UnitPoint{X: 0, Y: metrics.UnitsPerCellHeight})
 	trinketTopPos := c.mapToScreen(pc, core.UnitPoint{X: 0, Y: 0})
 
 	// Calculate available space below and above the trinket
@@ -609,8 +654,8 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	spaceAbove := trinketTopPos.Y - screenBounds.Y
 
 	// Calculate max rows that fit in each direction (screen rows)
-	maxRowsBelow := int(spaceBelow / screen.CellHeight)
-	maxRowsAbove := int(spaceAbove / screen.CellHeight)
+	maxRowsBelow := int(spaceBelow / screen.UnitsPerCellHeight)
+	maxRowsAbove := int(spaceAbove / screen.UnitsPerCellHeight)
 
 	// Minimum rows needed to show useful content (at least 2 items + potential scroll indicators)
 	const minRowsRequired = 4
@@ -661,7 +706,7 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	// Store for use during rendering
 	c.popupVisibleRows = visibleRows
 
-	popupHeightUnits := core.Unit(visibleRows) * screen.CellHeight
+	popupHeightUnits := core.Unit(visibleRows) * screen.UnitsPerCellHeight
 
 	// If popping up, calculate Y position now that we know height
 	if !popDown {
@@ -671,14 +716,18 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		}
 	}
 
-	popupBounds := core.UnitRect{
+	// Asked of the HOST's ancestry: a drop-down is anchored to its box, and a
+	// box standing between cells on a surface that can draw it there wants a
+	// list that stands with it. Snapping one and not the other is what put the
+	// list a fraction of a column off the control it belongs to.
+	popupBounds := gridPopupRect(c.ancestor(), screen, core.UnitRect{
 		X: trinketBottomPos.X,
 		Y: popupY,
 		// The trinket's width is in its own denomination; the popup
 		// lives on the screen surface.
 		Width:  core.ExchangeX(bounds.Width, metrics, screen),
 		Height: popupHeightUnits,
-	}
+	})
 
 	// Create popup request. Anchor is the box's own screen rect so the
 	// compositor casts one shadow over control + list together.
@@ -747,23 +796,33 @@ func (c *ComboBox) notifyIndexChanged() {
 	}
 }
 
+// displayText is what the closed box shows for text in avail units: the
+// value, cut to fit beside the arrow.
+//
+// Through the same function the tree and the list cut with. Cutting BYTES
+// here, as this did, drops half a rune off any multi-byte character, and
+// cutting with nothing appended leaves a word that just looks misspelled --
+// "ARJ Archive" came out "ARJ Archiv" with nothing to say it had been cut.
+func (c *ComboBox) displayText(text string, avail core.Unit) string {
+	return ellipsizeText(c.EffectiveFont(), c.EffectiveCellMetrics(), text, avail)
+}
+
 // SizeHint returns the preferred size.
 func (c *ComboBox) SizeHint() core.UnitSize {
 	metrics := c.EffectiveCellMetrics()
-	font := c.EffectiveFont()
 
 	// Calculate width based on longest item using font measurement
-	minWidth := font.MeasureText("----------") // Minimum 10 chars
+	minWidth := c.MeasureText("----------") // Minimum 10 chars
 	maxWidth := minWidth
 	for _, item := range c.items {
-		itemWidth := font.MeasureText(item)
+		itemWidth := c.MeasureText(c.CellRun(item))
 		if itemWidth > maxWidth {
 			maxWidth = itemWidth
 		}
 	}
 
 	// Add space for dropdown arrow " ▼"
-	arrowWidth := font.MeasureText(" ▼")
+	arrowWidth := c.MeasureText(" ▼")
 
 	return core.UnitSize{
 		Width:  maxWidth + arrowWidth,
@@ -813,22 +872,27 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	// Get font for text measurement and rendering
 	font := c.EffectiveFont()
 
-	// Calculate text area width (leave space for arrow)
-	arrowWidth := font.MeasureText(" ▼")
-	textAreaWidth := bounds.Width - arrowWidth
-
-	// Truncate text if needed to fit in text area
-	displayText := text
-	for font.MeasureText(displayText) > textAreaWidth && len(displayText) > 0 {
-		displayText = displayText[:len(displayText)-1]
+	// The arrow sits on the TRAILING edge and the value runs back from the
+	// leading one, so a combobox in a right-to-left form reads value then
+	// arrow from the right. The gap between the two travels with the arrow,
+	// which is why the run is turned around rather than just moved.
+	arrow := " ▼"
+	if core.ChromeMirrored(c.ancestor()) {
+		arrow = "▼ "
 	}
 
-	// Draw text
-	p.DrawText(0, 0, displayText, s, font)
+	// Calculate text area width (leave space for arrow)
+	arrowWidth := c.MeasureText(arrow)
+	textAreaWidth := bounds.Width - arrowWidth
 
-	// Draw dropdown arrow at the right
-	arrowX := bounds.Width - arrowWidth
-	p.DrawText(arrowX, 0, " ▼", s, font)
+	// Draw text
+	// Cut to fit first, prepared for the cell target after.
+	cut, _ := c.ElideText(text, textAreaWidth)
+	shown := c.CellRun(cut)
+	p.DrawText(core.LeadingX(c.ancestor(), bounds.Width, 0, c.MeasureText(shown)), 0, shown, s, font)
+
+	// Draw dropdown arrow at the trailing edge
+	p.DrawText(core.LeadingX(c.ancestor(), bounds.Width, textAreaWidth, arrowWidth), 0, arrow, s, font)
 
 	// While the drop-down is open, frame the box with the same 1-pixel
 	// separator-color stroke as the popup. Painted by the trinket itself
@@ -861,14 +925,14 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 		popupHeight = maxVis
 	}
 
-	popupY := metrics.CellHeight // Below the main trinket
+	popupY := metrics.UnitsPerCellHeight // Below the main trinket
 
 	// Draw popup background
 	popupBounds := core.UnitRect{
 		X:      0,
 		Y:      popupY,
 		Width:  bounds.Width,
-		Height: core.Unit(popupHeight) * metrics.CellHeight,
+		Height: core.Unit(popupHeight) * metrics.UnitsPerCellHeight,
 	}
 	itemStyle := scheme.GetDropdownItemText()
 	p.FillRect(popupBounds, ' ', itemStyle)
@@ -882,7 +946,7 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 		}
 
 		item := c.items[itemIndex]
-		itemY := popupY + core.Unit(i)*metrics.CellHeight
+		itemY := popupY + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// Determine item style
 		var s style.CellStyle
@@ -897,7 +961,7 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			X:      0,
 			Y:      itemY,
 			Width:  bounds.Width,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 
 		// Draw item text through the proportional path, clipped only
@@ -908,18 +972,25 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			X:      0,
 			Y:      itemY,
 			Width:  bounds.Width,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		})
-		rowPainter.DrawText(metrics.CellWidth, itemY, item, s, font)
+		// The row is indented a column on the leading side; the same column is
+		// left on the other, so a cut item does not run into the frame.
+		cut, _ := c.ElideText(item, bounds.Width-metrics.UnitsPerCellWidth*2)
+		run := c.CellRun(cut)
+		rowPainter.DrawText(core.LeadingX(c.ancestor(), bounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
+			itemY, run, s, font)
 	}
 
 	// Draw scroll indicators if needed
 	if c.scrollOffset > 0 {
-		p.DrawCell(bounds.Width-metrics.CellWidth*2, popupY, '▲', itemStyle)
+		p.DrawCell(core.LeadingX(c.ancestor(), bounds.Width, bounds.Width-metrics.UnitsPerCellWidth*2, metrics.UnitsPerCellWidth),
+			popupY, '▲', itemStyle)
 	}
 	if c.scrollOffset+popupHeight < len(c.items) {
-		endY := popupY + core.Unit(popupHeight-1)*metrics.CellHeight
-		p.DrawCell(bounds.Width-metrics.CellWidth*2, endY, '▼', itemStyle)
+		endY := popupY + core.Unit(popupHeight-1)*metrics.UnitsPerCellHeight
+		p.DrawCell(core.LeadingX(c.ancestor(), bounds.Width, bounds.Width-metrics.UnitsPerCellWidth*2, metrics.UnitsPerCellWidth),
+			endY, '▼', itemStyle)
 	}
 }
 
@@ -972,10 +1043,10 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 		// Reserve first row for scroll up indicator if can scroll up
 		if c.canScrollUp() {
 			centerX := popupBounds.Width / 2
-			popupPainter.DrawCell(centerX-metrics.CellWidth*2, 0, '^', itemStyle)
+			popupPainter.DrawCell(centerX-metrics.UnitsPerCellWidth*2, 0, '^', itemStyle)
 			popupPainter.DrawCell(centerX, 0, '^', itemStyle)
-			popupPainter.DrawCell(centerX+metrics.CellWidth*2, 0, '^', itemStyle)
-			startY = metrics.CellHeight
+			popupPainter.DrawCell(centerX+metrics.UnitsPerCellWidth*2, 0, '^', itemStyle)
+			startY = metrics.UnitsPerCellHeight
 			itemCount--
 		}
 		// Reserve last row for scroll down indicator if can scroll down
@@ -992,7 +1063,7 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 		}
 
 		item := c.items[itemIndex]
-		itemY := startY + core.Unit(i)*metrics.CellHeight
+		itemY := startY + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// Determine item style - highlight hovered item (or current if no hover)
 		var s style.CellStyle
@@ -1011,7 +1082,7 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			X:      0,
 			Y:      itemY,
 			Width:  popupBounds.Width,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 
 		// Draw item text through the proportional path, clipped only
@@ -1022,9 +1093,12 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			X:      0,
 			Y:      itemY,
 			Width:  popupBounds.Width,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		})
-		rowPainter.DrawText(metrics.CellWidth, itemY, item, s, font)
+		cut, _ := c.ElideText(item, popupBounds.Width-metrics.UnitsPerCellWidth*2)
+		run := c.CellRun(cut)
+		rowPainter.DrawText(core.LeadingX(c.ancestor(), popupBounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
+			itemY, run, s, font)
 	}
 
 	// Draw scroll down indicator or scrollbar
@@ -1034,11 +1108,11 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			c.paintScrollbar(popupPainter, popupBounds.Width, visibleItems)
 		} else if c.canScrollDown() {
 			// In drag mode, show scroll down indicator on last row
-			endY := core.Unit(visibleItems-1) * metrics.CellHeight
+			endY := core.Unit(visibleItems-1) * metrics.UnitsPerCellHeight
 			centerX := popupBounds.Width / 2
-			popupPainter.DrawCell(centerX-metrics.CellWidth*2, endY, 'v', itemStyle)
+			popupPainter.DrawCell(centerX-metrics.UnitsPerCellWidth*2, endY, 'v', itemStyle)
 			popupPainter.DrawCell(centerX, endY, 'v', itemStyle)
-			popupPainter.DrawCell(centerX+metrics.CellWidth*2, endY, 'v', itemStyle)
+			popupPainter.DrawCell(centerX+metrics.UnitsPerCellWidth*2, endY, 'v', itemStyle)
 		}
 	}
 
@@ -1057,7 +1131,9 @@ func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (sc
 	metrics := c.screenMetrics()
 	totalItems := len(c.items)
 
-	scrollbarX = popupWidth - metrics.CellWidth
+	// The lane is on the TRAILING edge -- the right of a left-to-right list
+	// and the left of a right-to-left one.
+	scrollbarX = core.LeadingX(c.ancestor(), popupWidth, popupWidth-metrics.UnitsPerCellWidth, metrics.UnitsPerCellWidth)
 	trackHeight = visibleCount
 
 	if totalItems <= visibleCount {
@@ -1107,7 +1183,7 @@ func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (sc
 // Mid-drag the thumb origin is the smooth (pointer-tracked) position.
 func (c *ComboBox) popupScrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
 	metrics := c.screenMetrics()
-	trackU = float64(core.Unit(visibleCount) * metrics.CellHeight)
+	trackU = float64(core.Unit(visibleCount) * metrics.UnitsPerCellHeight)
 	totalItems := len(c.items)
 	if totalItems <= visibleCount || visibleCount <= 0 {
 		return trackU, trackU, 0
@@ -1148,8 +1224,8 @@ func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visible
 	// rectangle for the thumb, both at unit granularity.
 	if p.Graphical() {
 		trackU, thumbU, posU := c.popupScrollbarUnits(visibleCount)
-		laneX := popupWidth - metrics.CellWidth
-		stripeX := laneX + metrics.CellWidth/2
+		laneX := core.LeadingX(c.ancestor(), popupWidth, popupWidth-metrics.UnitsPerCellWidth, metrics.UnitsPerCellWidth)
+		stripeX := laneX + metrics.UnitsPerCellWidth/2
 		p.FillRect(core.UnitRect{
 			X:      stripeX,
 			Y:      0,
@@ -1159,7 +1235,7 @@ func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visible
 		p.FillRect(core.UnitRect{
 			X:      laneX + 1,
 			Y:      core.Unit(posU + 0.5),
-			Width:  metrics.CellWidth - 2,
+			Width:  metrics.UnitsPerCellWidth - 2,
 			Height: core.Unit(thumbU + 0.5),
 		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
 		return
@@ -1169,13 +1245,13 @@ func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visible
 
 	// Draw scrollbar track
 	for i := 0; i < trackHeight; i++ {
-		y := core.Unit(i) * metrics.CellHeight
+		y := core.Unit(i) * metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
-		y := core.Unit(thumbStart+i) * metrics.CellHeight
+		y := core.Unit(thumbStart+i) * metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
 }
@@ -1231,14 +1307,17 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 			}
 
 			scrollbarX, thumbStart, thumbHeight, _ := c.scrollbarGeometry(popupBounds.Width, popupHeight)
-			if event.X >= popupBounds.X+scrollbarX {
+			// The lane is one column wherever it sits, so the hit area is
+			// that column rather than everything past its near edge.
+			laneAt := popupBounds.X + scrollbarX
+			if event.X >= laneAt && event.X < laneAt+metrics.UnitsPerCellWidth {
 				// Click on scrollbar area
 				relY := event.Y - popupBounds.Y
-				clickedRow := int(relY / metrics.CellHeight)
+				clickedRow := int(relY / metrics.UnitsPerCellHeight)
 
 				// Pixel surfaces anchor the drag to the grab point
 				// within the unit-granular thumb.
-				if core.FindSmoothPositioning(c.Self()) {
+				if core.FindSmoothPositioning(c.ancestor()) {
 					_, thumbU, posU := c.popupScrollbarUnits(popupHeight)
 					pos := float64(relY)
 					if pos >= posU && pos < posU+thumbU {
@@ -1293,7 +1372,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 
 		// Calculate which item was pressed
 		relY := event.Y - popupBounds.Y
-		rowIndex := int(relY / metrics.CellHeight)
+		rowIndex := int(relY / metrics.UnitsPerCellHeight)
 
 		// In drag mode with scrolling, adjust for scroll up indicator
 		needsScroll := len(c.items) > c.effectiveMaxVisible()
@@ -1308,6 +1387,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 			c.mouseDown = true
 			c.mouseDownX = event.X
 			c.mouseDownY = event.Y
+			c.popupDownX, c.popupDownY = event.X, event.Y
 			c.dragging = false
 			c.Update()
 		}
@@ -1361,7 +1441,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 			return true
 		}
 
-		currentRow := int(relY / metrics.CellHeight)
+		currentRow := int(relY / metrics.UnitsPerCellHeight)
 		rowDelta := currentRow - c.scrollbarDragStartY
 
 		visibleCount := popupHeight
@@ -1399,15 +1479,15 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 
 	// Check if we need to start dragging (detects movement beyond threshold)
 	if c.mouseDown && !c.dragging {
-		dx := event.X - c.mouseDownX
-		dy := event.Y - c.mouseDownY
+		dx := event.X - c.popupDownX
+		dy := event.Y - c.popupDownY
 		if dx < 0 {
 			dx = -dx
 		}
 		if dy < 0 {
 			dy = -dy
 		}
-		threshold := metrics.CellWidth / 2
+		threshold := metrics.UnitsPerCellWidth / 2
 		if dx > threshold || dy > threshold {
 			c.dragging = true
 		}
@@ -1424,7 +1504,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 		topLeft := c.mapToScreen(pc, core.UnitPoint{})
 		selfH := c.Bounds().Height
 		if selfH <= 0 {
-			selfH = c.screenMetrics().CellHeight
+			selfH = c.screenMetrics().UnitsPerCellHeight
 		}
 		selfRect := core.UnitRect{X: topLeft.X, Y: topLeft.Y, Width: c.Bounds().Width, Height: selfH}
 		overSelf = selfRect.Contains(core.UnitPoint{X: event.X, Y: event.Y})
@@ -1483,7 +1563,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	// In drag mode with scrolling, check scroll indicator rows
 	if showScrollIndicators {
 		// First row is scroll up indicator if can scroll up
-		if c.canScrollUp() && relY < metrics.CellHeight {
+		if c.canScrollUp() && relY < metrics.UnitsPerCellHeight {
 			if c.scrollHoverZone != -1 {
 				c.scrollHoverZone = -1
 				c.scrollUp(1)
@@ -1497,7 +1577,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 			return true
 		}
 		// Last row is scroll down indicator if can scroll down
-		if c.canScrollDown() && relY >= core.Unit(popupHeight-1)*metrics.CellHeight {
+		if c.canScrollDown() && relY >= core.Unit(popupHeight-1)*metrics.UnitsPerCellHeight {
 			if c.scrollHoverZone != 1 {
 				c.scrollHoverZone = 1
 				c.scrollDown(1)
@@ -1522,7 +1602,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 
 	// Calculate which item row the mouse is on
 	// In drag mode with scroll indicators, adjust for the top indicator row
-	rowIndex := int(relY / metrics.CellHeight)
+	rowIndex := int(relY / metrics.UnitsPerCellHeight)
 	if showScrollIndicators && c.canScrollUp() {
 		rowIndex-- // First row is scroll indicator, so subtract 1
 	}
@@ -1568,7 +1648,7 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 	if inPopup {
 		// Calculate which item was released on
 		relY := event.Y - popupBounds.Y
-		rowIndex := int(relY / metrics.CellHeight)
+		rowIndex := int(relY / metrics.UnitsPerCellHeight)
 
 		// In drag mode with scrolling, adjust for scroll up indicator
 		needsScroll := len(c.items) > c.effectiveMaxVisible()
@@ -1608,10 +1688,17 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 		// Was dragging (in either mode) and released outside - cancel
 		c.SetCurrentIndex(c.originalIndex)
 		c.HidePopup()
-	} else if wasClickMode {
-		// In click mode, released outside without drag - dismiss
+	} else if wasClickMode && wasMouseDown {
+		// In click mode, released outside without drag - dismiss.
+		//
+		// A press of its own is what makes a release this popup's to answer.
+		// Every release the host routes here reaches this handler whether the
+		// pointer is over the drop-down or not, so without that a release with
+		// nothing behind it -- one the terminal reports twice, one left over
+		// from the gesture before the drop-down existed -- shuts a drop-down
+		// the user has not clicked outside of.
 		c.HidePopup()
-	} else {
+	} else if !wasClickMode {
 		// Not in click mode, released outside without drag - enter click mode
 		// This is the "click to open" case - popup should stay open
 		c.enterClickMode()
@@ -1823,7 +1910,7 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 	bounds := c.Bounds()
 
 	// Check if click is on the main combobox area (first row)
-	if event.Y < metrics.CellHeight && event.X >= 0 && event.X < bounds.Width {
+	if event.Y < metrics.UnitsPerCellHeight && event.X >= 0 && event.X < bounds.Width {
 		if c.isOpen {
 			if c.clickMode {
 				// Click mode: click on button toggles closed
@@ -1834,6 +1921,7 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 			c.mouseDown = true
 			c.mouseDownX = event.X
 			c.mouseDownY = event.Y
+			c.markPopupGrab(event.X, event.Y)
 			c.dragging = false
 			return true
 		}
@@ -1845,20 +1933,23 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 		c.dragging = false
 		c.clickMode = false // Will switch to click mode on release without drag
 		c.ShowPopup()
+		// After the drop-down exists, so the screen mapping resolves through
+		// the controller it registered with.
+		c.markPopupGrab(event.X, event.Y)
 		return true
 	}
 
 	// If popup is open and click is in popup area, let popup handler deal with it
 	if c.isOpen {
-		popupY := metrics.CellHeight
+		popupY := metrics.UnitsPerCellHeight
 		popupHeight := c.effectiveMaxVisible()
 		if popupHeight > len(c.items) {
 			popupHeight = len(c.items)
 		}
 
-		if event.Y >= popupY && event.Y < popupY+core.Unit(popupHeight)*metrics.CellHeight {
+		if event.Y >= popupY && event.Y < popupY+core.Unit(popupHeight)*metrics.UnitsPerCellHeight {
 			// Clicked in popup area (fallback for non-overlay mode)
-			itemIndex := int((event.Y - popupY) / metrics.CellHeight)
+			itemIndex := int((event.Y - popupY) / metrics.UnitsPerCellHeight)
 			actualIndex := c.scrollOffset + itemIndex
 
 			if actualIndex >= 0 && actualIndex < len(c.items) {
@@ -1866,6 +1957,7 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 				c.mouseDown = true
 				c.mouseDownX = event.X
 				c.mouseDownY = event.Y
+				c.markPopupGrab(event.X, event.Y)
 				c.dragging = false
 				c.Update()
 			}
@@ -1885,6 +1977,9 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement while button may be held.
 func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	c.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	if !c.mouseDown || !c.isOpen {
 		return false
 	}
@@ -1902,7 +1997,7 @@ func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if dy < 0 {
 			dy = -dy
 		}
-		threshold := metrics.CellWidth / 2
+		threshold := metrics.UnitsPerCellWidth / 2
 		if dx > threshold || dy > threshold {
 			c.dragging = true
 		} else {
@@ -1911,12 +2006,12 @@ func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Calculate popup bounds for hit testing
-	popupY := metrics.CellHeight
+	popupY := metrics.UnitsPerCellHeight
 	popupHeight := c.effectiveMaxVisible()
 	if popupHeight > len(c.items) {
 		popupHeight = len(c.items)
 	}
-	popupEndY := popupY + core.Unit(popupHeight)*metrics.CellHeight
+	popupEndY := popupY + core.Unit(popupHeight)*metrics.UnitsPerCellHeight
 
 	// Handle scrolling when dragging above/below popup
 	if event.Y < popupY && event.X >= 0 && event.X < bounds.Width && c.canScrollUp() {
@@ -1952,7 +2047,7 @@ func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
 		c.scrollHoverZone = 0
 		c.stopScrollTimer()
 
-		itemIndex := int((event.Y - popupY) / metrics.CellHeight)
+		itemIndex := int((event.Y - popupY) / metrics.UnitsPerCellHeight)
 		actualIndex := c.scrollOffset + itemIndex
 
 		if actualIndex >= 0 && actualIndex < len(c.items) {
@@ -1993,12 +2088,12 @@ func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	bounds := c.Bounds()
 
 	// Calculate popup bounds
-	popupY := metrics.CellHeight
+	popupY := metrics.UnitsPerCellHeight
 	popupHeight := c.effectiveMaxVisible()
 	if popupHeight > len(c.items) {
 		popupHeight = len(c.items)
 	}
-	popupEndY := popupY + core.Unit(popupHeight)*metrics.CellHeight
+	popupEndY := popupY + core.Unit(popupHeight)*metrics.UnitsPerCellHeight
 
 	// Check if release is within popup
 	inPopup := event.Y >= popupY && event.Y < popupEndY &&
@@ -2007,7 +2102,7 @@ func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if inPopup && wasMouseDown {
 		if wasDragging {
 			// Drag mode - release inside confirms
-			itemIndex := int((event.Y - popupY) / metrics.CellHeight)
+			itemIndex := int((event.Y - popupY) / metrics.UnitsPerCellHeight)
 			actualIndex := c.scrollOffset + itemIndex
 			if actualIndex >= 0 && actualIndex < len(c.items) {
 				c.SetCurrentIndex(actualIndex)

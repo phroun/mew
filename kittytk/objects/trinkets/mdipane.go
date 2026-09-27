@@ -48,7 +48,7 @@ type MDIPane struct {
 	// cycleOrder is the M-Tab sequence, kept separate from the visual z-order
 	// (windows) so cycling can raise a child to see it without committing the
 	// sequence. Most-recently-committed child is at the end. Committed only on a
-	// genuine child interaction or the idle lock-in - not by parent Next/Prev
+	// genuine child interaction or the idle lock-in - not by parent Next/Prior
 	// buttons or by stepping the run.
 	cycleOrder []*window.Window
 
@@ -63,8 +63,15 @@ type MDIPane struct {
 	// Modal window stack
 	modalStack []*window.Window
 
-	// Drag state
-	dragging    *window.Window
+	// Drag state. dragMoved says the pointer has LEFT the point the window
+	// was grabbed at, which is what makes the gesture a drag.
+	dragging  *window.Window
+	dragMoved bool
+
+	// dragSnapped says this drag is what maximized the child, so bringing the
+	// pointer back below the pane's top undoes it -- no pull needed, since the
+	// gesture is already a drag rather than a click.
+	dragSnapped bool
 	dragStartX  core.Unit
 	dragStartY  core.Unit
 	dragOffsetX core.Unit
@@ -78,9 +85,10 @@ type MDIPane struct {
 	resizeOriginal core.UnitRect
 
 	// Double-click detection
-	lastClickTime   time.Time
-	lastClickX      core.Unit
-	lastClickY      core.Unit
+	// The title bar's double-click, on the kit every title bar shares. The
+	// window is tracked alongside it so clicks on two different children
+	// never pair up.
+	titleClicks     window.DoubleClickTracker
 	lastClickWindow *window.Window
 
 	// Focus-without-raise: track pressed window for conditional raise on release
@@ -424,7 +432,7 @@ func (m *MDIPane) SetActiveWindow(win *window.Window) {
 
 // mdiCycleCommitTimeout is the idle gap after which an in-progress MDI cycle
 // run locks its landing spot into the sequence. MDI cycling can be driven by
-// the parent's own Next/Prev buttons (no modifier to release), so the timer is
+// the parent's own Next/Prior buttons (no modifier to release), so the timer is
 // the commit mechanism here rather than modifier release.
 const mdiCycleCommitTimeout = 2 * time.Second
 
@@ -443,7 +451,7 @@ func (m *MDIPane) bringToCycleFront(win *window.Window) {
 // endCycleSession ends an in-progress cycle run, committing the child it landed
 // on to the front of the sequence. A no-op when no run is in progress. Fired by
 // a genuine child interaction (a key the child handles, or a click) or the idle
-// lock-in - never by stepping the run or the parent's Next/Prev buttons.
+// lock-in - never by stepping the run or the parent's Next/Prior buttons.
 func (m *MDIPane) endCycleSession() {
 	m.mu.Lock()
 	if !m.cycling {
@@ -608,7 +616,7 @@ func (m *MDIPane) cycle(forward bool) {
 
 	// Idle lock-in: a step long after the previous one is a fresh gesture, so
 	// lock the prior run's landing spot into the sequence first. MDI has no
-	// modifier-release to key off (the parent's Next/Prev buttons carry none),
+	// modifier-release to key off (the parent's Next/Prior buttons carry none),
 	// so the timer is the commit mechanism.
 	if wasCycling && gap > mdiCycleCommitTimeout {
 		m.endCycleSession()
@@ -653,6 +661,12 @@ func (m *MDIPane) cycle(forward bool) {
 
 // MaximizeWindow maximizes a window to fill the MDI pane.
 func (m *MDIPane) MaximizeWindow(win *window.Window) {
+	// A window that cannot be maximized is left alone, as the desktop's
+	// manager leaves it: maximizing is a resize, and a fixed-size dialog
+	// asked not to be resized.
+	if !win.CanMaximize() {
+		return
+	}
 	clientArea := m.ClientArea()
 	win.Maximize()
 	win.SetBounds(clientArea)
@@ -724,9 +738,13 @@ func (m *MDIPane) TileWindows() {
 	}
 	cells := window.TileLayout(clientArea, items)
 
+	var snap core.CellMetrics
+	if !core.FindSmoothPositioning(m.Self()) {
+		snap = m.EffectiveCellMetrics()
+	}
 	for i, win := range visibleWindows {
 		win.Restore()
-		window.PlaceInCell(win, cells[i], items[i].Resizable)
+		window.PlaceInCell(win, cells[i], items[i].Resizable, snap)
 	}
 
 	m.Update()
@@ -751,8 +769,8 @@ func (m *MDIPane) CascadeWindows() {
 	metrics := m.EffectiveCellMetrics()
 	// The cascade step includes the frame border, so each window's whole
 	// top chrome (border + titlebar) clears the one beneath it.
-	border := core.FindFrameBorderUnits(visibleWindows[0])
-	offset := metrics.CellWidth*2 + border
+	border, _ := core.FindFrameBorderUnitsIn(visibleWindows[0], metrics)
+	offset := metrics.UnitsPerCellWidth*2 + border
 
 	// Standard size for cascaded windows
 	width := metrics.RoundDownToCellX(clientArea.Width * 3 / 4)
@@ -767,11 +785,15 @@ func (m *MDIPane) CascadeWindows() {
 		y := clientArea.Y + core.Unit(i)*offset
 
 		// A window that can't be resized is only repositioned, keeping its
-		// own size; only resizable windows adopt the standard cascade size.
+		// own size; only resizable windows adopt the standard cascade size,
+		// and only as far as they say they grow.
 		w, h := width, height
 		if win.Flags()&window.WindowFlagNoResize != 0 {
 			b := win.Bounds()
 			w, h = b.Width, b.Height
+		} else {
+			size := window.ConstrainSize(win, core.UnitSize{Width: w, Height: h})
+			w, h = size.Width, size.Height
 		}
 
 		// Wrap if off screen
@@ -891,15 +913,23 @@ func (m *MDIPane) displayBounds(win *window.Window) core.UnitRect {
 func (m *MDIPane) ClientArea() core.UnitRect {
 	bounds := m.Bounds()
 	outer, interior := m.denominations()
-	return core.UnitRect{
+	area := core.UnitRect{
 		X:      0,
 		Y:      0,
 		Width:  core.ExchangeX(bounds.Width, outer, interior),
 		Height: core.ExchangeY(bounds.Height, outer, interior),
 	}
+	// A cell surface can only offer whole cells, so the room a child is
+	// fitted to is floored onto the grid -- half a row at the bottom is a row
+	// nothing can be drawn in, and a child sized to it would be given a
+	// height the grid cannot express. The desktop's own room does the same.
+	if !core.FindSmoothPositioning(m.Self()) {
+		area = interior.AlignRect(area)
+	}
+	return area
 }
 
-// denominations returns the grid-metrics currency of the pane's own
+// denominations returns the cell-metrics currency of the pane's own
 // coordinate space (outer: the parent's, in which Bounds lives) and
 // of its interior, where child-window geometry lives (honoring a
 // per-pane override). Equal unless an override is set on this pane.
@@ -963,7 +993,7 @@ func (m *MDIPane) positionWindow(win *window.Window) {
 	if cascadeIndex < 0 {
 		cascadeIndex = 0
 	}
-	offset := core.Unit(cascadeIndex) * metrics.CellWidth * 2
+	offset := core.Unit(cascadeIndex) * metrics.UnitsPerCellWidth * 2
 
 	x := clientArea.X + offset
 	y := clientArea.Y + offset
@@ -1016,31 +1046,35 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// agrees with what the user sees and with the press path (which commits
 	// these bounds before detecting).
 	// The HIT zone follows the grab rule (quarter cell or 3 device px, border
-	// included); resizeGripFor stays the overlay's, which must not move.
+	// included); affordanceBandFor stays the painted band's, which must not
+	// move.
 	metrics := m.EffectiveCellMetrics()
 	graphical := core.FindGraphicalFrames(m.Self())
-	border := core.FindFrameBorderUnits(win)
-	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), border)
+	// Each grip is a pair, and so is the border it is built on: the column
+	// count carries the across half, the row count the down half.
+	bx, by := core.FindFrameBorderUnitsIn(win, metrics)
+	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), bx, by)
 	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip,
-		window.ResizeOverlayGrip(graphical, metrics, border))
+		window.ResizeAffordanceBand(graphical, metrics, bx, by))
 }
 
-// resizeGripFor is the effective resize-grip thickness for a child window
-// (the surface's grip capability, discovered by ancestry).
-func (m *MDIPane) resizeGripFor(win *window.Window) core.Unit {
-	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()),
-		m.EffectiveCellMetrics(), core.FindFrameBorderUnits(win))
+// affordanceBandFor is how thick the translucent band along a child window's
+// edges is (the surface's frame kind, discovered by ancestry).
+func (m *MDIPane) affordanceBandFor(win *window.Window) window.EdgeThickness {
+	metrics := m.EffectiveCellMetrics()
+	bx, by := core.FindFrameBorderUnitsIn(win, metrics)
+	return window.ResizeAffordanceBand(core.FindGraphicalFrames(m.Self()), metrics, bx, by)
 }
 
-// setResizeHover shows the translucent white overlay along the given resize
+// setResizeBands shows the translucent white overlay along the given resize
 // edge(s) of win (window-local rects), the same highlight desktop windows
 // get from the WindowManager. edge == ResizeEdgeNone clears it.
-func (m *MDIPane) setResizeHover(win *window.Window, edge int) {
+func (m *MDIPane) setResizeBands(win *window.Window, edge int) {
 	if edge == window.ResizeEdgeNone {
-		win.SetResizeHoverRects(nil)
+		win.SetResizeBandRects(nil)
 		return
 	}
-	win.SetResizeHoverRects(window.ResizeEdgeRects(win, edge, m.resizeGripFor(win)))
+	win.SetResizeBandRects(window.ResizeEdgeRects(win, edge, m.affordanceBandFor(win)))
 }
 
 // clearWindowHover clears any lingering per-widget hover on the window we
@@ -1053,11 +1087,11 @@ func (m *MDIPane) clearWindowHover() {
 	}
 }
 
-// updateResizeHover highlights the size-sensitive edge under the pointer on
+// updateResizeBands highlights the size-sensitive edge under the pointer on
 // the topmost child window and clears it on the others - the MDI equivalent
-// of WindowManager.updateResizeHover, called on plain moves (no drag). It
+// of WindowManager.updateResizeBands, called on plain moves (no drag). It
 // repaints only when a highlight actually changed.
-func (m *MDIPane) updateResizeHover(x, y core.Unit) {
+func (m *MDIPane) updateResizeBands(x, y core.Unit) {
 	m.mu.RLock()
 	windows := m.windows
 	m.mu.RUnlock()
@@ -1075,10 +1109,10 @@ func (m *MDIPane) updateResizeHover(x, y core.Unit) {
 		var rects []core.UnitRect
 		if i == topmost {
 			if edge := m.detectResizeEdge(win, x, y); edge != window.ResizeEdgeNone {
-				rects = window.ResizeEdgeRects(win, edge, m.resizeGripFor(win))
+				rects = window.ResizeEdgeRects(win, edge, m.affordanceBandFor(win))
 			}
 		}
-		if win.SetResizeHoverRects(rects) {
+		if win.SetResizeBandRects(rects) {
 			changed = true
 		}
 	}
@@ -1092,7 +1126,9 @@ func (m *MDIPane) SetBounds(bounds core.UnitRect) {
 	m.TrinketBase.SetBounds(bounds)
 	m.layoutContent()
 
-	// Adjust maximized windows
+	// Re-fit maximized windows (see WindowManager.SetScreenBounds): a window
+	// that says how far it grows does not take the whole pane, so this asks
+	// the same question MaximizeWindow does.
 	clientArea := m.ClientArea()
 	for _, win := range m.windows {
 		if win.IsMaximized() {
@@ -1252,13 +1288,18 @@ func (m *MDIPane) SetLayoutManager(lm core.LayoutManager) {
 // SizeHint returns the preferred size.
 // If minimum size is set (via SetMinimumSize), returns that as the hint.
 // This allows the MDIPane to report a fixed size when embedded in a ScrollArea.
-// Otherwise returns the current bounds size.
+// Otherwise the fallback a panel uses (see defaultSizeCells): the pane holds
+// windows of its own and has nothing of its own to derive a size from.
 func (m *MDIPane) SizeHint() core.UnitSize {
 	minSize := m.MinimumSize()
 	if minSize.Width > 0 || minSize.Height > 0 {
 		return minSize
 	}
-	return m.Bounds().Size()
+	metrics := m.EffectiveCellMetrics()
+	return core.UnitSize{
+		Width:  metrics.UnitsPerCellWidth * defaultSizeCells,
+		Height: metrics.UnitsPerCellHeight * defaultContainerHeightCells,
+	}
 }
 
 // HandleFocusIn is called when MDIPane gains focus.
@@ -1329,8 +1370,8 @@ func (m *MDIPane) Paint(p *core.Painter) {
 	if drawPattern {
 		// Draw pattern background (like Desktop)
 		bgStyle := scheme.GetDesktopFill()
-		for y := core.Unit(0); y < clientArea.Height; y += metrics.CellHeight {
-			for x := core.Unit(0); x < clientArea.Width; x += metrics.CellWidth {
+		for y := core.Unit(0); y < clientArea.Height; y += metrics.UnitsPerCellHeight {
+			for x := core.Unit(0); x < clientArea.Width; x += metrics.UnitsPerCellWidth {
 				ip.DrawCell(x, y, bgChar, bgStyle)
 			}
 		}
@@ -1535,7 +1576,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				m.resizeOriginal = bounds
 				m.pressedWindow = nil // Clear pressed window for resize
 				m.mu.Unlock()
-				m.setResizeHover(win, resizeEdge) // white overlay on the grabbed edge
+				m.setResizeBands(win, resizeEdge) // white overlay on the grabbed edge
 				return true
 			}
 
@@ -1547,11 +1588,18 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 			// titlebar's bottom (the top border above it is a resize edge,
 			// handled first). Cell frames draw the title on the top row, so
 			// no offset.
-			titleBottom := metrics.CellHeight
+			titleBottom := metrics.UnitsPerCellHeight
 			if core.FindGraphicalFrames(win) {
-				titleBottom += core.FindFrameBorderUnits(win)
+				_, by := core.FindFrameBorderUnitsIn(win, metrics)
+				titleBottom += by
 			}
-			if event.Y < bounds.Y+titleBottom &&
+			// A capped maximized child holds the whole pane but draws its
+			// frame in the middle of it, so the row is measured from the
+			// frame (the whole surface for every other child).
+			fr := win.FrameRect()
+			titleRow := core.UnitRect{X: bounds.X + fr.X, Y: bounds.Y + fr.Y,
+				Width: fr.Width, Height: titleBottom}
+			if titleRow.Contains(core.UnitPoint{X: event.X, Y: event.Y}) &&
 				win.Flags()&window.WindowFlagNoTitle == 0 {
 
 				m.ActivateWindow(win)
@@ -1561,31 +1609,30 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				localEvent.X -= bounds.X
 				localEvent.Y -= bounds.Y
 				if win.HandleMousePress(localEvent) {
-					// Update click tracking
+					// The window took it -- a caption button. That is not
+					// half of a double-click, so the tracker is disarmed
+					// rather than fed: recording it lets the NEXT plain
+					// title click pair with a button press and toggle
+					// maximize a second time.
 					m.mu.Lock()
-					m.lastClickTime = time.Now()
-					m.lastClickX = event.X
-					m.lastClickY = event.Y
+					m.titleClicks.Reset()
 					m.lastClickWindow = win
 					m.pressedWindow = nil
 					m.mu.Unlock()
 					return true
 				}
 
-				// Check for double-click
-				now := time.Now()
+				// Check for double-click, reset when the target window
+				// changes so clicks on two children never pair up.
 				m.mu.Lock()
-				isDoubleClick := m.lastClickWindow == win &&
-					now.Sub(m.lastClickTime) < 400*time.Millisecond &&
-					abs(int(event.X-m.lastClickX)) < int(metrics.CellWidth) &&
-					abs(int(event.Y-m.lastClickY)) < int(metrics.CellHeight)
-				m.lastClickTime = now
-				m.lastClickX = event.X
-				m.lastClickY = event.Y
+				if m.lastClickWindow != win {
+					m.titleClicks.Reset()
+				}
+				isDoubleClick := m.titleClicks.Press(event.X, event.Y, metrics)
 				m.lastClickWindow = win
 				m.mu.Unlock()
 
-				if isDoubleClick && win.Flags()&window.WindowFlagNoMaximize == 0 {
+				if isDoubleClick && win.CanMaximize() {
 					if win.IsMaximized() {
 						win.Restore()
 					} else {
@@ -1602,6 +1649,8 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				if win.Flags()&window.WindowFlagNoMove == 0 {
 					m.mu.Lock()
 					m.dragging = win
+					m.dragMoved = false
+					m.dragSnapped = false
 					m.dragStartX = event.X
 					m.dragStartY = event.Y
 					m.dragOffsetX = event.X - bounds.X
@@ -1662,56 +1711,118 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle resize
 	if resizing != nil {
-		newBounds := window.ApplyResize(resizeOriginal, resizeEdge,
-			event.X-resizeStartX, event.Y-resizeStartY,
-			m.EffectiveCellMetrics(), !core.FindSmoothPositioning(m.Self()), m.ClientArea())
+		snap := !core.FindSmoothPositioning(m.Self())
+		cells := m.EffectiveCellMetrics()
+		dx, dy := core.DragTravel(
+			core.UnitPoint{X: resizeStartX, Y: resizeStartY},
+			core.UnitPoint{X: event.X, Y: event.Y}, cells, snap)
+		newBounds := window.ApplyResize(resizeOriginal, resizeEdge, dx, dy,
+			cells, snap, m.ClientArea(),
+			window.WindowResizeLimits(resizing))
 
 		resizing.SetBounds(newBounds)
-		m.setResizeHover(resizing, resizeEdge) // overlay follows the new bounds
+		m.setResizeBands(resizing, resizeEdge) // overlay follows the new bounds
 		m.Update()
 		return true
 	}
 
 	// Handle drag
 	if dragging != nil {
+		// A drag begins when the pointer LEAVES the point it was grabbed at.
+		// Until it does the gesture is still a click, and a click moves
+		// nothing -- neither the child's position nor, for a maximized one,
+		// its state.
+		m.mu.Lock()
+		if m.dragging == dragging && (event.X != m.dragStartX || event.Y != m.dragStartY) {
+			m.dragMoved = true
+		}
+		started := m.dragMoved
+		m.mu.Unlock()
+		if !started {
+			return true
+		}
+
 		justRestored := false
 		clientArea := m.ClientArea()
 		metrics := m.EffectiveCellMetrics()
 
-		// Handle restore from maximized
+		// A maximized child comes down when it is PULLED down: the pointer has
+		// to travel a row BELOW the point it was grabbed at. Its top edge is
+		// the top of the pane already, so where the child would sit is at or
+		// below that from the moment it is grabbed, and any jitter a hand puts
+		// into a click answers that.
 		if dragging.IsMaximized() {
-			newY := event.Y - offsetY
-			if newY >= clientArea.Y {
-				oldBounds := dragging.Bounds()
+			m.mu.RLock()
+			startY, snapped := m.dragStartY, m.dragSnapped
+			m.mu.RUnlock()
+
+			if event.Y-startY >= metrics.UnitsPerCellHeight ||
+				(snapped && event.Y >= clientArea.Y) {
+				// The FRAME being held, before the restore takes it away.
+				// It is the whole child except on a capped maximized one,
+				// which holds the pane and draws itself in the middle of it
+				// -- and there the grab offset, measured from the pane's
+				// corner, is nowhere near the title bar that was grabbed.
+				oldFrame := dragging.FrameRect()
 				dragging.Restore()
 				justRestored = true
 				newBounds := dragging.Bounds()
 				dragging.Layout()
 
-				proportion := float64(offsetX) / float64(oldBounds.Width)
-				offsetX = core.Unit(proportion * float64(newBounds.Width))
+				// Re-express the grab inside that frame, then scale it
+				// across the width so the cursor stays proportionally
+				// placed on the narrower title bar, and down the height
+				// unchanged -- a title bar is the same height whatever the
+				// window's size.
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newBounds.Width) / float64(oldFrame.Width))
+				}
 
 				m.mu.Lock()
-				m.dragOffsetX = offsetX
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = false
 				m.mu.Unlock()
 			} else {
+				// Not pulled down yet: a maximized child does not slide.
 				return true
 			}
 		}
 
-		newX := event.X - offsetX
-		newY := event.Y - offsetY
+		origin := core.DragOrigin(
+			core.UnitPoint{X: event.X, Y: event.Y},
+			core.UnitPoint{X: offsetX, Y: offsetY},
+			metrics, !core.FindSmoothPositioning(m.Self()))
 
 		bounds := dragging.Bounds()
-		bounds.X = newX
-		bounds.Y = newY
+		bounds.X = origin.X
+		bounds.Y = origin.Y
 
 		// Maximize gesture: only when the POINTER itself moves above the pane's
 		// top (into/past the pane edge), not merely when the window's top edge
 		// is lifted there by the grab offset - which fired too eagerly.
-		if event.Y < clientArea.Y && dragging.Flags()&window.WindowFlagNoMaximize == 0 && !justRestored {
+		if event.Y < clientArea.Y && dragging.CanMaximize() && !justRestored {
 			if !dragging.IsMaximized() {
+				// The frame being held, before maximizing replaces it. The
+				// grab is measured from the child's corner and has to be
+				// re-expressed in the frame it will be holding, or the
+				// gesture goes on pointing into geometry that is gone -- and
+				// the restore that unwinds it inherits the error.
+				oldFrame := dragging.FrameRect()
 				m.MaximizeWindow(dragging)
+				dragging.Layout()
+				newFrame := dragging.FrameRect()
+
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newFrame.Width) / float64(oldFrame.Width))
+				}
+				offsetX, offsetY = offsetX+newFrame.X, offsetY+newFrame.Y
+
+				m.mu.Lock()
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = true
+				m.mu.Unlock()
 			}
 			return true
 		}
@@ -1732,15 +1843,15 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return true
 	}
 
-	// No drag or resize in progress: keep the resize-edge hover overlay in
+	// No drag or resize in progress: keep the resize-edge cue in
 	// sync with the pointer (like desktop windows). A held button means a
 	// gesture began elsewhere and is passing through - the edge highlight is a
-	// hover affordance, so suppress it and clear any lingering band.
+	// cue for a plain pointer, so suppress it and clear any lingering band.
 	if event.Buttons == 0 {
-		m.updateResizeHover(event.X, event.Y)
+		m.updateResizeBands(event.X, event.Y)
 	} else {
 		// Off-surface point clears every window's edge overlay.
-		m.updateResizeHover(-1, -1)
+		m.updateResizeBands(-1, -1)
 	}
 
 	m.mu.RLock()
@@ -1867,6 +1978,9 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	event.X, event.Y = m.toInterior(event.X, event.Y)
 
 	m.mu.Lock()
+	// The button coming up is what makes the NEXT press a second click
+	// rather than a repeat of this one.
+	m.titleClicks.Release()
 	dragging := m.dragging
 	resizing := m.resizing
 	pressedWin := m.pressedWindow
@@ -1877,7 +1991,7 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.Unlock()
 
 	if resizing != nil {
-		resizing.SetResizeHoverRects(nil) // drop the overlay when the resize ends
+		resizing.SetResizeBandRects(nil) // drop the overlay when the resize ends
 		m.Update()
 	}
 	if dragging != nil || resizing != nil {

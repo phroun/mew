@@ -1,0 +1,182 @@
+package main
+
+// Answering the query here, out of a PSL file.
+//
+// The same query text, the same structure taken off it, and the same table
+// printed at the end -- but nothing is dialled and nobody is asked. A source
+// that holds its own records answers the questions an application would have
+// been asked, which is the whole of what makes the two interchangeable.
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
+)
+
+// readings names the two ways a PSL record's contents can be addressed.
+var readings = map[string]serval.Reading{
+	"whole":   serval.Whole,
+	"members": serval.Members,
+}
+
+// fromPSL runs a query file against a PSL file and prints what comes back.
+func fromPSL(path, reading, query string, raw bool) {
+	which, ok := readings[reading]
+	if !ok {
+		fail("no reading called %q: whole or members", reading)
+	}
+	text, err := os.ReadFile(path)
+	if err != nil {
+		fail("%v", err)
+	}
+	src, err := serval.ParsePSLSource(string(text), which)
+	if err != nil {
+		fail("%s: %v", path, err)
+	}
+
+	script, err := wire.Parse(query)
+	if err != nil {
+		fail("%v", err)
+	}
+	out := &printer{raw: raw}
+	if err := run(src, script, out); err != nil {
+		out.flush()
+		fail("%v", err)
+	}
+	out.flush()
+}
+
+// run drives the source through the statements the file holds, which are the
+// ones a display would have sent.
+func run(src serval.Source, script *wire.Script, out *printer) error {
+	var set serval.DataSet
+	defer func() {
+		if set != nil {
+			set.Close()
+		}
+	}()
+
+	for _, stmt := range script.Statements {
+		switch stmt.Verb {
+		case "end":
+			continue
+
+		case "new":
+			if len(stmt.Args) == 0 || stmt.Args[0].Name != wire.QueryVerb {
+				return fmt.Errorf("new: expected a query")
+			}
+			args := stmt.Args[1:]
+			descriptor, err := wire.ParseDescriptor(args)
+			if err != nil {
+				return err
+			}
+			if set != nil {
+				set.Close()
+			}
+			if set, err = src.Open(descriptor); err != nil {
+				return err
+			}
+			// Opening carries the first scope, because a display never wants a
+			// sequence without wanting rows of it.
+			if err := scope(set, args, out); err != nil {
+				return err
+			}
+
+		case wire.QueryVerb:
+			if set == nil {
+				return fmt.Errorf("query: nothing has been opened")
+			}
+			if err := scope(set, afterTarget(stmt), out); err != nil {
+				return err
+			}
+
+		case "set":
+			return fmt.Errorf("set: a query is the sequence it was opened " +
+				"with; a different sequence is another `new query`")
+
+		case "destroy":
+			if set != nil {
+				set.Close()
+				set = nil
+			}
+
+		default:
+			return fmt.Errorf("%s: a query file holds new, query and destroy", stmt.Verb)
+		}
+	}
+	return nil
+}
+
+// scope draws one and writes it out as the statements it would have crossed
+// as, so what is printed comes off the wire language either way.
+func scope(set serval.DataSet, args []*wire.Arg, out *printer) error {
+	sc, err := wire.ParseScope(args)
+	if err != nil {
+		return err
+	}
+	return set.Read(sc, &results{out: out})
+}
+
+// results writes each record as the result statement that carries one, and the
+// terminator when the scope ends.
+type results struct{ out *printer }
+
+// Ordered leads the answer, in the spelling the wire leads one with.
+func (r *results) Ordered() {
+	r.out.take(result((&wire.Result{Ordered: true}).Args()...))
+}
+
+func (r *results) Done(done serval.Complete) { r.out.take(terminator(done)) }
+
+// Record and Subset write a record out under the word that says how much of it
+// came back: `record` for every field it has, `fields` for the ones this
+// scope asked for.
+func (r *results) Record(id *serval.Value, fields serval.Record) error {
+	return r.write(true, id, fields, serval.Totals{})
+}
+
+func (r *results) Subset(id *serval.Value, fields serval.Record, has serval.Totals) error {
+	return r.write(false, id, fields, has)
+}
+
+func (r *results) write(whole bool, id *serval.Value, fields serval.Record, has serval.Totals) error {
+	rec := &wire.Result{ID: wire.AsWire(id), Fields: fields, Whole: whole, Has: has}
+	r.out.take(result(rec.Args()...))
+	return nil
+}
+
+// terminator is what ends the scope, in the spelling the wire ends one with.
+func terminator(done serval.Complete) string {
+	return result((&wire.Result{Complete: &done}).Args()...)
+}
+
+// result builds one result statement. Everything here is one query, so it is
+// addressed as the first one an application would have named.
+func result(extra ...*wire.Arg) string {
+	args := append([]*wire.Arg{{Value: wire.NewInt(1)}}, extra...)
+	return wire.EncodeStatement(&wire.Statement{Verb: wire.ResultVerb, Args: args})
+}
+
+// afterTarget drops the object a statement is addressed to, leaving what it
+// says about it. There is one query here, so which one it names does not have
+// to be resolved -- only skipped.
+func afterTarget(stmt *wire.Statement) []*wire.Arg {
+	if len(stmt.Args) == 0 {
+		return nil
+	}
+	a := stmt.Args[0]
+	if a.Value != nil && a.Name == "" && a.Value.Kind == wire.NumberValue {
+		return stmt.Args[1:]
+	}
+	if a.Value == nil && a.Flag == wire.FlagTrue {
+		return stmt.Args[1:]
+	}
+	return stmt.Args
+}
+
+func fail(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}

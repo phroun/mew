@@ -538,10 +538,10 @@ func (p *parser) charClass(t *tok) []span {
 		return nil
 	}
 	var out []span
-	prev := rune(-1) // last literal, candidate for a range start
-	emitPrev := func() {
-		if prev >= 0 {
-			out = append(out, span{prev, prev})
+	prior := rune(-1) // last literal, candidate for a range start
+	emitPrior := func() {
+		if prior >= 0 {
+			out = append(out, span{prior, prior})
 		}
 	}
 	for {
@@ -551,31 +551,31 @@ func (p *parser) charClass(t *tok) []span {
 			p.errorf("unterminated character list")
 			return nil
 		case '"':
-			emitPrev()
+			emitPrior()
 			return out
 		case '\\':
-			emitPrev()
-			prev = t.escape()
+			emitPrior()
+			prior = t.escape()
 		case '-':
-			if prev < 0 || t.peek() == '"' || t.peek() == 0 {
+			if prior < 0 || t.peek() == '"' || t.peek() == 0 {
 				// leading or trailing '-': a literal
-				emitPrev()
-				prev = '-'
+				emitPrior()
+				prior = '-'
 				continue
 			}
 			hi := t.get()
 			if hi == '\\' {
 				hi = t.escape()
 			}
-			lo := prev
+			lo := prior
 			if hi < lo {
 				lo, hi = hi, lo
 			}
 			out = append(out, span{lo, hi})
-			prev = -1
+			prior = -1
 		default:
-			emitPrev()
-			prev = c
+			emitPrior()
+			prior = c
 		}
 	}
 }

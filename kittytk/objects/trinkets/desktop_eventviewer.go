@@ -38,6 +38,10 @@ type eventViewer struct {
 	modes     core.ModeSource
 	showMouse bool
 	seq       int
+
+	// forget drops what the desktop is keeping for the NEXT viewer, so Clear
+	// clears the log rather than just the window. See Desktop.LogError.
+	forget func()
 }
 
 // build assembles the window content: the log, a filter row, and a hint line.
@@ -70,15 +74,20 @@ func (v *eventViewer) build() core.Trinket {
 	// Repeat are the whole question for a keyboard problem and pure clutter
 	// for a mouse one. Hiding every one of them does not leave a blank tree:
 	// with no visible data column the key column comes back, hidden or not.
+	//
+	// The widths are units, as every measurement in this toolkit is, and are
+	// written as cells of the default denomination -- what they were when a
+	// column counted them.
+	const cell = core.Unit(8)
 	for _, c := range []*TreeColumn{
-		{ID: "seq", Caption: "#", Width: 7, Align: "right", Optional: true,
+		{ID: "seq", Caption: "#", Width: 7 * cell, Align: core.AlignLayoutOpposite, Optional: true,
 			Sortable: true, Numeric: true},
-		{ID: "event", Caption: "Event", Width: 14, Resizable: true, Optional: true},
-		{ID: "key", Caption: "Key", Width: 16, Resizable: true, Optional: true},
-		{ID: "mods", Caption: "Modifiers", Width: 22, Resizable: true, Optional: true},
-		{ID: "repeat", Caption: "Repeat", Width: 7, Align: "center", Optional: true},
-		{ID: "text", Caption: "Text", Width: 8, Resizable: true, Optional: true},
-		{ID: "detail", Caption: "Detail", Width: 40, Resizable: true, Optional: true},
+		{ID: "event", Caption: "Event", Width: 14 * cell, Resizable: true, Optional: true},
+		{ID: "key", Caption: "Key", Width: 16 * cell, Resizable: true, Optional: true},
+		{ID: "mods", Caption: "Modifiers", Width: 22 * cell, Resizable: true, Optional: true},
+		{ID: "repeat", Caption: "Repeat", Width: 7 * cell, Align: core.AlignCenter, Optional: true},
+		{ID: "text", Caption: "Text", Width: 8 * cell, Resizable: true, Optional: true},
+		{ID: "detail", Caption: "Detail", Width: 40 * cell, Resizable: true, Optional: true},
 	} {
 		// The ids are the literal above and all differ, so the only error
 		// AddColumn returns cannot arise here.
@@ -93,11 +102,7 @@ func (v *eventViewer) build() core.Trinket {
 	mouse.SetOnToggled(func(checked bool) { v.showMouse = checked })
 
 	clear := NewButton("Clear")
-	clear.SetOnClick(func() {
-		v.tree.Clear()
-		v.seq = 0
-		v.setStatus("cleared")
-	})
+	clear.SetOnClick(v.clearLog)
 
 	controls := NewPanel()
 	controlsLayout := layout.NewBoxLayout(core.Horizontal)
@@ -130,7 +135,7 @@ func (v *eventViewer) build() core.Trinket {
 	rootPanel.AddChild(v.tree)
 	rootPanel.AddChild(controls)
 	// The tree takes the slack; the control row keeps its natural height.
-	rootLayout.ItemAt(0).WithStretch(1).WithAlign(core.AlignFill)
+	rootLayout.ItemAt(0).WithStretch(1).WithAlign(core.DefaultAlignment())
 
 	return rootPanel
 }
@@ -209,6 +214,52 @@ func (v *eventViewer) log(ev core.Event) {
 		v.tree.RemoveRootItem(roots[0])
 	}
 	// Follow the tail, the way a log window does.
+	v.tree.SetCurrentIndex(len(v.tree.RootItems()) - 1)
+	v.setStatus(fmt.Sprintf("%d events", v.seq))
+}
+
+// clearLog empties the window AND what the desktop is holding for the next one.
+//
+// Both, because they are one log. Clearing the window alone would put the errors
+// back the next time the viewer was opened, which is a Clear that cleared nothing.
+func (v *eventViewer) clearLog() {
+	v.tree.Clear()
+	v.seq = 0
+	if v.forget != nil {
+		v.forget()
+	}
+	v.setStatus("cleared")
+}
+
+// logError appends one row for something that went WRONG, which is not an event
+// and belongs here anyway.
+//
+// **A log nobody can see is the bug it is meant to close.** The display is told
+// things it cannot pass on -- an optional include a bundle could not find, a
+// complaint with no statement to carry it back across the wire -- and what it used
+// to do with them was nothing. They are rare, they are what somebody debugging came
+// here for, and this is where a reader is already looking.
+//
+// The mouse filter does not touch these: what it hides is noise, and a refusal is
+// never noise.
+func (v *eventViewer) logError(source, reason string) {
+	v.seq++
+	seq := fmt.Sprintf("%d", v.seq)
+	item := NewTreeItem(seq)
+	item.SetValue("seq", seq)
+	item.SetValue("event", "Error")
+	// Whoever reported it, which for a source is its name: that is the one thing a
+	// reader needs to know which of their own names went wrong.
+	item.SetValue("key", source)
+	item.SetValue("mods", "")
+	item.SetValue("repeat", "-")
+	item.SetValue("text", "")
+	item.SetValue("detail", reason)
+	v.tree.AddRootItem(item)
+
+	if roots := v.tree.RootItems(); len(roots) > eventViewerMaxRows {
+		v.tree.RemoveRootItem(roots[0])
+	}
 	v.tree.SetCurrentIndex(len(v.tree.RootItems()) - 1)
 	v.setStatus(fmt.Sprintf("%d events", v.seq))
 }

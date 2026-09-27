@@ -169,7 +169,7 @@ func (d *DockRow) SetOnFocusMenuBar(callback func(forward bool)) {
 func (d *DockRow) entriesPerRow() int {
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
-	entriesPerRow := int(bounds.Width / (core.Unit(d.entryWidth) * metrics.CellWidth))
+	entriesPerRow := int(bounds.Width / (core.Unit(d.entryWidth) * metrics.UnitsPerCellWidth))
 	if entriesPerRow < 1 {
 		entriesPerRow = 1
 	}
@@ -186,7 +186,7 @@ func (d *DockRow) RowCount() int {
 	metrics := d.EffectiveCellMetrics()
 
 	// How many entries fit per row?
-	entriesPerRow := int(bounds.Width / (core.Unit(d.entryWidth) * metrics.CellWidth))
+	entriesPerRow := int(bounds.Width / (core.Unit(d.entryWidth) * metrics.UnitsPerCellWidth))
 	if entriesPerRow < 1 {
 		entriesPerRow = 1
 	}
@@ -203,7 +203,7 @@ func (d *DockRow) RequiredHeight() core.Unit {
 		return 0
 	}
 	metrics := d.EffectiveCellMetrics()
-	return core.Unit(rows) * metrics.CellHeight
+	return core.Unit(rows) * metrics.UnitsPerCellHeight
 }
 
 // SizeHint returns the preferred size.
@@ -232,7 +232,7 @@ func (d *DockRow) Paint(p *core.Painter) {
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', dockStyle)
 
 	// Calculate layout
-	entryWidthUnits := core.Unit(d.entryWidth) * metrics.CellWidth
+	entryWidthUnits := core.Unit(d.entryWidth) * metrics.UnitsPerCellWidth
 	entriesPerRow := int(bounds.Width / entryWidthUnits)
 	if entriesPerRow < 1 {
 		entriesPerRow = 1
@@ -244,7 +244,7 @@ func (d *DockRow) Paint(p *core.Painter) {
 		col := i % entriesPerRow
 
 		x := core.Unit(col) * entryWidthUnits
-		y := core.Unit(row) * metrics.CellHeight
+		y := core.Unit(row) * metrics.UnitsPerCellHeight
 
 		// Choose style based on state; focus takes priority over hover. Hover
 		// is graphical-only (the cell/TUI path gets no free moves, so a hover
@@ -256,7 +256,7 @@ func (d *DockRow) Paint(p *core.Painter) {
 			X:      x,
 			Y:      y,
 			Width:  entryWidthUnits,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}
 		p.FillRect(entryRect, ' ', entryStyle)
 
@@ -264,20 +264,20 @@ func (d *DockRow) Paint(p *core.Painter) {
 		// monospaced (one cell each edge); only the interior title uses the
 		// proportional font.
 		p.DrawCell(x, y, '[', entryStyle)
-		p.DrawCell(x+entryWidthUnits-metrics.CellWidth, y, ']', entryStyle)
+		p.DrawCell(x+entryWidthUnits-metrics.UnitsPerCellWidth, y, ']', entryStyle)
 
 		// Draw the title proportionally within the interior (between the
 		// brackets), truncating with an ellipsis to fit the interior width.
 		font := d.EffectiveFont()
-		interiorX := x + metrics.CellWidth
-		interiorWidth := entryWidthUnits - 2*metrics.CellWidth
+		interiorX := x + metrics.UnitsPerCellWidth
+		interiorWidth := entryWidthUnits - 2*metrics.UnitsPerCellWidth
 
 		title := entry.Title
-		if font.MeasureText(title) > interiorWidth {
+		if d.MeasureText(title) > interiorWidth {
 			ellipsis := "…"
-			ellipsisW := font.MeasureText(ellipsis)
+			ellipsisW := d.MeasureText(ellipsis)
 			runes := []rune(title)
-			for len(runes) > 0 && font.MeasureText(string(runes))+ellipsisW > interiorWidth {
+			for len(runes) > 0 && d.MeasureText(string(runes))+ellipsisW > interiorWidth {
 				runes = runes[:len(runes)-1]
 			}
 			title = string(runes) + ellipsis
@@ -288,9 +288,9 @@ func (d *DockRow) Paint(p *core.Painter) {
 			X:      interiorX,
 			Y:      y,
 			Width:  interiorWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		})
-		titlePainter.DrawText(interiorX, y, title, entryStyle, font)
+		titlePainter.DrawText(interiorX, y, d.CellRun(title), entryStyle, font)
 	}
 }
 
@@ -334,15 +334,31 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	entriesPerRow := d.entriesPerRow()
 
-	switch d.KeyCommand(event.Key) {
-	case core.CmdTrinketItemLeft, core.CmdTrinketItemPrior:
+	// A side-named arrow says which way across the SCREEN, and the entries run
+	// the way the dock reads -- so the left arrow steps back along them in a
+	// dock reading left to right and on along them in one reading the other
+	// way. prior and next name the sequence outright and never turn.
+	cmd := d.KeyCommand(event.Key)
+	if cmd == core.CmdTrinketItemLeft || cmd == core.CmdTrinketItemRight {
+		onward := cmd == core.CmdTrinketItemRight
+		if core.ChromeMirrored(d) {
+			onward = !onward
+		}
+		cmd = core.CmdTrinketItemPrior
+		if onward {
+			cmd = core.CmdTrinketItemNext
+		}
+	}
+
+	switch cmd {
+	case core.CmdTrinketItemPrior:
 		if d.selectedIndex > 0 {
 			d.selectedIndex--
 			d.Update()
 		}
 		return true
 
-	case core.CmdTrinketItemRight, core.CmdTrinketItemNext:
+	case core.CmdTrinketItemNext:
 		if d.selectedIndex < len(d.entries)-1 {
 			d.selectedIndex++
 			d.Update()
@@ -350,7 +366,7 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketItemUp:
-		// Move to same column in previous row
+		// Move to same column in prior row
 		if d.selectedIndex >= entriesPerRow {
 			d.selectedIndex -= entriesPerRow
 			d.Update()
@@ -367,7 +383,7 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdFocusPrior:
-		// Move to previous item, or off the start of the dock (backward).
+		// Move to prior item, or off the start of the dock (backward).
 		if d.selectedIndex > 0 {
 			d.selectedIndex--
 			d.Update()
@@ -420,13 +436,13 @@ func (d *DockRow) HandleMousePress(event core.MousePressEvent) bool {
 	bounds := d.Bounds()
 
 	// Calculate which entry was clicked
-	entryWidthUnits := core.Unit(d.entryWidth) * metrics.CellWidth
+	entryWidthUnits := core.Unit(d.entryWidth) * metrics.UnitsPerCellWidth
 	entriesPerRow := int(bounds.Width / entryWidthUnits)
 	if entriesPerRow < 1 {
 		entriesPerRow = 1
 	}
 
-	row := int(event.Y / metrics.CellHeight)
+	row := int(event.Y / metrics.UnitsPerCellHeight)
 	col := int(event.X / entryWidthUnits)
 
 	index := row*entriesPerRow + col
@@ -452,12 +468,12 @@ func (d *DockRow) entryAt(x, y core.Unit) int {
 	if x < 0 || y < 0 || x >= bounds.Width || y >= bounds.Height {
 		return -1
 	}
-	entryWidthUnits := core.Unit(d.entryWidth) * metrics.CellWidth
+	entryWidthUnits := core.Unit(d.entryWidth) * metrics.UnitsPerCellWidth
 	entriesPerRow := int(bounds.Width / entryWidthUnits)
 	if entriesPerRow < 1 {
 		entriesPerRow = 1
 	}
-	row := int(y / metrics.CellHeight)
+	row := int(y / metrics.UnitsPerCellHeight)
 	col := int(x / entryWidthUnits)
 	if col >= entriesPerRow {
 		return -1 // dead space past the last column of a row

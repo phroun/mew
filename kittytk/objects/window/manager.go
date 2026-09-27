@@ -106,6 +106,11 @@ type WindowManager struct {
 	dragIsTearHandle bool
 	dragMoved        bool
 
+	// dragSnapped says this drag is what maximized the window, so bringing the
+	// pointer back below the menu bar undoes it -- no pull needed, since the
+	// gesture is already a drag rather than a click.
+	dragSnapped bool
+
 	// Resize state
 	resizing       *Window
 	resizeEdge     int
@@ -180,6 +185,12 @@ type PopupOverlay struct {
 	Anchor core.UnitRect
 	// Paint function to render the popup
 	Paint func(p *core.Painter)
+	// Inert marks a paint-only popup the pointer passes through (see
+	// core.PopupRequest).
+	Inert bool
+	// Fade is how solid this overlay is drawn over time (see
+	// core.PopupRequest). Nil is solid.
+	Fade *core.Fade
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event core.MousePressEvent) bool
 	// HandleMouseMove function to handle mouse movement (returns true if handled)
@@ -254,10 +265,28 @@ func abs(x int) int {
 	return x
 }
 
+// EdgeThickness is a thickness along a window's edges stated per axis: X is
+// how far in from a vertical edge, Y how far in from a horizontal one. Both
+// the grab zone and the affordance band are one of these; neither is the
+// other, and this type says nothing about which.
+//
+// Two numbers because a unit is square only where the cell is. The same
+// count spent on both axes is the same physical thickness at the default
+// 8x16 denomination and at every denomination proportional to it, and a
+// different one everywhere else: over an 8x16 surface a 16x16 subtree draws
+// twelve units as six pixels across and twelve down.
+type EdgeThickness struct {
+	X, Y core.Unit
+}
+
+// Zero is the cell frame's answer, where the metrics defaults apply instead:
+// a whole column on the sides, a whole row top and bottom.
+func (g EdgeThickness) Zero() bool { return g.X <= 0 && g.Y <= 0 }
+
 // ResizeEdgeAt returns the resize edge bits for point (x, y) against a
 // window occupying `bounds` (all in the same coordinate space). `grip` is
 // the effective grab-zone thickness in units - the graphical grip sliver
-// plus any frame border; when it is 0 the cell-frame defaults from
+// plus any frame border; when it is zero the cell-frame defaults from
 // `metrics` apply (a full cell on the sides and bottom) and the top edge
 // is NOT grabbable (the top row is the titlebar, used for dragging). The
 // bottom and (when grabbable) top edges widen at the corners so diagonal
@@ -266,17 +295,23 @@ func abs(x int) int {
 // This is the single source of resize-edge geometry: the desktop
 // WindowManager and the embedded MDIPane both call it, so desktop and MDI
 // windows detect identical edges and corners.
-func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics, grip, cornerReach core.Unit) int {
-	edgeThreshold := metrics.CellWidth
-	cornerThreshold := metrics.CellWidth * 2
-	bottomBand := metrics.CellHeight
-	if grip > 0 {
-		edgeThreshold = grip
-		cornerThreshold = grip * 2
-		bottomBand = grip
+func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics, grip, cornerReach EdgeThickness) int {
+	edgeThreshold := metrics.UnitsPerCellWidth
+	cornerThreshold := EdgeThickness{
+		X: metrics.UnitsPerCellWidth * 2,
+		Y: metrics.UnitsPerCellHeight * 2,
 	}
-	if cornerReach < cornerThreshold {
-		cornerReach = cornerThreshold
+	bottomBand := metrics.UnitsPerCellHeight
+	if !grip.Zero() {
+		edgeThreshold = grip.X
+		cornerThreshold = EdgeThickness{X: grip.X * 2, Y: grip.Y * 2}
+		bottomBand = grip.Y
+	}
+	if cornerReach.X < cornerThreshold.X {
+		cornerReach.X = cornerThreshold.X
+	}
+	if cornerReach.Y < cornerThreshold.Y {
+		cornerReach.Y = cornerThreshold.Y
 	}
 
 	lx := x - bounds.X
@@ -287,17 +322,16 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 
 	// The CORNERS reach further than the sides, and have to: the side zone is
 	// kept as narrow as it can be so content stays reachable, and a diagonal
-	// target that narrow is a target nobody can hit. The corner is the square
-	// where the two AFFORDANCE bands overlap — what is highlighted is what
-	// grabs — so it does not shrink when the grab rule does.
+	// target that narrow is a target nobody can hit. The reach is twice the
+	// grip, or whatever the caller asked for in cornerReach if that is more.
 	//
 	// It is checked first and whole, rather than by widening the horizontal
 	// threshold along a live top/bottom edge: that older form scaled off a
 	// grip that was itself a cell wide, and collapsed to nothing once the grip
 	// became the minimum it should always have been.
-	if grip > 0 {
-		nearLeft, nearRight := lx < cornerReach, lx >= bounds.Width-cornerReach
-		nearTop, nearBottom := ly < cornerReach, ly >= bounds.Height-cornerReach
+	if !grip.Zero() {
+		nearLeft, nearRight := lx < cornerReach.X, lx >= bounds.Width-cornerReach.X
+		nearTop, nearBottom := ly < cornerReach.Y, ly >= bounds.Height-cornerReach.Y
 		// A window too small for four distinct corners splits by the pointer's
 		// half, the same rule the edges use below.
 		if nearLeft && nearRight {
@@ -322,9 +356,9 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 		}
 	}
 
-	// Vertical grips. The top edge is only grabbable with a graphical grip
-	// (grip>0); with the cell frame the top row is the titlebar.
-	atTop := grip > 0 && ly < grip
+	// Vertical grips. The top edge is only grabbable with a graphical grip;
+	// with the cell frame the top row is the titlebar.
+	atTop := !grip.Zero() && ly < grip.Y
 	atBottom := ly >= bounds.Height-bottomBand
 	// When the window is short enough (or its grip wide enough) that the top
 	// and bottom grips overlap, letting one always win strands the other
@@ -342,7 +376,7 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 	// bottom edge so the diagonal is easy to hit.
 	hThresh := edgeThreshold
 	if atTop || atBottom {
-		hThresh = cornerThreshold
+		hThresh = cornerThreshold.X
 	}
 	atLeft := lx < hThresh
 	atRight := lx >= bounds.Width-hThresh
@@ -370,9 +404,10 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 	return edge
 }
 
-// ResizeOverlayGrip is the thickness of the resize AFFORDANCE — the
-// translucent band drawn along the edge under the pointer: the frame border,
-// plus a flat half column BEYOND it.
+// ResizeAffordanceBand is how thick the translucent band drawn along the
+// edge under the pointer is: the frame border, plus a flat half column
+// BEYOND it. It is PAINT. Nothing about it decides what grabs — the grab
+// zone is ResizeHitGrip, and the two are computed apart.
 //
 // Note the opposite structure to ResizeHitGrip, which is border-INCLUSIVE.
 // That is the point rather than an inconsistency: the affordance is a visual
@@ -384,11 +419,29 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 // graphical says which kind of frame this is, exactly as in ResizeHitGrip:
 // false is the cell frame, where the whole border row/column is both the grab
 // and the affordance and ResizeEdgeRects' metrics defaults apply.
-func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, border core.Unit) core.Unit {
+//
+// Half a column is a DISTANCE, and the band is that thick whichever edge it
+// lies along: the same across the sides as down the top and bottom. So it is
+// stated once, in the surface's own denomination — the reference the
+// geometry is snapped in, and the one whose units are square — and exchanged
+// onto each axis, rather than counted out of the local denomination twice.
+//
+// Half a column of the LOCAL cell spent on both axes is half a column across
+// and something else entirely down, since a unit is square only where the
+// cell is. The top and bottom bands of an MDI child came out at 12 device
+// pixels against the sides' 6 at a square 16x16 denomination, 24 against 6 at
+// 16x8, and 3 against 6 at 8x32. The border term is already a distance,
+// stated per axis by core.FindFrameBorderUnitsIn.
+func ResizeAffordanceBand(graphical bool, metrics core.CellMetrics, borderX, borderY core.Unit) EdgeThickness {
 	if !graphical {
-		return 0
+		return EdgeThickness{}
 	}
-	return border + metrics.CellWidth/2
+	d := core.DefaultCellMetrics()
+	beyond := d.UnitsPerCellWidth / 2
+	return EdgeThickness{
+		X: borderX + core.ExchangeX(beyond, d, metrics),
+		Y: borderY + core.ExchangeY(beyond, d, metrics),
+	}
 }
 
 // ResizeHitGrip is how far in from a window's outer edge a press starts a
@@ -411,31 +464,75 @@ func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, border core.Uni
 // the whole border row/column is the grip and the metrics defaults in
 // ResizeEdgeAt apply — this rule is graphical-only.
 //
-// Deliberately NOT the same quantity as ResizeOverlayGrip, which sizes the
+// Deliberately NOT the same quantity as ResizeAffordanceBand, which sizes the
 // visual affordance: see there for why the two must not converge.
-func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, border core.Unit) core.Unit {
+//
+// A quarter column is a distance too, and reaches the same way in from a
+// side as from the top: stated once in the surface's own denomination and
+// exchanged onto each axis, the same shape ResizeAffordanceBand takes one
+// fraction coarser.
+//
+// The three-device-pixel floor converts per axis for the same reason: three
+// pixels buy a different number of units across than down, and it is ceiled
+// after the conversion so the floor is never rounded away.
+func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, borderX, borderY core.Unit) EdgeThickness {
 	if !graphical {
-		return 0
+		return EdgeThickness{}
 	}
 	if ppu <= 0 {
 		ppu = 1
 	}
-	grip := border + metrics.CellWidth/4
-	if px := core.Unit(math.Ceil(3 / ppu)); px > grip {
-		grip = px
+	d := core.DefaultCellMetrics()
+	beyond := d.UnitsPerCellWidth / 4
+	grip := EdgeThickness{
+		X: borderX + core.ExchangeX(beyond, d, metrics),
+		Y: borderY + core.ExchangeY(beyond, d, metrics),
+	}
+	// Three device pixels are 3/ppu units of the surface's denomination; an
+	// axis counting more finely than that spends proportionally more of them.
+	floor := func(denom, surface core.Unit) core.Unit {
+		if denom <= 0 || surface <= 0 {
+			return core.Unit(math.Ceil(3 / ppu))
+		}
+		return core.Unit(math.Ceil(3 * float64(denom) / (ppu * float64(surface))))
+	}
+	if px := floor(metrics.UnitsPerCellWidth, d.UnitsPerCellWidth); px > grip.X {
+		grip.X = px
+	}
+	if px := floor(metrics.UnitsPerCellHeight, d.UnitsPerCellHeight); px > grip.Y {
+		grip.Y = px
 	}
 	return grip
 }
 
+// ResizeLimits are the floor and ceiling a drag-resize holds a window
+// between. A ceiling of core.Unbounded on an axis leaves that axis free.
+type ResizeLimits struct {
+	Minimum core.UnitSize
+	Maximum core.UnitSize
+}
+
+// WindowResizeLimits reads the limits off a window. A nil window is
+// unlimited, which is what the geometry rule does with a zero value anyway.
+func WindowResizeLimits(win *Window) ResizeLimits {
+	if win == nil {
+		return ResizeLimits{Maximum: core.UnitSize{Width: core.Unbounded, Height: core.Unbounded}}
+	}
+	return ResizeLimits{Minimum: win.MinimumSize(), Maximum: win.MaximumSize()}
+}
+
 // ApplyResize computes the new bounds for a window resized from `original`
-// by dragging edge bits `edge` a delta of (deltaX, deltaY). It enforces a
-// minimum size (3x2 cells), optionally snaps to cell boundaries
-// (snapToCells - false on smooth/pixel surfaces), keeps the window's
-// top/left within `clientArea` (the far edge absorbs the clamp when
+// by dragging edge bits `edge` a delta of (deltaX, deltaY). It holds the
+// window between `limits` and a floor of 3x2 cells, optionally snaps to cell
+// boundaries (snapToCells - false on smooth/pixel surfaces), keeps the
+// window's top/left within `clientArea` (the far edge absorbs the clamp when
 // resizing from that side), and limits the height to the client area. It
 // is the single resize-geometry rule shared by the desktop WindowManager
 // drag-resize and the embedded MDIPane.
-func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, metrics core.CellMetrics, snapToCells bool, clientArea core.UnitRect) core.UnitRect {
+//
+// The edge under the pointer is the one that stops when a limit is reached:
+// the opposite edge is anchored and stays where the gesture found it.
+func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, metrics core.CellMetrics, snapToCells bool, clientArea core.UnitRect, limits ResizeLimits) core.UnitRect {
 	nb := original
 	if edge&ResizeEdgeLeft != 0 {
 		nb.X = original.X + deltaX
@@ -456,8 +553,27 @@ func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, met
 		nb = metrics.AlignRect(nb)
 	}
 
-	minWidth := metrics.CellWidth * 3
-	minHeight := metrics.CellHeight * 2
+	if limits.Maximum.Width >= 0 && nb.Width > limits.Maximum.Width {
+		if edge&ResizeEdgeLeft != 0 {
+			nb.X = original.X + original.Width - limits.Maximum.Width
+		}
+		nb.Width = limits.Maximum.Width
+	}
+	if limits.Maximum.Height >= 0 && nb.Height > limits.Maximum.Height {
+		if edge&ResizeEdgeTop != 0 {
+			nb.Y = original.Y + original.Height - limits.Maximum.Height
+		}
+		nb.Height = limits.Maximum.Height
+	}
+
+	minWidth := metrics.UnitsPerCellWidth * 3
+	minHeight := metrics.UnitsPerCellHeight * 2
+	if limits.Minimum.Width > minWidth {
+		minWidth = limits.Minimum.Width
+	}
+	if limits.Minimum.Height > minHeight {
+		minHeight = limits.Minimum.Height
+	}
 	if nb.Width < minWidth {
 		if edge&ResizeEdgeLeft != 0 {
 			nb.X = original.X + original.Width - minWidth
@@ -501,8 +617,8 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	graphical := core.FindGraphicalFrames(win)
 	border := core.FindFrameBorderUnits(win)
 	return ResizeEdgeAt(win.Bounds(), x, y, metrics,
-		ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(win), border),
-		ResizeOverlayGrip(graphical, metrics, border))
+		ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(win), border, border),
+		ResizeAffordanceBand(graphical, metrics, border, border))
 }
 
 // resizeEdgeRects returns the window-local rectangles (one per set edge
@@ -510,22 +626,23 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 // given resize edge, matching detectResizeEdge's thresholds. Used to
 // highlight the edge under the pointer.
 func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
-	return ResizeEdgeRects(win, edge, ResizeOverlayGrip(core.FindGraphicalFrames(win),
-		core.DefaultCellMetrics(), core.FindFrameBorderUnits(win)))
+	border := core.FindFrameBorderUnits(win)
+	return ResizeEdgeRects(win, edge, ResizeAffordanceBand(core.FindGraphicalFrames(win),
+		core.DefaultCellMetrics(), border, border))
 }
 
 // ResizeEdgeRects returns the window-local rectangles to highlight for the
 // given resize edge(s), sized to the affordance thickness (see
-// ResizeOverlayGrip). Shared by the WindowManager and the MDIPane so both
+// ResizeAffordanceBand). Shared by the WindowManager and the MDIPane so both
 // draw the same resize overlay.
-func ResizeEdgeRects(win *Window, edge int, grip core.Unit) []core.UnitRect {
+func ResizeEdgeRects(win *Window, edge int, band EdgeThickness) []core.UnitRect {
 	b := win.Bounds()
 	metrics := core.DefaultCellMetrics()
-	edgeThreshold := metrics.CellWidth
-	bottomBand := metrics.CellHeight
-	if grip > 0 {
-		edgeThreshold = grip
-		bottomBand = grip
+	edgeThreshold := metrics.UnitsPerCellWidth
+	bottomBand := metrics.UnitsPerCellHeight
+	if !band.Zero() {
+		edgeThreshold = band.X
+		bottomBand = band.Y
 	}
 
 	var rects []core.UnitRect
@@ -590,10 +707,10 @@ func (m *WindowManager) pointOverOverlay(x, y core.Unit) bool {
 	return false
 }
 
-// updateResizeHover highlights the size-sensitive edge(s) of the topmost
+// updateResizeBands highlights the size-sensitive edge(s) of the topmost
 // window under the pointer, clearing the highlight on every other window.
 // Called on mouse move when no drag or resize is in progress.
-func (m *WindowManager) updateResizeHover(x, y core.Unit) {
+func (m *WindowManager) updateResizeBands(x, y core.Unit) {
 	m.mu.RLock()
 	windows := make([]*Window, len(m.windows))
 	copy(windows, m.windows)
@@ -628,7 +745,7 @@ func (m *WindowManager) updateResizeHover(x, y core.Unit) {
 		if win == target && edge != ResizeEdgeNone {
 			rects = m.resizeEdgeRects(win, edge)
 		}
-		if win.SetResizeHoverRects(rects) {
+		if win.SetResizeBandRects(rects) {
 			changed = true
 		}
 	}
@@ -705,16 +822,16 @@ func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
 	return win.CursorShapeAt(x-b.X, y-b.Y)
 }
 
-// ClearResizeHover removes the resize-edge highlight from every window.
+// ClearResizeBands removes the resize-edge highlight from every window.
 // Called when the pointer leaves the surface, so no stale band lingers.
-func (m *WindowManager) ClearResizeHover() {
+func (m *WindowManager) ClearResizeBands() {
 	m.mu.RLock()
 	windows := make([]*Window, len(m.windows))
 	copy(windows, m.windows)
 	m.mu.RUnlock()
 	changed := false
 	for _, win := range windows {
-		if win.SetResizeHoverRects(nil) {
+		if win.SetResizeBandRects(nil) {
 			changed = true
 		}
 	}
@@ -755,7 +872,10 @@ func (m *WindowManager) SetScreenBounds(bounds core.UnitRect) {
 		desktop.SetBounds(bounds)
 	}
 
-	// Adjust maximized windows to client area
+	// Re-fit maximized windows to the client area -- which is not the whole
+	// of it for a window that says how far it grows, so this asks the same
+	// question MaximizeWindow does. Setting the raw area here undid the cap
+	// on every relayout, and a relayout happens at startup.
 	clientArea := m.ClientArea()
 	for _, win := range m.windows {
 		if win.IsMaximized() {
@@ -795,9 +915,21 @@ func (m *WindowManager) ClientArea() core.UnitRect {
 
 	// If desktop has a ClientArea method, use it
 	if da, ok := desktop.(interface{ ClientArea() core.UnitRect }); ok {
-		return da.ClientArea()
+		screen = da.ClientArea()
 	}
 
+	// A cell surface can only offer whole cells. Half a row at the bottom is
+	// a row nothing can be drawn in, and a room that offers it hands every
+	// window fitted to it a size the grid cannot express -- which is how a
+	// maximized window ended up a row taller than the room it filled.
+	//
+	// The origin floors and the extent floors WITH it: unlike a window, a
+	// room may not round up, because the space it is rounding up into is not
+	// there.
+	if !m.SmoothPositioning() {
+		metrics := core.DefaultCellMetrics()
+		screen = snapRectToCells(metrics, screen)
+	}
 	return screen
 }
 
@@ -1178,12 +1310,12 @@ func (m *WindowManager) DeactivateActiveWindow() {
 // This is used when the menu bar is dismissed via Escape.
 func (m *WindowManager) RestorePreviousActiveWindow() {
 	m.mu.Lock()
-	prev := m.previousActiveWindow
+	previous := m.previousActiveWindow
 	m.previousActiveWindow = nil
 	m.mu.Unlock()
 
-	if prev != nil {
-		m.ActivateWindow(prev)
+	if previous != nil {
+		m.ActivateWindow(previous)
 	}
 }
 
@@ -1614,10 +1746,11 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	}
 	metrics := core.DefaultCellMetrics()
 	titleTop := core.FindFrameBorderUnits(win)
-	if event.Y >= bounds.Y+titleTop+metrics.CellHeight {
+	fr := win.FrameRect()
+	if event.Y >= bounds.Y+fr.Y+titleTop+metrics.UnitsPerCellHeight {
 		return // below the title row
 	}
-	if win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) != TitleButtonNone {
+	if win.buttonAtWindowPoint(event.X-bounds.X, event.Y-bounds.Y) != TitleButtonNone {
 		return // no titlebar buttons while blocked
 	}
 	m.mu.Lock()
@@ -1629,6 +1762,7 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	m.dragNeedsButton = false
 	m.dragIsTearHandle = false
 	m.dragMoved = false
+	m.dragSnapped = false
 	m.pressedWindow = nil
 	m.mu.Unlock()
 }
@@ -1832,6 +1966,8 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		Bounds:             request.Bounds,
 		Anchor:             request.Anchor,
 		Paint:              request.Paint,
+		Inert:              request.Inert,
+		Fade:               request.Fade,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
@@ -1924,8 +2060,8 @@ func MapTrinketToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoi
 				pm = core.FindEffectiveCellMetrics(pw)
 			}
 			scrollX, scrollY := scroller.ScrollOffset()
-			result.X -= core.Unit(scrollX) * pm.CellWidth
-			result.Y -= core.Unit(scrollY) * pm.CellHeight
+			result.X -= core.Unit(scrollX) * pm.UnitsPerCellWidth
+			result.Y -= core.Unit(scrollY) * pm.UnitsPerCellHeight
 		}
 
 		// Crossing a window's content boundary: content coordinates are
@@ -1950,7 +2086,7 @@ func MapTrinketToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoi
 	return result
 }
 
-// ScreenCellMetrics returns the grid metrics of the screen/desktop
+// ScreenCellMetrics returns the cell metrics of the screen/desktop
 // surface - the denomination popup overlays are composited in.
 func (m *WindowManager) ScreenCellMetrics() core.CellMetrics {
 	m.mu.RLock()
@@ -2006,7 +2142,7 @@ func (m *WindowManager) positionWindow(win *Window) {
 	if cascadeIndex < 0 {
 		cascadeIndex = 0
 	}
-	offset := core.Unit(cascadeIndex) * metrics.CellWidth * 2
+	offset := core.Unit(cascadeIndex) * metrics.UnitsPerCellWidth * 2
 
 	x := clientArea.X + offset
 	y := clientArea.Y + offset
@@ -2058,16 +2194,17 @@ func (m *WindowManager) TileWindows() {
 	// render windows on the cell grid, so snap each cell there; shared edges
 	// round the same way and stay flush. Smooth (pixel) surfaces keep the exact
 	// proportional layout.
+	var snap core.CellMetrics
 	if !m.SmoothPositioning() {
-		metrics := core.DefaultCellMetrics()
+		snap = core.DefaultCellMetrics()
 		for i := range cells {
-			cells[i] = snapRectToCells(metrics, cells[i])
+			cells[i] = snapRectToCells(snap, cells[i])
 		}
 	}
 
 	for i, win := range windows {
 		win.Restore()
-		PlaceInCell(win, cells[i], items[i].Resizable)
+		PlaceInCell(win, cells[i], items[i].Resizable, snap)
 	}
 }
 
@@ -2082,16 +2219,58 @@ func snapRectToCells(m core.CellMetrics, r core.UnitRect) core.UnitRect {
 	return core.UnitRect{X: left, Y: top, Width: right - left, Height: bot - top}
 }
 
-// PlaceInCell moves win into cell: a resizable window fills it, a
-// non-resizable window keeps its own size at the cell's top-left.
-func PlaceInCell(win *Window, cell core.UnitRect, resizable bool) {
-	if resizable {
-		win.SetBounds(cell)
-		return
+// ConstrainSize holds a size between the window's own minimum and maximum.
+//
+// The maximum is capped first and the minimum raised after, so where the two
+// conflict the minimum wins, as it does wherever else they meet.
+func ConstrainSize(win *Window, size core.UnitSize) core.UnitSize {
+	if win == nil {
+		return size
 	}
-	b := win.Bounds()
-	b.X, b.Y = cell.X, cell.Y
-	win.SetBounds(b)
+	max, min := win.MaximumSize(), win.MinimumSize()
+	if max.Width >= 0 && size.Width > max.Width {
+		size.Width = max.Width
+	}
+	if max.Height >= 0 && size.Height > max.Height {
+		size.Height = max.Height
+	}
+	if size.Width < min.Width {
+		size.Width = min.Width
+	}
+	if size.Height < min.Height {
+		size.Height = min.Height
+	}
+	return size
+}
+
+// PlaceInCell moves win into cell: a resizable window fills as much of it as
+// it says it may grow to, a non-resizable window keeps its own size, and
+// either way what it does not fill it sits in the middle of -- the same thing
+// maximizing does with a room too big for the window.
+//
+// snap is the grid an origin must land on (a cell surface can render a window
+// nowhere else); its zero value asks for no snapping, which is what a smooth
+// surface wants.
+func PlaceInCell(win *Window, cell core.UnitRect, resizable bool, snap core.CellMetrics) {
+	size := win.Bounds().Size()
+	if resizable {
+		size = ConstrainSize(win, cell.Size())
+	}
+	r := core.UnitRect{
+		X:      cell.X + (cell.Width-size.Width)/2,
+		Y:      cell.Y + (cell.Height-size.Height)/2,
+		Width:  size.Width,
+		Height: size.Height,
+	}
+	// An origin floors onto the grid; it never ceils, which would push the
+	// window past the cell's far edge.
+	if snap.UnitsPerCellWidth > 0 {
+		r.X = snap.RoundDownToCellX(r.X)
+	}
+	if snap.UnitsPerCellHeight > 0 {
+		r.Y = snap.RoundDownToCellY(r.Y)
+	}
+	win.SetBounds(r)
 }
 
 // CascadeWindows arranges windows in a cascade.
@@ -2114,7 +2293,7 @@ func (m *WindowManager) CascadeWindows() {
 	// The cascade step includes the frame border, so each window's whole
 	// top chrome (border + titlebar) clears the one beneath it.
 	border := core.FindFrameBorderUnits(windows[0])
-	offset := metrics.CellWidth*2 + border
+	offset := metrics.UnitsPerCellWidth*2 + border
 
 	// Standard size for cascaded windows - align to cell boundaries
 	width := metrics.RoundDownToCellX(clientArea.Width * 3 / 4)
@@ -2129,11 +2308,17 @@ func (m *WindowManager) CascadeWindows() {
 		y := clientArea.Y + core.Unit(i)*offset
 
 		// A window that can't be resized is only repositioned, keeping its
-		// own size; only resizable windows adopt the standard cascade size.
+		// own size; only resizable windows adopt the standard cascade size,
+		// and only as far as they say they grow. The stepped corner is the
+		// arrangement, so a window held under the standard size stays on its
+		// step rather than centring on it.
 		w, h := width, height
 		if win.Flags()&WindowFlagNoResize != 0 {
 			b := win.Bounds()
 			w, h = b.Width, b.Height
+		} else {
+			size := ConstrainSize(win, core.UnitSize{Width: w, Height: h})
+			w, h = size.Width, size.Height
 		}
 
 		// Wrap if off screen
@@ -2170,9 +2355,14 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 	popups := m.popups
 	m.mu.RUnlock()
 
-	// Check popups first (highest z-order)
+	// Check popups first (highest z-order). An inert one is not there as
+	// far as the pointer is concerned: the press goes on to whatever it
+	// was lying over, and the clear below takes it off the screen.
 	for i := len(popups) - 1; i >= 0; i-- {
 		popup := popups[i]
+		if popup.Inert {
+			continue
+		}
 		if popup.Bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
 			if popup.HandleMousePress != nil {
 				return popup.HandleMousePress(event)
@@ -2299,9 +2489,16 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			// immediately. The titlebar sits below the top frame border, so
 			// the drag region covers the border AND the titlebar row (the
 			// kit's possibly-scaled RowH).
+			// A capped maximized window holds the whole room but draws
+			// its frame in the middle of it, so the band is measured from
+			// the frame rather than from the surface (FrameRect is the
+			// whole surface for every other window).
 			metrics := core.DefaultCellMetrics()
 			titleTop := core.FindFrameBorderUnits(win)
-			if event.Y < bounds.Y+titleTop+win.titleBarMetrics().RowH &&
+			fr := win.FrameRect()
+			titleBand := core.UnitRect{X: bounds.X + fr.X, Y: bounds.Y + fr.Y,
+				Width: fr.Width, Height: titleTop + win.titleBarMetrics().RowH}
+			if titleBand.Contains(core.UnitPoint{X: event.X, Y: event.Y}) &&
 				hasTitleBar(win.Flags(), win.State()) {
 
 				// Activate (focus + raise) for titlebar interaction
@@ -2311,7 +2508,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				// begin a tear-capable drag; a release in place is a click
 				// that toggles detach/dock.
 				if win.Flags()&WindowFlagTearable != 0 &&
-					win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) == TitleButtonTear {
+					win.buttonAtWindowPoint(event.X-bounds.X, event.Y-bounds.Y) == TitleButtonTear {
 					m.mu.Lock()
 					m.dragging = win
 					m.dragStartX = event.X
@@ -2320,6 +2517,8 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragOffsetY = event.Y - bounds.Y
 					m.dragIsTearHandle = true
 					m.dragMoved = false
+					m.dragSnapped = false
+					m.dragSnapped = false
 					m.dragNeedsButton = false
 					m.pressedWindow = nil
 					m.mu.Unlock()
@@ -2333,9 +2532,13 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				localEvent.X -= bounds.X
 				localEvent.Y -= bounds.Y
 				if win.HandleMousePress(localEvent) {
-					// Window handled it (button click) - update click tracking but don't drag
+					// The window took it -- a caption button. That is not
+					// half of a double-click, so the tracker is disarmed
+					// rather than fed: recording it lets the NEXT plain
+					// title click pair with a button press and toggle
+					// maximize a second time.
 					m.mu.Lock()
-					m.titleClicks.Press(event.X, event.Y, metrics)
+					m.titleClicks.Reset()
 					m.lastClickWindow = win
 					m.pressedWindow = nil
 					m.mu.Unlock()
@@ -2353,7 +2556,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				m.lastClickWindow = win
 				m.mu.Unlock()
 
-				if isDoubleClick && win.Flags()&WindowFlagNoMaximize == 0 {
+				if isDoubleClick && canMaximize(win.Flags()) {
 					if win.IsMaximized() {
 						win.Restore()
 					} else {
@@ -2378,6 +2581,8 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragNeedsButton = false
 					m.dragIsTearHandle = false
 					m.dragMoved = false
+					m.dragSnapped = false
+					m.dragSnapped = false
 					m.pressedWindow = nil // Clear pressed window for drag
 					m.mu.Unlock()
 				}
@@ -2447,6 +2652,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			popup := popups[i]
 			if popup.HandleMouseMove != nil {
 				if popup.HandleMouseMove(event) {
+					// The pointer is over the popup, so it is over
+					// nothing in the window below: a highlight left
+					// lit there would sit on a button the pointer
+					// walked off and never came back to.
+					m.clearWindowHover()
 					return true
 				}
 			}
@@ -2455,14 +2665,19 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle resize
 	if resizing != nil {
-		newBounds := ApplyResize(resizeOriginal, resizeEdge,
-			event.X-resizeStartX, event.Y-resizeStartY,
-			core.DefaultCellMetrics(), !m.SmoothPositioning(), m.ClientArea())
+		snap := !m.SmoothPositioning()
+		metrics := core.DefaultCellMetrics()
+		dx, dy := core.DragTravel(
+			core.UnitPoint{X: resizeStartX, Y: resizeStartY},
+			core.UnitPoint{X: event.X, Y: event.Y}, metrics, snap)
+		newBounds := ApplyResize(resizeOriginal, resizeEdge, dx, dy,
+			metrics, snap, m.ClientArea(),
+			WindowResizeLimits(resizing))
 
 		resizing.SetBounds(newBounds)
 		// Keep the edge highlight on the edge being dragged, tracking the
 		// window's new size instead of leaving it stale at the start bounds.
-		resizing.SetResizeHoverRects(m.resizeEdgeRects(resizing, resizeEdge))
+		resizing.SetResizeBandRects(m.resizeEdgeRects(resizing, resizeEdge))
 		m.RequestRepaint()
 		return true
 	}
@@ -2485,14 +2700,20 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// Any motion during a drag marks it moved (a handle press that
-		// never moves is a click, not a drag).
+		// A drag begins when the pointer LEAVES the point it was grabbed at.
+		// Until it does the gesture is still a click, and a click moves
+		// nothing -- neither the window's position nor, for a maximized one,
+		// its state.
 		m.mu.Lock()
-		if m.dragging == dragging {
+		if m.dragging == dragging && (event.X != m.dragStartX || event.Y != m.dragStartY) {
 			m.dragMoved = true
 		}
+		started := m.dragMoved
 		isTearHandle := m.dragIsTearHandle
 		m.mu.Unlock()
+		if !started {
+			return true
+		}
 
 		// Tear-off: past the surface edge, the host may lift the window
 		// out into its own OS surface (G4 granting) - but ONLY when the
@@ -2523,16 +2744,25 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		clientArea := m.ClientArea()
 		metrics := core.DefaultCellMetrics()
 
-		// If window is maximized, only restore if dragging DOWN (below menu bar)
-		// Dragging left/right while in menu bar area keeps window maximized
+		// A maximized window comes down when it is PULLED down: the pointer
+		// has to travel a row BELOW the point it was grabbed at. Its top edge
+		// is the top of the room already, so where the window would sit is at
+		// or below the menu bar from the moment it is grabbed, and any jitter
+		// a hand puts into a click answers that.
 		if dragging.IsMaximized() {
-			// Calculate where the window would be positioned
-			newY := event.Y - offsetY
+			m.mu.RLock()
+			startY, snapped := m.dragStartY, m.dragSnapped
+			m.mu.RUnlock()
+			pulled := event.Y - startY
 
-			// Only restore if dragging below the menu bar
-			if newY >= clientArea.Y {
-				// Get the normalized bounds before restore
-				oldBounds := dragging.Bounds()
+			if pulled >= core.FindEffectiveCellMetrics(dragging).UnitsPerCellHeight ||
+				(snapped && event.Y >= clientArea.Y) {
+				// The FRAME being held, before the restore takes it away. It is
+				// the whole window except on a capped maximized one, which holds
+				// the room and draws itself in the middle of it -- and there the
+				// grab offset, measured from the room's corner, is nowhere near
+				// the title bar the person actually grabbed.
+				oldFrame := dragging.FrameRect()
 
 				// Restore the window
 				dragging.Restore()
@@ -2543,28 +2773,36 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 				// This ensures content bounds are recalculated for normal mode (with borders)
 				dragging.Layout()
 
-				// Recalculate offset so the cursor stays proportionally positioned
-				// on the titlebar (e.g., if you grabbed the middle, keep it middle)
-				proportion := float64(offsetX) / float64(oldBounds.Width)
-				offsetX = core.Unit(proportion * float64(newBounds.Width))
+				// Re-express the grab inside that frame, then scale it across:
+				// across the width so the cursor stays proportionally placed on
+				// the narrower title bar (grab the middle, keep the middle), and
+				// down the height unchanged, since a title bar is the same
+				// height whatever the window's size.
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newBounds.Width) / float64(oldFrame.Width))
+				}
 
 				// Update stored offset
 				m.mu.Lock()
-				m.dragOffsetX = offsetX
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = false
 				m.mu.Unlock()
 			} else {
-				// Still in menu bar area - keep maximized, don't process further
+				// Not pulled down yet: a maximized window does not slide.
 				return true
 			}
 		}
 
 		// Move window
-		newX := event.X - offsetX
-		newY := event.Y - offsetY
+		origin := core.DragOrigin(
+			core.UnitPoint{X: event.X, Y: event.Y},
+			core.UnitPoint{X: offsetX, Y: offsetY},
+			metrics, !m.SmoothPositioning())
 
 		bounds := dragging.Bounds()
-		bounds.X = newX
-		bounds.Y = newY
+		bounds.X = origin.X
+		bounds.Y = origin.Y
 
 		// Snap-maximize only when the POINTER itself enters the menu-bar strip
 		// above the client area - not merely when the window's top edge is
@@ -2575,7 +2813,29 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// normal clamped move.
 		if !isTearHandle && event.Y < clientArea.Y && canMaximize(dragging.Flags()) && !justRestored {
 			if !dragging.IsMaximized() {
+				// The frame being held, before maximizing replaces it. The
+				// grab is measured from the window's corner and has to be
+				// re-expressed in the frame it will be holding, or the
+				// gesture goes on pointing into geometry that is gone -- and
+				// the restore that unwinds it inherits the error.
+				oldFrame := dragging.FrameRect()
 				m.MaximizeWindow(dragging)
+				dragging.Layout()
+				newFrame := dragging.FrameRect()
+
+				// Across the width, so the cursor stays proportionally placed
+				// on the wider title bar; down the height unchanged, a title
+				// bar being the same height whatever the window's size.
+				offsetX, offsetY = offsetX-oldFrame.X, offsetY-oldFrame.Y
+				if oldFrame.Width > 0 {
+					offsetX = core.Unit(float64(offsetX) * float64(newFrame.Width) / float64(oldFrame.Width))
+				}
+				offsetX, offsetY = offsetX+newFrame.X, offsetY+newFrame.Y
+
+				m.mu.Lock()
+				m.dragOffsetX, m.dragOffsetY = offsetX, offsetY
+				m.dragSnapped = true
+				m.mu.Unlock()
 				m.RequestRepaint()
 			}
 			return true
@@ -2608,15 +2868,18 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Not dragging or resizing in this manager. A held button means a gesture
 	// began elsewhere (a menu scrub, a selection drag) and is passing through:
-	// the resize-edge highlight is a hover affordance, so suppress it and drop
+	// the resize-edge cue belongs to a plain pointer, so suppress it and drop
 	// any lingering band. A plain move (no button) previews the edge.
 	if event.Buttons == 0 {
-		m.updateResizeHover(event.X, event.Y)
+		m.updateResizeBands(event.X, event.Y)
 	} else {
-		m.ClearResizeHover()
+		m.ClearResizeBands()
 	}
 
-	// Forward to desktop first (for menu bar drag navigation)
+	// Forward to desktop first (for menu bar drag navigation). An open
+	// dropdown swallows every move it is handed, so a window highlighted on
+	// the way to the menu bar has to be put out here -- otherwise it stays
+	// lit for as long as the menu is up, and past whatever the menu does.
 	m.mu.RLock()
 	desktop := m.desktop
 	active := m.activeWindow
@@ -2629,6 +2892,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
 			if handler.HandleMouseMove(event) {
+				m.clearWindowHover()
 				return true
 			}
 		}
@@ -2698,6 +2962,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 // HandleMouseRelease processes mouse button release.
 func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.Lock()
+	// The button coming up is what makes the NEXT press a second click
+	// rather than a repeat of this one.
+	m.titleClicks.Release()
 	dragging := m.dragging
 	resizing := m.resizing
 	pressedWin := m.pressedWindow
@@ -2709,6 +2976,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.pressedWindow = nil
 	m.dragIsTearHandle = false
 	m.dragMoved = false
+	m.dragSnapped = false
 	m.mu.Unlock()
 
 	if dragging != nil || resizing != nil {

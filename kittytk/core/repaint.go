@@ -58,6 +58,30 @@ func (w *TrinketBase) notifyAncestorsOfMove() {
 	noteSubtreeRepaint(self.Parent())
 }
 
+// EmbedHosted is implemented by a trinket that stands somewhere it is not
+// parented into: a tree's cell editor, drawn by the tree over the cell it is
+// editing. The host is who draws it, so the host is where the walk carries on.
+//
+// Without that step an editor's every keystroke marked nothing above it, and
+// the window holding the tree looked unchanged to a compositor caching its
+// texture -- the typed letter appeared whenever something else happened to
+// dirty that window, and not before.
+type EmbedHosted interface {
+	EmbedHost() Trinket
+}
+
+// repaintParent is the next trinket up: the parent, or for an embedded
+// trinket with no parent, the host standing in for one.
+func repaintParent(t Trinket) Trinket {
+	if p := t.Parent(); p != nil {
+		return p
+	}
+	if e, ok := t.(EmbedHosted); ok {
+		return e.EmbedHost()
+	}
+	return nil
+}
+
 // noteSubtreeRepaint tells every tracker from t up to the root that
 // something beneath it changed.
 //
@@ -70,6 +94,6 @@ func noteSubtreeRepaint(t Trinket) {
 		if tracker, ok := t.(SubtreeRepaintTracker); ok {
 			tracker.NoteSubtreeRepaint()
 		}
-		t = t.Parent()
+		t = repaintParent(t)
 	}
 }

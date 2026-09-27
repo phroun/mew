@@ -1,0 +1,411 @@
+case empty
+  text   (empty)
+  ltr    (nil)
+  ltr+m  (nil)
+  rtl    (nil)
+  rtl+m  (nil)
+  shape  (nil)
+  rtlatL 0
+  rtlatR 1
+
+case ascii
+  text   0068 0065 006C 006C 006F 0020 0077 006F 0072 006C 0064
+  ltr    (nil)
+  ltr+m  (nil)
+  rtl    perm=[0 1 2 3 4 5 6 7 8 9 10] rtl=00000000000
+  rtl+m  perm=[> 0 1 2 3 4 5 6 7 8 9 10 |] rtl=00000000000 marked
+  shape  (nil)
+  rtlatL 000000000000
+  rtlatR 000000000000
+
+case digits
+  text   0031 0032 0033 0034 0035
+  ltr    (nil)
+  ltr+m  (nil)
+  rtl    perm=[0 1 2 3 4] rtl=00000
+  rtl+m  perm=[> 0 1 2 3 4 |] rtl=00000 marked
+  shape  (nil)
+  rtlatL 000000
+  rtlatR 000000
+
+case punctuation
+  text   002E 002E 002E 0021 003F
+  ltr    (nil)
+  ltr+m  (nil)
+  rtl    perm=[4 3 2 1 0] rtl=11111
+  rtl+m  perm=[4 3 2 1 0] rtl=11111 marked
+  shape  (nil)
+  rtlatL 000000
+  rtlatR 111111
+
+case hebrew
+  text   05E9 05DC 05D5 05DD
+  ltr    perm=[3 2 1 0] rtl=1111
+  ltr+m  perm=[| 3 2 1 0 <] rtl=1111 marked
+  rtl    perm=[3 2 1 0] rtl=1111
+  rtl+m  perm=[3 2 1 0] rtl=1111 marked
+  shape  (nil)
+  rtlatL 11111
+  rtlatR 11111
+
+case hebrew words
+  text   05E9 05DC 05D5 05DD 0020 05E2 05D5 05DC 05DD
+  ltr    perm=[8 7 6 5 4 3 2 1 0] rtl=111111111
+  ltr+m  perm=[| 8 7 6 5 4 3 2 1 0 <] rtl=111111111 marked
+  rtl    perm=[8 7 6 5 4 3 2 1 0] rtl=111111111
+  rtl+m  perm=[8 7 6 5 4 3 2 1 0] rtl=111111111 marked
+  shape  (nil)
+  rtlatL 1111111111
+  rtlatR 1111111111
+
+case ltr in rtl
+  text   05D0 05D1 05D2 0020 0061 0062 0063 0020 05D3 05D4 05D5
+  ltr    perm=[2 1 0 3 4 5 6 7 10 9 8] rtl=11100000111
+  ltr+m  perm=[| 2 1 0 < > 3 4 5 6 7 | | 10 9 8 <] rtl=11100000111 marked
+  rtl    perm=[10 9 8 7 4 5 6 3 2 1 0] rtl=11110001111
+  rtl+m  perm=[| 10 9 8 7 < > 4 5 6 | 3 2 1 0] rtl=11110001111 marked
+  shape  (nil)
+  rtlatL 111000001111
+  rtlatR 111100011111
+
+case rtl in ltr
+  text   0061 0062 0063 0020 05E9 05DC 05D5 05DD 0020 0078 0079 007A
+  ltr    perm=[0 1 2 3 7 6 5 4 8 9 10 11] rtl=000011110000
+  ltr+m  perm=[0 1 2 3 | 7 6 5 4 < > 8 9 10 11 |] rtl=000011110000 marked
+  rtl    perm=[9 10 11 8 7 6 5 4 3 0 1 2] rtl=000111111000
+  rtl+m  perm=[> 9 10 11 | | 8 7 6 5 4 3 < > 0 1 2 |] rtl=000111111000 marked
+  shape  (nil)
+  rtlatL 0000111100000
+  rtlatR 0001111110000
+
+case digits in rtl
+  text   05E9 05DC 05D5 05DD 0020 0031 0032 0033 0020 05E2 05D5 05DC 05DD
+  ltr    perm=[12 11 10 9 8 5 6 7 4 3 2 1 0] rtl=1111100011111
+  ltr+m  perm=[| 12 11 10 9 8 < > 5 6 7 | | 4 3 2 1 0 <] rtl=1111100011111 marked
+  rtl    perm=[12 11 10 9 8 5 6 7 4 3 2 1 0] rtl=1111100011111
+  rtl+m  perm=[| 12 11 10 9 8 < > 5 6 7 | 4 3 2 1 0] rtl=1111100011111 marked
+  shape  (nil)
+  rtlatL 11111000111111
+  rtlatR 11111000111111
+
+case digits ending rtl
+  text   05E9 05DC 05D5 05DD 0020 0031 0032 0033
+  ltr    perm=[4 3 2 1 0 5 6 7] rtl=11111000
+  ltr+m  perm=[| 4 3 2 1 0 < > 5 6 7 |] rtl=11111000 marked
+  rtl    perm=[5 6 7 4 3 2 1 0] rtl=11111000
+  rtl+m  perm=[> 5 6 7 | 4 3 2 1 0] rtl=11111000 marked
+  shape  (nil)
+  rtlatL 111110000
+  rtlatR 111110000
+
+case arabic
+  text   0627 0644 0639 0631 0628 064A 0629
+  ltr    perm=[6 5 4 3 2 1 0] rtl=1111111 glyph=FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  ltr+m  perm=[| 6 5 4 3 2 1 0 <] rtl=1111111 marked glyph=FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  rtl    perm=[6 5 4 3 2 1 0] rtl=1111111 glyph=FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  rtl+m  perm=[6 5 4 3 2 1 0] rtl=1111111 marked glyph=FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  shape  FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  rtlatL 11111111
+  rtlatR 11111111
+
+case arabic lam alef
+  text   0644 0627 0020 0625 0644 0647 0020 0625 0644 0627 0020 0627 0644 0644 0647
+  ltr    perm=[14 13 12 11 10 9 8 7 6 5 4 3 2 1 0] rtl=111111111111111 glyph=FEFB ABSORBED 0020 FE87 FEDF FEEA 0020 FE87 FEFB ABSORBED 0020 FE8D FEDF FEE0 FEEA
+  ltr+m  perm=[| 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 <] rtl=111111111111111 marked glyph=FEFB ABSORBED 0020 FE87 FEDF FEEA 0020 FE87 FEFB ABSORBED 0020 FE8D FEDF FEE0 FEEA
+  rtl    perm=[14 13 12 11 10 9 8 7 6 5 4 3 2 1 0] rtl=111111111111111 glyph=FEFB ABSORBED 0020 FE87 FEDF FEEA 0020 FE87 FEFB ABSORBED 0020 FE8D FEDF FEE0 FEEA
+  rtl+m  perm=[14 13 12 11 10 9 8 7 6 5 4 3 2 1 0] rtl=111111111111111 marked glyph=FEFB ABSORBED 0020 FE87 FEDF FEEA 0020 FE87 FEFB ABSORBED 0020 FE8D FEDF FEE0 FEEA
+  shape  FEFB ABSORBED 0020 FE87 FEDF FEEA 0020 FE87 FEFB ABSORBED 0020 FE8D FEDF FEE0 FEEA
+  rtlatL 1111111111111111
+  rtlatR 1111111111111111
+
+case arabic harakat
+  text   0645 064E 0631 0652 062D 064E 0628 064B 0627
+  ltr    perm=[8 6 7 4 5 2 3 0 1] rtl=111111111 glyph=FEE3 064E FEAE 0652 FEA3 064E FE92 064B FE8E
+  ltr+m  perm=[| 8 6 7 4 5 2 3 0 1 <] rtl=111111111 marked glyph=FEE3 064E FEAE 0652 FEA3 064E FE92 064B FE8E
+  rtl    perm=[8 6 7 4 5 2 3 0 1] rtl=111111111 glyph=FEE3 064E FEAE 0652 FEA3 064E FE92 064B FE8E
+  rtl+m  perm=[8 6 7 4 5 2 3 0 1] rtl=111111111 marked glyph=FEE3 064E FEAE 0652 FEA3 064E FE92 064B FE8E
+  shape  FEE3 064E FEAE 0652 FEA3 064E FE92 064B FE8E
+  rtlatL 1111111111
+  rtlatR 1111111111
+
+case arabic tatweel
+  text   0628 0640 0640 0627 0628
+  ltr    perm=[4 3 2 1 0] rtl=11111 glyph=FE91 0640 0640 FE8E FE8F
+  ltr+m  perm=[| 4 3 2 1 0 <] rtl=11111 marked glyph=FE91 0640 0640 FE8E FE8F
+  rtl    perm=[4 3 2 1 0] rtl=11111 glyph=FE91 0640 0640 FE8E FE8F
+  rtl+m  perm=[4 3 2 1 0] rtl=11111 marked glyph=FE91 0640 0640 FE8E FE8F
+  shape  FE91 0640 0640 FE8E FE8F
+  rtlatL 111111
+  rtlatR 111111
+
+case arabic zwj
+  text   0628 200D 0628
+  ltr    perm=[2 0 1] rtl=111 glyph=FE91 200D FE90
+  ltr+m  perm=[| 2 0 1 <] rtl=111 marked glyph=FE91 200D FE90
+  rtl    perm=[2 0 1] rtl=111 glyph=FE91 200D FE90
+  rtl+m  perm=[2 0 1] rtl=111 marked glyph=FE91 200D FE90
+  shape  FE91 200D FE90
+  rtlatL 1111
+  rtlatR 1111
+
+case hebrew niqqud
+  text   05E9 05B8 05C1 05DC 05D5 05B9 05DD
+  ltr    perm=[6 4 5 3 0 1 2] rtl=1111111
+  ltr+m  perm=[| 6 4 5 3 0 1 2 <] rtl=1111111 marked
+  rtl    perm=[6 4 5 3 0 1 2] rtl=1111111
+  rtl+m  perm=[6 4 5 3 0 1 2] rtl=1111111 marked
+  shape  (nil)
+  rtlatL 11111111
+  rtlatR 11111111
+
+case hebrew and arabic
+  text   05E9 05DC 05D5 05DD 0020 0627 0644 0639 0631 0628 064A 0629
+  ltr    perm=[11 10 9 8 7 6 5 4 3 2 1 0] rtl=111111111111 glyph=05E9 05DC 05D5 05DD 0020 FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  ltr+m  perm=[| 11 10 9 8 7 6 5 4 3 2 1 0 <] rtl=111111111111 marked glyph=05E9 05DC 05D5 05DD 0020 FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  rtl    perm=[11 10 9 8 7 6 5 4 3 2 1 0] rtl=111111111111 glyph=05E9 05DC 05D5 05DD 0020 FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  rtl+m  perm=[11 10 9 8 7 6 5 4 3 2 1 0] rtl=111111111111 marked glyph=05E9 05DC 05D5 05DD 0020 FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  shape  05E9 05DC 05D5 05DD 0020 FE8D FEDF FECC FEAE FE91 FEF4 FE94
+  rtlatL 1111111111111
+  rtlatR 1111111111111
+
+case brackets in rtl
+  text   05E9 05DC 05D5 05DD 0020 0028 05E2 05D5 05DC 05DD 0029
+  ltr    perm=[9 8 7 6 5 4 3 2 1 0 10] rtl=11111111110
+  ltr+m  perm=[| 9 8 7 6 5 4 3 2 1 0 < > 10 |] rtl=11111111110 marked
+  rtl    perm=[10 9 8 7 6 5 4 3 2 1 0] rtl=11111111111
+  rtl+m  perm=[10 9 8 7 6 5 4 3 2 1 0] rtl=11111111111 marked
+  shape  (nil)
+  rtlatL 111111111100
+  rtlatR 111111111111
+
+case brackets in ltr
+  text   0061 0020 0028 05E9 05DC 05D5 05DD 0029 0020 0062
+  ltr    perm=[0 1 2 6 5 4 3 7 8 9] rtl=0001111000
+  ltr+m  perm=[0 1 2 | 6 5 4 3 < > 7 8 9 |] rtl=0001111000 marked
+  rtl    perm=[9 8 7 6 5 4 3 2 1 0] rtl=0111111110
+  rtl+m  perm=[> 9 | | 8 7 6 5 4 3 2 1 < > 0 |] rtl=0111111110 marked
+  shape  (nil)
+  rtlatL 00011110000
+  rtlatR 01111111100
+
+case cjk
+  text   65E5 672C 8A9E 0020 05E9 05DC 05D5 05DD
+  ltr    perm=[0 1 2 3 7 6 5 4] rtl=00001111
+  ltr+m  perm=[0 1 2 3 | 7 6 5 4 <] rtl=00001111 marked
+  rtl    perm=[7 6 5 4 3 0 1 2] rtl=00011111
+  rtl+m  perm=[| 7 6 5 4 3 < > 0 1 2 |] rtl=00011111 marked
+  shape  (nil)
+  rtlatL 000011111
+  rtlatR 000111111
+
+case latin combining
+  text   0063 0061 0066 0065 0301
+  ltr    (nil)
+  ltr+m  (nil)
+  rtl    perm=[0 1 2 3 4] rtl=00000
+  rtl+m  perm=[> 0 1 2 3 4 |] rtl=00000 marked
+  shape  (nil)
+  rtlatL 000000
+  rtlatR 000000
+
+case rlm
+  text   0061 0062 0063 200F 05E9 05DC 05D5 05DD
+  ltr    perm=[0 1 2 7 6 5 4 3] rtl=00011111
+  ltr+m  perm=[0 1 2 7 6 5 4 3] rtl=00011111 marked
+  rtl    perm=[7 6 5 4 3 0 1 2] rtl=00011111
+  rtl+m  perm=[7 6 5 4 3 > 0 1 2 |] rtl=00011111 marked
+  shape  (nil)
+  rtlatL 000111111
+  rtlatR 000111111
+
+case lrm
+  text   05E9 05DC 05D5 05DD 200E 0061 0062 0063
+  ltr    perm=[3 2 1 0 4 5 6 7] rtl=11110000
+  ltr+m  perm=[| 3 2 1 0 < 4 5 6 7] rtl=11110000 marked
+  rtl    perm=[4 5 6 7 3 2 1 0] rtl=11110000
+  rtl+m  perm=[4 5 6 7 3 2 1 0] rtl=11110000 marked
+  shape  (nil)
+  rtlatL 111100000
+  rtlatR 111100000
+
+case embedding
+  text   0061 0062 0063 202B 05E9 05DC 05D5 05DD 202C
+  ltr    perm=[0 1 2 3 7 6 5 4 8] rtl=000011110
+  ltr+m  perm=[0 1 2 3 | 7 6 5 4 < 8] rtl=000011110 marked
+  rtl    perm=[7 8 6 5 4 0 1 2 3] rtl=000011111
+  rtl+m  perm=[| 7 8 6 5 4 < > 0 1 2 3 |] rtl=000011111 marked
+  shape  (nil)
+  rtlatL 0000111100
+  rtlatR 0000111111
+
+case isolate
+  text   0061 0062 0063 2067 05E9 05DC 05D5 05DD 2069
+  ltr    perm=[0 1 2 3 7 6 5 4 8] rtl=000011110
+  ltr+m  perm=[0 1 2 3 | 7 6 5 4 < 8] rtl=000011110 marked
+  rtl    perm=[7 8 6 5 4 3 0 1 2] rtl=000111111
+  rtl+m  perm=[7 8 6 5 4 3 > 0 1 2 |] rtl=000111111 marked
+  shape  (nil)
+  rtlatL 0000111100
+  rtlatR 0001111111
+
+case first strong isolate
+  text   2068 05E9 05DC 05D5 05DD 2069 0020 0061 0062 0063
+  ltr    perm=[0 4 3 2 1 5 6 7 8 9] rtl=0111100000
+  ltr+m  perm=[0 | 4 3 2 1 < 5 6 7 8 9] rtl=0111100000 marked
+  rtl    perm=[7 8 9 6 4 5 3 2 1 0] rtl=1111111000
+  rtl+m  perm=[> 7 8 9 | 6 4 5 3 2 1 0] rtl=1111111000 marked
+  shape  (nil)
+  rtlatL 01111000000
+  rtlatR 11111110000
+
+case tab and control
+  text   0061 0009 0062 0007 0063
+  ltr    (nil)
+  ltr+m  (nil)
+  rtl    perm=[2 3 4 1 0] rtl=01000
+  rtl+m  perm=[> 2 3 4 | | 1 < > 0 |] rtl=01000 marked
+  shape  (nil)
+  rtlatL 000000
+  rtlatR 010000
+
+case nko
+  text   0061 0062 0063 0020 07D2 07DE 07CF 0020 0078 0079 007A
+  ltr    perm=[0 1 2 3 6 5 4 7 8 9 10] rtl=00001110000
+  ltr+m  perm=[0 1 2 3 | 6 5 4 < > 7 8 9 10 |] rtl=00001110000 marked
+  rtl    perm=[8 9 10 7 6 5 4 3 0 1 2] rtl=00011111000
+  rtl+m  perm=[> 8 9 10 | | 7 6 5 4 3 < > 0 1 2 |] rtl=00011111000 marked
+  shape  (nil)
+  rtlatL 000011100000
+  rtlatR 000111110000
+
+case syriac
+  text   0061 0062 0063 0020 0710 0712 0713 0020 0078 0079 007A
+  ltr    perm=[0 1 2 3 6 5 4 7 8 9 10] rtl=00001110000
+  ltr+m  perm=[0 1 2 3 | 6 5 4 < > 7 8 9 10 |] rtl=00001110000 marked
+  rtl    perm=[8 9 10 7 6 5 4 3 0 1 2] rtl=00011111000
+  rtl+m  perm=[> 8 9 10 | | 7 6 5 4 3 < > 0 1 2 |] rtl=00011111000 marked
+  shape  (nil)
+  rtlatL 000011100000
+  rtlatR 000111110000
+
+case samaritan
+  text   0061 0062 0063 0020 0800 0801 0020 0078 0079 007A
+  ltr    perm=[0 1 2 3 5 4 6 7 8 9] rtl=0000110000
+  ltr+m  perm=[0 1 2 3 | 5 4 < > 6 7 8 9 |] rtl=0000110000 marked
+  rtl    perm=[7 8 9 6 5 4 3 0 1 2] rtl=0001111000
+  rtl+m  perm=[> 7 8 9 | | 6 5 4 3 < > 0 1 2 |] rtl=0001111000 marked
+  shape  (nil)
+  rtlatL 00001100000
+  rtlatR 00011110000
+
+case thaana
+  text   0061 0062 0063 0020 078B 07A8 0020 0078 0079 007A
+  ltr    perm=[0 1 2 3 4 5 6 7 8 9] rtl=0000110000
+  ltr+m  perm=[0 1 2 3 | 4 5 < > 6 7 8 9 |] rtl=0000110000 marked
+  rtl    perm=[7 8 9 6 4 5 3 0 1 2] rtl=0001111000
+  rtl+m  perm=[> 7 8 9 | | 6 4 5 3 < > 0 1 2 |] rtl=0001111000 marked
+  shape  (nil)
+  rtlatL 00001100000
+  rtlatR 00011110000
+
+case well formed mark
+  text   05DC 05B4 05D0
+  ltr    perm=[2 0 1] rtl=111
+  ltr+m  perm=[| 2 0 1 <] rtl=111 marked
+  rtl    perm=[2 0 1] rtl=111
+  rtl+m  perm=[2 0 1] rtl=111 marked
+  shape  (nil)
+  rtlatL 1111
+  rtlatR 1111
+
+case baseless mark
+  text   05DC 0020 05B4 05D0
+  ltr    perm=[3 2 1 0] rtl=1111
+  ltr+m  perm=[| 3 2 1 0 <] rtl=1111 marked
+  rtl    perm=[3 2 1 0] rtl=1111
+  rtl+m  perm=[3 2 1 0] rtl=1111 marked
+  shape  (nil)
+  rtlatL 11111
+  rtlatR 11111
+
+case baseless mark at end
+  text   05DC 0020 05B4
+  ltr    perm=[0 1 2] rtl=100
+  ltr+m  perm=[| 0 < > 1 2 |] rtl=100 marked
+  rtl    perm=[2 1 0] rtl=111
+  rtl+m  perm=[2 1 0] rtl=111 marked
+  shape  (nil)
+  rtlatL 1000
+  rtlatR 1111
+
+case mixed script mark
+  text   05D0 05DC 0901 05D0
+  ltr    perm=[3 2 1 0] rtl=1111
+  ltr+m  perm=[| 3 2 1 0 <] rtl=1111 marked
+  rtl    perm=[3 2 1 0] rtl=1111
+  rtl+m  perm=[3 2 1 0] rtl=1111 marked
+  shape  (nil)
+  rtlatL 11111
+  rtlatR 11111
+
+case mark on dotted circle
+  text   0061 25CC 05B4 0062
+  ltr    (nil)
+  ltr+m  (nil)
+  rtl    perm=[0 1 2 3] rtl=0000
+  rtl+m  perm=[> 0 1 2 3 |] rtl=0000 marked
+  shape  (nil)
+  rtlatL 00000
+  rtlatR 00000
+
+case mark opening the line
+  text   05B4 05DC
+  ltr    perm=[0 1] rtl=01
+  ltr+m  perm=[0 | 1 <] rtl=01 marked
+  rtl    perm=[1 0] rtl=11
+  rtl+m  perm=[1 0] rtl=11 marked
+  shape  (nil)
+  rtlatL 011
+  rtlatR 111
+
+runes
+  0028 mirror=0029
+  0029 mirror=0028
+  05D0 strongRTL
+  05D1 strongRTL
+  05D2 strongRTL
+  05D3 strongRTL
+  05D4 strongRTL
+  05D5 strongRTL
+  05DC strongRTL
+  05DD strongRTL
+  05E2 strongRTL
+  05E9 strongRTL
+  0625 strongRTL
+  0627 strongRTL
+  0628 strongRTL
+  0629 strongRTL
+  062D strongRTL
+  0631 strongRTL
+  0639 strongRTL
+  0640 strongRTL
+  0644 strongRTL
+  0645 strongRTL
+  0647 strongRTL
+  064A strongRTL
+  0710 strongRTL
+  0712 strongRTL
+  0713 strongRTL
+  078B strongRTL
+  07CF strongRTL
+  07D2 strongRTL
+  07DE strongRTL
+  0800 strongRTL
+  0801 strongRTL
+  200E control
+  200F strongRTL control
+  202B control
+  202C control
+  2067 control
+  2068 control
+  2069 control

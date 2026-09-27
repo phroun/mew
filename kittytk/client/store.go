@@ -1,0 +1,132 @@
+package client
+
+// The app's side of its store on the desktop: a flat set of names, each holding
+// one blob.
+//
+// A key beginning with `#` names something the desktop may throw away at any
+// moment, the way `#` names a temporary table in SQL. That is the only
+// difference between what is kept and what is cached: one namespace, and the
+// name says how long the blob lives.
+//
+// Nothing here is a verb of its own. The store is an object the display knows
+// by name from the moment the connection opens, a blob in it is an object too,
+// and the protocol's own verbs do the work:
+//
+//	conn.OnStore(client.StoreBlob, func(ev *wire.Event) { ... })
+//	conn.Store().List(take)                      // q1=ask store inventory
+//	conn.Store().Write("figaro", "psl", bundle)  // set store blobs={ new blob ... }
+//	conn.Blob(id).Append(more)                   // do <blob> append bytes="..."
+//	conn.Blob(id).Read(2048, take)               // q2=ask <blob> bytes offset=2048
+//	conn.Blob(id).Drop()                         // destroy <blob>
+//
+// Every one of these SENDS. Nothing blocks for what comes back.
+//
+// # What was asked for is answered; what changed is heard
+//
+// The two questions -- the inventory and a chunk -- take a callback, and what
+// comes back reaches it as `answer`, quoting the key the question carried. So two
+// reads outstanding at once are told apart, and a question that found nothing
+// still completes. An inventory arrives as one answer per blob and a completion
+// carrying count=; a chunk is a single answer that completes its question, and
+// the next chunk is a new question asked from the offset this one reached.
+//
+// The three EVENTS are the store reporting a change nobody asked for: store_blob
+// when a blob is written or appended to, store_gone when one is dropped,
+// store_error for a refusal on either path. Those are subscribed to, with
+// OnStore, the way any other object's events are.
+//
+// The desktop decides where any of it physically lives. An app names its
+// material and nothing else about it.
+
+import (
+	"fmt"
+
+	"github.com/phroun/kittytk/wire"
+)
+
+// CacheMark begins the key of a blob the desktop may throw away.
+const CacheMark = "#"
+
+// The events the store raises. All of them name the store as their source, so
+// one subscription hears everything. None of them answers a question: see the
+// file comment.
+const (
+	StoreBlob  = "store_blob"  // one blob: what it is and how big
+	StoreGone  = "store_gone"  // a blob is no longer there
+	StoreError = "store_error" // what went wrong, and with which key
+)
+
+// StoreID returns the ObjectID of this connection's store, as reported in the
+// handshake. It is 0 for a connection that has none (an in-process one, which
+// has no handshake). The display also knows the store by name, so `ask store
+// inventory` says the same thing as this id does.
+func (c *Conn) StoreID() uint64 { return c.Init(wire.StoreName) }
+
+// Store is the connection's store as a handle: an object like any other, so
+// Set and On reach it directly for anything this type does not wrap.
+func (c *Conn) Store() Store { return Store{c.Given(wire.StoreName)} }
+
+// Blob is one blob of the store by the id it was named with. An app never
+// invents one of these: it learns ids from an inventory's answers and from
+// store_blob events, and a blob has no name of its own -- the store's keys name
+// what is IN it, not the handles it hands out for writing.
+func (c *Conn) Blob(id uint64) Blob { return Blob{Handle{c: c, id: id}} }
+
+// OnStore registers a handler for one of the store's events and opens the flow
+// for it. Subscribing does not ask what is in the store: List does that, and is
+// answered rather than heard, so an app after the inventory need subscribe to
+// nothing at all.
+func (c *Conn) OnStore(event string, fn func(*wire.Event)) { c.Store().On(event, fn) }
+
+// Store is the app's whole store.
+type Store struct{ Handle }
+
+// Write puts a blob in the store, replacing whatever the key held.
+//
+// A key is a NAME, not a path: no slashes, nothing that is only digits, nothing
+// unprintable, and `#` only at the front. It is the same name the blob carries
+// when it becomes a bundle, and an address reaches into a bundle with slashes
+// and positions.
+//
+// typ is one of txt, psl, bin, ini or conf; the desktop refuses anything else.
+// The answer is a store_blob naming the id the blob can be addressed by, which
+// is how something larger than one statement is continued -- see Blob.Append.
+func (s Store) Write(key, typ string, data []byte) error {
+	return s.Set(fmt.Sprintf("blobs={ new blob key=%s type=%s data=%s }",
+		wire.Quote(key), typ, wire.QuoteBlob(data)))
+}
+
+// List asks what the store holds, calling fn for each blob and once more for the
+// completion, which carries count=.
+//
+// The completion arrives whether or not a blob came before it, so a store holding
+// nothing is told apart from one still being listed -- and holding nothing is an
+// answer rather than a refusal.
+func (s Store) List(fn func(*wire.Answer)) error { return s.AskFor("inventory", fn) }
+
+// Blob is one blob of the store.
+type Blob struct{ Handle }
+
+// Append adds to the end of the blob, as a terminal is fed. It is how something
+// too large for one statement is written: Write the first piece, then append the
+// rest.
+func (b Blob) Append(data []byte) error {
+	return b.Do("append bytes=" + wire.QuoteBlob(data))
+}
+
+// Replace writes the blob's whole contents again.
+func (b Blob) Replace(data []byte) error {
+	return b.Set("data=" + wire.QuoteBlob(data))
+}
+
+// Read asks for the chunk of the blob that starts at offset, calling fn with it.
+//
+// One chunk COMPLETES the question: it says where it starts and whether it is the
+// last, and reading on is a fresh Read from the end of what arrived.
+func (b Blob) Read(offset int, fn func(*wire.Answer)) error {
+	return b.AskFor(fmt.Sprintf("bytes offset=%d", offset), fn)
+}
+
+// Drop takes the blob out of the store, which is the whole of what it was. It
+// answers with a store_gone naming the key.
+func (b Blob) Drop() error { return b.Destroy() }

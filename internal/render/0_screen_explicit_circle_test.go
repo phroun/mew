@@ -23,9 +23,9 @@ func TestExplicitDottedCircleIsABase(t *testing.T) {
 	if got := termCols(strings.TrimRight(out, " ")); got != 2 {
 		t.Fatalf("explicit circle+mark should be one cell + x = 2 cols, got %d (%q)", got, out)
 	}
-	// The mark still rides the previous cell (the cluster is not defective).
+	// The mark still rides the preceding cell (the cluster is not defective).
 	runes := []rune("◌" + holam + "x")
-	if textwidth.DefectiveMark(textwidth.PrevBase(runes, 1), runes[1]) {
+	if textwidth.DefectiveMark(textwidth.PrecedingBase(runes, 1), runes[1]) {
 		t.Fatalf("a mark on an explicit dotted circle must not be defective")
 	}
 }

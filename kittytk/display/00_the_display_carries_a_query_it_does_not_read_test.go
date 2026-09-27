@@ -1,0 +1,212 @@
+package display_test
+
+// A query put to one application by another, carried by the display.
+//
+// The display has no orchestrated reason to open a query yet, and does not
+// need one to carry the question: `do host relay` hands the statements over
+// and sends back whatever comes, as `relay` events subscribed to beforehand --
+// another application's speech is not the answer to a question, arriving
+// whenever it speaks and with no last one. So the whole reverse direction can be driven
+// over a real connection -- an application serving, a display routing, a tool
+// asking -- before the piece that decides WHEN to ask exists.
+//
+// It is off unless the display opens it, and that is tested here too: an
+// application that can relay can address another application's objects.
+
+import (
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/wire"
+	"github.com/phroun/serval"
+)
+
+// servedRelay runs a headless desktop with the debug relay open, and returns
+// the socket it is on.
+func servedRelay(t *testing.T) string {
+	t.Helper()
+	_, srv, sock, done := servedDesktop(t)
+	t.Cleanup(done)
+	srv.SetRelayEnabled(true)
+	return sock
+}
+
+// served is a connection whose application serves one source of three records.
+func served(t *testing.T, sock string) *client.Conn {
+	t.Helper()
+	conn := dialSocket(t, sock, "servingapp")
+	rows := []struct {
+		key  int64
+		name string
+	}{{1, "alpha"}, {2, "beta"}, {3, "gamma"}}
+	if _, err := conn.ProvideSource("letters", func(f *client.Fill) {
+		f.Ordered()
+		for _, r := range rows {
+			if f.Count > 0 && f.Sent() >= f.Count {
+				break
+			}
+			_ = f.Record(r.key, serval.Named("name", r.name))
+		}
+		_ = f.Exhausted()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return conn
+}
+
+// relayed asks the display to carry text to servingapp and collects the
+// statements that come back.
+func relayed(t *testing.T, conn *client.Conn, text string) ([]string, error) {
+	t.Helper()
+	var mu sync.Mutex
+	var lines []string
+	done := make(chan struct{})
+	var once sync.Once
+
+	conn.OnHost(client.EventRelay, func(ev *wire.Event) {
+		s, ok := ev.Text("text")
+		if !ok {
+			return
+		}
+		mu.Lock()
+		lines = append(lines, s)
+		mu.Unlock()
+		if strings.Contains(s, " complete") {
+			once.Do(func() { close(done) })
+		}
+	})
+	if err := conn.Relay("servingapp", text); err != nil {
+		return nil, err
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the answer never completed")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return append([]string(nil), lines...), nil
+}
+
+func TestTheDisplayCarriesAQueryItDoesNotRead(t *testing.T) {
+	sock := servedRelay(t)
+
+	app := served(t, sock)
+	defer app.Close()
+	tool := dialSocket(t, sock, "asking tool")
+	defer tool.Close()
+
+	lines, err := relayed(t, tool, `q=new query source="letters" sort={ name natural } count=2`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(lines, "\n")
+
+	// The application named the query, and the reply carrying that name came
+	// back before anything that uses it.
+	if !strings.HasPrefix(got, "reply q=") {
+		t.Fatalf("the first thing back was not the reply:\n%s", got)
+	}
+	for _, want := range []string{
+		// The order is declared before the records rather than after them, so
+		// it rides on the first of them.
+		`result 1 ordered id=1 record={ name "alpha" }`,
+		// And the terminator rides on the last.
+		`result 1 id=2 record={ name "beta" } complete exhausted`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing:\n  %s\nin:\n%s", want, got)
+		}
+	}
+	// It was asked for two and sent two: the scope was honoured.
+	if n := strings.Count(got, "result 1 "); n != 2 {
+		t.Errorf("%d records came back, want 2:\n%s", n, got)
+	}
+}
+
+// A refusal comes back the same way an answer does.
+func TestARelayedRefusalComesBack(t *testing.T) {
+	sock := servedRelay(t)
+
+	app := served(t, sock)
+	defer app.Close()
+	tool := dialSocket(t, sock, "asking tool")
+	defer tool.Close()
+
+	var mu sync.Mutex
+	var got string
+	seen := make(chan struct{})
+	var once sync.Once
+	tool.OnHost(client.EventRelay, func(ev *wire.Event) {
+		if s, ok := ev.Text("text"); ok {
+			mu.Lock()
+			got = s
+			mu.Unlock()
+			once.Do(func() { close(seen) })
+		}
+	})
+	if err := tool.Relay("servingapp", `q=new query source="ledgers" count=1`); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-seen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing came back")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.HasPrefix(got, "error text=") || !strings.Contains(got, "ledgers") {
+		t.Errorf("the refusal came back as %q", got)
+	}
+}
+
+// The relay is shut unless the display opens it, and says so.
+func TestTheRelayIsShutUnlessTheDisplayOpensIt(t *testing.T) {
+	_, srv, sock, done := servedDesktop(t)
+	t.Cleanup(done)
+	if srv.RelayEnabled() {
+		t.Fatal("the relay was open with nothing opening it")
+	}
+
+	app := served(t, sock)
+	defer app.Close()
+	tool := dialSocket(t, sock, "asking tool")
+	defer tool.Close()
+
+	err := tool.Relay("servingapp", `q=new query source="letters" count=1`)
+	if err == nil || !strings.Contains(err.Error(), "not open") {
+		t.Errorf("relaying with the relay shut read %v", err)
+	}
+}
+
+// Relaying to something that is not connected is refused, by name.
+func TestRelayingToNobodyIsRefused(t *testing.T) {
+	sock := servedRelay(t)
+
+	tool := dialSocket(t, sock, "asking tool")
+	defer tool.Close()
+
+	err := tool.Relay("nobody", `q=new query source="x" count=1`)
+	if err == nil || !strings.Contains(err.Error(), "nobody") {
+		t.Errorf("relaying to nobody read %v", err)
+	}
+}
+
+// The display does not read what it carries, but it does refuse text that is
+// not the language at all -- there is nothing to hand over otherwise.
+func TestTheDisplayRefusesTextThatIsNotTheLanguage(t *testing.T) {
+	sock := servedRelay(t)
+
+	app := served(t, sock)
+	defer app.Close()
+	tool := dialSocket(t, sock, "asking tool")
+	defer tool.Close()
+
+	err := tool.Relay("servingapp", `q=new query source={ unterminated`)
+	if err == nil {
+		t.Error("text that will not parse was carried anyway")
+	}
+}

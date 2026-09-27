@@ -31,7 +31,7 @@ static void on_newwin(void *ud) {
     kt_ui *u = kt_build(c2, s);
     free(s);
     if (!u) { g_fail = 1; g_done = 1; return; }
-    for (int i = 0; i < 10; i++) kt_exec(c2, "tile");
+    for (int i = 0; i < 10; i++) kt_exec(c2, "do host tile");
     kt_ui_free(u);
     g_done = 1;
 }

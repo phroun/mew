@@ -21,13 +21,16 @@ type (
 	ValueKind       = wire.ValueKind
 	FlagState       = wire.FlagState
 	Event           = wire.Event
+	Answer          = wire.Answer
 	Reply           = wire.Reply
 	Scanner         = wire.Scanner
 	PropInfo        = wire.PropInfo
 	TypeInfo        = wire.TypeInfo
 	EventInfo       = wire.EventInfo
+	AskInfo         = wire.AskInfo
 	EventFieldDesc  = wire.EventFieldDesc
 	Vocabulary      = wire.Vocabulary
+	Trouble         = wire.Trouble
 	EventDispatcher = wire.EventDispatcher
 )
 
@@ -38,22 +41,63 @@ const (
 	FlagFalse         = wire.FlagFalse
 	FlagIndeterminate = wire.FlagIndeterminate
 
+	// AnswerVerb is what an ask is answered with, for a type declaring that its
+	// question answers rather than raising events.
+	AnswerVerb = wire.AnswerVerb
+
 	WordValue   = wire.WordValue
 	NumberValue = wire.NumberValue
 	StringValue = wire.StringValue
 	BlockValue  = wire.BlockValue
+
+	// The names a connection's application, store and host answer to.
+	AppName   = wire.AppName
+	StoreName = wire.StoreName
+	HostName  = wire.HostName
+	InitVerb  = wire.InitVerb
+
+	// The verbs a query travels under, and the verb it is answered with.
+	QueryVerb  = wire.QueryVerb
+	ResultVerb = wire.ResultVerb
+
+	// PlaceVerb and StaleVerb are the other two things an application says
+	// rather than asks: where a record stands, and what has stopped being true.
+	PlaceVerb = wire.PlaceVerb
+	StaleVerb = wire.StaleVerb
+
+	// TroubleVerb is what the display says went wrong on a batch's behalf without
+	// stopping it, said just before that batch's reply.
+	TroubleVerb = wire.TroubleVerb
 )
 
 // Language functions.
 var (
 	Parse              = wire.Parse
 	Quote              = wire.Quote
+	QuoteBlob          = wire.QuoteBlob
 	NewEvent           = wire.NewEvent
 	ParseEvent         = wire.ParseEvent
 	EncodeReply        = wire.EncodeReply
 	DecodeReply        = wire.DecodeReply
 	EncodeError        = wire.EncodeError
+	EncodeTrouble      = wire.EncodeTrouble
+	DecodeTrouble      = wire.DecodeTrouble
 	NewScanner         = wire.NewScanner
+	EncodeStatement    = wire.EncodeStatement
 	DecodeVocabulary   = wire.DecodeVocabulary
 	NewEventDispatcher = wire.NewEventDispatcher
+)
+
+// The argument constructors, for anything building a statement's arguments --
+// an answer's payload above all, which is named values and nothing else.
+var (
+	// Named is one named argument carrying a value of whatever Go type it is
+	// given, the way an event's fields are built.
+	Named = wire.Named
+
+	// NewInt is an integer value.
+	NewInt = wire.NewInt
+
+	// Blob is one named argument carrying bytes rather than text.
+	Blob = wire.Blob
 )

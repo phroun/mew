@@ -2,6 +2,9 @@ package client
 
 import (
 	"fmt"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/phroun/kittytk/wire"
 )
@@ -13,6 +16,12 @@ import (
 type Handle struct {
 	c  *Conn
 	id uint64
+	// name is the session key the display already knows this object by, used
+	// in place of the id in the statements sent for it. Only the two objects
+	// the connection is given -- its application and its store -- have one;
+	// everything a client builds is addressed by the id its key surfaced.
+	// Events are routed by id either way.
+	name string
 }
 
 // ID returns the object's wire identity.
@@ -21,14 +30,43 @@ func (h Handle) ID() uint64 { return h.id }
 // Valid reports whether the handle references anything.
 func (h Handle) Valid() bool { return h.c != nil && h.id != 0 }
 
+// addr is how a statement names this object.
+func (h Handle) addr() string {
+	if h.name != "" {
+		return h.name
+	}
+	return strconv.FormatUint(h.id, 10)
+}
+
 // Set applies raw property text to the object: h.Set(`caption="Hi" !enabled`).
 // The typed setters below are preferred; this is the escape hatch
 // that keeps the full vocabulary reachable.
-func (h Handle) Set(args string) error { return h.c.set(h.id, args) }
+func (h Handle) Set(args string) error { return h.c.set(h.addr(), args) }
 
 // Destroy removes the object (detaches trinkets, closes windows).
 func (h Handle) Destroy() error {
-	_, err := h.c.Exec(fmt.Sprintf("destroy %d", h.id))
+	_, err := h.c.Exec("destroy " + h.addr())
+	return err
+}
+
+// Ask puts a question to the object: h.Ask("bytes offset=2048") sends
+// `ask <target> bytes offset=2048`.
+//
+// It carries NO correlation key, so the answer carries none either and nothing
+// here routes it -- which suits an asker that is not waiting, and nothing else.
+// AskFor is the one to use to be told: it mints a key and calls back with each
+// piece of the answer.
+func (h Handle) Ask(question string) error {
+	_, err := h.c.Exec(fmt.Sprintf("ask %s %s", h.addr(), question))
+	return err
+}
+
+// Do tells the object to do something: h.Do("append bytes=\"...\"") sends
+// `do <target> append bytes="..."`. Nothing comes back from it -- that is what
+// separates an action from a question -- though what it changes may raise the
+// events the object declares.
+func (h Handle) Do(action string) error {
+	_, err := h.c.Exec(fmt.Sprintf("do %s %s", h.addr(), action))
 	return err
 }
 
@@ -36,6 +74,111 @@ func (h Handle) Destroy() error {
 func (h Handle) On(event string, fn func(*wire.Event)) {
 	h.c.on(h.id, event, fn)
 }
+
+// Decide answers a decision an event carried: allow and the display does the thing
+// it asked about, deny and it does not.
+//
+// A few events are questions rather than announcements -- a window asking whether it
+// may close is the one to know -- and each carries a `decision=` field naming the
+// question. This is that answer:
+//
+//	ui.Object("w").On("window_closing", func(ev *wire.Event) {
+//	    id, _ := ev.Uint(wire.DecisionField)
+//	    c.Decide(id, !unsavedWork)
+//	})
+//
+// **Answer every question you subscribe to, and promptly.** A window's close waits
+// about five seconds and then asks the person whether to force it, naming the
+// application that did not respond -- because the display cannot tell one that is
+// still thinking from one that is never going to answer. Nothing is owed for an
+// event that carries no `decision=`, which is nearly all of them.
+//
+// It is `do <id> allow` and nothing more; Object(id).Do(wire.DecisionAllow) is the
+// same statement said longhand.
+func (c *Conn) Decide(decision uint64, allow bool) error {
+	word := wire.DecisionDeny
+	if allow {
+		word = wire.DecisionAllow
+	}
+	return c.Object(decision).Do(word)
+}
+
+// Asking says the answer is a person's, and goes on saying it until the returned
+// func is called.
+//
+// **A confirmation dialog is not an answer.** It is the time taken to reach one, and
+// the display cannot see it: from there, an application holding a question in front
+// of somebody and one that has stopped look exactly alike. That is what the deadline
+// on a decision is for, and why it would otherwise put its own question -- "did not
+// respond; force the window closed?" -- on top of yours.
+//
+// So say so, for as long as it is true:
+//
+//	win.On("window_closing", func(ev *wire.Event) {
+//	    stop := c.Asking(ev)
+//	    askSomebody(func(yes bool) { stop(); c.Decide(id, yes) })
+//	})
+//
+// The pace comes off the event: the display states how long it will wait, and this
+// speaks twice inside every wait, so one ping going missing costs nothing. Stopping
+// is not answering -- `stop` only ends the pinging, and a decision still wants its
+// `allow` or `deny`. Calling it twice is safe, and so is never calling it: the
+// pinging ends with the connection, and ends by itself the moment the display stops
+// recognising the decision, which is what a question it has given up on looks like.
+//
+// A ping already on the wire when `stop` is called cannot be recalled, and costs
+// nothing: it buys one more wait, and the answer that follows settles the question
+// well inside it.
+//
+// An event carrying no decision, or one nobody is timing, hands back a func that
+// does nothing -- there is nothing to keep alive.
+func (c *Conn) Asking(ev *wire.Event) (stop func()) {
+	nothing := func() {}
+	if ev == nil {
+		return nothing
+	}
+	decision, ok := ev.Uint(wire.DecisionField)
+	if !ok {
+		return nothing
+	}
+	within, _ := ev.Int(wire.DecisionWithinField)
+	if within <= 0 {
+		return nothing
+	}
+	// Twice per wait, so the deadline is only ever reached by two in a row going
+	// unsent -- which is a connection in trouble, not a slow reader.
+	every := time.Duration(within) * time.Millisecond / 2
+	if every < 10*time.Millisecond {
+		every = 10 * time.Millisecond
+	}
+
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-c.closed:
+				return
+			case <-t.C:
+				// A refusal means the display is no longer holding this
+				// question: it gave up, or somebody else answered. Either way
+				// there is nothing left to keep alive.
+				if err := c.Object(decision).Do(wire.DecisionWaiting); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// Object is a handle on any display-side object by its id -- one a key surfaced, or
+// one an event named, which is how a decision and a store's blobs arrive.
+func (c *Conn) Object(id uint64) Handle { return Handle{c: c, id: id} }
 
 // Target returns the in-process constructed object (the real trinket).
 // IN-PROCESS ESCAPE HATCH ONLY: nil under a remote transport. Exists

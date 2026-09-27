@@ -266,6 +266,8 @@ func TestTornFrameLeavesCornersTransparent(t *testing.T) {
 	core.SetTextMeasurer(px)
 
 	win := NewWindow("torn")
+	// A torn window is an OS window, sized in device pixels on no cell grid.
+	win.SetSmoothPositioning(true)
 	win.SetBounds(core.UnitRect{Width: 400, Height: 200})
 	win.Layout()
 	win.Paint(core.NewPainter(px))
@@ -292,18 +294,19 @@ func TestTearOffHostZoomDragRestoreAndSnap(t *testing.T) {
 
 	h.ToggleZoom() // 0,30 1600x970
 
-	// Grab the zoomed title at its center and drag down: restore,
-	// with the grab re-proportioned onto the restored width.
+	// Grab the zoomed title at its center and pull the POINTER down a row:
+	// restore, with the grab re-proportioned onto the restored width.
 	gx, gy = 800, 200
 	h.Event(core.MousePressEvent{X: 800, Y: 8, Button: core.LeftButton})
+	gy = 216
 	h.Event(core.MouseMoveEvent{X: 800, Y: 170, Buttons: core.LeftButton})
 	if win.IsMaximized() || surf.size.Width != 200 {
 		t.Fatalf("drag did not restore the zoomed window: maximized=%v width=%d",
 			win.IsMaximized(), surf.size.Width)
 	}
 	// Grab was at the title's center: it stays centered (800/1600*200 = 100).
-	if surf.x != 800-100 || surf.y != 200-8 {
-		t.Errorf("restored window at %d,%d; want %d,%d", surf.x, surf.y, 800-100, 200-8)
+	if surf.x != 800-100 || surf.y != 216-8 {
+		t.Errorf("restored window at %d,%d; want %d,%d", surf.x, surf.y, 800-100, 216-8)
 	}
 
 	// Motion below the top strip re-arms the snap latch...
@@ -562,5 +565,95 @@ func TestTearOffHostPixelAnchoredWhenZoomed(t *testing.T) {
 	h.ToggleZoom()
 	if h.KeepPixelSizeOnFontZoom() {
 		t.Fatal("restoring the zoom returns to unit-size preservation")
+	}
+}
+
+// Zooming an OS window fills the work area whatever maximum the window
+// carries, and the window draws its frame at that maximum in the middle of
+// the surface, shading the rest -- which is what maximizing looks like on the
+// desktop too.
+//
+// Capping the OS WINDOW instead is what left a bounded window looking exactly
+// as it did before: a frame the size of its maximum, sitting on the display
+// with no room around it and nothing shaded, and -- since a surface below the
+// work area reads as one the OS resized out of it -- not maximized for long
+// either.
+func TestTearOffHostZoomFillsTheWorkAreaAndFramesTheMaximumInside(t *testing.T) {
+	// The fake's work area is 1600x970 at 0,30.
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	win.SetMaximumSize(core.UnitSize{Width: 800, Height: 400})
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	h.zoomToWorkArea()
+
+	if surf.size.Width != 1600 || surf.size.Height != 970 {
+		t.Errorf("the OS window is %dx%d, want the whole 1600x970 work area",
+			surf.size.Width, surf.size.Height)
+	}
+	if surf.x != 0 || surf.y != 30 {
+		t.Errorf("the OS window sits at %d,%d, want the work area's origin 0,30", surf.x, surf.y)
+	}
+	if !win.IsMaximized() {
+		t.Error("the window is not maximized after zooming")
+	}
+
+	// The frame is the maximum, centered in the surface, with the rest shade.
+	fr := win.FrameRect()
+	if fr.Width != 800 || fr.Height != 400 {
+		t.Errorf("the frame is %v, want the window's maximum of 800x400", fr.Size())
+	}
+	// Exactly centred: an OS window stands on no cell grid, so nothing here
+	// floors (see Window.gridded).
+	wantX, wantY := core.Unit((1600-800)/2), core.Unit((970-400)/2)
+	if fr.X != wantX || fr.Y != wantY {
+		t.Errorf("the frame sits at %d,%d, want %d,%d -- centered in the surface",
+			fr.X, fr.Y, wantX, wantY)
+	}
+}
+
+// A minimum still raises the OS window: a surface smaller than the window
+// will draw is a window with its own edges off the screen.
+func TestTearOffHostZoomRaisesToTheWindowsMinimum(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	win.SetMinimumSize(core.UnitSize{Width: 2000, Height: 0})
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	h.zoomToWorkArea()
+	if surf.size.Width != 2000 {
+		t.Errorf("a minimum of 2000 against a 1600 work area gave %d, want the minimum",
+			surf.size.Width)
+	}
+}
+
+// Zooming is what maximizing means once a window is out on the OS, so a window
+// that may not be maximized may not be zoomed: not by a title double-click,
+// and not by ToggleZoom itself.
+func TestTearOffHostRefusesToZoomAWindowThatMayNot(t *testing.T) {
+	for _, flags := range []WindowFlags{WindowFlagNoResize, WindowFlagNoMaximize} {
+		surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+		win := NewWindow("torn")
+		win.SetFlags(flags)
+		h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+		h.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 120, Y: 8, Button: core.LeftButton})
+		h.Event(core.MousePressEvent{X: 121, Y: 8, Button: core.LeftButton})
+		if win.IsMaximized() || surf.size.Width != 200 {
+			t.Errorf("flags %v: a title double-click zoomed it to %v", flags, surf.size)
+		}
+		// The press is not swallowed either: it starts a drag, so a fixed
+		// window can still be moved by someone who clicked twice. Checked
+		// before the release, which is what ends the drag.
+		if !h.Dragging() {
+			t.Errorf("flags %v: the second click was swallowed instead of dragging", flags)
+		}
+		h.Event(core.MouseReleaseEvent{X: 121, Y: 8, Button: core.LeftButton})
+
+		h.ToggleZoom()
+		if win.IsMaximized() || surf.size.Width != 200 {
+			t.Errorf("flags %v: ToggleZoom zoomed it to %v", flags, surf.size)
+		}
 	}
 }

@@ -11,33 +11,32 @@ import (
 
 // A key press is named from the KEY, always.
 //
-// It was not: a plain or shifted printable answered "" here and got its name
-// from the SDLTextInput event that followed, because the character was being
-// used as the name. Identity and text are different things arriving in
-// different events, and taking one from the other left an ordinary letter with
-// no name of its own until a text event turned up to supply one.
+// Identity and text are different things arriving in different SDL events, and
+// a name taken from the text leaves an ordinary letter nameless until a text
+// event turns up to supply one. The key is the POSITION it sits at, which the
+// scancode gives (see gridKeys).
 func TestPlainPrintablesAreNamedFromTheKey(t *testing.T) {
 	for _, c := range []struct {
-		name string
-		sym  sdl3.Keycode
-		mod  uint16
-		want string
+		name     string
+		sym      sdl3.Keycode
+		scancode uint32
+		mod      uint16
+		want     string
 	}{
-		{"unmodified letter", 'x', 0, "x"},
-		{"shifted letter spends Shift on the case", 'x', sdl3.KMOD_LSHIFT, "X"},
-		{"digit", '5', 0, "5"},
-		{"punctuation", ';', 0, ";"},
-		// A letter, a digit and a punctuation mark have no name but the
-		// character they show, so naming them from the key and naming them
-		// from the character come to the same string. The space bar is not
-		// like them: direct-key-handler calls it "Space" and so does the
-		// terminal backend, so " " here was the character's name standing in
-		// for the key's -- the very substitution this test forbids -- and the
-		// keymap, which binds "Space", resolved the space bar to nothing on
-		// this host. See 0_platform_sdl_spacebar_test.go.
-		{"space", ' ', 0, "Space"},
+		{"unmodified letter", 'x', hidX, 0, "x"},
+		{"shifted letter spends Shift on the case", 'x', hidX, sdl3.KMOD_LSHIFT, "X"},
+		{"digit", '5', hid5, 0, "5"},
+		{"punctuation", ';', hidSemicolon, 0, ";"},
+		{"shifted punctuation spends Shift on the second name", ';', hidSemicolon, sdl3.KMOD_LSHIFT, ":"},
+		// The space bar has a name of its own: direct-key-handler calls it
+		// "Space" and so does the terminal backend, so " " here would be the
+		// character's name standing in for the key's -- the very substitution
+		// this test forbids -- and the keymap, which binds "Space", would
+		// resolve the space bar to nothing on this host. See
+		// 0_platform_sdl_spacebar_test.go.
+		{"space", ' ', 44, 0, "Space"},
 	} {
-		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod})
+		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod, Scancode: c.scancode})
 		if got != c.want {
 			t.Errorf("%s: translateKey(%q, mod %#x) = %q, want %q",
 				c.name, c.sym, c.mod, got, c.want)
@@ -62,15 +61,17 @@ func TestGlyphStillYieldsItsKeyDown(t *testing.T) {
 // on its own, and a plain press now agrees with it.
 func TestPressAgreesWithTheBareName(t *testing.T) {
 	for _, c := range []struct {
-		sym   sdl3.Keycode
-		shift bool
-		mod   uint16
+		sym      sdl3.Keycode
+		scancode uint32
+		shift    bool
+		mod      uint16
 	}{
-		{'x', false, 0},
-		{'x', true, sdl3.KMOD_LSHIFT},
-		{'7', false, 0},
+		{'x', hidX, false, 0},
+		{'x', hidX, true, sdl3.KMOD_LSHIFT},
+		{'7', hid1 + 6, false, 0},
+		{'7', hid1 + 6, true, sdl3.KMOD_LSHIFT},
 	} {
-		sym := sdl3.Keysym{Sym: c.sym, Mod: c.mod}
+		sym := sdl3.Keysym{Sym: c.sym, Mod: c.mod, Scancode: c.scancode}
 		press := translateKey(sym)
 		bare := bareKey(sym, c.shift)
 		if press != bare {

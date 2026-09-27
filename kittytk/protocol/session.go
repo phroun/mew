@@ -12,7 +12,7 @@ import (
 // are the binder's job.
 type Object interface {
 	Set(name string, value *Value, flag FlagState) error
-	Append(child Object) error
+	Append(slot string, child Object) error
 	ID() uint64
 }
 
@@ -34,6 +34,43 @@ type EventControl interface {
 // destroyer is an optional Object capability backing the destroy verb.
 type destroyer interface {
 	Destroy() error
+}
+
+// asker is an optional Object capability backing the ask verb: the object is
+// put a question and answers it with events.
+//
+// The protocol had no way to ask for anything. `new`, `set` and `destroy` change
+// the display; `sub` opens the flow of events an object raises when something
+// happens TO it; `describe` reports the vocabulary. None of them is "tell me
+// this, now" -- so a read was modelled as subscribing and being pushed, which
+// suits state that changes and does not suit a question with an argument in it,
+// or an answer that comes in more than one piece.
+//
+// An answer is not a reply and no longer an event. The reply says the batch was
+// understood; what the object had to say arrives as `answer` statements correlated
+// to the key the ask carried -- see protocol/answers.go and wire/answer.go.
+type asker interface {
+	Ask(question string, args []*Arg, out *Answers) error
+}
+
+// doer is an optional Object capability backing the do verb: the object is told
+// to do something.
+//
+// `set` writes a value the object then holds; `ask` puts a question and the
+// answer comes back. Neither fits a thing simply DONE -- tiling the windows,
+// appending to a blob -- and those were spelled as properties, which reads as
+// state and behaves as a command: `set <mdi> tile` says a pane is tiled the way
+// `set <cb> checked` says a box is checked, and only one of the two is a thing
+// you can ask for afterwards.
+//
+// That is the test between the two verbs. If asking for it means something, it
+// is a property; if asking is nonsense, it is an action.
+//
+// An action expects nothing back -- that is what separates `do` from `ask`. It
+// runs with emission suppressed, as `new` and `set` do, so what a client asked
+// for does not come back at it as events (D20).
+type doer interface {
+	Do(action string, args []*Arg) error
 }
 
 // Session holds connection-scoped interpretation state: alias and
@@ -69,6 +106,29 @@ func (s *Session) Register(obj Object) {
 		s.objects[obj.ID()] = obj
 	}
 }
+
+// RegisterAs registers an object and gives it a name in the key table, so a
+// client addresses it without first naming the id from the handshake: the
+// connection's application answers to `app` and its store to `store` the
+// moment the connection opens.
+//
+// The name is a session key like any other, which means a client that wants
+// it for something of its own takes it - `app=new window` shadows it, the
+// way re-keying anything else does.
+func (s *Session) RegisterAs(name string, obj Object) {
+	if obj == nil {
+		return
+	}
+	s.Register(obj)
+	s.keys[name] = obj.ID()
+}
+
+// Forget takes a host-registered object back out of the session, so the id names
+// nothing again. It is the other half of Register, for an object whose life is
+// shorter than the connection's: a decision stops being addressable the moment it
+// is decided, and a second `do` on it is then refused for not naming anything,
+// which is the truth.
+func (s *Session) Forget(id uint64) { s.forget(id) }
 
 // Object returns the object registered under id, if any. The host uses it at
 // window-adoption time to resolve wire references such as a window's owner id.
@@ -119,13 +179,14 @@ func (s *Session) Execute(script *Script, f Factory) (*Reply, error) {
 }
 
 func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) error {
-	// Surfacing reference: key=path (D15). Also registers the surfaced
-	// name as a session key, so later verbs can use the short name
-	// (`wcb=root.cb` then `sub wcb toggle`).
+	// Surfacing reference: key=path or key=id (D15). Also registers the
+	// surfaced name as a session key, so later verbs can use the short name
+	// (`wcb=root.cb` then `sub wcb toggle`; `store=1099511627777` then
+	// `ask store inventory`).
 	if stmt.Verb == "" {
-		id, ok := s.keys[stmt.Ref]
-		if !ok {
-			return fmt.Errorf("surfacing %s=%s: unknown key path %q", stmt.Key, stmt.Ref, stmt.Ref)
+		id, err := s.surfaced(stmt)
+		if err != nil {
+			return err
 		}
 		st.reply.IDs[stmt.Key] = id
 		s.keys[stmt.Key] = id
@@ -183,6 +244,10 @@ func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) err
 		}
 		s.forget(obj.ID())
 		return nil
+	case "ask":
+		return s.askObject(f, stmt.Key, stmt.Args)
+	case "do":
+		return s.suppressed(f, func() error { return s.doObject(stmt.Args) })
 	case "sub", "unsub":
 		return s.subscribe(stmt.Verb, stmt.Args, f)
 	case "describe":
@@ -217,6 +282,77 @@ func (s *Session) suppressed(f Factory, fn func() error) error {
 	return err
 }
 
+// askObject puts a question to an object: `ask <target> <question> [args...]`.
+// The question is a bare word, as an event name is in `sub`, and what follows it
+// is named arguments -- `ask <blob> bytes offset=2048`.
+//
+// It runs OUTSIDE the emission suppression that wraps `new` and `set`: those
+// suppress so a property a client set does not echo back at it, and an answer to
+// a question is not an echo. It is the whole point of having asked.
+func (s *Session) askObject(f Factory, key string, args []*Arg) error {
+	obj, _, rest, err := s.resolveTarget("ask", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 || rest[0].Value != nil || rest[0].Flag != FlagTrue {
+		return fmt.Errorf("ask: expected a question after the target")
+	}
+	question := rest[0].Name
+	a, ok := obj.(asker)
+	if !ok {
+		return fmt.Errorf("ask: %s answers no questions", s.describeTarget(obj))
+	}
+	if err := checkAskName(s.objectTypes[obj.ID()], question); err != nil {
+		return err
+	}
+	// **The refusals above stay Go errors and fail the batch.** A question nobody
+	// answers, or one this type does not declare, is a statement that was not
+	// understood -- and the reply is where "not understood" belongs. What the
+	// ANSWERS carry is a question that was understood and could not be answered,
+	// which is `out.Fail` and reaches whoever asked.
+	var out *Answers
+	if ac, ok := f.(AnswerControl); ok {
+		out = ac.Answers(key)
+	}
+	return a.Ask(question, rest[1:], out)
+}
+
+// doObject tells an object to do something: `do <target> <action> [args...]`.
+// The action is a bare word, as a question is in `ask`, and what follows it is
+// named arguments -- `do <blob> append bytes="..."`.
+//
+// It runs INSIDE the emission suppression that wraps `new` and `set`, because
+// what it does is a change the client asked for, and D20 says those do not echo
+// back. Nothing comes back from it at all: an action that wanted an answer
+// would be a question.
+func (s *Session) doObject(args []*Arg) error {
+	obj, _, rest, err := s.resolveTarget("do", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 || rest[0].Value != nil || rest[0].Flag != FlagTrue {
+		return fmt.Errorf("do: expected an action after the target")
+	}
+	action := rest[0].Name
+	d, ok := obj.(doer)
+	if !ok {
+		return fmt.Errorf("do: %s does nothing", s.describeTarget(obj))
+	}
+	if err := checkDoName(s.objectTypes[obj.ID()], action); err != nil {
+		return err
+	}
+	return d.Do(action, rest[1:])
+}
+
+// describeTarget names an object for a refusal: its type where the wire built
+// it, and its id where the host registered it.
+func (s *Session) describeTarget(obj Object) string {
+	if t := s.objectTypes[obj.ID()]; t != "" {
+		return fmt.Sprintf("a %s", t)
+	}
+	return fmt.Sprintf("object %d", obj.ID())
+}
+
 // resolveTarget interprets a verb's leading argument as an object
 // reference (D19): a key path (`set root.status ...`) or a bare
 // numeric ID (`set 1042 ...`). Returns the object, the key path when
@@ -231,7 +367,7 @@ func (s *Session) resolveTarget(verb string, args []*Arg) (Object, string, []*Ar
 	keyPath := ""
 	switch {
 	case head.Name == "" && head.Value != nil && head.Value.Kind == NumberValue && head.Value.IsInt:
-		id = uint64(head.Value.Number)
+		id = uint64(head.Value.Int)
 	case head.Name != "" && head.Value == nil && head.Flag == FlagTrue:
 		known, ok := s.keys[head.Name]
 		if !ok {
@@ -248,6 +384,27 @@ func (s *Session) resolveTarget(verb string, args []*Arg) (Object, string, []*Ar
 		return nil, "", nil, fmt.Errorf("%s: no object with id %d in this session", verb, id)
 	}
 	return obj, keyPath, args[1:], nil
+}
+
+// surfaced resolves a `key=path` or `key=id` statement to the object the
+// name is about to stand for. A path is one this session already knows; an
+// id must name an object this session holds, which is what keeps a client
+// to the objects it built and the ones the host registered for it -- ids
+// are a global counter, so another connection's are perfectly guessable and
+// reach nothing.
+func (s *Session) surfaced(stmt *Statement) (uint64, error) {
+	if stmt.Ref != "" {
+		id, ok := s.keys[stmt.Ref]
+		if !ok {
+			return 0, fmt.Errorf("surfacing %s=%s: unknown key path %q", stmt.Key, stmt.Ref, stmt.Ref)
+		}
+		return id, nil
+	}
+	if _, ok := s.objects[stmt.RefID]; !ok {
+		return 0, fmt.Errorf("surfacing %s=%d: no object with id %d in this session",
+			stmt.Key, stmt.RefID, stmt.RefID)
+	}
+	return stmt.RefID, nil
 }
 
 // forget drops an object and every key that referenced it.
@@ -459,7 +616,10 @@ func (s *Session) applyArgs(obj Object, args []*Arg, f Factory, st *execState, k
 	for _, a := range args {
 		name := a.Name
 		if name == "" {
-			// Anonymous numbers exist only for verb targets (D19).
+			// A property statement takes no operands: a property
+			// travels under its name (D10), which is what the alias
+			// dictionaries are for. Verbs that DO take operands read
+			// them before they ever reach here.
 			return fmt.Errorf("unnamed value: properties must be named (name=value)")
 		}
 		// Alias substitution (lexical, property-name position, D10/D18):
@@ -472,11 +632,13 @@ func (s *Session) applyArgs(obj Object, args []*Arg, f Factory, st *execState, k
 			name = target
 		}
 
-		if name == "children" {
-			if a.Value == nil || a.Value.Kind != BlockValue {
-				return fmt.Errorf("children: expected a {} block")
-			}
-			if err := s.buildChildren(obj, a.Value.Block, f, st, keyPath); err != nil {
+		// A {} block is a value kind like any other, and the property it
+		// was written on says what to do with it: a collection adopts what
+		// the block builds. Nothing here knows the name `children` -- that
+		// is a property a type registers, alongside any other collection
+		// it accepts.
+		if a.Value != nil && a.Value.Kind == BlockValue {
+			if err := s.buildChildren(obj, name, a.Value.Block, f, st, keyPath); err != nil {
 				return err
 			}
 			continue
@@ -495,17 +657,17 @@ func (s *Session) applyArgs(obj Object, args []*Arg, f Factory, st *execState, k
 	return nil
 }
 
-// buildChildren executes a children block (D13): each statement must
-// be a (possibly keyed) `new`. Keys register hierarchically under the
-// enclosing key path (D15); with no enclosing key they remain
-// internal-only.
-func (s *Session) buildChildren(parent Object, block *Script, f Factory, st *execState, keyPath string) error {
+// buildChildren executes a collection block (D13) into the named property:
+// each statement must be a (possibly keyed) `new`. Keys register
+// hierarchically under the enclosing key path (D15); with no enclosing key
+// they remain internal-only.
+func (s *Session) buildChildren(parent Object, slot string, block *Script, f Factory, st *execState, keyPath string) error {
 	for _, stmt := range block.Statements {
 		if stmt.Verb != "new" {
 			if stmt.Verb == "" {
-				return fmt.Errorf("children: surfacing references are top-level statements")
+				return fmt.Errorf("%s: surfacing references are top-level statements", slot)
 			}
-			return fmt.Errorf("children: only new statements allowed, found %q", stmt.Verb)
+			return fmt.Errorf("%s: only new statements allowed, found %q", slot, stmt.Verb)
 		}
 
 		childPath := ""
@@ -520,7 +682,7 @@ func (s *Session) buildChildren(parent Object, block *Script, f Factory, st *exe
 		if childPath != "" {
 			s.keys[childPath] = child.ID()
 		}
-		if err := parent.Append(child); err != nil {
+		if err := parent.Append(slot, child); err != nil {
 			return err
 		}
 	}

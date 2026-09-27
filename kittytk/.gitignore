@@ -10,8 +10,10 @@
 /demo
 /demoapp
 /editordemo
+/kittytk-queryprobe
 /kittytk-sdl
 /kittytk-tui
+/queryapp
 /remoteapp
 /spawndesktop
 *.exe

@@ -160,6 +160,26 @@ func (s *Splitter) SetTitle(title string) {
 	s.Update()
 }
 
+// TooltipAt answers for the divider band and nothing else: the panes on either
+// side are trinkets of their own and answer for themselves.
+//
+// What it offers is the TITLE rather than what was cut, because what the band
+// draws is the title dressed in its dots -- and the dots are decoration, not
+// something a reader is missing.
+func (s *Splitter) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	band := s.dividerBounds()
+	if !band.Contains(local) {
+		return "", core.UnitRect{}, false
+	}
+	if tip := s.Tooltip(); tip != "" {
+		return tip, band, true
+	}
+	if _, _, cut := s.TrinketBase.TooltipAt(local); cut && s.title != "" {
+		return s.title, band, true
+	}
+	return "", core.UnitRect{}, false
+}
+
 // Children returns all child trinkets.
 func (s *Splitter) Children() []core.Trinket {
 	var children []core.Trinket
@@ -245,12 +265,12 @@ func (s *Splitter) SetLayoutManager(layout core.LayoutManager) {
 func (s *Splitter) dividerThickness() core.Unit {
 	metrics := s.EffectiveCellMetrics()
 	if s.orientation == core.Horizontal {
-		return metrics.CellWidth
+		return metrics.UnitsPerCellWidth
 	}
 	if core.FindSmoothPositioning(s.Self()) {
-		return metrics.CellHeight / 2
+		return metrics.UnitsPerCellHeight / 2
 	}
-	return metrics.CellHeight
+	return metrics.UnitsPerCellHeight
 }
 
 // dividerBounds returns the bounds of the divider bar.
@@ -270,11 +290,20 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 		firstWidth := core.Unit(float64(totalWidth) * s.position)
 		if !smooth {
 			// Round to cell boundary
-			firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.CellWidth
+			firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.UnitsPerCellWidth
+		}
+
+		// The first pane takes its share of the run from the LEADING edge, so
+		// the divider stands that far in from the side the direction reads
+		// from. Reflecting can land it off a cell where the splitter's own
+		// width is not a whole number of them, so it is taken to a cell again.
+		x := core.LeadingX(s, bounds.Width, firstWidth, dividerSize)
+		if !smooth {
+			x = core.Unit(metrics.UnitsToCellX(x)) * metrics.UnitsPerCellWidth
 		}
 
 		return core.UnitRect{
-			X:      firstWidth,
+			X:      x,
 			Y:      0,
 			Width:  dividerSize,
 			Height: bounds.Height,
@@ -286,7 +315,7 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 	firstHeight := core.Unit(float64(totalHeight) * s.position)
 	if !smooth {
 		// Round to cell boundary
-		firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.CellHeight
+		firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.UnitsPerCellHeight
 	}
 
 	return core.UnitRect{
@@ -303,17 +332,23 @@ func (s *Splitter) childBounds() (core.UnitRect, core.UnitRect) {
 	divider := s.dividerBounds()
 
 	if s.orientation == core.Horizontal {
-		return core.UnitRect{
-				X:      0,
-				Y:      0,
-				Width:  divider.X,
-				Height: bounds.Height,
-			}, core.UnitRect{
-				X:      divider.X + divider.Width,
-				Y:      0,
-				Width:  bounds.Width - divider.X - divider.Width,
-				Height: bounds.Height,
-			}
+		near := core.UnitRect{
+			X:      0,
+			Y:      0,
+			Width:  divider.X,
+			Height: bounds.Height,
+		}
+		far := core.UnitRect{
+			X:      divider.X + divider.Width,
+			Y:      0,
+			Width:  bounds.Width - divider.X - divider.Width,
+			Height: bounds.Height,
+		}
+		// The first pane is the one on the leading side.
+		if core.ChromeMirrored(s) {
+			return far, near
+		}
+		return near, far
 	}
 
 	// Vertical
@@ -337,8 +372,8 @@ func (s *Splitter) childBounds() (core.UnitRect, core.UnitRect) {
 func (s *Splitter) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * 20,
-		Height: metrics.CellHeight * 5,
+		Width:  metrics.UnitsPerCellWidth * 20,
+		Height: metrics.UnitsPerCellHeight * 5,
 	}
 }
 
@@ -381,8 +416,8 @@ func (sp *Splitter) Paint(p *core.Painter) {
 			// Vertical divider bar with ':' handle
 			midY := bounds.Height / 2
 			// Round to cell boundary
-			midY = (midY / metrics.CellHeight) * metrics.CellHeight
-			for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+			midY = (midY / metrics.UnitsPerCellHeight) * metrics.UnitsPerCellHeight
+			for y := core.Unit(0); y < bounds.Height; y += metrics.UnitsPerCellHeight {
 				ch := '│'
 				// Draw drag handle indicator in the middle
 				if y == midY {
@@ -392,7 +427,7 @@ func (sp *Splitter) Paint(p *core.Painter) {
 			}
 		} else {
 			// Horizontal divider bar: ────·· Title ··────
-			width := int(bounds.Width / metrics.CellWidth)
+			width := int(bounds.Width / metrics.UnitsPerCellWidth)
 			titleRunes := []rune(sp.title)
 			titleLen := len(titleRunes)
 
@@ -464,34 +499,36 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	line := dividerStyle.WithBg(dividerStyle.Fg)
 	p.FillRect(divider, ' ', dividerStyle)
 
-	// Hairline thickness and dot sizes are screen-space quantities:
-	// inside a re-denominated interior, a 1-local-unit line would
-	// scale below one pixel and vanish.
-	hairW := p.ScreenWidthToLocal(1)
-	if hairW < 1 {
-		hairW = 1
-	}
-	hairH := p.ScreenHeightToLocal(1)
-	if hairH < 1 {
-		hairH = 1
-	}
+	// Hairline thickness and dot sizes are screen-space quantities, so they
+	// hold their physical size under re-denomination. The hairlines go through
+	// HairlineWidth/Height, which also keeps them on the glass: the converted
+	// count can span no device pixel at all, and the line vanishes.
+	hairW := p.HairlineWidth()
+	hairH := p.HairlineHeight()
 
 	if sp.orientation == core.Horizontal {
 		// Vertical band: hairline down the middle, broken by the ':'
-		// grab dots at the exact center. The dot/gap sizes are screen-space
-		// (so they survive re-denomination) but scale with the cell so they
-		// track font_size; the constants are the 8x16-baseline sizes.
-		metrics := sp.EffectiveCellMetrics()
-		lineX := divider.X + (divider.Width-hairW)/2
-		cx := divider.X + divider.Width/2
+		// grab dots at the exact center. The gap and the dots are screen-space
+		// sizes converted into local units, the same as the hairlines above:
+		// a screen unit is a fixed number of device pixels at a given zoom, so
+		// these track font_size and stay put under re-denomination. The
+		// constants are the sizes in screen units.
+		dotW := atLeast(p.ScreenWidthToLocal(2), hairW)
+		dotH := atLeast(p.ScreenHeightToLocal(2), hairH)
+		// The dots sit ON the line, so both are centered by the one
+		// expression. Centering the line on (Width-hairW)/2 while placing
+		// the dots at Width/2-dotW/2 truncates two different halvings on a
+		// grid whose coarseness is the denomination's: at 4x8 that put the
+		// dots a whole local unit -- two device pixels -- to the right of
+		// the line they are meant to straddle.
+		centered := func(w core.Unit) core.Unit { return divider.X + (divider.Width-w)/2 }
+		lineX := centered(hairW)
 		cy := divider.Y + divider.Height/2
-		gapHalf := atLeast(p.ScreenHeightToLocal(6)*metrics.CellHeight/16, hairH)
+		gapHalf := atLeast(p.ScreenHeightToLocal(6), hairH)
 		p.FillRect(core.UnitRect{X: lineX, Y: divider.Y, Width: hairW, Height: cy - gapHalf - divider.Y}, ' ', line)
 		p.FillRect(core.UnitRect{X: lineX, Y: cy + gapHalf, Width: hairW, Height: divider.Y + divider.Height - cy - gapHalf}, ' ', line)
-		dotW := atLeast(p.ScreenWidthToLocal(2)*metrics.CellWidth/8, hairW)
-		dotH := atLeast(p.ScreenHeightToLocal(2)*metrics.CellHeight/16, hairH)
-		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy - dotH - hairH, Width: dotW, Height: dotH}, ' ', line)
-		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy + hairH, Width: dotW, Height: dotH}, ' ', line)
+		p.FillRect(core.UnitRect{X: centered(dotW), Y: cy - dotH - hairH, Width: dotW, Height: dotH}, ' ', line)
+		p.FillRect(core.UnitRect{X: centered(dotW), Y: cy + hairH, Width: dotW, Height: dotH}, ' ', line)
 		return
 	}
 
@@ -502,12 +539,16 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	if sp.title != "" {
 		label = "·· " + sp.title + " ··"
 	}
-	font := captionFont75(sp.EffectiveFont())
-	// Font metrics are screen-space; convert into this painter's local
-	// units so centering holds inside re-denominated interiors.
-	w := p.ScreenWidthToLocal(font.MeasureText(label))
-	h := p.ScreenHeightToLocal(font.LineHeight())
-	pad := core.Unit(4)
+	base := sp.EffectiveFont()
+	font := captionFont75(base)
+	// The measured width is screen-space; convert into this painter's local
+	// units so centering holds inside re-denominated interiors. The line the
+	// caption occupies is three quarters of a cell down, already local.
+	measure := func(text string) core.Unit { return p.ScreenWidthToLocal(font.MeasureText(text)) }
+	h := core.LineUnits(font, base, sp.EffectiveCellMetrics())
+	pad := p.ScreenWidthToLocal(4)
+	label, _ = sp.ElideTextWith(label, divider.Width-pad*2, measure)
+	w := measure(label)
 	boxW := w + pad*2
 	if boxW > divider.Width {
 		boxW = divider.Width
@@ -519,7 +560,7 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	// the band's centerline.
 	boxY := divider.Y + (divider.Height-h)/2
 	p.FillRect(core.UnitRect{X: boxX, Y: boxY, Width: boxW, Height: h}, ' ', titleStyle)
-	p.DrawText(boxX+pad, boxY, label, titleStyle, font)
+	p.DrawText(boxX+pad, boxY, sp.CellRun(label), titleStyle, font)
 }
 
 // HandleMousePress handles mouse button presses.
@@ -620,35 +661,48 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement for dragging.
 func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	s.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	if s.dragging {
 		bounds := s.Bounds()
+		metrics := s.EffectiveCellMetrics()
+		snap := !core.FindSmoothPositioning(s.Self())
+		dividerSize := s.dividerThickness()
 
-		if s.orientation == core.Horizontal {
-			dividerSize := s.dividerThickness()
-			totalWidth := bounds.Width - dividerSize
-			if totalWidth > 0 {
-				newPos := float64(event.X-s.dragOffset) / float64(totalWidth)
-				if newPos < 0.1 {
-					newPos = 0.1
-				} else if newPos > 0.9 {
-					newPos = 0.9
-				}
-				s.position = newPos
-				s.Update()
+		// Where the divider goes: the pointer, less the point of the divider
+		// it grabbed. On a cell surface both are taken to the cell they are
+		// in, so the divider keeps step with the pointer's column instead of
+		// trailing it by whatever the sub-cell part of either happened to be.
+		at := core.UnitPoint{X: event.X, Y: event.Y}
+		off := core.UnitPoint{X: s.dragOffset, Y: s.dragOffset}
+		origin := core.DragOrigin(at, off, metrics, snap)
+
+		// How far the divider has come along the run, measured from the
+		// LEADING edge, which is what the position is a share of.
+		total, along, cell := bounds.Width-dividerSize, origin.X, metrics.UnitsPerCellWidth
+		if s.orientation != core.Horizontal {
+			total, along, cell = bounds.Height-dividerSize, origin.Y, metrics.UnitsPerCellHeight
+		} else if core.ChromeMirrored(s) {
+			along = total - origin.X
+		}
+		if total > 0 {
+			// dividerBounds turns the ratio back into a position and takes it
+			// to the cell it is in, so aim at the MIDDLE of the cell this
+			// drag chose: the ratio then lands back on that cell rather than
+			// on whichever side of the boundary the arithmetic fell.
+			aim := along
+			if snap {
+				aim += cell / 2
 			}
-		} else {
-			dividerSize := s.dividerThickness()
-			totalHeight := bounds.Height - dividerSize
-			if totalHeight > 0 {
-				newPos := float64(event.Y-s.dragOffset) / float64(totalHeight)
-				if newPos < 0.1 {
-					newPos = 0.1
-				} else if newPos > 0.9 {
-					newPos = 0.9
-				}
-				s.position = newPos
-				s.Update()
+			newPos := float64(aim) / float64(total)
+			if newPos < 0.1 {
+				newPos = 0.1
+			} else if newPos > 0.9 {
+				newPos = 0.9
 			}
+			s.position = newPos
+			s.Update()
 		}
 
 		return true
@@ -785,8 +839,8 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 		if s.orientation == core.Horizontal {
 			totalWidth := float64(bounds.Width - s.dividerThickness()) // Subtract divider
 			if totalWidth > 0 {
-				smallStep = float64(metrics.CellWidth) / totalWidth
-				largeStep = float64(metrics.CellWidth*10) / totalWidth
+				smallStep = float64(metrics.UnitsPerCellWidth) / totalWidth
+				largeStep = float64(metrics.UnitsPerCellWidth*10) / totalWidth
 			} else {
 				smallStep = 0.02
 				largeStep = 0.1
@@ -794,12 +848,20 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 		} else {
 			totalHeight := float64(bounds.Height - s.dividerThickness())
 			if totalHeight > 0 {
-				smallStep = float64(metrics.CellHeight) / totalHeight
-				largeStep = float64(metrics.CellHeight*4) / totalHeight
+				smallStep = float64(metrics.UnitsPerCellHeight) / totalHeight
+				largeStep = float64(metrics.UnitsPerCellHeight*4) / totalHeight
 			} else {
 				smallStep = 0.02
 				largeStep = 0.1
 			}
+		}
+
+		// The keys are named for sides of the screen and keep meaning them:
+		// Left moves the divider left. In a right-to-left splitter the first
+		// pane is the right one, so moving the divider left GROWS it, and the
+		// step that shrank the pane now has to add to its share.
+		if s.orientation == core.Horizontal && core.ChromeMirrored(s) {
+			smallStep, largeStep = -smallStep, -largeStep
 		}
 
 		// The fine size is the small step and the coarse size the large one.

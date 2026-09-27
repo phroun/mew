@@ -15,8 +15,10 @@ type Button struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	text         string
-	icon         *style.Icon
+	text string
+	// icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	icon         string
 	iconSize     style.IconSize
 	checkable    bool
 	checked      bool
@@ -54,16 +56,18 @@ func NewButton(text string) *Button {
 	b.SetFocusPolicy(core.StrongFocus)
 	b.SetAccessibleRole(core.RoleButton)
 	b.SetAccessibleName(text)
+	// A cap is one row of text and as wide as its caption; neither grows. Given
+	// a row three deep it sits in it rather than becoming a three-row slab, and
+	// a layout asked to fill has nothing here to fill.
+	b.SetSizePolicy(core.NewSizePolicy(core.SizeFixed, core.SizeFixed))
 	return b
 }
 
-// NewIconButton creates a button with an icon.
-func NewIconButton(icon *style.Icon) *Button {
+// NewIconButton creates a button showing the icon registered under a name.
+func NewIconButton(icon string) *Button {
 	b := NewButton("")
 	b.icon = icon
-	if icon != nil {
-		b.SetAccessibleName(icon.ID)
-	}
+	b.SetAccessibleName(icon)
 	return b
 }
 
@@ -77,23 +81,26 @@ func (b *Button) SetText(text string) {
 	b.text = text
 	b.SetAccessibleName(text)
 	b.Update()
+	b.InvalidateLayout()
 }
 
-// Icon returns the button icon.
-func (b *Button) Icon() *style.Icon {
+// Icon returns the name of the button's icon.
+func (b *Button) Icon() string {
 	return b.icon
 }
 
-// SetIcon sets the button icon.
-func (b *Button) SetIcon(icon *style.Icon) {
+// SetIcon names the button's icon.
+func (b *Button) SetIcon(icon string) {
 	b.icon = icon
 	b.Update()
+	b.InvalidateLayout()
 }
 
 // SetIconSize sets the icon size.
 func (b *Button) SetIconSize(size style.IconSize) {
 	b.iconSize = size
 	b.Update()
+	b.InvalidateLayout()
 }
 
 // IsCheckable returns whether the button is checkable.
@@ -247,35 +254,73 @@ func (b *Button) Click() {
 	}
 }
 
+// buttonShadowOffset is how far the drop shadow falls, down and right: half
+// a cell's WIDTH, at the default denomination.
+//
+// The width, because a cell is narrower than it is tall and so it is the
+// limiting measure. A shadow thrown by the taller one would reach further
+// down than across and read as a smear rather than a shadow.
+//
+// One distance, and the same on both axes -- but saying that takes an
+// exchange per axis rather than one number used twice. A unit is square
+// only at the default denomination: a cell keeps its shape whatever it is
+// divided into, so dividing it 16 across and 16 down leaves units half as
+// wide as they are tall, and the same COUNT on each axis would then fall
+// half as far across as down.
+var buttonShadowOffset = core.DefaultCellMetrics().UnitsPerCellWidth / 2
+
 // SizeHint returns the preferred size.
 func (b *Button) SizeHint() core.UnitSize {
 	metrics := b.EffectiveCellMetrics()
-	font := b.EffectiveFont()
 
-	// Calculate text width using font measurement
-	textWidth := font.MeasureText(b.text)
+	// Text measured in THIS button's denomination. Everything else here --
+	// the icon, the brackets, the shadow -- is stated in cells, which are a
+	// fixed physical size and need no adjusting; the caption was measured at
+	// the DEFAULT denomination, so inside a re-denominated window the button
+	// sized itself around a caption counted in units of the wrong size.
+	textWidth := b.MeasureText(b.CellRun(b.text))
 
 	// Add icon width if present (icons use fixed width)
 	iconWidth := core.Unit(0)
-	if b.icon != nil {
+	if b.icon != "" {
 		if b.iconSize == style.IconSmall {
 			iconWidth = metrics.TextWidth(3)
 		} else {
 			iconWidth = metrics.TextWidth(5)
 		}
 		if len(b.text) > 0 {
-			iconWidth += metrics.CellWidth // Space between icon and text
+			iconWidth += metrics.UnitsPerCellWidth // Space between icon and text
 		}
 	}
 
 	// Brackets are decorative - use cell-based sizing (2 cells total)
-	// Plus 1 cell for drop shadow on the right
-	bracketWidth := metrics.CellWidth * 2 // 1 cell each for left and right bracket
-	shadowWidth := metrics.CellWidth
+	// Plus the drop shadow's reservation on the right (see StyleInsets)
+	bracketWidth := metrics.UnitsPerCellWidth * 2 // 1 cell each for left and right bracket
+	insets := b.StyleInsets()
 
 	return core.UnitSize{
-		Width:  textWidth + iconWidth + bracketWidth + shadowWidth,
-		Height: metrics.TextHeight(2), // 2 rows: button + shadow row
+		Width:  textWidth + iconWidth + bracketWidth + insets.Horizontal(),
+		Height: metrics.TextHeight(1) + insets.Vertical(), // the cap, and the shadow below it
+	}
+}
+
+// StyleInsets is the room a button keeps for its drop shadow: a cell to the
+// right and a row below, the two edges it falls on.
+//
+// What it RESERVES, which is deliberately not what it paints. The pixel path
+// draws a softer shadow half a cell out; reserving the whole cell and the whole
+// row on both surfaces is what makes a row of trinkets land identically
+// whichever surface is drawing, and what keeps the trinkets beside a button on
+// the grid rather than half a row down from it.
+//
+// It is also what lets the size above be one row plus this, rather than two
+// rows with the second unaccounted for: a layout that cannot tell the cap from
+// the shadow aligns a one-row neighbour against both of them.
+func (b *Button) StyleInsets() core.UnitMargins {
+	metrics := b.EffectiveCellMetrics()
+	return core.UnitMargins{
+		Right:  metrics.UnitsPerCellWidth,
+		Bottom: metrics.UnitsPerCellHeight,
 	}
 }
 
@@ -348,22 +393,21 @@ func (b *Button) Paint(p *core.Painter) {
 		leftBracket = '<'
 		rightBracket = '>'
 	}
-	bracketWidth := metrics.CellWidth * 2 // Each bracket is 1 cell
-	textWidth := font.MeasureText(b.text)
+	bracketWidth := metrics.UnitsPerCellWidth * 2 // Each bracket is 1 cell
+	textWidth := b.MeasureText(b.CellRun(b.text))
 
 	// Icon handling
 	iconWidth := core.Unit(0)
-	if b.icon != nil {
-		var textIcon style.TextIcon
-		if b.iconSize == style.IconSmall && b.icon.HasText(style.IconSmall) {
-			textIcon = b.icon.TextSmall
-		} else if b.icon.HasText(style.IconLarge) {
-			textIcon = b.icon.TextLarge
-		}
-		if textIcon.Width > 0 {
-			iconWidth = metrics.TextWidth(textIcon.Width + 1)
-		}
+	if textIcon, ok := style.IconText(b.icon, b.iconSize); ok && textIcon.Width > 0 {
+		iconWidth = metrics.TextWidth(textIcon.Width + 1)
 	}
+
+	// The face is as wide as what it holds -- unless the layout gave the button
+	// less than it asked for, and then the caption is cut and the face is what
+	// there is. A button drawn at its natural width in a narrower slot runs its
+	// last letters through whatever stands beside it.
+	shown, _ := b.ElideText(b.text, bounds.Width-bracketWidth-iconWidth)
+	textWidth = b.MeasureText(b.CellRun(shown))
 
 	// Total button width (content only, no shadow)
 	buttonWidth := bracketWidth + textWidth + iconWidth
@@ -373,16 +417,17 @@ func (b *Button) Paint(p *core.Painter) {
 	// Pressed offset: on pixel surfaces the face scoots down-right to
 	// land exactly where the shadow rectangle was; cell surfaces keep
 	// the classic one-column shift.
-	shadowOff := metrics.CellWidth / 2
+	shadowOffX := core.ExchangeX(buttonShadowOffset, core.DefaultCellMetrics(), metrics)
+	shadowOffY := core.ExchangeY(buttonShadowOffset, core.DefaultCellMetrics(), metrics)
 	xOffset := core.Unit(0)
 	// Center the two-row button in any extra vertical space its layout gave it.
 	yOffset := b.vInset()
 	if showPressed {
 		if graphical {
-			xOffset = shadowOff
-			yOffset += shadowOff
+			xOffset = shadowOffX
+			yOffset += shadowOffY
 		} else {
-			xOffset = metrics.CellWidth
+			xOffset = metrics.UnitsPerCellWidth
 		}
 	}
 
@@ -395,10 +440,10 @@ func (b *Button) Paint(p *core.Painter) {
 	// rendering of the same idea.
 	if graphical && !showPressed {
 		p.FillRect(core.UnitRect{
-			X:      shadowOff,
-			Y:      yOffset + shadowOff,
+			X:      shadowOffX,
+			Y:      yOffset + shadowOffY,
 			Width:  buttonWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', style.DefaultStyle().WithBg(shadowFg))
 	}
 
@@ -408,7 +453,7 @@ func (b *Button) Paint(p *core.Painter) {
 			X:      xOffset,
 			Y:      yOffset,
 			Width:  buttonWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 	}
 
@@ -420,24 +465,18 @@ func (b *Button) Paint(p *core.Painter) {
 
 		// Top half blocks on second row (shifted right by 1 cell)
 		// Calculate number of cells needed for the button width
-		shadowY := yOffset + metrics.CellHeight
-		numShadowCells := int((buttonWidth + metrics.CellWidth - 1) / metrics.CellWidth)
+		shadowY := yOffset + metrics.UnitsPerCellHeight
+		numShadowCells := int((buttonWidth + metrics.UnitsPerCellWidth - 1) / metrics.UnitsPerCellWidth)
 		for i := 0; i < numShadowCells; i++ {
-			p.DrawCell(metrics.CellWidth+metrics.CellToUnitsX(i), shadowY, '▀', shadowStyle)
+			p.DrawCell(metrics.UnitsPerCellWidth+metrics.CellToUnitsX(i), shadowY, '▀', shadowStyle)
 		}
 	}
 
 	// Draw icon if present
-	if b.icon != nil && iconWidth > 0 {
-		var textIcon style.TextIcon
-		if b.iconSize == style.IconSmall && b.icon.HasText(style.IconSmall) {
-			textIcon = b.icon.TextSmall
-		} else if b.icon.HasText(style.IconLarge) {
-			textIcon = b.icon.TextLarge
-		}
-
+	if iconWidth > 0 {
+		textIcon, _ := style.IconText(b.icon, b.iconSize)
 		if textIcon.Width > 0 {
-			x := xOffset + metrics.CellWidth // After left bracket (1 cell)
+			x := xOffset + metrics.UnitsPerCellWidth // After left bracket (1 cell)
 			y := yOffset
 			for row := 0; row < textIcon.Height; row++ {
 				for col := 0; col < textIcon.Width; col++ {
@@ -453,13 +492,13 @@ func (b *Button) Paint(p *core.Painter) {
 	p.DrawCell(xOffset, yOffset, leftBracket, s)
 
 	// Draw text using font
-	if b.text != "" {
-		textX := xOffset + metrics.CellWidth + iconWidth // After left bracket (1 cell)
-		p.DrawText(textX, yOffset, b.text, s, font)
+	if shown != "" {
+		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
+		p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)
-	rightX := xOffset + buttonWidth - metrics.CellWidth // Before right edge (1 cell)
+	rightX := xOffset + buttonWidth - metrics.UnitsPerCellWidth // Before right edge (1 cell)
 	p.DrawCell(rightX, yOffset, rightBracket, s)
 }
 
@@ -523,34 +562,46 @@ func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 func (b *Button) vInset() core.Unit {
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
-	slack := bounds.Height - metrics.CellHeight*2
+	slack := bounds.Height - metrics.UnitsPerCellHeight*2
 	if slack <= 0 {
 		return 0
 	}
 	if core.FindSmoothPositioning(b.Self()) {
 		return slack / 2
 	}
-	rows := slack / metrics.CellHeight
-	return (rows / 2) * metrics.CellHeight
+	rows := slack / metrics.UnitsPerCellHeight
+	return (rows / 2) * metrics.UnitsPerCellHeight
 }
 
-// hitRect returns the button's local click/hover region. It follows the
-// intrinsic two-row footprint at its centered offset (the extra vertical space
-// a layout grants is inert). On graphical surfaces the drop shadow only reaches
-// partway into the second row, so the dead bottom half-row is trimmed; cell
-// surfaces use the full two rows.
+// hitRect returns the button's local click/hover region: its face and the
+// shadow beside and beneath it, and nothing else.
+//
+// A button's footprint is intrinsic -- two rows deep, and as wide as its
+// caption plus the shadow's column -- so room a layout grants beyond that is
+// inert on BOTH axes. A grid cell or a stretched row is often much larger than
+// the button drawn in it, and answering a click from a corner of the cell the
+// button never painted is answering for somewhere it does not appear to be.
+//
+// On graphical surfaces the drop shadow only reaches partway into the second
+// row, so the dead bottom half-row is trimmed; cell surfaces use the full two.
 func (b *Button) hitRect() core.UnitRect {
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
 	top := b.vInset()
-	h := metrics.CellHeight * 2
+	h := metrics.UnitsPerCellHeight * 2
 	if top+h > bounds.Height {
 		h = bounds.Height - top
 	}
 	if core.FindGraphicalFrames(b.Self()) {
-		h -= metrics.CellHeight / 2
+		h -= metrics.UnitsPerCellHeight / 2
 	}
-	return core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: h}
+	// The face plus the shadow's column, which is what SizeHint reports and
+	// what Paint lays down from the button's leading edge.
+	w := b.SizeHint().Width
+	if w > bounds.Width {
+		w = bounds.Width
+	}
+	return core.UnitRect{X: 0, Y: top, Width: w, Height: h}
 }
 
 // inHitBox reports whether a local point falls in the button's hit region.
@@ -584,6 +635,9 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 // highlight when the button is idle, and the pressed-and-over state during
 // a press.
 func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	b.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	// Hover and drag use the same hit box as the click path (full bounds on
 	// cell surfaces; full bounds minus the dead bottom half-row on graphical
 	// surfaces), so all three stop at the same edge.

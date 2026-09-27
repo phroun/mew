@@ -116,7 +116,7 @@ func TestTextInputChangeEvents(t *testing.T) {
 
 func TestComboBoxSelectionChangeEvents(t *testing.T) {
 	f, events := buildWithEvents(t, nil, `
-new combobox children={new item caption="A"; new item caption="B"} selected=1
+new combobox items={new item caption="A"; new item caption="B"} selected=1
 `)
 	combo := f.targets[0].(*ComboBox)
 	*events = nil

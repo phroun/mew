@@ -18,6 +18,7 @@ package client
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/phroun/kittytk/wire"
@@ -44,6 +45,10 @@ type Conn struct {
 	// by object ID. Nil entries under a future remote transport.
 	targets map[uint64]any
 
+	// asks is what this connection is waiting to be answered, by the correlation
+	// key it minted for each question. See answers.go.
+	asks asked
+
 	// App handlers by (object, event type) and by event type.
 	handlers     map[uint64]map[string][]func(*wire.Event)
 	typeHandlers map[string][]func(*wire.Event)
@@ -54,15 +59,38 @@ type Conn struct {
 	// Command sink for action= dispatch (the app's registry).
 	dispatch func(commandID string)
 
-	// appID is this connection's Application ObjectID, reported by the
-	// display service in the handshake (0 for in-process connections, which
-	// have no handshake). Address app-wide properties by it - see SetApp.
-	appID uint64
+	// What this application serves, and what the display is currently reading
+	// of it. Statements arriving for one of these are the other direction of
+	// the wire: the display asking, rather than being told (client/query.go).
+	//
+	// lastHostedID names them in this application's own space: each end mints
+	// its own ids, and the direction a statement travelled says whose space it
+	// is in, so the two never have to be told apart.
+	sources      map[string]*Source
+	queries      map[uint64]*Query
+	lastHostedID uint64
+
+	// given is every object the display has handed this connection, by the
+	// name it knows it by: its application, its store, its handle on the
+	// display, and whatever else a display offers. Empty for an in-process
+	// connection, which has no handshake.
+	//
+	// One record rather than a field per object, so a display that hands over
+	// something new reaches a client that was never taught its name -- and so
+	// an init arriving later replaces what a name meant rather than leaving
+	// two answers. Guarded by mu: the read loop writes it.
+	given map[string]uint64
 
 	// closed fires once when the transport disconnects (remote) or
 	// Close is called, so callers can block on the connection's life.
 	closed    chan struct{}
 	closeOnce sync.Once
+
+	// What the display said on its way out, if it said anything. Written once by
+	// the reader and read by whoever asks afterwards, so it is under the lock the
+	// rest of the replica is.
+	farewell     string
+	saidFarewell bool
 }
 
 type subKey struct {
@@ -98,6 +126,8 @@ func newConn(dispatch func(commandID string)) *Conn {
 		handlers:     make(map[uint64]map[string][]func(*wire.Event)),
 		typeHandlers: make(map[string][]func(*wire.Event)),
 		subs:         make(map[subKey]bool),
+		sources:      make(map[string]*Source),
+		queries:      make(map[uint64]*Query),
 		dispatch:     dispatch,
 		closed:       make(chan struct{}),
 	}
@@ -107,21 +137,123 @@ func newConn(dispatch func(commandID string)) *Conn {
 // whether by the app calling Close or the display service disconnecting.
 func (c *Conn) Closed() <-chan struct{} { return c.closed }
 
+// said records the display's farewell. The socket closing is what ends the
+// connection; this only says what the display told us about it first.
+func (c *Conn) said(reason string) {
+	c.mu.Lock()
+	c.farewell, c.saidFarewell = reason, true
+	c.mu.Unlock()
+}
+
+// Goodbye is what the display said on its way out, and whether it said anything.
+//
+// **A closed connection does not say why it closed.** A display that quit, one that
+// went down badly, and a network that dropped are the same silence -- and they call
+// for different things, which is why the display says which before it hangs up.
+// `quit` is a display that was asked to stop and is not coming back on its own;
+// `crash` is one that went down because something was wrong, so whatever puts it back
+// is worth waiting for. An empty reason means nothing was said, which is most ways a
+// connection can end.
+//
+// **It is not an instruction.** An application may well have work of its own that
+// outlives its display, and nothing in this library decides otherwise: the connection
+// ends, this says what was said about it, and what to do next is the application's.
+func (c *Conn) Goodbye() (reason string, said bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.farewell, c.saidFarewell
+}
+
 // AppID returns the ObjectID of this connection's application, as reported by
 // the display service in the handshake. It is 0 for in-process connections
-// (which have no handshake). Use it to address application-wide properties -
-// e.g. c.Exec(fmt.Sprintf("set %d multiwindow", c.AppID())), or SetApp.
-func (c *Conn) AppID() uint64 { return c.appID }
+// (which have no handshake). The display also knows the application by name,
+// so `set app multiwindow` says the same thing as this id does; the id is
+// what a client wants when it has taken the name for something else.
+func (c *Conn) AppID() uint64 { return c.Init(wire.AppName) }
+
+// App is this connection's application object as a handle: what app-wide
+// properties are set through, and what it raises events on.
+func (c *Conn) App() Handle { return c.Given(wire.AppName) }
+
+// handOver records an init statement: every field of it is an object the
+// display has handed this connection, under the name it knows it by. A name
+// already in hand is replaced, because the display saying it again is the
+// display saying what that name means NOW.
+//
+// It runs at the handshake and again whenever one arrives afterwards, so this
+// is read from the connection's own goroutine as well as the caller's.
+func (c *Conn) handOver(stmt *wire.Statement) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.given == nil {
+		c.given = map[string]uint64{}
+	}
+	for _, a := range stmt.Args {
+		if a.Value == nil || a.Value.Kind != wire.NumberValue || !a.Value.IsInt {
+			continue
+		}
+		c.given[a.Name] = uint64(a.Value.Int)
+	}
+}
+
+// Init is the ObjectID of a thing the display handed this connection, by the
+// name it knows it by -- "app", "store", "host", and whatever a display offers
+// beyond them. 0 for a name it has not handed over.
+//
+// The name is also a session key the display bound, so `set <name> ...` says
+// the same thing as this id does; this is what reaches the object when a
+// client has taken that name for something of its own.
+func (c *Conn) Init(name string) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.given[name]
+}
+
+// InitNames is every name the display has handed over, sorted.
+func (c *Conn) InitNames() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	names := make([]string, 0, len(c.given))
+	for n := range c.given {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Given is a handle on one of them, by name.
+func (c *Conn) Given(name string) Handle { return c.handed(c.Init(name), name) }
+
+// HostID returns the ObjectID of this connection's handle on the display, as
+// reported in the handshake. It is 0 for a connection that has none (an
+// in-process one, which has no handshake).
+func (c *Conn) HostID() uint64 { return c.Init(wire.HostName) }
+
+// Host is the display itself as a handle: the terminal's theme, the desktop's
+// font and status bar, whether there is a desktop at all. One of each exists
+// and everyone connected shares it, so what is set here is set for all of them.
+func (c *Conn) Host() Handle { return c.Given(wire.HostName) }
+
+// handed is a handle for one of the objects the display hands over, which
+// it already knows by name. A connection without a handshake was handed
+// neither, and addressing one by a name the display never registered would
+// only produce a puzzling refusal, so such a handle keeps to the id it has.
+func (c *Conn) handed(id uint64, name string) Handle {
+	if id == 0 {
+		return Handle{c: c}
+	}
+	return Handle{c: c, id: id, name: name}
+}
 
 // SetApp applies application-wide properties to this connection's app with the
 // same syntax as any object: SetApp("multiwindow contextonly") sends
-// `set <appID> multiwindow contextonly`. It errors before the handshake has
+// `set app multiwindow contextonly`. It errors before the handshake has
 // assigned an app ID (in-process connections have none).
 func (c *Conn) SetApp(props string) (*wire.Reply, error) {
-	if c.appID == 0 {
+	if c.AppID() == 0 {
 		return nil, fmt.Errorf("SetApp: no application id (in-process connection)")
 	}
-	return c.Exec(fmt.Sprintf("set %d %s", c.appID, props))
+	return c.Exec(fmt.Sprintf("set %s %s", wire.AppName, props))
 }
 
 // markClosed fires the Closed channel exactly once.
@@ -270,6 +402,19 @@ func (c *Conn) OnCommand(action string, fn func()) {
 	c.mu.Unlock()
 }
 
+// OnType registers a handler for every event of a type that reaches this
+// connection, whichever object raised it -- and WITHOUT subscribing to
+// anything. It is observation: what arrives is what some subscription
+// elsewhere, or the event's own unconditional flow, has already let through.
+//
+// Handle.On is the way to ask for an object's events. This is the way to watch
+// what comes.
+func (c *Conn) OnType(eventType string, fn func(*wire.Event)) {
+	c.mu.Lock()
+	c.typeHandlers[eventType] = append(c.typeHandlers[eventType], fn)
+	c.mu.Unlock()
+}
+
 // stateOf returns the replica entry, creating it lazily.
 func (c *Conn) stateOf(id uint64) *objState {
 	c.mu.Lock()
@@ -283,9 +428,10 @@ func (c *Conn) stateOf(id uint64) *objState {
 }
 
 // set sends a set statement for one object (fire-and-forget; D20
-// guarantees it will not echo back).
-func (c *Conn) set(id uint64, args string) error {
-	_, err := c.Exec(fmt.Sprintf("set %d %s", id, args))
+// guarantees it will not echo back). target is whatever names it: the id a
+// key surfaced, or the name the display already knows it by.
+func (c *Conn) set(target, args string) error {
+	_, err := c.Exec(fmt.Sprintf("set %s %s", target, args))
 	return err
 }
 
@@ -300,3 +446,29 @@ func (u *UI) ID(name string) uint64 { return u.ids[name] }
 
 // Has reports whether a name was surfaced.
 func (u *UI) Has(name string) bool { _, ok := u.ids[name]; return ok }
+
+// The questions the display answers. Nothing else reads these back, so an app
+// that means to turn one of them over asks first -- and either question is
+// answered with one answer carrying both, so one round trip settles it.
+const (
+	AskDark    = "dark"
+	AskDesktop = "desktop"
+
+	// The display's debug relay: DoRelay carries statements to another connected
+	// application, and EventRelay is one statement it said back. Subscribed to
+	// rather than asked for, because it is that application's speech and there is
+	// no last one to wait for. Off unless the display was started with it open.
+	DoRelay    = "relay"
+	EventRelay = "relay"
+)
+
+// OnHost registers a handler for what the display says about itself and opens
+// the flow for it. Subscribing does not ask: see Handle.Ask.
+func (c *Conn) OnHost(event string, fn func(*wire.Event)) { c.Host().On(event, fn) }
+
+// Relay carries statements to another connected application, by name. What that
+// application says back arrives as EventRelay -- so subscribe with OnHost before
+// calling this, or the first statements over will have nowhere to land.
+func (c *Conn) Relay(to, text string) error {
+	return c.Host().Do(fmt.Sprintf("%s to=%s text=%s", DoRelay, wire.Quote(to), wire.Quote(text)))
+}

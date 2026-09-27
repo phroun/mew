@@ -936,7 +936,7 @@ func (e *Editor) runeAtVisualColumn(w *viewport.Viewport, line string, target in
 	// showBidi) — resolves too, instead of matching no rune and falling through
 	// to end-of-line. A marker maps to its run's own adjacent real cell: a START
 	// marker (MarkerRTL/LTR) precedes its run, so the NEXT real cell in visual
-	// order; an END marker follows its run, so the PREVIOUS one.
+	// order; an END marker follows its run, so the PRIOR one.
 	marked := e.lineMarkSet(w, runes)
 	col := 0
 	for pi, li := range layout.Perm {
@@ -1001,7 +1001,7 @@ func (e *Editor) markerCaretAt(w *viewport.Viewport, line string, target, subX i
 	isBase := func(li int) bool {
 		return li >= 0 && e.slotWidth(layout, runes, li, 0, tabSize) > 0
 	}
-	prevBase := func(pi int) int {
+	priorBase := func(pi int) int {
 		for j := pi - 1; j >= 0; j-- {
 			if isBase(layout.Perm[j]) {
 				return layout.Perm[j]
@@ -1068,7 +1068,7 @@ func (e *Editor) markerCaretAt(w *viewport.Viewport, line string, target, subX i
 			}
 			switch li {
 			case bidi.MarkerRTL: // "<": before the RTL cell to its left
-				if p := prevBase(pi); p >= 0 {
+				if p := priorBase(pi); p >= 0 {
 					return p, true
 				}
 			case bidi.MarkerLTR: // ">": before the LTR cell to its right
@@ -1077,7 +1077,7 @@ func (e *Editor) markerCaretAt(w *viewport.Viewport, line string, target, subX i
 				}
 			case bidi.MarkerEnd: // "|": the "after" side of the nearer neighbor
 				if subX < 500 {
-					return rightEdge(prevBase(pi)), true
+					return rightEdge(priorBase(pi)), true
 				}
 				return leftEdge(nextBase(pi)), true
 			}

@@ -29,7 +29,7 @@ func TestApplyResize(t *testing.T) {
 		{"top clamps at client top, height absorbs it", ResizeEdgeTop, 0, -100, core.UnitRect{X: 10, Y: 0, Width: 100, Height: 60}},
 	}
 	for _, c := range cases {
-		got := ApplyResize(orig, c.edge, c.dx, c.dy, m, false, ca)
+		got := ApplyResize(orig, c.edge, c.dx, c.dy, m, false, ca, unlimited)
 		if got != c.want {
 			t.Errorf("%s: ApplyResize = %+v, want %+v", c.name, got, c.want)
 		}
@@ -42,8 +42,72 @@ func TestApplyResizeHeightCappedToClientArea(t *testing.T) {
 	m := core.DefaultCellMetrics()
 	ca := core.UnitRect{X: 0, Y: 0, Width: 1000, Height: 200}
 	orig := core.UnitRect{X: 0, Y: 0, Width: 100, Height: 180}
-	got := ApplyResize(orig, ResizeEdgeBottom, 0, 100, m, false, ca)
+	got := ApplyResize(orig, ResizeEdgeBottom, 0, 100, m, false, ca, unlimited)
 	if got.Height != 200 {
 		t.Errorf("height = %d, want capped at client area height 200", got.Height)
+	}
+}
+
+// unlimited is a window that says nothing about how far it grows.
+var unlimited = ResizeLimits{Maximum: core.UnitSize{Width: core.Unbounded, Height: core.Unbounded}}
+
+// A window that states a maximum cannot be dragged past it, and the edge
+// opposite the one under the pointer stays where the gesture found it.
+func TestApplyResizeStopsAtTheStatedMaximum(t *testing.T) {
+	m := core.DefaultCellMetrics()
+	ca := core.UnitRect{X: 0, Y: 0, Width: 1000, Height: 1000}
+	orig := core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120}
+	lim := ResizeLimits{Maximum: core.UnitSize{Width: 280, Height: 160}}
+
+	cases := []struct {
+		name string
+		edge int
+		dx   core.Unit
+		dy   core.Unit
+		want core.UnitRect
+	}{
+		{"right stops at the maximum width", ResizeEdgeRight, 400, 0,
+			core.UnitRect{X: 100, Y: 100, Width: 280, Height: 120}},
+		{"left stops with the right edge anchored", ResizeEdgeLeft, -400, 0,
+			core.UnitRect{X: 20, Y: 100, Width: 280, Height: 120}},
+		{"bottom stops at the maximum height", ResizeEdgeBottom, 0, 400,
+			core.UnitRect{X: 100, Y: 100, Width: 200, Height: 160}},
+		{"top stops with the bottom edge anchored", ResizeEdgeTop, 0, -400,
+			core.UnitRect{X: 100, Y: 60, Width: 200, Height: 160}},
+		{"a corner stops on both axes at once", ResizeEdgeRight | ResizeEdgeBottom, 400, 400,
+			core.UnitRect{X: 100, Y: 100, Width: 280, Height: 160}},
+		{"short of the maximum nothing is clamped", ResizeEdgeRight, 40, 0,
+			core.UnitRect{X: 100, Y: 100, Width: 240, Height: 120}},
+	}
+	for _, c := range cases {
+		if got := ApplyResize(orig, c.edge, c.dx, c.dy, m, false, ca, lim); got != c.want {
+			t.Errorf("%s: ApplyResize = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// A stated minimum raises the shared 3x2-cell floor, and where the two
+// limits meet the minimum is the one that holds.
+func TestApplyResizeHoldsTheStatedMinimum(t *testing.T) {
+	m := core.DefaultCellMetrics()
+	ca := core.UnitRect{X: 0, Y: 0, Width: 1000, Height: 1000}
+	orig := core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120}
+
+	lim := ResizeLimits{
+		Minimum: core.UnitSize{Width: 150, Height: 90},
+		Maximum: core.UnitSize{Width: core.Unbounded, Height: core.Unbounded},
+	}
+	if got := ApplyResize(orig, ResizeEdgeRight, -400, 0, m, false, ca, lim); got.Width != 150 {
+		t.Errorf("width = %d, want the stated minimum 150", got.Width)
+	}
+
+	// Minimum over maximum: a band capped below its own floor keeps the floor.
+	crossed := ResizeLimits{
+		Minimum: core.UnitSize{Width: 150, Height: 90},
+		Maximum: core.UnitSize{Width: 100, Height: 60},
+	}
+	got := ApplyResize(orig, ResizeEdgeRight|ResizeEdgeBottom, 400, 400, m, false, ca, crossed)
+	if got.Width != 150 || got.Height != 90 {
+		t.Errorf("size = %v, want the minimum 150x90 to win over the maximum", got.Size())
 	}
 }

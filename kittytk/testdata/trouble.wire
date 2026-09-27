@@ -1,0 +1,89 @@
+# The corpus every implementation of a `trouble` reads.
+#
+# A refusal is what a batch is answered WITH, in place of the reply that would
+# have named what it made. A trouble is not that: the statements ran, the objects
+# exist, and something on the way is worth the author knowing -- an optional
+# include a bundle could not find, a hint that cannot mean what it says. It
+# travels immediately before the reply, so it is part of the answer to the batch
+# that caused it rather than news arriving out of the blue.
+#
+# Each case is two lines. The first is what arrived:
+#
+#   trouble <the arguments after the verb>
+#
+# The second is what it has to come out as, written back from the structure:
+#
+#   want <the same thing, in canonical spelling>
+#   bad          (the text must be refused)
+#
+# `want` is the structure rendered again, so a part dropped on the way in is a
+# part missing on the way out. Canonical order is `about` then `text`, and an
+# empty `about` is not written: it is about nothing nameable.
+#
+# See wire/wire.go.
+
+# --- what it says, at its smallest ---
+trouble text="no such include"
+want text="no such include"
+
+# --- and what it was about, which is the ordinary shape ---
+trouble about="bundle:papers" text="papers/extra: no such include"
+want about="bundle:papers" text="papers/extra: no such include"
+
+# The order it arrives in is not the order it is written back: the structure has
+# no order, so a canonical spelling is what two implementations can compare.
+trouble text="papers/extra: no such include" about="bundle:papers"
+want about="bundle:papers" text="papers/extra: no such include"
+
+# --- an empty `about` is about nothing nameable, and is not written back ---
+trouble about="" text="the store is gone"
+want text="the store is gone"
+
+# --- a reason is text, and is carried exactly ---
+trouble text="sort={ size desc } names a field nothing is keyed by"
+want text="sort={ size desc } names a field nothing is keyed by"
+
+trouble text="he said \"no such include\" and meant it"
+want text="he said \"no such include\" and meant it"
+
+trouble about="bundle:papers" text="two ways down: parent= and location= both"
+want about="bundle:papers" text="two ways down: parent= and location= both"
+
+# Somebody else's alphabet, in both halves.
+trouble about="bundle:סוגריים" text="לא נמצא"
+want about="bundle:סוגריים" text="לא נמצא"
+
+# --- what a later version says is not what this one refuses ---
+#
+# An argument this version does not know is a later one saying more. A client
+# that refused the whole statement over it would stop hearing complaints the day
+# the display learned to say where they came from.
+trouble about="bundle:papers" text="no such include" id=17
+want about="bundle:papers" text="no such include"
+
+trouble text="no such include" at="papers/extra"
+want text="no such include"
+
+# The last one wins, the same as everywhere else a name is said twice.
+trouble text="first" text="second"
+want text="second"
+
+# --- a complaint with nothing in it says less than silence ---
+#
+# A reader shown a row with no reason on it is told there is a problem and
+# nothing else, which is worse than not being told.
+trouble
+bad
+
+trouble about="bundle:papers"
+bad
+
+# --- and a reason has to be a reason ---
+trouble text=17
+bad
+
+trouble text
+bad
+
+trouble about=papers text="no such include"
+bad

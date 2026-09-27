@@ -11,17 +11,17 @@ type BoxLayout struct {
 	BaseLayout
 	orientation   core.Orientation
 	items         []*LayoutItem
-	metricsSource core.Trinket // container whose effective grid metrics apply
+	metricsSource core.Trinket // container whose effective cell metrics apply
 }
 
-// SetMetricsSource sets the trinket whose effective grid metrics this
+// SetMetricsSource sets the trinket whose effective cell metrics this
 // layout uses (normally the container; wired by Panel). Layouts are
 // not trinkets, so they cannot walk the inheritance chain themselves.
 func (l *BoxLayout) SetMetricsSource(w core.Trinket) {
 	l.metricsSource = w
 }
 
-// effectiveMetrics resolves grid metrics from the given container if
+// effectiveMetrics resolves cell metrics from the given container if
 // it is a trinket, else from the stored metrics source, else defaults.
 func (l *BoxLayout) effectiveMetrics(container core.Container) core.CellMetrics {
 	if w, ok := container.(core.Trinket); ok && w != nil {
@@ -31,6 +31,20 @@ func (l *BoxLayout) effectiveMetrics(container core.Container) core.CellMetrics 
 		return core.FindEffectiveCellMetrics(l.metricsSource)
 	}
 	return core.DefaultCellMetrics()
+}
+
+// effectiveDirection resolves the direction items are placed against from the
+// given container if it is a trinket, else from the stored metrics source,
+// else left to right. Layouts are not trinkets, so they cannot walk the
+// inheritance chain themselves.
+func (l *BoxLayout) effectiveDirection(container core.Container) core.Direction {
+	if w, ok := container.(core.Trinket); ok && w != nil {
+		return core.FindEffectiveDirection(w)
+	}
+	if l.metricsSource != nil {
+		return core.FindEffectiveDirection(l.metricsSource)
+	}
+	return core.DirLTR
 }
 
 // NewBoxLayout creates a new box layout with the given orientation.
@@ -137,18 +151,55 @@ func (l *BoxLayout) ItemAt(index int) *LayoutItem {
 	return l.items[index]
 }
 
-// isInlineTrinket returns true if the trinket is an inline (non-container) trinket.
-func isInlineTrinket(w core.Trinket) bool {
-	// If it implements InlineTrinket interface and returns true, it's inline
-	if inline, ok := w.(core.InlineTrinket); ok && inline.IsInlineTrinket() {
-		return true
+// spacingTotal is ALL the room Layout puts between and around the items along
+// the main axis, which is what SizeHint and MinimumSize have to promise: a box
+// handed less than Layout then consumes lays its children out past its own
+// edge, and a row of buttons put its last shadow through whatever was drawn to
+// the right of it.
+func (l *BoxLayout) spacingTotal(container core.Container) core.Unit {
+	if len(l.items) < 1 {
+		return 0
 	}
-	// If it's a Container, it's not inline
-	if _, ok := w.(core.Container); ok {
-		return false
+	metrics := l.effectiveMetrics(container)
+	if l.orientation == core.Vertical {
+		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
+		return spacing * core.Unit(len(l.items)-1)
 	}
-	// Default: treat as inline if not a container
-	return true
+	base := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
+	total := l.inlineSpacingForItems(metrics)
+	for i := 0; i < len(l.items)-1; i++ {
+		if !isInlineTrinket(l.items[i].Trinket) && !isInlineTrinket(l.items[i+1].Trinket) {
+			total += base
+		}
+	}
+	return total
+}
+
+// itemSize is what a child asks for: what it answers for itself, lowered to
+// max_width and max_height and then raised to min_width and min_height.
+//
+// The order is the rule: where a maximum and a minimum conflict the minimum
+// wins. A maximum says how far a trinket may grow and a minimum how small it
+// may be made, and being made too small is the worse failure -- a control
+// squeezed under its minimum stops being usable, where one that overruns a
+// maximum is merely bigger than asked.
+func itemSize(w core.Trinket) core.UnitSize {
+	size := w.SizeHint()
+	max := w.MaximumSize()
+	if max.Width >= 0 && size.Width > max.Width {
+		size.Width = max.Width
+	}
+	if max.Height >= 0 && size.Height > max.Height {
+		size.Height = max.Height
+	}
+	min := w.MinimumSize()
+	if size.Width < min.Width {
+		size.Width = min.Width
+	}
+	if size.Height < min.Height {
+		size.Height = min.Height
+	}
+	return size
 }
 
 // Layout arranges children within the given bounds.
@@ -160,46 +211,45 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// Apply margins
 	rect := l.effectiveBounds(bounds)
 
+	// The direction items are placed against is the CONTAINER's, not each
+	// item's own: a right-to-left panel sitting in a left-to-right row is
+	// placed against the row it sits in.
+	layoutDir := l.effectiveDirection(container)
+
+	// A row runs the way its direction reads. The run is laid out from the
+	// left either way and reflected at the end (see mirrorX), so the sizing,
+	// the boundaries and the air around inline trinkets have one answer that
+	// both directions share.
+	//
+	// Only a row has a run to reflect. A column hands each child the whole
+	// width and the direction is spent inside that, by alignContent, resolving
+	// the child's halign to a side.
+	mirrored := layoutDir == core.DirRTL && l.orientation == core.Horizontal
+
 	// Round spacing to whole cell size based on orientation
 	metrics := l.effectiveMetrics(container)
 	var spacing core.Unit
 	if l.orientation == core.Horizontal {
-		// Round to CellWidth
-		spacing = core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.CellWidth
+		// Round to UnitsPerCellWidth
+		spacing = core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
 	} else {
-		// Round to CellHeight
-		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.CellHeight
+		// Round to UnitsPerCellHeight
+		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
 	}
 
-	// For horizontal layout, calculate additional spacing for inline trinkets
-	var inlineSpacingTotal core.Unit
-	if l.orientation == core.Horizontal && len(l.items) > 0 {
-		// Space before first inline trinket
-		if isInlineTrinket(l.items[0].Trinket) {
-			inlineSpacingTotal += metrics.CellWidth
-		}
-		// Space between items where at least one is inline
-		for i := 0; i < len(l.items)-1; i++ {
-			if isInlineTrinket(l.items[i].Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
-				inlineSpacingTotal += metrics.CellWidth
-			}
-		}
-		// Space after last inline trinket
-		if isInlineTrinket(l.items[len(l.items)-1].Trinket) {
-			inlineSpacingTotal += metrics.CellWidth
-		}
-	}
+	inlineSpacingTotal := l.inlineSpacingForItems(metrics)
 
 	// Calculate sizes along the primary axis
 	var sizes []core.Unit
 	if l.orientation == core.Horizontal {
-		sizes = l.horizontalItemWidths(rect.Width, metrics, spacing, inlineSpacingTotal)
+		sizes = l.horizontalItemWidths(rect.Width, metrics, spacing, inlineSpacingTotal,
+			cellQuantum(container, metrics.UnitsPerCellWidth))
 	} else {
 		totalSpacing := spacing * core.Unit(len(l.items)-1)
 		stretchItems := make([]stretchItem, len(l.items))
 
 		for i, item := range l.items {
-			hint := item.Trinket.SizeHint()
+			hint := itemSize(item.Trinket)
 			policy := item.Trinket.SizePolicy()
 
 			minSize := hint.Height
@@ -208,10 +258,14 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			if h := itemHeightForWidth(item.Trinket, l.verticalItemWidth(rect.Width, item, metrics)); h > 0 {
 				minSize = h
 			}
+			if m := item.Trinket.MinimumSize().Height; minSize < m {
+				minSize = m
+			}
 
+			want := stretchFor(item.Trinket, item.Stretch)
 			stretch := 0
-			if policy.Vertical == core.SizeExpanding || item.Stretch > 0 {
-				stretch = item.Stretch
+			if policy.Vertical == core.SizeExpanding || want > 0 {
+				stretch = want
 				if stretch == 0 {
 					stretch = 1
 				}
@@ -219,12 +273,17 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 			stretchItems[i] = stretchItem{
 				minimum: minSize,
+				maximum: item.Trinket.MaximumSize().Height,
 				stretch: stretch,
 			}
 		}
 
-		sizes = calculateStretch(rect.Height-totalSpacing, stretchItems)
+		sizes = calculateStretch(rect.Height-totalSpacing, stretchItems,
+			cellQuantum(container, metrics.UnitsPerCellHeight))
 	}
+
+	// The line's decoration room, set aside before anything is aligned in it.
+	allowance := l.styleAllowance()
 
 	// Position trinkets
 	var pos core.Unit
@@ -232,7 +291,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		pos = rect.X
 		// Add margin before first inline trinket
 		if len(l.items) > 0 && isInlineTrinket(l.items[0].Trinket) {
-			pos += metrics.CellWidth
+			pos += metrics.UnitsPerCellWidth
 		}
 	} else {
 		pos = rect.Y
@@ -254,7 +313,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			// For inline trinkets, use inline spacing; for containers, use base spacing
 			if i < len(l.items)-1 {
 				if isInlineTrinket(item.Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
-					pos += metrics.CellWidth // Inline spacing
+					pos += metrics.UnitsPerCellWidth // Inline spacing
 				} else {
 					pos += spacing // Container-to-container spacing
 				}
@@ -264,10 +323,10 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			itemX := rect.X
 			itemWidth := rect.Width
 
-			if inlineTrinket, ok := item.Trinket.(core.InlineTrinket); ok && inlineTrinket.IsInlineTrinket() {
+			if insetInColumn(item.Trinket) {
 				// Add 1-cell horizontal margin on each side
-				itemX += metrics.CellWidth
-				itemWidth -= metrics.CellWidth * 2
+				itemX += metrics.UnitsPerCellWidth
+				itemWidth -= metrics.UnitsPerCellWidth * 2
 				if itemWidth < 0 {
 					itemWidth = 0
 				}
@@ -282,22 +341,122 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			pos += sizes[i] + spacing
 		}
 
+		if mirrored {
+			itemBounds = mirrorX(rect, itemBounds)
+		}
+
 		// Apply alignment within the item bounds
-		itemBounds = l.alignItem(item, itemBounds)
-		item.Trinket.SetBounds(itemBounds)
+		itemBounds = l.alignItem(item, itemBounds, allowance, layoutDir)
+		placeChild(container, item.Trinket, itemBounds, metrics)
 	}
 }
 
-// alignItem adjusts item bounds based on alignment.
-func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitRect {
-	hint := item.Trinket.SizeHint()
+// styleAllowance is the part of a line's cross-axis size that exists ONLY
+// because something in it reserves room for decoration -- the row a button's
+// drop shadow adds beneath a line of otherwise one-row trinkets.
+//
+// The line minus its tallest CONTENT. Where the tallest item is content (a list
+// three rows deep beside a button) the shadow already fits inside the line and
+// the answer is nothing: no one is being aligned around decoration, so none is
+// set aside. Where the button is what made the line tall, the answer is that
+// row, and it is kept out of the band its neighbours align in -- which is what
+// puts a one-row field level with the button's cap instead of half a row under
+// it.
+//
+// Trailing edges only, which is where the one decoration in this toolkit falls.
+// A leading inset would come off the other end and is not implemented.
+func (l *BoxLayout) styleAllowance() core.UnitMargins {
+	var outerW, outerH, contentW, contentH core.Unit
+	for _, item := range l.items {
+		hint := itemSize(item.Trinket)
+		ins := core.FindStyleInsets(item.Trinket)
+		if hint.Width > outerW {
+			outerW = hint.Width
+		}
+		if hint.Height > outerH {
+			outerH = hint.Height
+		}
+		if c := hint.Width - ins.Horizontal(); c > contentW {
+			contentW = c
+		}
+		if c := hint.Height - ins.Vertical(); c > contentH {
+			contentH = c
+		}
+	}
+	allow := core.UnitMargins{Right: outerW - contentW, Bottom: outerH - contentH}
+	if allow.Right < 0 {
+		allow.Right = 0
+	}
+	if allow.Bottom < 0 {
+		allow.Bottom = 0
+	}
+	return allow
+}
+
+// alignItem places an item in its allocation.
+//
+// Alignment happens inside the BAND -- the allocation less the line's
+// decoration room -- so what one trinket keeps for a shadow is not something
+// the others line up against. The item's own insets go back on afterwards, so
+// its decoration reaches into the room that was set aside for it.
+//
+// The result is not clamped to the allocation. An item aligned left already
+// takes its own size whether or not the box is wide enough to hold it -- a
+// panel that came out narrower than its contents still shows them -- and
+// clamping here would take that away.
+func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance core.UnitMargins, layoutDir core.Direction) core.UnitRect {
+	ins := core.FindStyleInsets(item.Trinket)
+
+	// The band is what a FILLING item may take: decoration room is not room to
+	// grow into. Positional alignment gets the whole allocation instead -- a
+	// button centred in a three-row row puts its cap on the middle row and its
+	// shadow on the last, rather than centring the pair.
+	band := bounds
+	band.Width -= allowance.Right
+	band.Height -= allowance.Bottom
+	if band.Width < 0 {
+		band.Width = 0
+	}
+	if band.Height < 0 {
+		band.Height = 0
+	}
+
+	out := l.alignContent(item, bounds, band, ins, layoutDir)
+
+	// Only on the CROSS axis, which is the one alignment placed from the
+	// content size. Along the main axis the allocation came from the sizing
+	// pass, which measured the whole trinket, decoration included -- adding it
+	// again there stretched a button in a vertical box by its own shadow row.
+	if l.orientation == core.Horizontal {
+		out.Height += ins.Vertical()
+	} else {
+		out.Width += ins.Horizontal()
+	}
+	return out
+}
+
+// alignContent places an item's CONTENT: positioned within bounds, the whole
+// allocation, and grown no further than band when it fills.
+func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, ins core.UnitMargins, layoutDir core.Direction) core.UnitRect {
+	hint := itemSize(item.Trinket)
+	hint.Width -= ins.Horizontal()
+	hint.Height -= ins.Vertical()
 	policy := item.Trinket.SizePolicy()
+	align := alignmentFor(item.Trinket, item.Align)
 
 	if l.orientation == core.Horizontal {
+		// A cross axis the trinket says is FIXED does not grow, whatever it is
+		// asked to do: a button's cap is one row and a field is one row, and a
+		// row three deep holds them at their own height rather than stretching
+		// them to it. There is nothing to fill, so the item sits where its
+		// alignment puts it.
+		fill := align.FillV && policy.Vertical != core.SizeFixed
+
 		// A trinket whose cross-axis policy is Expanding fills the
 		// allocation; alignment clamps only trinkets that don't want
 		// to grow (separators, text inputs vs. buttons, etc.).
 		if policy.Vertical == core.SizeExpanding {
+			bounds.Height = band.Height
 			return bounds
 		}
 
@@ -308,32 +467,37 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 			height = itemHeightForWidth(item.Trinket, bounds.Width)
 		}
 
-		// Vertical alignment in horizontal layout. Only AlignFill stretches
-		// the child to the row; every other value (including the default,
-		// unset alignment) keeps the child's natural height, so a one-row
-		// text input beside a taller button stays one row instead of growing
-		// to the button's height. The default centers it in the row.
-		switch item.Align {
-		case core.AlignFill:
-			// Fill available space - no adjustment needed
+		// Filling stretches the child to the row, and is what an item gets
+		// when nothing says otherwise; an item that does not fill keeps its
+		// natural height, so a one-row text input beside a taller button stays
+		// one row instead of growing to the button's height, placed in the row
+		// by its own alignment.
+		if fill {
+			bounds.Height = band.Height
+			return bounds
+		}
+		switch align.V {
 		case core.AlignTop:
 			bounds.Height = height
 		case core.AlignBottom:
-			if height < bounds.Height {
-				bounds.Y += bounds.Height - height
+			// To the BAND's bottom edge: the row a shadow reserves is not a row
+			// to sit on. Middle below ignores the reservation instead, because
+			// the shadow is not in the middle and has no business moving it.
+			if height < band.Height {
+				bounds.Y += band.Height - height
 				bounds.Height = height
 			}
 		default: // AlignMiddle and unspecified
 			if height < bounds.Height {
-				// Snap the centering offset to the cell grid. A sub-row offset
+				// Snap the centering offset to a whole cell. A sub-row offset
 				// (a 1-row item centered in a 2-row row is half a row down) is
 				// drawn snapped to a row on a cell surface but hit-tested at the
-				// raw half-row bounds, so clicks land a row off; grid-aligning
-				// keeps draw and hit together. Pixel surfaces are unaffected -
+				// raw half-row bounds, so clicks land a row off; snapping to a
+				// row keeps draw and hit together. Pixel surfaces are unaffected -
 				// the offset is already a whole number of rows there or rounds
 				// to the same row.
 				off := (bounds.Height - height) / 2
-				if ch := core.FindEffectiveCellMetrics(item.Trinket).CellHeight; ch > 0 {
+				if ch := core.FindEffectiveCellMetrics(item.Trinket).UnitsPerCellHeight; ch > 0 {
 					off = (off / ch) * ch
 				}
 				bounds.Y += off
@@ -341,8 +505,11 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 			}
 		}
 	} else {
+		fill := align.FillH && policy.Horizontal != core.SizeFixed
+
 		// Cross-axis Expanding fills the allocation (see above).
 		if policy.Horizontal == core.SizeExpanding {
+			bounds.Width = band.Width
 			return bounds
 		}
 
@@ -353,26 +520,41 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 			return bounds
 		}
 
-		// Horizontal alignment in vertical layout
-		switch item.Align {
-		case core.AlignFill:
-			// Fill available space - no adjustment needed
-		case core.AlignLeft:
-			bounds.Width = hint.Width
-		case core.AlignCenter:
+		if fill {
+			bounds.Width = band.Width
+			return bounds
+		}
+
+		// The logical alignments are spent HERE, where the trinket and the
+		// direction around it are both known; what is left is a side.
+		switch core.ResolveHAlign(align.H, core.FindTextDirection(item.Trinket), layoutDir) {
+		case core.SideLeft:
+			// Only ever narrower than the allocation, the way the other two
+			// sides already are. A child handed MORE width than the box has
+			// spills past its edge -- and since a trinket cuts its text to
+			// its OWN bounds, it also concludes it had room for all of it, so
+			// a caption too long for the panel runs off the side instead of
+			// eliding, with nothing to offer on hover either.
+			if hint.Width < bounds.Width {
+				bounds.Width = hint.Width
+			}
+		case core.SideCenter:
 			if hint.Width < bounds.Width {
 				// Grid-snap the offset (see the vertical-centering note) so a
 				// cell surface draws and hit-tests the child in the same column.
 				off := (bounds.Width - hint.Width) / 2
-				if cw := core.FindEffectiveCellMetrics(item.Trinket).CellWidth; cw > 0 {
+				if cw := core.FindEffectiveCellMetrics(item.Trinket).UnitsPerCellWidth; cw > 0 {
 					off = (off / cw) * cw
 				}
 				bounds.X += off
 				bounds.Width = hint.Width
 			}
-		case core.AlignRight:
-			if hint.Width < bounds.Width {
-				bounds.X += bounds.Width - hint.Width
+		case core.SideRight:
+			// To the BAND's right edge, so a right-aligned trinket leaves the
+			// column a neighbour's shadow falls in free -- and one with a
+			// shadow of its own puts its cap there and the shadow beyond it.
+			if hint.Width < band.Width {
+				bounds.X += band.Width - hint.Width
 				bounds.Width = hint.Width
 			}
 		}
@@ -391,7 +573,7 @@ func hasHeightForWidth(w core.Trinket) bool {
 // horizontalItemWidths computes item widths for the horizontal
 // orientation given the content width (margins already removed),
 // mirroring Layout's spacing rules.
-func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.CellMetrics, baseSpacing, inlineSpacingTotal core.Unit) []core.Unit {
+func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.CellMetrics, baseSpacing, inlineSpacingTotal, q core.Unit) []core.Unit {
 	// For inline gaps, use inline spacing; for container gaps, use base spacing
 	totalSpacing := inlineSpacingTotal
 	for i := 0; i < len(l.items)-1; i++ {
@@ -402,12 +584,13 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 
 	stretchItems := make([]stretchItem, len(l.items))
 	for i, item := range l.items {
-		hint := item.Trinket.SizeHint()
+		hint := itemSize(item.Trinket)
 		policy := item.Trinket.SizePolicy()
 
+		want := stretchFor(item.Trinket, item.Stretch)
 		stretch := 0
-		if policy.Horizontal == core.SizeExpanding || item.Stretch > 0 {
-			stretch = item.Stretch
+		if policy.Horizontal == core.SizeExpanding || want > 0 {
+			stretch = want
 			if stretch == 0 {
 				stretch = 1
 			}
@@ -415,18 +598,84 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 
 		stretchItems[i] = stretchItem{
 			minimum: hint.Width,
+			maximum: item.Trinket.MaximumSize().Width,
 			stretch: stretch,
+			floor:   item.Trinket.MinimumSize().Width,
 		}
 	}
 
-	return calculateStretch(contentWidth-totalSpacing, stretchItems)
+	available := contentWidth - totalSpacing
+	shrinkToFit(stretchItems, available)
+	return calculateStretch(available, stretchItems, q)
+}
+
+// shrinkToFit brings a row's items down together when what they asked for
+// comes to more than the row has and nothing in the row can absorb it.
+//
+// What a trinket asks for is what it would LIKE, not the least it can do
+// with: that is what MinimumSize says. Handing every item its wish regardless
+// leaves the last of them drawn past the end of the row -- so a row of three
+// panels shows two and a bit of the third rather than three narrow ones. And
+// since a trinket cuts its text to its OWN bounds, one given room that is not
+// there believes it had room for all of it, so a caption too long for the row
+// runs off the side instead of eliding.
+//
+// A row with something elastic in it is left alone: calculateStretch already
+// takes the deficit out of whatever stretches, which is where it should come
+// from -- a caption is not cut while a spacer beside it sits at full size.
+func shrinkToFit(items []stretchItem, available core.Unit) {
+	var wanted, elastic core.Unit
+	for _, it := range items {
+		if it.stretch > 0 {
+			return
+		}
+		wanted += it.minimum
+		if room := it.minimum - it.floor; room > 0 {
+			elastic += room
+		}
+	}
+	over := wanted - available
+	if over <= 0 || elastic <= 0 {
+		return
+	}
+	if over > elastic {
+		over = elastic
+	}
+	// Taken in proportion to what each item can give, so the one that asked
+	// for most gives most and one already at its narrowest gives nothing.
+	var taken core.Unit
+	for i := range items {
+		room := items[i].minimum - items[i].floor
+		if room <= 0 {
+			continue
+		}
+		cut := (over * room) / elastic
+		items[i].minimum -= cut
+		taken += cut
+	}
+	// Whatever integer division left behind comes off whichever item still
+	// has most to give, so the row lands exactly on the width it has.
+	for rest := over - taken; rest > 0; {
+		widest := -1
+		for i := range items {
+			if items[i].minimum > items[i].floor &&
+				(widest < 0 || items[i].minimum > items[widest].minimum) {
+				widest = i
+			}
+		}
+		if widest < 0 {
+			break
+		}
+		items[widest].minimum--
+		rest--
+	}
 }
 
 // verticalItemWidth returns the width an item will receive in a
 // vertical layout (inline trinkets are inset one cell per side).
 func (l *BoxLayout) verticalItemWidth(contentWidth core.Unit, item *LayoutItem, metrics core.CellMetrics) core.Unit {
-	if isInlineTrinket(item.Trinket) {
-		contentWidth -= metrics.CellWidth * 2
+	if insetInColumn(item.Trinket) {
+		contentWidth -= metrics.UnitsPerCellWidth * 2
 	}
 	if contentWidth < 0 {
 		contentWidth = 0
@@ -446,23 +695,29 @@ func itemHeightForWidth(w core.Trinket, width core.Unit) core.Unit {
 	return w.SizeHint().Height
 }
 
-// inlineSpacingForItems computes the extra horizontal spacing inline
-// trinkets receive in a horizontal layout (mirrors Layout).
+// inlineSpacingForItems is the breathing room a horizontal box opens around
+// INLINE trinkets -- the small controls that read as part of a sentence rather
+// than as blocks: a column before the first if it is inline, one between any
+// two where either is, and one after the last if it is.
+//
+// It is not the configured spacing and does not replace it; between two items
+// that are both blocks the configured spacing applies instead. Layout consumes
+// it, so spacingTotal has to promise it.
 func (l *BoxLayout) inlineSpacingForItems(metrics core.CellMetrics) core.Unit {
 	var total core.Unit
 	if len(l.items) == 0 {
 		return 0
 	}
 	if isInlineTrinket(l.items[0].Trinket) {
-		total += metrics.CellWidth
+		total += metrics.UnitsPerCellWidth
 	}
 	for i := 0; i < len(l.items)-1; i++ {
 		if isInlineTrinket(l.items[i].Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
-			total += metrics.CellWidth
+			total += metrics.UnitsPerCellWidth
 		}
 	}
 	if isInlineTrinket(l.items[len(l.items)-1].Trinket) {
-		total += metrics.CellWidth
+		total += metrics.UnitsPerCellWidth
 	}
 	return total
 }
@@ -494,7 +749,7 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 
 	var height core.Unit
 	if l.orientation == core.Vertical {
-		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.CellHeight
+		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
 		for i, item := range l.items {
 			height += itemHeightForWidth(item.Trinket, l.verticalItemWidth(contentWidth, item, metrics))
 			if i < len(l.items)-1 {
@@ -502,8 +757,13 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 			}
 		}
 	} else {
-		spacing := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.CellWidth
-		widths := l.horizontalItemWidths(contentWidth, metrics, spacing, l.inlineSpacingForItems(metrics))
+		spacing := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
+		// Measured at the widths Layout will give, which on a cell surface are
+		// whole cells: a child asked how tall it is at a width it will never
+		// have answers for a line it will never wrap at.
+		container, _ := l.metricsSource.(core.Container)
+		widths := l.horizontalItemWidths(contentWidth, metrics, spacing, l.inlineSpacingForItems(metrics),
+			cellQuantum(container, metrics.UnitsPerCellWidth))
 		for i, item := range l.items {
 			if h := itemHeightForWidth(item.Trinket, widths[i]); h > height {
 				height = h
@@ -514,12 +774,42 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 	return height + l.margins.Vertical()
 }
 
+// insetInColumn reports whether a column insets this child by a column of air
+// on each side. It is the trinket's own word, which is a narrower test than
+// isInlineTrinket's "a container is a block and everything else reads as
+// inline": a separator or a spacer down a column is not a control in a
+// sentence, and narrowing it would be a change to how it draws.
+//
+// SizeHint, MinimumSize and Layout all ask it, so what a column PROMISES and
+// what it then takes cannot drift apart.
+func insetInColumn(w core.Trinket) bool {
+	inline, ok := w.(core.InlineTrinket)
+	return ok && inline.IsInlineTrinket()
+}
+
+// crossBearings is the air a COLUMN opens beside an inline child -- a column
+// on each side, which Layout insets it by.
+//
+// Down a column that air is across the run, so it belongs to the width a box
+// asks for rather than to the spacing between children. Without it a box asks
+// for exactly its widest child and then hands that child two columns less than
+// it asked for, and the caption a control could not fit runs out past its own
+// edge -- off the trailing side, which is under a scroll bar's lane as often
+// as it is into open air.
+func (l *BoxLayout) crossBearings(w core.Trinket, metrics core.CellMetrics) core.Unit {
+	if l.orientation == core.Horizontal || !insetInColumn(w) {
+		return 0
+	}
+	return metrics.UnitsPerCellWidth * 2
+}
+
 // SizeHint returns the preferred size for the container.
 func (l *BoxLayout) SizeHint(container core.Container) core.UnitSize {
 	var width, height core.Unit
+	metrics := l.effectiveMetrics(container)
 
 	for _, item := range l.items {
-		hint := item.Trinket.SizeHint()
+		hint := itemSize(item.Trinket)
 
 		if l.orientation == core.Horizontal {
 			width += hint.Width
@@ -528,20 +818,16 @@ func (l *BoxLayout) SizeHint(container core.Container) core.UnitSize {
 			}
 		} else {
 			height += hint.Height
-			if hint.Width > width {
-				width = hint.Width
+			if w := hint.Width + l.crossBearings(item.Trinket, metrics); w > width {
+				width = w
 			}
 		}
 	}
 
-	// Add spacing
-	if len(l.items) > 1 {
-		spacing := l.spacing * core.Unit(len(l.items)-1)
-		if l.orientation == core.Horizontal {
-			width += spacing
-		} else {
-			height += spacing
-		}
+	if spacing := l.spacingTotal(container); l.orientation == core.Horizontal {
+		width += spacing
+	} else {
+		height += spacing
 	}
 
 	// Add margins
@@ -554,6 +840,7 @@ func (l *BoxLayout) SizeHint(container core.Container) core.UnitSize {
 // MinimumSize returns the minimum size for the container.
 func (l *BoxLayout) MinimumSize(container core.Container) core.UnitSize {
 	var width, height core.Unit
+	metrics := l.effectiveMetrics(container)
 
 	for _, item := range l.items {
 		minSize := item.Trinket.MinimumSize()
@@ -565,20 +852,17 @@ func (l *BoxLayout) MinimumSize(container core.Container) core.UnitSize {
 			}
 		} else {
 			height += minSize.Height
-			if minSize.Width > width {
-				width = minSize.Width
+			if w := minSize.Width + l.crossBearings(item.Trinket, metrics); w > width {
+				width = w
 			}
 		}
 	}
 
 	// Add spacing
-	if len(l.items) > 1 {
-		spacing := l.spacing * core.Unit(len(l.items)-1)
-		if l.orientation == core.Horizontal {
-			width += spacing
-		} else {
-			height += spacing
-		}
+	if spacing := l.spacingTotal(container); l.orientation == core.Horizontal {
+		width += spacing
+	} else {
+		height += spacing
 	}
 
 	// Add margins

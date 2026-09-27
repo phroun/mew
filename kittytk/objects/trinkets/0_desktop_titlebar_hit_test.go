@@ -9,11 +9,11 @@ import (
 )
 
 // The titlebar chrome sits inside the reserved frame border, so its band
-// runs [0, border+CellHeight) in window-local coordinates. A press on the
-// LOWER part of a titlebar button - the strip below CellHeight but still
+// runs [0, border+UnitsPerCellHeight) in window-local coordinates. A press on the
+// LOWER part of a titlebar button - the strip below UnitsPerCellHeight but still
 // within the border-shifted titlebar - must still register as a button
 // click, not leak through to content. Regression: the router gated on
-// event.Y < CellHeight and missed the bottom `border` rows of the chrome.
+// event.Y < UnitsPerCellHeight and missed the bottom `border` rows of the chrome.
 func TestTitlebarButtonHitIncludesBorderOffset(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
@@ -36,12 +36,12 @@ func TestTitlebarButtonHitIncludesBorderOffset(t *testing.T) {
 
 	// The maximize button is the third control ([x][.][^]); target its
 	// horizontal centre, at a row inside the border-shifted band that the
-	// old gate (< CellHeight) would have dropped.
+	// old gate (< UnitsPerCellHeight) would have dropped.
 	buttonWidth := metrics.TextWidth(3)
-	maxCenterX := metrics.CellWidth + buttonWidth*2 + buttonWidth/2 + border
-	y := metrics.CellHeight + border/2 // below CellHeight, inside the chrome
-	if y <= metrics.CellHeight {
-		y = metrics.CellHeight // border/2 rounded to 0; still exercises the boundary
+	maxCenterX := metrics.UnitsPerCellWidth + buttonWidth*2 + buttonWidth/2 + border
+	y := metrics.UnitsPerCellHeight + border/2 // below UnitsPerCellHeight, inside the chrome
+	if y <= metrics.UnitsPerCellHeight {
+		y = metrics.UnitsPerCellHeight // border/2 rounded to 0; still exercises the boundary
 	}
 
 	if win.IsMaximized() {
@@ -51,6 +51,6 @@ func TestTitlebarButtonHitIncludesBorderOffset(t *testing.T) {
 	win.HandleMouseRelease(core.MouseReleaseEvent{X: maxCenterX, Y: y, Button: core.LeftButton})
 
 	if !win.IsMaximized() {
-		t.Errorf("press+release on the lower titlebar band (y=%d, band=%d) did not hit the maximize button", y, metrics.CellHeight+border)
+		t.Errorf("press+release on the lower titlebar band (y=%d, band=%d) did not hit the maximize button", y, metrics.UnitsPerCellHeight+border)
 	}
 }

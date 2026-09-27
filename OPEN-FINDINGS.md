@@ -32,13 +32,48 @@ two options it names are still the question. Reversing it needs the event half
 designed, not just properties registered — a `cursor` property a client can
 write but never read tells it nothing about where the caret went.
 
-`docs/property-vocabulary.md:196-197` now carries `cursor`, `selection_start`
-and `selection_end` marked **not implemented** against this deferral, so the
-docs and the wire agree on their absence.
-
 Go API a wire client still cannot reach: `SetCursorPosition`, `SelectAll`,
 `SelectedText`, `HasSelection`.
 *Verified against current code and docs.*
+
+### `parent=` has no wire spelling: containment is children-blocks only
+*Recovered 2026-09-05 from the retired `docs/property-vocabulary.md` draft.*
+
+The draft's identity table listed `parent=<id or key>` as how an object states
+its containment "at creation or reparent". It was never registered: it is not a
+common property, and nothing in `protocol/` resolves it. Structure is built with
+`children={}` blocks and nothing else.
+
+Two consequences, and the second is the sharper one:
+
+- A trinket can only be placed where it is created. There is no wire spelling
+  for **reparenting** at all -- `destroy` and rebuild is the only route.
+- A build script's shape is forced to match the tree's shape. Anything that
+  wants to declare objects flat and then assemble them cannot.
+
+Whether `parent=` should exist is the open question; if it does, it needs an
+answer for what happens when it names an object in another connection's tree,
+and for whether it can move a trinket that is already placed.
+
+### Forward references within a batch
+*Recovered 2026-09-05 from the retired `docs/property-vocabulary.md` draft,
+where it was open question 5, marked "left open by owner".*
+
+Whether a later statement in one batch may reference a correlation key bound by
+an earlier one:
+
+```
+key1=new window ...
+new button parent=key1 ...
+```
+
+The draft's argument for it was building whole trees in one burst. It depends on
+`parent=` above, so the two stand or fall together, and it is the reason to
+decide `parent=` rather than simply drop it.
+
+Against: `children={}` already builds a whole tree in one burst, and scoped keys
+(`k1.sk1`) already address inside one. What forward references add is the flat
+declaration order, not the single round trip.
 
 ### TextInput: `EchoPasswordOnEdit` is declared but does nothing
 `EchoPasswordOnEdit` is one of four `EchoMode` constants (`textinput.go:101`,
@@ -51,11 +86,6 @@ of the `echo` enum's words, because exposing it would put a spelling on the
 wire that silently does the opposite of what it says. Either implement it or
 delete the constant.
 *Verified against current code.*
-
-### Panel: give flex and grid a wire spelling
-**Title only.** Related surface: `objects/trinkets/panel_protocol.go:68` reaches
-the layout manager through an interface assertion for `SetSpacing`, so layout
-properties are currently spelled ad hoc.
 
 ### MenuItem: decide what an item with no `action=` should emit
 **Title only.** A design question, not a bug report — the entry records that the
@@ -102,22 +132,6 @@ worth filing.
 ---
 
 ## KittyTK — layout and the cell grid
-
-### Nothing keeps a trinket's bounds on the cell grid
-On a cell surface, drawing rounds and hit-testing does not: `UnitsToCellX`
-integer-divides (`backend/tui/tui.go:993`) while `UnitRect.Contains` works in
-units. So a trinket placed off the grid draws in one cell and answers the mouse
-in another.
-
-This was hit for real: I set a window to `area.Width*3/4`, which has no relation
-to `CellWidth`, and got sizes like 640×400 → 480×276 (`h % 16 == 4`). Fixed at
-that one call site with `metrics.AlignSize`. Nothing enforces it generally.
-
-The gate for whether snapping applies is `WindowManager.SmoothPositioning()`, set
-only when the backend reports `core.SmoothPositioner`. The open question is
-whether alignment belongs in `SetBounds` for every trinket under a cell surface,
-rather than at each call site.
-*Live detail from a session where it was reproduced.*
 
 ### BoxLayout: `SizeHint` counts spacing raw while `Layout` rounds it
 The measurement and the placement disagree about the same gap, so a box asks for
@@ -173,8 +187,26 @@ cadences to run and three `go.mod` files for the subtree split to carry.
 Worth doing when there is an external client asking for it. Until then it is
 release overhead buying nothing measurable, and it stays one file away.
 
-### Wiki: add the trinkets missing from the Home index
-Documentation gap. **Title only** — the list of which trinkets is not recorded.
+### wikidoc generates less than it could, and the hand-written half is what goes stale
+*The Home-index question this replaces was answered and fixed 2026-09-27: no
+trinket was missing, one concept page was, and it is linked now.*
+
+Two blocks the tool could render and nothing asks it to:
+
+- **A type index.** `<!-- ktkdoc:types -->` is implemented (`typeIndex`,
+  `cmd/kittytk-wikidoc/main.go:296`) and lists real and virtual types
+  separately. No page uses it, so Home's index is maintained by hand and the
+  question "is anything missing from it" has to be asked with a shell one-liner
+  rather than by the tool.
+- **A `does` table.** There is no `ktkdoc:does <type>` at all, so every `do`
+  vocabulary on the wiki is prose. That is not hypothetical: MDIPane's actions
+  moved from properties to `do` statements and the page taught the old spelling
+  through a whole release, which only `-examples` caught, and only because one
+  fence happened to be executable.
+
+Both are the same shape -- what the tool generates cannot drift, and what it
+does not is what drifted. A `does` renderer would also cover the new `decision`
+type's three words, which are prose today.
 
 ### Fix the stale `SizeHint` comment on TextInput
 A comment that no longer describes the code. Small. **Title only.**

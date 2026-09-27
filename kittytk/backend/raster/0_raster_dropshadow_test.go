@@ -44,14 +44,14 @@ func TestDrawDropShadowPxFalloff(t *testing.T) {
 	}
 
 	// Walking out from the right edge, the shadow only gets lighter.
-	prev := -1
+	prior := -1
 	for d := 0; d <= int(blur)+2; d++ {
 		got := lum(b, x+w+d, y+h/2)
-		if prev >= 0 && got < prev {
+		if prior >= 0 && got < prior {
 			t.Errorf("shadow at %d px past the edge = %d, darker than %d at %d px — falloff must be monotonic",
-				d, got, prev, d-1)
+				d, got, prior, d-1)
 		}
-		prev = got
+		prior = got
 	}
 
 	if just := lum(b, x+w+1, y+h/2); just >= 255 {

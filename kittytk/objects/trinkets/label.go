@@ -14,15 +14,19 @@ type Label struct {
 	core.AccessibleTrinket
 
 	text      string
-	alignment core.Alignment
+	alignment core.HAlign
 	wordWrap  bool
+
+	// textDirection overrides what the caption itself says about which way
+	// it runs. DirInherit -- the zero value -- reads the caption.
+	textDirection core.Direction
 }
 
 // NewLabel creates a new label with the given text.
 func NewLabel(text string) *Label {
 	l := &Label{
 		text:      text,
-		alignment: core.AlignLeft,
+		alignment: core.AlignTextNatural,
 	}
 	l.TrinketBase = *core.NewTrinketBase()
 	l.Init(l)
@@ -42,16 +46,30 @@ func (l *Label) SetText(text string) {
 	l.text = text
 	l.SetAccessibleName(text)
 	l.Update()
+	l.InvalidateLayout()
 }
 
 // Alignment returns the text alignment.
-func (l *Label) Alignment() core.Alignment {
+func (l *Label) Alignment() core.HAlign {
 	return l.alignment
 }
 
 // SetAlignment sets the text alignment.
-func (l *Label) SetAlignment(align core.Alignment) {
+func (l *Label) SetAlignment(align core.HAlign) {
 	l.alignment = align
+	l.Update()
+}
+
+// TextDirection implements core.TextDirectioner: the direction set on the
+// label, else what its caption says, else no opinion.
+func (l *Label) TextDirection() (core.Direction, bool) {
+	return textDirectionOf(l.textDirection, l.text)
+}
+
+// SetTextDirection overrides which way the caption is taken to run;
+// core.DirInherit hands the question back to the caption itself.
+func (l *Label) SetTextDirection(d core.Direction) {
+	l.textDirection = d
 	l.Update()
 }
 
@@ -64,18 +82,18 @@ func (l *Label) WordWrap() bool {
 func (l *Label) SetWordWrap(wrap bool) {
 	l.wordWrap = wrap
 	l.Update()
+	l.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.
 func (l *Label) SizeHint() core.UnitSize {
 	metrics := l.EffectiveCellMetrics()
-	font := l.EffectiveFont()
 
 	// Split text by newlines to calculate proper dimensions
 	lines := strings.Split(l.text, "\n")
 	var maxWidth core.Unit
 	for _, line := range lines {
-		lineWidth := font.MeasureText(line)
+		lineWidth := l.MeasureText(line)
 		if lineWidth > maxWidth {
 			maxWidth = lineWidth
 		}
@@ -105,13 +123,13 @@ func (l *Label) HeightForWidth(width core.Unit) core.Unit {
 	if !l.wordWrap {
 		return l.SizeHint().Height
 	}
-	font := l.EffectiveFont()
-	lineCount := len(wrapText(l.text, width, font))
+	metrics := l.EffectiveCellMetrics()
+	lineCount := len(wrapText(l.text, width, l.EffectiveFont(), metrics))
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	// A text line occupies one grid row, in the container's denomination.
-	return core.Unit(lineCount) * l.EffectiveCellMetrics().CellHeight
+	// A text line occupies one cell down, in the container's denomination.
+	return core.Unit(lineCount) * metrics.UnitsPerCellHeight
 }
 
 // Paint renders the label.
@@ -165,7 +183,7 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 	}
 
 	// Calculate starting Y position based on vertical alignment
-	totalTextHeight := core.Unit(len(lines)) * metrics.CellHeight
+	totalTextHeight := core.Unit(len(lines)) * metrics.UnitsPerCellHeight
 	var startY core.Unit
 	if totalTextHeight < bounds.Height {
 		// Center vertically if text is shorter than bounds
@@ -177,16 +195,20 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 		if i >= maxLines {
 			break
 		}
+		// What fits, said so: a line drawn past the label's own edge runs
+		// under whatever stands beside it and reads as though the text ended
+		// where the room did.
+		shown, _ := l.ElideText(line, bounds.Width)
 
 		p.DrawTextAligned(
-			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.CellHeight},
-			line,
-			l.alignment,
+			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
+			l.CellRun(shown),
+			l.textSide(),
 			core.AlignTop,
 			s,
 			l.EffectiveFont(),
 		)
-		y += metrics.CellHeight
+		y += metrics.UnitsPerCellHeight
 	}
 }
 
@@ -199,7 +221,7 @@ func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.Cell
 		return
 	}
 
-	lines := wrapText(l.text, bounds.Width, l.EffectiveFont())
+	lines := wrapText(l.text, bounds.Width, l.EffectiveFont(), metrics)
 	y := core.Unit(0)
 
 	for i, line := range lines {
@@ -208,15 +230,23 @@ func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.Cell
 		}
 
 		p.DrawTextAligned(
-			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.CellHeight},
-			line,
-			l.alignment,
+			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
+			l.CellRun(line),
+			l.textSide(),
 			core.AlignTop,
 			s,
 			l.EffectiveFont(),
 		)
-		y += metrics.CellHeight
+		y += metrics.UnitsPerCellHeight
 	}
+}
+
+// textSide spends the label's alignment: its caption's own direction against
+// the direction in force where the label sits. A caption of digits has no
+// direction of its own and takes the label's surroundings, so an unmarked
+// number in a right-to-left form begins on the right with everything else.
+func (l *Label) textSide() core.HSide {
+	return core.ResolveHAlignFor(l.alignment, l, nil)
 }
 
 // AccessibleInfo returns accessibility information.
@@ -230,13 +260,17 @@ func (l *Label) AccessibleInfo() core.AccessibleInfo {
 // wrapText wraps text to the given width in units, breaking at word
 // boundaries and measuring candidate lines with the font. Words wider
 // than a full line fall back to character breaking.
-func wrapText(text string, maxWidth core.Unit, font *core.Font) []string {
+//
+// The width and the measurements are both in the caller's units, so metrics
+// is the caller's own cell metrics: a width counted at one denomination and
+// compared against text measured at another breaks in the wrong places.
+func wrapText(text string, maxWidth core.Unit, font *core.Font, metrics core.CellMetrics) []string {
 	if maxWidth <= 0 {
 		return nil
 	}
 
 	var lines []string
-	spaceWidth := font.MeasureText(" ")
+	spaceWidth := font.MeasureTextIn(" ", metrics)
 
 	for _, paragraph := range strings.Split(text, "\n") {
 		var currentLine strings.Builder
@@ -249,7 +283,7 @@ func wrapText(text string, maxWidth core.Unit, font *core.Font) []string {
 		}
 
 		for _, word := range strings.Fields(paragraph) {
-			wordWidth := font.MeasureText(word)
+			wordWidth := font.MeasureTextIn(word, metrics)
 
 			// Width if appended to the current line (with separating space)
 			joined := wordWidth
@@ -280,7 +314,7 @@ func wrapText(text string, maxWidth core.Unit, font *core.Font) []string {
 			// Word wider than a full line: break it by characters,
 			// placing at least one rune per line.
 			for _, r := range word {
-				runeWidth := font.MeasureText(string(r))
+				runeWidth := font.MeasureTextIn(string(r), metrics)
 				if currentWidth > 0 && currentWidth+runeWidth > maxWidth {
 					flush()
 				}

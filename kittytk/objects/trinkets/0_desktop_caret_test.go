@@ -6,6 +6,7 @@ import (
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
+	"github.com/phroun/kittytk/style"
 )
 
 // caretAsker requests the platform text caret from inside a desktop-composited
@@ -18,10 +19,17 @@ type caretAsker struct {
 func newCaretAsker(style int) *caretAsker {
 	c := &caretAsker{style: style}
 	c.TrinketBase = *core.NewTrinketBase()
+	c.Init(c) // so focus and the text-sink question reach this type
+	c.SetFocusPolicy(core.StrongFocus)
 	return c
 }
 
-func (c *caretAsker) Paint(p *core.Painter) { p.RequestTextCaret(4, 6, c.style) }
+func (c *caretAsker) Paint(p *core.Painter) { p.RequestTextCaret(4, 6, c.style, style.ColorDefault) }
+
+// A trinket that asks for the platform caret is a trinket that types: the
+// caret is where typing goes, and the surface withdraws it when what holds
+// focus does not.
+func (c *caretAsker) AcceptsTextInput() bool { return true }
 
 // The DESKTOP composites every window into one surface, so it owns the frame
 // and must apply the caret request itself. Without this a focused terminal
@@ -42,11 +50,13 @@ func TestDesktopFrameAppliesTextCaret(t *testing.T) {
 	}
 
 	win := window.NewWindow("W")
-	win.SetContent(newCaretAsker(5))
+	asker := newCaretAsker(5)
+	win.SetContent(asker)
 	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 800, Height: 240})
 	d.WindowManager().AddWindow(win)
 	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 400, Height: 200})
 	win.Layout()
+	win.FocusManager().SetFocusedTrinket(asker)
 
 	h.Frame(core.NewPainter(px))
 	if !surf.caretVisible {

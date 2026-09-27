@@ -18,40 +18,88 @@ import (
 //	set pane restore=1042    # id-directed actions
 //
 // Events (all carry window= and, where useful, title=): minimize,
-// restore, remove, active (window=0 means none). Note: an MDI child's
-// window_closed emission is superseded by the pane's remove event
-// (the pane owns the close-complete hook of hosted windows).
-func init() {
-	// mdiWindowAction adapts an id-directed pane method.
-	mdiWindowAction := func(name string, act func(m *MDIPane, w *window.Window)) protocol.PropertyApplier {
-		return wprop(name, func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
-			n, err := protocol.AsInt(name, v, f)
-			if err != nil {
-				return err
-			}
-			w := findMDIWindow(m, uint64(n))
-			if w == nil {
-				return fmt.Errorf("%s: no window %d in this pane", name, n)
-			}
-			act(m, w)
-			return nil
-		})
+// restore, remove, active (window=0 means none). A closing child raises
+// both `remove` here and its own `window_closed`: one says the pane lost
+// a child, the other says the window went, and an application may be
+// listening for either. (The pane owns the close-complete SLOT, which is
+// how it drops the child from its list; the window's own announcement is
+// an observer and does not compete for it.)
+// Do performs one of the pane's actions (protocol.doer). Arranging windows and
+// moving between them are things done, not values the pane then holds, so they
+// arrive as `do <mdi> tile` rather than as properties that read like state.
+func (m *MDIPane) Do(action string, args []*protocol.Arg) error {
+	switch action {
+	case "tile":
+		m.TileWindows()
+		return nil
+	case "cascade":
+		m.CascadeWindows()
+		return nil
+	case "next":
+		m.NextWindow()
+		return nil
+	case "prior":
+		m.PriorWindow()
+		return nil
+	case "restore", "minimize", "remove":
+		w, err := m.hostedWindow(action, args)
+		if err != nil {
+			return err
+		}
+		switch action {
+		case "restore":
+			m.RestoreWindow(w)
+		case "minimize":
+			m.MinimizeWindow(w)
+		case "remove":
+			m.RemoveWindow(w)
+		}
+		return nil
 	}
-	// mdiFlagAction adapts a no-argument pane method.
-	mdiFlagAction := func(name string, act func(m *MDIPane)) protocol.PropertyApplier {
-		return wprop(name, func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
-			b, err := protocol.AsBool(name, v, f)
-			if err != nil {
-				return err
-			}
-			if b {
-				act(m)
-			}
-			return nil
-		})
-	}
+	return fmt.Errorf("an mdipane does nothing called %q", action)
+}
 
+// hostedWindow resolves the window= argument the id-directed actions take.
+func (m *MDIPane) hostedWindow(action string, args []*protocol.Arg) (*window.Window, error) {
+	for _, a := range args {
+		if a.Name != "window" {
+			continue
+		}
+		if a.Value == nil || a.Value.Kind != protocol.NumberValue || !a.Value.IsInt {
+			return nil, fmt.Errorf("%s: window= expects an object id", action)
+		}
+		id := uint64(a.Value.Int)
+		w := findMDIWindow(m, id)
+		if w == nil {
+			return nil, fmt.Errorf("%s: no window %d in this pane", action, id)
+		}
+		return w, nil
+	}
+	return nil, fmt.Errorf("%s: expected window=", action)
+}
+
+func init() {
 	protocol.RegisterType("mdipane", &protocol.TypeSpec{
+		// Arranging windows and moving between them are things DONE. There is
+		// no "is it tiled" to ask for or to set, so they are actions rather
+		// than the flag and int properties they used to be spelled as.
+		//
+		// "prior", not "prev": the vocabulary pairs next with prior everywhere
+		// else it makes the distinction -- item_prior, page_prior, del_prior,
+		// sort_mode_prior -- and "prev" appeared here alone, on the wire and on
+		// the Go method both. Renamed together so the two never disagree.
+		Does: map[string]protocol.DoDesc{
+			"tile":    protocol.NewDoDesc("Tile the hosted windows."),
+			"cascade": protocol.NewDoDesc("Cascade the hosted windows."),
+			"next":    protocol.NewDoDesc("Activate the next window."),
+			"prior":   protocol.NewDoDesc("Activate the prior window."),
+			"restore": protocol.NewDoDesc("Restore a hosted window.").
+				Arg("window", "uint", "The window, by the id it was built under."),
+			"minimize": protocol.NewDoDesc("Minimize a hosted window.").
+				Arg("window", "uint", "The window, by the id it was built under."),
+			"remove": protocol.NewDoDesc("Close a hosted window.").
+				Arg("window", "uint", "The window, by the id it was built under."),
+		},
 		Events: map[string]protocol.EventDesc{
 			"active": protocol.NewEventDesc("The active child window changed, including to none.").
 				Field("trinket", "uint", "The pane's object ID.").
@@ -101,47 +149,37 @@ func init() {
 			})
 		},
 		Props: map[string]protocol.Property{
-			"fill": protocol.NewProperty("string", wprop("fill", func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
-				s, err := protocol.AsString("fill", v, f)
+			// background_char, not fill: fill is the common property for
+			// which axes an item grows to, and this names a character.
+			"background_char": protocol.NewProperty("string", wprop("background_char", func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("background_char", v, f)
 				if err != nil {
 					return err
 				}
 				runes := []rune(s)
 				if len(runes) != 1 {
-					return fmt.Errorf("fill: expected exactly one character")
+					return fmt.Errorf("background_char: expected exactly one character")
 				}
 				m.SetBackgroundChar(runes[0])
 				return nil
 			})).Tip("Background fill character"),
 			"pattern": boolProp("pattern", (*MDIPane).SetDrawPattern).Tip("Draw a pattern background").Def("false"),
-			"tile":    protocol.NewProperty("flag", mdiFlagAction("tile", (*MDIPane).TileWindows)).Tip("Tile the hosted windows"),
-			"cascade": protocol.NewProperty("flag", mdiFlagAction("cascade", (*MDIPane).CascadeWindows)).Tip("Cascade the hosted windows"),
-			"next":    protocol.NewProperty("flag", mdiFlagAction("next", (*MDIPane).NextWindow)).Tip("Activate the next window"),
-			// "prior", not "prev": the vocabulary pairs next with prior
-			// everywhere else it makes the distinction -- item_prior,
-			// page_prior, del_prior, sort_mode_prior -- and "prev"
-			// appeared here alone, on the wire and on the Go method
-			// both. Renamed together so the two never disagree.
-			"prior":    protocol.NewProperty("flag", mdiFlagAction("prior", (*MDIPane).PriorWindow)).Tip("Activate the prior window"),
-			"restore":  protocol.NewProperty("int", mdiWindowAction("restore", (*MDIPane).RestoreWindow)).Tip("Restore a hosted window by id"),
-			"minimize": protocol.NewProperty("int", mdiWindowAction("minimize", (*MDIPane).MinimizeWindow)).Tip("Minimize a hosted window by id"),
-			"remove":   protocol.NewProperty("int", mdiWindowAction("remove", (*MDIPane).RemoveWindow)).Tip("Close a hosted window by id"),
-		},
-		Append: func(parent, child any) error {
-			m := parent.(*MDIPane)
-			switch c := child.(type) {
-			case *window.Window:
-				m.AddWindow(c)
-				return nil
-			case core.Trinket:
-				if m.Content() != nil {
-					return fmt.Errorf("mdipane: background content already set")
+			"children": protocol.NewCollection(func(parent, child any) error {
+				m := parent.(*MDIPane)
+				switch c := child.(type) {
+				case *window.Window:
+					m.AddWindow(c)
+					return nil
+				case core.Trinket:
+					if m.Content() != nil {
+						return fmt.Errorf("mdipane: background content already set")
+					}
+					m.SetContent(c)
+					return nil
+				default:
+					return fmt.Errorf("mdipane: children must be windows or a content trinket, got %T", child)
 				}
-				m.SetContent(c)
-				return nil
-			default:
-				return fmt.Errorf("mdipane: children must be windows or a content trinket, got %T", child)
-			}
+			}).Tip("The windows this pane hosts, and one trinket behind them."),
 		},
 		Destroy: func(t any) error {
 			return destroyTrinket(t.(*MDIPane))

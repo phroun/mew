@@ -86,6 +86,8 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		scanner: wire.NewScanner(nc),
 		replies: make(chan replyOrError, 1),
 		events:  make(chan *wire.Event, 256),
+		answers: make(chan *wire.Answer, 256),
+		inbound: make(chan []*wire.Statement, 64),
 	}
 	c.transport = rt
 
@@ -112,25 +114,73 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	if err != nil {
 		dbg("dial app=%q: reading welcome failed: %v", appName, err)
 		nc.Close()
-		return nil, fmt.Errorf("handshake: %w", err)
+		return nil, handshakeSilence(ep, err)
 	}
 	script, err := wire.Parse(welcome)
-	if err != nil || len(script.Statements) == 0 || script.Statements[0].Verb != "welcome" {
+	if err != nil || len(script.Statements) == 0 {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
 	}
-	// The handshake carries this connection's Application ObjectID, so the app
-	// can address application-wide properties (see Conn.AppID / Conn.SetApp).
-	for _, a := range script.Statements[0].Args {
-		if a.Name == "app" && a.Value != nil && a.Value.Kind == wire.NumberValue && a.Value.IsInt {
-			c.appID = uint64(a.Value.Number)
+	// A display that will not have this connection says so, and what it says is
+	// worth more than the line it arrived on.
+	if stmt := script.Statements[0]; stmt.Verb == "error" {
+		nc.Close()
+		for _, a := range stmt.Args {
+			if a.Name == "text" && a.Value != nil && a.Value.Kind == wire.StringValue {
+				return nil, fmt.Errorf("handshake: %s", a.Value.Str)
+			}
 		}
+		return nil, fmt.Errorf("handshake: refused")
 	}
-	dbg("dial app=%q: welcome received (app id=%d), connection ready", appName, c.appID)
+	if script.Statements[0].Verb != "welcome" {
+		nc.Close()
+		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
+	}
+	// Then an init statement: what this connection was handed, one field per
+	// object. Every field of it is an object, so a client reads them all
+	// without being taught the names -- a display that hands over a fourth
+	// thing is reachable here with no client change (see Conn.Init).
+	//
+	// This first one is read here so the ids are in hand before Dial returns.
+	// Later ones arrive on the read loop like anything else: the display can
+	// hand over something new, or hand the same name a new object, whenever it
+	// has reason to.
+	init, err := rt.scanner.Next()
+	if err != nil {
+		dbg("dial app=%q: reading init failed: %v", appName, err)
+		nc.Close()
+		return nil, fmt.Errorf("handshake: reading init: %w", err)
+	}
+	initScript, err := wire.Parse(init)
+	if err != nil || len(initScript.Statements) == 0 ||
+		initScript.Statements[0].Verb != wire.InitVerb {
+		nc.Close()
+		return nil, fmt.Errorf("handshake: unexpected init %q", init)
+	}
+	c.handOver(initScript.Statements[0])
+	dbg("dial app=%q: handed %v, connection ready", appName, c.InitNames())
 
 	go rt.readLoop()
 	go rt.eventLoop()
+	go rt.inboundLoop()
+	go rt.answerLoop()
 	return c, nil
+}
+
+// handshakeSilence explains a display that accepted the connection and then
+// closed it without a word.
+//
+// There is one way for that to happen and it is worth naming: a tls:// display
+// answers a plaintext client inside TLS, so its refusal cannot be written at
+// all and the socket simply ends. The scheme is the client's to get right and
+// nothing on the wire can tell it so.
+func handshakeSilence(ep endpoint, err error) error {
+	if ep.network == "tcp" && !ep.useTLS {
+		return fmt.Errorf("handshake: %w -- the display said nothing at all, "+
+			"which is what a tls:// display does to a tcp:// client; try "+
+			"tls://%s", err, ep.address)
+	}
+	return fmt.Errorf("handshake: %w", err)
 }
 
 type replyOrError struct {
@@ -148,15 +198,38 @@ type remoteTransport struct {
 	writeMu sync.Mutex
 	replies chan replyOrError
 
-	// pendingDesc accumulates the describe verb's flat vocabulary
-	// statements (proptype/prop/propcommon) that arrive ahead of the
-	// reply terminating the batch; attached to that reply's Extra.
+	// pendingDesc accumulates the describe verb's flat vocabulary statements
+	// (proptype/prop/propcommon/ask/askarg/do/doarg/event/eventfield) that
+	// arrive ahead of the reply terminating the batch; attached to that
+	// reply's Extra.
 	pendingDesc []string
+
+	// pendingTrouble accumulates the `trouble` statements that arrive ahead of the
+	// same reply: what the display says went wrong on this batch's behalf without
+	// stopping it. Attached to that reply's Trouble.
+	pendingTrouble []wire.Trouble
 
 	// events are delivered on their own goroutine so a handler that
 	// executes statements (SetCaption inside OnToggle) cannot
 	// deadlock the reader that must route the reply.
 	events chan *wire.Event
+
+	// inbound carries whole batches the display sent: the other direction of
+	// the wire, where the display asks and this application answers. They get
+	// a goroutine of their own rather than sharing the event one, because
+	// serving a window can take as long as the records take and a list nobody
+	// is looking at must not hold up a click.
+	//
+	// Whole batches rather than statements, because a batch is what gets one
+	// reply -- and the reply is what carries the ids this application minted
+	// for whatever the batch made.
+	inbound   chan []*wire.Statement
+	pendingIn []*wire.Statement
+
+	// answers carry what a question this application asked was answered with.
+	// Their own goroutine for the same reason events have one: a handler that
+	// executes statements must not be able to stop the reader that routes them.
+	answers chan *wire.Answer
 
 	closeOnce sync.Once
 }
@@ -192,6 +265,8 @@ func (t *remoteTransport) readLoop() {
 		t.Close()
 		close(t.replies)
 		close(t.events)
+		close(t.inbound)
+		close(t.answers)
 		t.conn.markClosed()
 	}()
 	for {
@@ -210,26 +285,111 @@ func (t *remoteTransport) readLoop() {
 				if r != nil && len(t.pendingDesc) > 0 {
 					r.Extra = t.pendingDesc
 				}
-				t.pendingDesc = nil
-				t.replies <- replyOrError{reply: r, err: err}
+				// What the display said went wrong on this batch's behalf without
+				// stopping it. It rides the reply because that is what it is part
+				// of -- the answer to what this application sent. See
+				// wire.TroubleVerb.
+				if r != nil && len(t.pendingTrouble) > 0 {
+					r.Trouble = t.pendingTrouble
+				}
+				t.pendingDesc, t.pendingTrouble = nil, nil
+				t.answer(replyOrError{reply: r, err: err})
+			case wire.TroubleVerb:
+				// Held until the reply, which is what it is part of. A batch that
+				// goes on to fail is answered with the refusal instead, and these
+				// are let go -- the display's own log still holds them.
+				if tr, err := wire.DecodeTrouble(stmt); err == nil {
+					t.pendingTrouble = append(t.pendingTrouble, tr)
+				}
 			case "error":
-				t.pendingDesc = nil
+				t.pendingDesc, t.pendingTrouble = nil, nil
 				msg := "display error"
 				for _, a := range stmt.Args {
 					if a.Name == "text" && a.Value != nil && a.Value.Kind == wire.StringValue {
 						msg = a.Value.Str
 					}
 				}
-				t.replies <- replyOrError{err: fmt.Errorf("%s", msg)}
-			case "proptype", "prop", "propcommon":
+				t.answer(replyOrError{err: fmt.Errorf("%s", msg)})
+			case "proptype", "prop", "propcommon", "ask", "askarg", "do", "doarg", "eventfield":
+				// Two different lines start with `ask` and with `do`: the
+				// display putting a question to something this application
+				// holds, and the describe stream's record of a question a type
+				// CAN answer. The first is addressed to an object and so opens
+				// with a bare id; the second opens with of=.
+				if _, _, ok := hostedTarget(stmt, nil); ok {
+					t.pendingIn = append(t.pendingIn, stmt)
+					continue
+				}
 				// describe verb output: buffer until the reply arrives.
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
+			case "new", wire.QueryVerb, "set", "destroy", "sub", "unsub":
+				// The other direction: the display making, asking after, or
+				// letting go of something this application holds. Gathered
+				// until the batch ends, because a batch is what gets a reply.
+				t.pendingIn = append(t.pendingIn, stmt)
+			case "end":
+				// The batch is closed. Handled off the reader, because
+				// answering writes and the reader has to stay free to route
+				// what comes back.
+				if len(t.pendingIn) > 0 {
+					t.inbound <- t.pendingIn
+					t.pendingIn = nil
+				}
+			case wire.GoodbyeVerb:
+				// The display saying it is going, which is the last thing this
+				// connection will carry. Recorded, and nothing else: what an
+				// application does about its display going is the application's
+				// to decide, and it may well have work of its own that outlives
+				// it. The socket closing right behind this is what ends the
+				// connection, the same as it always was.
+				reason, _ := wire.GoodbyeReason(stmt)
+				t.conn.said(reason)
+			case wire.InitVerb:
+				// The display handing over something: a new object, or a new
+				// object under a name already in hand. It is not only a
+				// handshake step -- the display says it whenever it has
+				// something to give.
+				t.conn.handOver(stmt)
+			case wire.AnswerVerb:
+				// An answer to a question this application asked. Not an event and
+				// not a reply: it is correlated to the ask that wanted it, and
+				// routed on the reader because routing is all it needs -- whoever
+				// asked decides what to do with it.
+				if script, err := wire.Parse(text); err == nil && len(script.Statements) == 1 {
+					if a, err := wire.ParseAnswer(script.Statements[0].Args); err == nil {
+						t.answers <- a
+					}
+				}
 			case "event":
+				// One verb, two things: an event RECORD opens with a bare type
+				// word, and the describe stream's description of one names the
+				// type it belongs to with of=. ParseEvent is what tells them
+				// apart -- it wants that leading word -- so a line it refuses is
+				// a description, and describing events was reaching no client
+				// at all until it was buffered here.
 				if ev, err := wire.ParseEvent(text); err == nil {
 					t.events <- ev
+					continue
 				}
+				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
 			}
 		}
+	}
+}
+
+// answer hands a reply to whatever is waiting for one, and drops it if
+// nothing is.
+//
+// A reply is only ever sent in answer to a batch, so one arriving with no
+// batch outstanding is the other end saying something it should not have. The
+// channel holds the one in flight; blocking on a second would stop this reader
+// dead, and a reader that has stopped is a connection that has silently gone
+// deaf -- far worse than an unexpected statement going in the bin.
+func (t *remoteTransport) answer(r replyOrError) {
+	select {
+	case t.replies <- r:
+	default:
+		dbg("reply with no batch outstanding, dropped: %v", r.err)
 	}
 }
 
@@ -239,4 +399,27 @@ func (t *remoteTransport) eventLoop() {
 	for ev := range t.events {
 		t.conn.deliver(ev)
 	}
+}
+
+// answerLoop delivers answers in order, on a goroutine of their own.
+func (t *remoteTransport) answerLoop() {
+	for a := range t.answers {
+		t.conn.inboundAnswer(a)
+	}
+}
+
+// inboundLoop runs the batches the display sent, in the order they arrived.
+func (t *remoteTransport) inboundLoop() {
+	for batch := range t.inbound {
+		t.conn.InboundBatch(batch)
+	}
+}
+
+// Send writes without waiting for anything back, which is what the reverse
+// direction needs: this is the end answering, not asking.
+func (t *remoteTransport) Send(src string) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	_, err := t.nc.Write([]byte(src + "\n"))
+	return err
 }

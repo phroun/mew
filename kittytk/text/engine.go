@@ -105,6 +105,22 @@ func (r *Run) OriginPx(ppu float64) int {
 	return int(math.Round(float64(r.x) / 64 * ppu))
 }
 
+// EndPx is the run's right edge in device pixels at ppu pixels per unit,
+// rounded ONCE from the same unrounded pen OriginPx and BoxOf are measured off.
+//
+// It is the run's OWN edge, which is not what the caret positions either side
+// of it give: those are answers about logical indices, and an index at a run
+// boundary belongs to the run on the other side of it. A caller measuring a run
+// by asking for the caret at its first and last index gets that other run's
+// edge and a span reaching across it.
+//
+// And it is one rounding, not the origin's plus the advance's: two roundings
+// land up to a pixel from where the run's last cluster ends, which is a sliver
+// of that glyph clipped off by a caller drawing the run within this span.
+func (r *Run) EndPx(ppu float64) int {
+	return pxOfFixed(r.x+r.advanceOf(), ppu)
+}
+
 // Line is one wrapped line: runs stored in visual order (leftmost
 // first), with metrics for stacking.
 type Line struct {
@@ -114,10 +130,21 @@ type Line struct {
 	// Width is the line's total advance.
 	Width core.Unit
 	// Ascent and Descent are distances above/below the baseline (both
-	// positive); Gap is the leading below the descent.
+	// positive); Gap is the leading below the descent. They size the line's
+	// BOX, so each is ceiled: a box must hold what is in it.
 	Ascent, Descent, Gap core.Unit
 	// Baseline is the line's baseline Y relative to the paragraph top.
+	//
+	// A POSITION, and so floored from the same ascent the box ceils. Ceiling
+	// both is a downward bias chosen twice over: the box grows to hold the
+	// glyphs and the glyphs are then pushed down inside it, which is how
+	// every run came to sit low in its row and reach the bottom edge.
 	Baseline core.Unit
+
+	// ascFloor is the floored ascent Baseline is built from, kept beside the
+	// ceiled one because the box and the position want different roundings
+	// of the same measurement.
+	ascFloor core.Unit
 
 	// advance is Width before it was rounded to whole units, kept for
 	// measurement that has to land ON a glyph rather than near it. See
@@ -286,45 +313,45 @@ func Shared() *Engine {
 	return sharedEngine
 }
 
-// shapeCache is a two-generation cache: inserts land in cur; when cur
-// fills, it becomes prev and a fresh cur starts. Anything untouched
+// shapeCache is a two-generation cache: inserts land in current; when current
+// fills, it becomes previous and a fresh current starts. Anything untouched
 // for two generations is dropped - no per-entry bookkeeping, bounded
 // memory, and the hot working set (the strings on screen) stays warm.
 type shapeCache struct {
-	cur, prev map[string]*ShapedParagraph
-	max       int
+	current, previous map[string]*ShapedParagraph
+	max               int
 }
 
 func newShapeCache(max int) shapeCache {
 	return shapeCache{
-		cur:  make(map[string]*ShapedParagraph),
-		prev: make(map[string]*ShapedParagraph),
-		max:  max,
+		current:  make(map[string]*ShapedParagraph),
+		previous: make(map[string]*ShapedParagraph),
+		max:      max,
 	}
 }
 
 func (c *shapeCache) get(k string) (*ShapedParagraph, bool) {
-	if v, ok := c.cur[k]; ok {
+	if v, ok := c.current[k]; ok {
 		return v, true
 	}
-	if v, ok := c.prev[k]; ok {
-		c.cur[k] = v // promote so it survives the next rotation
+	if v, ok := c.previous[k]; ok {
+		c.current[k] = v // promote so it survives the next rotation
 		return v, true
 	}
 	return nil, false
 }
 
 func (c *shapeCache) put(k string, v *ShapedParagraph) {
-	if len(c.cur) >= c.max {
-		c.prev = c.cur
-		c.cur = make(map[string]*ShapedParagraph)
+	if len(c.current) >= c.max {
+		c.previous = c.current
+		c.current = make(map[string]*ShapedParagraph)
 	}
-	c.cur[k] = v
+	c.current[k] = v
 }
 
 func (c *shapeCache) clear() {
-	c.cur = make(map[string]*ShapedParagraph)
-	c.prev = make(map[string]*ShapedParagraph)
+	c.current = make(map[string]*ShapedParagraph)
+	c.previous = make(map[string]*ShapedParagraph)
 }
 
 // shapeKey identifies a shaping request: font identity (colors are
@@ -520,7 +547,7 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 	y := core.Unit(0)
 	for _, lineRuns := range wrapped {
 		line := buildLine(lineRuns)
-		line.Baseline = y + line.Ascent
+		line.Baseline = y + line.ascFloor
 		y += line.Height()
 		sp.Lines = append(sp.Lines, line)
 	}
@@ -531,9 +558,13 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 		size := emFor(face, p.Font)
 		scale := float32(size) / float32(face.Upem()) / 64
 		asc := core.Unit(math.Ceil(float64(ext.Ascender * scale)))
+		ascFloor := core.Unit(math.Floor(float64(ext.Ascender * scale)))
 		desc := core.Unit(math.Ceil(float64(-ext.Descender * scale)))
 		gap := core.Unit(math.Ceil(float64(ext.LineGap * scale)))
-		sp.Lines = []Line{{Ascent: asc, Descent: desc, Gap: gap, Baseline: asc}}
+		sp.Lines = []Line{{
+			Ascent: asc, Descent: desc, Gap: gap,
+			Baseline: ascFloor, ascFloor: ascFloor,
+		}}
 	}
 	if cacheable {
 		e.cache.put(key, sp)
@@ -574,6 +605,7 @@ func buildLine(runs shaping.Line) Line {
 		}
 		if a := core.Unit(out.LineBounds.Ascent.Ceil()); a > line.Ascent {
 			line.Ascent = a
+			line.ascFloor = core.Unit(out.LineBounds.Ascent.Floor())
 		}
 		if d := core.Unit((-out.LineBounds.Descent).Ceil()); d > line.Descent {
 			line.Descent = d
@@ -597,10 +629,78 @@ func (e *Engine) ShapeRun(f *core.Font, s string) *ShapedParagraph {
 	return e.ShapeParagraph(Paragraph{Text: s, Font: f}, 0)
 }
 
+// Baseline is where a face's baseline sits below the top of the line it is
+// drawn on, in units: the face's own ascent, scaled to the em that fills its
+// line budget. This is what makes two faces of different sizes share a line
+// -- centring their line BOXES does not, since a box's ascent is not half of
+// it, and the smaller face lands off the line the bigger one sits on.
+func (e *Engine) Baseline(f *core.Font) core.Unit {
+	sp := e.ShapeRun(f, "")
+	if sp == nil || len(sp.Lines) == 0 {
+		return 0
+	}
+	return sp.Lines[0].Baseline
+}
+
+// CapHeight is how far a capital's ink reaches above the baseline, in units:
+// the face's own cap height, scaled to the em that fills its line budget.
+//
+// This is the basis for sitting one face beside another. A face's line box
+// carries leading that its letters do not use, its baseline says nothing
+// about how tall they are, and the ink of any PARTICULAR string depends on
+// whether that string happens to have descenders -- none of the three is the
+// size of the type. The height of a capital is, measured once per face.
+//
+// The face declares it (OS/2 sCapHeight) or, on an older table, the library
+// measures the capital's own glyph box for it.
+func (e *Engine) CapHeight(f *core.Font) core.Unit {
+	face := e.db.resolve(f)
+	if face == nil {
+		return 0
+	}
+	cap := face.LineMetric(gtfont.CapHeight)
+	if cap <= 0 {
+		return 0
+	}
+	upem := face.Upem()
+	if upem == 0 {
+		return 0
+	}
+	scale := float64(emFor(face, f)) / float64(upem) / 64
+	return core.Unit(math.Round(float64(cap) * scale))
+}
+
 // Measure is the fast simple tier's measurement: the advance width of
 // s in font f, by real shaping (so it always agrees with painting).
 func (e *Engine) Measure(f *core.Font, s string) core.Unit {
 	return e.ShapeRun(f, s).Width()
+}
+
+// MeasureIn is Measure expressed in the units of a given denomination.
+//
+// Denomination says how many units make one cell; the cell is the fixed
+// physical thing, so a higher denomination means smaller units and
+// therefore MORE of them for the same run of text. The text does not
+// change size -- only the currency it is counted in.
+//
+// Scaled from the UNROUNDED advance for the reason MeasurePx gives:
+// Measure has already rounded to whole units at the default denomination,
+// and scaling that rounds a second time. Text is proportional, so the
+// advance is a real quantity and there is no cell tally to count; the one
+// rounding belongs at the end, in the currency being asked for.
+func (e *Engine) MeasureIn(f *core.Font, s string, m core.CellMetrics) core.Unit {
+	cw := m.UnitsPerCellWidth
+	if cw < 1 {
+		cw = core.DefaultCellMetrics().UnitsPerCellWidth
+	}
+	base := float64(core.DefaultCellMetrics().UnitsPerCellWidth)
+	widest := 0.0
+	for _, l := range e.ShapeRun(f, s).Lines {
+		if a := float64(l.advance) / 64; a > widest {
+			widest = a
+		}
+	}
+	return core.Unit(math.Round(widest * float64(cw) / base))
 }
 
 // MeasurePx is Measure in device pixels at ppu pixels per unit.

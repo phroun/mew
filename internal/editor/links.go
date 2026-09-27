@@ -595,7 +595,7 @@ func (e *Editor) linkTargetVisited(w *viewport.Viewport, target string) bool {
 }
 
 // navLink (nav_next / nav_prior) moves the caret from the focused button to
-// the next (dir +1) or previous (dir -1) link in the document, cycling at the
+// the next (dir +1) or prior (dir -1) link in the document, cycling at the
 // ends. It captures (returns true) only when a button is currently focused —
 // so in a fallthrough chain (tab = nav_next|completion|insert) it yields to
 // editing whenever the caret is not inside a link. The move keeps browse mode
@@ -747,7 +747,7 @@ func (e *Editor) firstLinkFromCaret(w *viewport.Viewport) (int, linkSpan, bool) 
 	return 0, linkSpan{}, false
 }
 
-// navVert (nav_down / nav_up) moves to the nearest link on the next / previous
+// navVert (nav_down / nav_up) moves to the nearest link on the next / prior
 // link-bearing line, but never scrolls past the current screen: when there is
 // no further link line on screen it pages instead (go_page_next / go_page_prior)
 // and still reports success. On the target line the link is chosen by the ideal

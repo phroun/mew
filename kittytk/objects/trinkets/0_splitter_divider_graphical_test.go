@@ -75,7 +75,7 @@ func TestComboBoxPopupSmoothScrollbarDrag(t *testing.T) {
 		X:      0,
 		Y:      0,
 		Width:  200,
-		Height: core.Unit(visible) * metrics.CellHeight,
+		Height: core.Unit(visible) * metrics.UnitsPerCellHeight,
 	}
 	trackU, thumbU, posU := cb.popupScrollbarUnits(visible)
 	scrollable := trackU - thumbU
@@ -143,7 +143,7 @@ func TestDividerThicknessFollowsRowDenomination(t *testing.T) {
 	if got := sp.dividerBounds().Height; got != 8 {
 		t.Errorf("standard metrics: divider %d units, want 8", got)
 	}
-	win.SetCellMetrics(&core.CellMetrics{CellWidth: 8, CellHeight: 32})
+	win.SetCellMetrics(&core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32})
 	win.Layout()
 	if got := sp.dividerBounds().Height; got != 16 {
 		t.Errorf("32-unit rows: divider %d units, want 16 (half a row)", got)

@@ -22,7 +22,7 @@ func TestDefectiveMark(t *testing.T) {
 	)
 	cases := []struct {
 		name string
-		prev rune
+		base rune
 		mark rune
 		want bool
 	}{
@@ -76,9 +76,9 @@ func TestDefectiveMark(t *testing.T) {
 		{"wide char", 'a', '日', false},
 	}
 	for _, c := range cases {
-		if got := DefectiveMark(c.prev, c.mark); got != c.want {
+		if got := DefectiveMark(c.base, c.mark); got != c.want {
 			t.Errorf("%s: DefectiveMark(%q, U+%04X) = %v, want %v",
-				c.name, string(c.prev), c.mark, got, c.want)
+				c.name, string(c.base), c.mark, got, c.want)
 		}
 	}
 }

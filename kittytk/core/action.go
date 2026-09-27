@@ -263,10 +263,10 @@ var StandardActions = struct {
 	CloseWindow string
 
 	// Navigation
-	FocusNext string
-	FocusPrev string
-	Escape    string
-	Confirm   string
+	FocusNext  string
+	FocusPrior string
+	Escape     string
+	Confirm    string
 }{
 	New:    "file.new",
 	Open:   "file.open",
@@ -294,8 +294,8 @@ var StandardActions = struct {
 	Restore:     "window.restore",
 	CloseWindow: "window.close",
 
-	FocusNext: "focus.next",
-	FocusPrev: "focus.prev",
-	Escape:    "dialog.escape",
-	Confirm:   "dialog.confirm",
+	FocusNext:  "focus.next",
+	FocusPrior: "focus.prior",
+	Escape:     "dialog.escape",
+	Confirm:    "dialog.confirm",
 }

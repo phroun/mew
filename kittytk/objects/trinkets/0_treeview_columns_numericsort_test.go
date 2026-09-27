@@ -56,18 +56,18 @@ func TestNumericValueCachedOnSet(t *testing.T) {
 // which a string comparison gets backwards.
 func TestTreeNumericColumnSort(t *testing.T) {
 	tv := NewTreeView()
-	bytes := NewTreeColumn("bytes", "Bytes", 10)
+	bytes := NewTreeColumn("bytes", "Bytes", 10*cell)
 	bytes.Sortable = true
 	bytes.Numeric = true
 	tv.AddColumn(bytes)
-	for _, spec := range []struct{ name, bytes string }{
+	for _, descriptor := range []struct{ name, bytes string }{
 		{"ten", "10"},
 		{"nine", "9"},
 		{"kilo", "1,024"},
 		{"half", "0.5"},
 	} {
-		it := NewTreeItem(spec.name)
-		it.SetValue("bytes", spec.bytes)
+		it := NewTreeItem(descriptor.name)
+		it.SetValue("bytes", descriptor.bytes)
 		tv.AddRootItem(it)
 	}
 	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
@@ -89,24 +89,24 @@ func TestTreeNumericColumnSort(t *testing.T) {
 // column sorts by a hidden numeric raw-size column.
 func TestTreeSortProxyColumn(t *testing.T) {
 	tv := NewTreeView()
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Sortable = true
 	size.SortProxy = 1 // the rawsize column below
 	tv.AddColumn(size)
-	raw := NewTreeColumn("rawsize", "Raw Size", 10)
+	raw := NewTreeColumn("rawsize", "Raw Size", 10*cell)
 	raw.Numeric = true
 	raw.Hidden = true
 	tv.AddColumn(raw)
 
-	for _, spec := range []struct{ name, size, raw string }{
+	for _, descriptor := range []struct{ name, size, raw string }{
 		{"big", "1.5 MB", "1572864"},
 		{"ten", "10 KB", "10240"},
 		{"two", "2 KB", "2048"},
 		{"nine", "9 KB", "9216"},
 	} {
-		it := NewTreeItem(spec.name)
-		it.SetValue("size", spec.size)
-		it.SetValue("rawsize", spec.raw)
+		it := NewTreeItem(descriptor.name)
+		it.SetValue("size", descriptor.size)
+		it.SetValue("rawsize", descriptor.raw)
 		tv.AddRootItem(it)
 	}
 	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
@@ -132,11 +132,11 @@ func TestTreeSortProxyColumn(t *testing.T) {
 
 	// A self- or out-of-range proxy is ignored rather than looping.
 	size.SortProxy = 0
-	if idx, _ := tv.sortTarget(); idx != 0 {
+	if idx, _ := tv.sortTarget(tv.primarySort().By); idx != 0 {
 		t.Errorf("self proxy resolved to %d, want 0", idx)
 	}
 	size.SortProxy = 99
-	if idx, _ := tv.sortTarget(); idx != 0 {
+	if idx, _ := tv.sortTarget(tv.primarySort().By); idx != 0 {
 		t.Errorf("out-of-range proxy resolved to %d, want 0", idx)
 	}
 }

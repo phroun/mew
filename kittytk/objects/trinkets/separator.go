@@ -80,6 +80,7 @@ func (s *LineSeparator) Title() string {
 func (s *LineSeparator) SetTitle(title string) {
 	s.title = title
 	s.Update()
+	s.InvalidateLayout()
 }
 
 // Orientation returns the separator orientation.
@@ -92,24 +93,24 @@ func (s *LineSeparator) SetOrientation(o core.Orientation) {
 	s.orientation = o
 	s.applyOrientationPolicy()
 	s.Update()
+	s.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.
 func (s *LineSeparator) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
-	font := s.EffectiveFont()
 	if s.orientation == core.Horizontal {
 		// Horizontal separator: 1 cell tall, width depends on title
-		titleWidth := font.MeasureText(s.title)
-		decorWidth := font.MeasureText("──  ──") // line stubs + title padding
+		titleWidth := s.MeasureText(s.title)
+		decorWidth := s.MeasureText("──  ──") // line stubs + title padding
 		return core.UnitSize{
 			Width:  titleWidth + decorWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}
 	}
 	// Vertical separator: 1 cell wide, height depends on title
 	return core.UnitSize{
-		Width:  metrics.CellWidth,
+		Width:  metrics.UnitsPerCellWidth,
 		Height: metrics.TextHeight(5),
 	}
 }
@@ -159,20 +160,21 @@ func (s *LineSeparator) Paint(p *core.Painter) {
 // exactly-centered title in the 75% caption face.
 func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
 	line := lineStyle.WithBg(lineStyle.Fg)
-	hairH := p.ScreenHeightToLocal(1)
-	if hairH < 1 {
-		hairH = 1
-	}
+	hairH := p.HairlineHeight()
 	midY := (bounds.Height - hairH) / 2
 	if s.title == "" {
 		p.FillRect(core.UnitRect{Y: midY, Width: bounds.Width, Height: hairH}, ' ', line)
 		return
 	}
-	font := captionFont75(s.EffectiveFont())
-	// Font metrics are screen-space (see ScreenHeightToLocal).
-	w := p.ScreenWidthToLocal(font.MeasureText(s.title))
-	h := p.ScreenHeightToLocal(font.LineHeight())
-	pad := core.Unit(6)
+	base := s.EffectiveFont()
+	font := captionFont75(base)
+	// Width comes back screen-space (see ScreenWidthToLocal). The line the
+	// caption occupies is three quarters of a cell down, already local.
+	measure := func(text string) core.Unit { return p.ScreenWidthToLocal(font.MeasureText(text)) }
+	h := core.LineUnits(font, base, s.EffectiveCellMetrics())
+	pad := p.ScreenWidthToLocal(6)
+	title, _ := s.ElideTextWith(s.title, bounds.Width-pad*2, measure)
+	w := measure(title)
 	boxW := w + pad*2
 	if boxW > bounds.Width {
 		boxW = bounds.Width
@@ -181,7 +183,7 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 	// The line in two segments: the mid-section belongs to the title.
 	p.FillRect(core.UnitRect{X: 0, Y: midY, Width: boxX, Height: hairH}, ' ', line)
 	p.FillRect(core.UnitRect{X: boxX + boxW, Y: midY, Width: bounds.Width - boxX - boxW, Height: hairH}, ' ', line)
-	p.DrawText(boxX+pad, midY+hairH/2-h/2, s.title, titleStyle, font)
+	p.DrawText(boxX+pad, midY+hairH/2-h/2, s.CellRun(title), titleStyle, font)
 }
 
 // paintVerticalGraphical draws the vertical rule: a hairline spanning
@@ -189,19 +191,17 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 // title runes in the 75% caption face.
 func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
 	line := lineStyle.WithBg(lineStyle.Fg)
-	hairW := p.ScreenWidthToLocal(1)
-	if hairW < 1 {
-		hairW = 1
-	}
+	hairW := p.HairlineWidth()
 	midX := (bounds.Width - hairW) / 2
 	if s.title == "" {
 		p.FillRect(core.UnitRect{X: midX, Width: hairW, Height: bounds.Height}, ' ', line)
 		return
 	}
-	font := captionFont75(s.EffectiveFont())
-	h := p.ScreenHeightToLocal(font.LineHeight())
+	base := s.EffectiveFont()
+	font := captionFont75(base)
+	h := core.LineUnits(font, base, s.EffectiveCellMetrics())
 	runes := []rune(s.title)
-	pad := core.Unit(4)
+	pad := p.ScreenHeightToLocal(4)
 	boxH := core.Unit(len(runes))*h + pad*2
 	if boxH > bounds.Height {
 		boxH = bounds.Height
@@ -219,13 +219,16 @@ func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.Unit
 
 // paintHorizontal draws: ────·· Title ··────
 func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle, metrics core.CellMetrics) {
-	width := int(bounds.Width / metrics.CellWidth)
+	width := int(bounds.Width / metrics.UnitsPerCellWidth)
 	if width <= 0 {
 		return
 	}
 
 	y := core.Unit(0)
-	titleRunes := []rune(s.title)
+	// The rule is drawn a cell at a time, so the title is prepared for the
+	// cell target before it is spread across those cells -- a per-rune loop
+	// over the text itself would lay a right-to-left title down backwards.
+	titleRunes := []rune(s.CellRun(s.title))
 	titleLen := len(titleRunes)
 
 	// No grab-handle dots here: the ···· decoration means "draggable"
@@ -238,7 +241,7 @@ func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, l
 		}
 	} else {
 		// ────── Title ──────
-		middleRunes := []rune(" " + s.title + " ")
+		middleRunes := []rune(" " + string(titleRunes) + " ")
 		middleLen := len(middleRunes)
 		startMiddle := (width - middleLen) / 2
 
@@ -258,7 +261,7 @@ func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, l
 
 // paintVertical draws a vertical line with optional centered title.
 func (s *LineSeparator) paintVertical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle, metrics core.CellMetrics) {
-	height := int(bounds.Height / metrics.CellHeight)
+	height := int(bounds.Height / metrics.UnitsPerCellHeight)
 	if height <= 0 {
 		return
 	}

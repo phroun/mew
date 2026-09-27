@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 
-	"github.com/phroun/kittytk/hebrew"
+	"github.com/phroun/khatool"
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
@@ -81,7 +84,23 @@ type ScreenRenderer struct {
 	resizeChan        chan struct{}
 	onResizeFunc      func() // Callback called when terminal resizes
 	watchNativeResize bool   // watch OS resize signals (real terminals only)
-	nativeStop        func() // uninstalls the native watcher, if installed
+
+	// hosted marks a renderer whose output has been virtualized: the bytes go
+	// to another cell renderer rather than to a terminal. That one owns the
+	// wire, and so is the one that turns right-to-left runs back for a host
+	// that reorders -- doing it here as well would turn them back twice and
+	// land every run reversed. See SetTerminal.
+	hosted bool
+
+	// hostFlip is what has been SAID about the terminal: that it applies its
+	// own bidi to whatever reaches it. That is a fact about the far end of the
+	// wire and stays true however many renderers the bytes pass through on the
+	// way, so it is what goes out to the host. Whether THIS renderer turns its
+	// own runs back is a different question, answered by frame.flipBidi, which
+	// is this and not being hosted.
+	hostFlip bool
+
+	nativeStop func() // uninstalls the native watcher, if installed
 
 	// Indicator glyphs/labels used to draw chrome (whitespace markers, gutter,
 	// cursor indicators).
@@ -212,7 +231,7 @@ func (sr *ScreenRenderer) slotWidth(layout *bidi.Layout, runes []rune, entry, co
 	}
 	// Base-aware, so an ill-formed mark measures the SPACING substitute painted
 	// for it rather than the zero cells a well-formed mark takes. Without that
-	// the caret walk would step over it as though it rode the previous cell,
+	// the caret walk would step over it as though it rode the preceding cell,
 	// and the columns this feeds would disagree with the paint.
 	return sr.runeWidthAt(runes, entry, col, w)
 }
@@ -310,6 +329,9 @@ func realTerminalSize() (int, int, error) {
 func (sr *ScreenRenderer) SetTerminal(out io.Writer, sizeFn func() (int, int, error), watchNativeResize bool) {
 	if out != nil {
 		sr.out = out
+		sr.hosted = true
+		sr.frame.flipBidi = false // the host turns the runs back; see hosted
+		sr.publishHostBidi()      // and has to be told what to turn them back for
 		// Diagnostic: MEW_EMIT_LOG=/path tees every write that carries RTL text
 		// to that file as a Go-quoted line, so the exact bytes mew sends to the
 		// terminal for a Hebrew/Arabic line can be inspected. Off unless set.
@@ -388,10 +410,20 @@ func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *viewport.Viewport
 func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 	sr.renderMu.Lock()
 	defer sr.renderMu.Unlock()
-	if sr.frame.flipBidi != flip {
-		sr.frame.flipBidi = flip
+	if sr.hostFlip != flip {
+		sr.hostFlip = flip
+		// Repaint either way. Hosted, this renderer's own emission does not
+		// change -- but the host reads the answer below when IT emits, and
+		// acts on it a whole row at a time, so the rows have to be laid down
+		// again for the change to reach the screen.
 		sr.frame.forceRedraw()
 	}
+	// Turned back HERE only when this renderer owns the wire. Hosted, the one
+	// it feeds does the turning, and doing it in both places lands every run
+	// reversed -- which is what a hosted mew showed while a standalone one on
+	// the same terminal was right.
+	sr.frame.flipBidi = flip && !sr.hosted
+	sr.publishHostBidi()
 }
 
 // SetFlipWordwise selects the flip's run segmentation (see backBuffer.flipWordwise):
@@ -405,6 +437,24 @@ func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 		sr.frame.flipWordwise = wordwise
 		sr.frame.forceRedraw()
 	}
+	sr.publishHostBidi()
+}
+
+// publishHostBidi tells KittyTK what mew has worked out about this terminal.
+//
+// mew emits its own backbuffer and KittyTK's cell backend emits its own, and
+// both hold visually ordered lines -- so a host that reorders what it is sent
+// needs the same turning-back from each. mew is the one that KNOWS: it sniffs
+// the terminal and probes it. Without this the chrome around mew's own text
+// comes out the wrong way round on the very terminal mew is getting right.
+//
+// Called with renderMu held.
+func (sr *ScreenRenderer) publishHostBidi() {
+	// What the TERMINAL does, not what this renderer does about it. Hosted,
+	// those differ: this renderer turns nothing back and the one it feeds turns
+	// everything, so sending its own flip would tell the host to stop -- and
+	// flipBidiForHost would go dead exactly where it has the most to say.
+	core.SetHostAppliesBidi(sr.hostFlip, sr.frame.flipWordwise, sr.frame.flipRideSafe)
 }
 
 // SetFlipRideSafeSelection marks a flip host whose background selection fill
@@ -418,6 +468,7 @@ func (sr *ScreenRenderer) SetFlipRideSafeSelection(rideSafe bool) {
 		sr.frame.flipRideSafe = rideSafe
 		sr.frame.forceRedraw()
 	}
+	sr.publishHostBidi()
 }
 
 // SetRtlMarkMode selects how an isolated RTL combining mark anchored on a dotted
@@ -1317,15 +1368,59 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		}
 
 		// RTL: the mirrored line-number gutter, between content and right margin.
+		//
+		// Emitted AFTER the content, which on a row this host cannot count puts
+		// it past the drift -- and the gutter's own blue then reaches the screen
+		// somewhere inside the text. So it draws its ground instead of asking
+		// for one: shaded cells in the colour it would have been given, and the
+		// number itself in its own ink on no ground at all. Nothing is left for
+		// a fill to misplace.
+		//
+		// Its own shade rather than the emitter's fallback, so an affected
+		// gutter is recognisable at a glance as the gutter (see the shades).
 		if w.LineNumbersVisible() && rtl {
-			sr.Write(lineNumbersColor)
+			// Empty gutter cells and the label wear the gutter's own colour, so
+			// neither says anything more while that is what it is. On a row
+			// drawing its own ground they part: EVERY empty cell takes the
+			// shade, and the label alone stands on no ground.
+			numColor, blankColor, blankGlyph := "", "", " "
+			if sr.lineDriftsFill(w, lineContent) {
+				if ink, ok := groundAsInk(lineNumbersColor); ok {
+					// Each says the whole of what its cell wears, so the lane
+					// alternates between two styles instead of accumulating a
+					// longer one at every cell -- and on a host that reorders
+					// what it is sent, every SGR is one more thing to misplace.
+					numColor = resetColor + dropGround(lineNumbersColor)
+					blankColor, blankGlyph = resetColor+ink, gutterBlank
+				}
+			}
+			if blankColor == "" {
+				// SGR accumulates until something resets it, and neither the
+				// shade's ink nor the label's carries a reset -- so asking for
+				// the gutter's colour here would leave its background standing
+				// behind the very cells drawn to do without one.
+				sr.Write(lineNumbersColor)
+			}
+			blanks := func(n int) string {
+				if n <= 0 {
+					return ""
+				}
+				return blankColor + strings.Repeat(blankGlyph, n)
+			}
+			// One blank, the label, and the rest of the gutter blank again --
+			// which is what "%-*s" laid down when every cell wore one colour and
+			// the padding could be left to it.
+			field := func(label string) string {
+				return blanks(1) + numColor + label +
+					blanks(lineNumWidth-1-utf8.RuneCountInString(label))
+			}
 			switch {
 			case doubleWide:
-				sr.Write(strings.Repeat(" ", lineNumWidth/2))
+				sr.Write(blanks(lineNumWidth / 2))
 			case haveContent:
-				sr.Write(fmt.Sprintf(" %-*d", lineNumWidth-1, docLine+1))
+				sr.Write(field(strconv.Itoa(docLine + 1)))
 			default:
-				sr.Write(fmt.Sprintf(" %-*s", lineNumWidth-1, sr.indicators.GutterEmpty))
+				sr.Write(field(sr.indicators.GutterEmpty))
 			}
 		}
 
@@ -1470,13 +1565,19 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	textColor := sr.col(w, "text")
 	// Selection styling. On a flip host whose bidi reorder miscounts a
 	// background/reverse selection fill (codepoints vs cells) — Terminal.app,
-	// flagged by flipRideSafe — a line carrying combining marks cannot use the
-	// real bar: it drifts and half-vanishes on pointed RTL. Foreground + bold
-	// ride each glyph intact, so those lines use the flip-safe selection (see
-	// the selectionFlip colors). Mark-free lines (English; Arabic, which mew
-	// pre-shapes to single presentation forms) keep the real bar, as do flip
-	// hosts whose fill tracks the glyphs (Kitty).
-	selName, selInvName := "selection", "selectionInvisibles"
+	// flagged by flipRideSafe — a RUN carrying combining marks cannot use the
+	// real bar: its fill slides off the cells it was meant for and pointed RTL
+	// loses most of its selection. Foreground + bold ride each glyph intact, so
+	// those runs use the flip-safe selection (see the selectionFlip colors).
+	// Mark-free runs (English; Arabic, which mew pre-shapes to single
+	// presentation forms) keep the real bar, as do flip hosts whose fill tracks
+	// the glyphs (Kitty).
+	//
+	// Per RUN, because a run is what such a host reorders as a unit and so what
+	// it counts wrongly. A line of chrome and English with one pointed word in
+	// it gives up that word and keeps the bar on everything else; giving up the
+	// whole line loses the fill on every cell where it would have landed right.
+	//
 	// The ride-safe selection is only needed when a zero-width mark is actually
 	// EMITTED: with rtlCombining off they are suppressed below, so the line
 	// carries codepoints == cells and the real bar works. (An LTR combining
@@ -1487,10 +1588,30 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// cells and keeps the real bar — only marks that survive the fold (vowels,
 	// accents) force the ride-safe fill.
 	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
-	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining && lineHasZeroWidthAfterFold(line, folding) {
-		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
+	// Filled in once the line's order is known (see layoutFor below): "after"
+	// means after on the SCREEN, and on a right-to-left line that is the other
+	// end of the text.
+	var giveUpFill []bool
+	// givesUpFill reports whether the rune at this display position sits in a
+	// run whose fill this host cannot place.
+	givesUpFill := func(runePos int) bool {
+		return runePos >= 0 && runePos < len(giveUpFill) && giveUpFill[runePos]
 	}
-	selectionColor := sr.col(w, selName)
+	// And whether the LINE carries such a run at all, which is what the padding
+	// past the end of the content has to go by: it is not in a run itself, but
+	// it lies past the point the drift starts from and its fill lands back over
+	// the letters.
+	var lineGivesUpFill bool
+	selectionColor := sr.col(w, "selection")
+	selectionFlipColor := sr.col(w, "selectionFlip")
+	// The selection colour for one rune: the run that cannot carry a fill wears
+	// what rides a glyph, and the rest of the line keeps the bar.
+	selectionColorAt := func(runePos int) string {
+		if givesUpFill(runePos) {
+			return selectionFlipColor
+		}
+		return selectionColor
+	}
 	resetColor := sr.col(w, "reset")
 	substitutesColor := sr.col(w, "special") // control char substitutes (^X / hex)
 	truncatedColor := sr.col(w, "truncation")
@@ -1500,7 +1621,8 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// selection variant when the marker falls inside the selection).
 	showInvisibles := w.ViewState.ShowInvisibles
 	plainInvisiblesColor := sr.col(w, "invisibles")
-	selectionInvisiblesColor := sr.col(w, selInvName)
+	selectionInvisiblesColor := sr.col(w, "selectionInvisibles")
+	selectionInvisiblesFlipColor := sr.col(w, "selectionInvisiblesFlip")
 	invisibleSpace := sr.indicators.VisibleSpace // marker for a space
 
 	// showMarks: draw a "*" (in the "marks" color) at every mark / garland-
@@ -1539,6 +1661,25 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// on pure-LTR lines, where layout is nil). rtlCell drives bracket mirroring.
 	rtl := sr.winRTL(w)
 	layout := sr.layoutFor(w, runes[:contentLen])
+
+	// Now the order the cells go out in is known, the fill question can be
+	// answered: the damage starts at the first pointed run and carries to
+	// everything drawn after it, which on a right-to-left line is the material
+	// that came BEFORE it in the text.
+	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining {
+		var visual []int
+		if layout != nil {
+			visual = layout.Perm
+		}
+		giveUpFill = khatool.UnplaceableFillAfterFold(
+			[]rune(line), folding, isZeroWidthMark, visual)
+		for _, give := range giveUpFill {
+			if give {
+				lineGivesUpFill = true
+				break
+			}
+		}
+	}
 	termCount := len(runes) - contentLen
 	contentSlots := contentLen
 	if layout != nil {
@@ -1575,11 +1716,11 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		return layout != nil && li >= 0 && li < len(layout.RTL) && layout.RTL[li]
 	}
 
-	// prevBase is the base character a combining mark at logical index li
+	// precedingBase is the base character a combining mark at logical index li
 	// would attach to: the nearest preceding rune that is not itself a mark
 	// (a cluster may stack several marks on one base). 0 when the mark opens
 	// the line and has nothing to anchor onto. Feeds textwidth.DefectiveMark.
-	prevBase := func(li int) rune { return textwidth.PrevBase(runes, li) }
+	precedingBase := func(li int) rune { return textwidth.PrecedingBase(runes, li) }
 
 	// Arabic cursive shaping lives on the layout (Layout.Glyph): each Arabic
 	// letter is substituted with its contextual presentation form (computed
@@ -1674,7 +1815,17 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		if paintPad > width {
 			paintPad = width
 		}
-		displayLine.WriteString(textColor + strings.Repeat(" ", paintPad))
+		// This pad is where an rtl line's own newline sits, the way the trailing
+		// pad is on an ltr one -- so a selection running through that newline
+		// highlights it here, and a selected line break shows on an rtl line at
+		// all. It is drawn BEFORE the content, so nothing has drifted yet and it
+		// takes the ordinary bar even on a line that gives its fill up further
+		// along.
+		padColor := textColor
+		if sel.exists && docLine >= sel.startLine && docLine < sel.endLine {
+			padColor = selectionColor
+		}
+		displayLine.WriteString(padColor + strings.Repeat(" ", paintPad))
 		outputVisualColumn = paintPad
 	}
 	// RTL: content trimmed off the LEFT edge is the line's reading tail
@@ -1789,7 +1940,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 				disp.ForcedSel[runePos] != "" {
 				return disp.ForcedSel[runePos]
 			}
-			return selectionColor
+			return selectionColorAt(runePos)
 		}
 		if forced != "" {
 			return forced
@@ -1804,6 +1955,9 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// markers use the selectionInvisibles variant.
 	getInvisiblesColor := func(runePos int) string {
 		if isSelected(runePos) {
+			if givesUpFill(runePos) {
+				return selectionInvisiblesFlipColor
+			}
 			return selectionInvisiblesColor
 		}
 		return plainInvisiblesColor
@@ -1912,6 +2066,14 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// Space shown as a marker glyph (never inside button chrome).
 			runeDisplay = invisiblesColor + invisibleSpace + baseColor
 			runeVisualWidth = 1
+		} else if r == ' ' && isSelected(logicalIdx) && givesUpFill(logicalIdx) &&
+			!isChrome(logicalIdx) {
+			// A selected space in a run wearing the riding style. That style
+			// paints no ground, so an ordinary space would read as unselected;
+			// a shaded cell says it is selected with ink, which is the one
+			// thing that survives this host's reordering.
+			runeVisualWidth = 1
+			runeDisplay = selectedBlank
 		} else if showInvisibles && r == '\n' {
 			// Line feed marker (appended terminator).
 			runeDisplay = invisiblesColor + sr.indicators.VisibleNewline + baseColor
@@ -1927,7 +2089,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// textwidth.IsControl).
 			runeDisplay = substitutesColor + runeToHexOrCtrl(r) + baseColor
 			runeVisualWidth = substituteWidth(runeToHexOrCtrl(r))
-		} else if base := prevBase(logicalIdx); textwidth.DefectiveMark(base, r) {
+		} else if base := precedingBase(logicalIdx); textwidth.DefectiveMark(base, r) {
 			// An ill-formed combining mark — no base to anchor onto, or a
 			// script-specific mark riding a base of another script. It is
 			// corruption, not text, and it CANNOT be painted as zero-width:
@@ -1979,7 +2141,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// folds into its base's presentation form is NOT dropped — it folds
 			// into the base glyph (backbuffer emitCellText) instead, so composable
 			// points render while the non-composable marks stay omitted.
-			if suppress && modeFoldsMarks(sr.frame.rtlMarkMode) && hebrew.Folds(r) {
+			if suppress && modeFoldsMarks(sr.frame.rtlMarkMode) && khatool.Folds(r) {
 				suppress = false
 			}
 			if !suppress && currentVisualColumn > viewOffsetX && outputVisualColumn > 0 {
@@ -2110,7 +2272,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		// introducer straight through onto the wire) and defective marks,
 		// which are painted as sized substitutes, not as riders.
 		if r == '\t' || textwidth.IsControl(r) || textwidth.Rune(r) != 0 ||
-			textwidth.DefectiveMark(prevBase(li), r) ||
+			textwidth.DefectiveMark(precedingBase(li), r) ||
 			(layout != nil && layout.Marked && bidi.IsDirectionControl(r)) {
 			break
 		}
@@ -2161,8 +2323,26 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	if outputVisualColumn < width {
 		padWidth := width - outputVisualColumn
 		padColor := textColor
+		padGlyph := " "
 		if sel.exists && docLine >= sel.startLine && docLine < sel.endLine {
 			padColor = selectionColor
+			// A line carrying a run whose fill this host cannot place cannot
+			// carry one out here either. The padding sits past the point the
+			// drift starts from, so its bar comes back over the letters and
+			// stands a white ground behind Hebrew that is not selected. The
+			// selection says itself with a GLYPH instead, which rides the
+			// reordering through the way the letters' own colour does -- and a
+			// shaded cell is how a selected run of nothing gets to be visible
+			// at all under a style that paints no ground.
+			//
+			// This is the padding drawn AFTER the content, so it is always past
+			// the drift. A right-to-left line's right-alignment pad is a
+			// different thing, laid down before anything else and never part of
+			// the selection at all.
+			if lineGivesUpFill {
+				padColor = selectionFlipColor
+				padGlyph = selectedBlank
+			}
 		}
 		// Under rtl the phantom column opens at the RIGHT edge, which is this
 		// padding's last cell. It holds no data, so highlighting it would show
@@ -2170,13 +2350,13 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		// written above, already in the plain text color.)
 		if phantom && rtl && padColor != textColor && padWidth > 0 {
 			if padWidth > 1 {
-				displayLine.WriteString(padColor + strings.Repeat(" ", padWidth-1))
+				displayLine.WriteString(padColor + strings.Repeat(padGlyph, padWidth-1))
 			}
 			displayLine.WriteString(textColor + " ")
 			padWidth = 0
 		}
 		if padWidth > 0 {
-			displayLine.WriteString(padColor + strings.Repeat(" ", padWidth))
+			displayLine.WriteString(padColor + strings.Repeat(padGlyph, padWidth))
 		}
 	}
 
@@ -2189,31 +2369,9 @@ func (sr *ScreenRenderer) getTabWidth(visualColumn int, w *viewport.Viewport) in
 	return tabSize - (visualColumn % tabSize)
 }
 
-// runeToHexOrCtrl converts a control character to ^X format or hex.
-// Directly translated from TypeScript runeToHexOrCtrl
-func runeToHexOrCtrl(r rune) string {
-	value := int(r)
-	if value <= 27 {
-		switch value {
-		case 0:
-			return "^@"
-		case 27:
-			return "^["
-		default:
-			return "^" + string(rune(value+64))
-		}
-	} else if value <= 0xFF {
-		// One byte of hex reads unambiguously on its own: FE.
-		return fmt.Sprintf("%02X", value)
-	}
-	// Past one byte the digits need a boundary, or a run of substituted
-	// codepoints reads as one long number: (0123). Wider planes keep whole
-	// byte pairs.
-	if value <= 0xFFFF {
-		return fmt.Sprintf("(%04X)", value)
-	}
-	return fmt.Sprintf("(%06X)", value)
-}
+// runeToHexOrCtrl is the visible stand-in for a rune that must not reach the
+// terminal as itself: ^X for the caret forms, hex otherwise.
+func runeToHexOrCtrl(r rune) string { return khatool.Substitute(r) }
 
 // substituteWidth is the column count of a substitute string — always plain
 // ASCII, one column per rune. The renderer measures every substitute this way
@@ -2232,13 +2390,13 @@ func substituteWidth(s string) int { return len([]rune(s)) }
 //
 // This is the single place the decision is made; both the paint and the width
 // model call it, so they cannot drift.
-func defectiveMarkForm(prev, r rune) (string, int) {
-	if textwidth.AnchorMark(prev, r) {
+func defectiveMarkForm(base, r rune) (string, int) {
+	if textwidth.AnchorMark(base, r) {
 		// The circle takes a cell and the mark rides it — at ZERO width for a
 		// non-spacing mark (Mn/Me), but Mc marks are SPACING combining marks
 		// and take a cell of their own, so the pair's width is the circle plus
 		// whatever the mark itself advances.
-		return string(textwidth.MarkAnchor) + string(r), 1 + textwidth.Rune(r)
+		return khatool.MarkForm(r), 1 + textwidth.Rune(r)
 	}
 	s := runeToHexOrCtrl(r)
 	return s, substituteWidth(s)
@@ -3098,7 +3256,7 @@ func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *viewp
 func (sr *ScreenRenderer) runeWidthAt(runes []rune, i, currentColumn int, w *viewport.Viewport) int {
 	r := runes[i]
 	if textwidth.IsMark(r) {
-		base := textwidth.PrevBase(runes, i)
+		base := textwidth.PrecedingBase(runes, i)
 		if textwidth.DefectiveMark(base, r) {
 			_, fw := defectiveMarkForm(base, r)
 			return fw
@@ -3126,43 +3284,6 @@ func lineHasZeroWidth(s string) bool {
 // (rendered as ^X, two cells) are excluded.
 func isZeroWidthMark(r rune) bool {
 	return r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0
-}
-
-// lineHasZeroWidthAfterFold reports whether s still carries a zero-width mark
-// once a folding rtlMarkMode has folded each Hebrew cluster into its
-// presentation form. A point that folds into (or is dropped from) its base no
-// longer inflates the codepoint count, so a line of pointed consonants keeps the
-// real selection bar; only marks that survive the fold — vowels, accents,
-// un-formable points — force the ride-safe fill. With folding off it is exactly
-// lineHasZeroWidth.
-func lineHasZeroWidthAfterFold(s string, folding bool) bool {
-	if !folding {
-		return lineHasZeroWidth(s)
-	}
-	runes := []rune(s)
-	for i := 0; i < len(runes); {
-		base := runes[i]
-		// A leading zero-width mark with no base of its own still counts.
-		if isZeroWidthMark(base) {
-			return true
-		}
-		// Gather the zero-width marks riding this base into one cluster.
-		j := i + 1
-		for j < len(runes) && isZeroWidthMark(runes[j]) {
-			j++
-		}
-		folded, ok := hebrew.PrecomposeCluster(runes[i:j])
-		if !ok {
-			folded = runes[i:j] // nothing folds: the cluster stands as written
-		}
-		for _, fr := range folded[1:] { // marks that survive after the base
-			if isZeroWidthMark(fr) {
-				return true
-			}
-		}
-		i = j
-	}
-	return false
 }
 
 // getTabSize returns the tab size for a viewport.

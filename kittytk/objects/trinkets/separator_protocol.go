@@ -7,7 +7,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for the separator trinket (see docs/property-vocabulary.md).
+// Wire registration for the separator trinket; the wiki's Separator page is
+// generated from it.
 func init() {
 	regTrinket("separator",
 		func() core.Trinket { return NewLineSeparator() },

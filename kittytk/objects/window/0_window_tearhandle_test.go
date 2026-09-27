@@ -18,7 +18,7 @@ func TestTearHandleFocusOrder(t *testing.T) {
 	if got := win.nextTitleFocus(TitleFocusTear); got != TitleFocusTitle {
 		t.Errorf("after tear = %v, want Title", got)
 	}
-	if got := win.prevTitleFocus(TitleFocusTitle); got != TitleFocusTear {
+	if got := win.priorTitleFocus(TitleFocusTitle); got != TitleFocusTear {
 		t.Errorf("before title = %v, want Tear", got)
 	}
 
@@ -40,7 +40,7 @@ func TestTearHandleHitTestAndActivate(t *testing.T) {
 	// the same slot buttonAtPosition/paintTearHandle compute.
 	metrics := core.DefaultCellMetrics()
 	buttonWidth := metrics.TextWidth(3)
-	controlsRight := metrics.CellWidth + buttonWidth*3
+	controlsRight := metrics.UnitsPerCellWidth + buttonWidth*3
 	titleW := win.EffectiveFont().MeasureText("w")
 	handleX := tearHandleSlotX(win.Bounds().Width, controlsRight, titleW, buttonWidth)
 	if got := win.buttonAtPosition(handleX+buttonWidth/2, 4); got != TitleButtonTear {

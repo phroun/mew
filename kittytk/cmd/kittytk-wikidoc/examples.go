@@ -32,7 +32,7 @@ func runExamples(pages []string) (int, error) {
 		}
 		name := filepath.Base(page)
 
-		// One session per page. A fence that continues the previous
+		// One session per page. A fence that continues the prior
 		// one -- `set tv.b ...` after the build that made `tv` -- is
 		// then executed against what the earlier fence built, which
 		// is how a reader would run them.

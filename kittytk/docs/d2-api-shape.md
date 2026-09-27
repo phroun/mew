@@ -46,9 +46,11 @@ guardrail keeps the client library from undoing that.
    four-point veneer contract feeding the client-library phase.
 
 The protocol's wire shape is deliberately NOT decided here, with one
-principle now fixed (D10, 2026-07-05): **nothing positional — every
-value travels under a property name**, with sender-declared,
-connection-scoped alias dictionaries for wire efficiency. Consequence
+principle now fixed (D10, 2026-07-05): **a property travels under its
+name**, with sender-declared, connection-scoped alias dictionaries for
+wire efficiency. That is about properties: a verb may take operands —
+values written with no name, read in the order they were written — and
+a property statement refuses one, which is where the rule is enforced. Consequence
 for this phase: the property and event names formalized in slices 3–4
 are wire vocabulary — choose them deliberately and keep a vocabulary
 list. (Also validated by the D10 sketch: buttons bind to command IDs
@@ -276,7 +278,7 @@ with `protocol.Quote`, the new exported string-literal quoter).
 **MDI tab converted (2026-07-05):** `mdipane` and `dockrow`/
 `dockentry` registered; the tab is a script + veneer handlers.
 Spawning documents is `set mdi children={new window …}` (D19 append
-of a whole window subtree); Tile/Cascade/Next/Prev are flag-action
+of a whole window subtree); Tile/Cascade/Next/Prior are flag-action
 properties and restore/minimize/remove are id-directed actions; the
 dock choreography (minimize event → dockentry, entry click →
 restore, restore/remove → destroy entry) runs entirely over

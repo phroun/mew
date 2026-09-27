@@ -87,7 +87,7 @@ type nullBackend struct{ mu sync.Mutex }
 func (n *nullBackend) Init() error { return nil }
 func (n *nullBackend) Shutdown()   {}
 func (n *nullBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (n *nullBackend) Size() core.UnitSize                                  { return core.UnitSize{Width: 8 * 120, Height: 16 * 40} }
 func (n *nullBackend) BeginFrame()                                          {}
@@ -98,7 +98,7 @@ func (n *nullBackend) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {}
 func (n *nullBackend) DrawText(x, y core.Unit, t string, s style.CellStyle, f *core.Font) core.Unit {
 	return 0
 }
-func (n *nullBackend) DrawTextAligned(core.UnitRect, string, core.Alignment, core.Alignment, style.CellStyle, *core.Font) {
+func (n *nullBackend) DrawTextAligned(core.UnitRect, string, core.HSide, core.VAlign, style.CellStyle, *core.Font) {
 }
 func (n *nullBackend) FillRect(core.UnitRect, rune, style.CellStyle)                     {}
 func (n *nullBackend) DrawRect(core.UnitRect, style.BorderStyle, style.CellStyle)        {}
@@ -194,10 +194,16 @@ func TestDemoBuildsOverService(t *testing.T) {
 	// and merely look inert. Reading the names out of wire.go is blunt, but
 	// it is the only thing that fails when someone adds a control and
 	// forgets to surface it, which is exactly how this test got written.
-	for _, name := range wiredNames(t, "wireMainWindow") {
-		if ui.ID(name) == 0 {
-			t.Errorf("wire.go addresses %q but the script never surfaces it: "+
-				"its handle is id 0, so nothing it sets or subscribes will happen", name)
+	// Every function the main window's wiring reaches, not just the entry
+	// point: a helper split out of it addresses the same script and its
+	// names go unchecked otherwise.
+	for _, fn := range []string{"wireMainWindow", "wireDenomination", "wireLimits", "wireDirection", "wireTerminalTab"} {
+		for _, name := range wiredNames(t, fn) {
+			if ui.ID(name) == 0 {
+				t.Errorf("%s addresses %q but the script never surfaces it: "+
+					"its handle is id 0, so nothing it sets or subscribes will happen",
+					fn, name)
+			}
 		}
 	}
 
@@ -243,14 +249,25 @@ func TestDemoBuildsOverService(t *testing.T) {
 	}
 
 	// Every desktop-action app verb must be accepted by the display.
-	for _, verb := range []string{
-		"status text=\"hi there\"", "cut", "copy", "paste", "selectall",
-		"tile", "cascade", "theme", "desktopfont tuesday",
-		"desktopfont default", "announce_visual", "announce_speak",
-		"rawkey",
-	} {
+	for _, verb := range []string{"announce_visual", "announce_speak"} {
 		if _, err := conn.Exec(verb); err != nil {
 			t.Errorf("app verb %q: %v", verb, err)
+		}
+	}
+	// And everything the display does.
+	for _, action := range []string{
+		"cut", "copy", "paste", "selectall", "tile", "cascade", "rawkey",
+	} {
+		if err := conn.Host().Do(action); err != nil {
+			t.Errorf("do host %s: %v", action, err)
+		}
+	}
+	// And every property of the display itself.
+	for _, prop := range []string{
+		`status="hi there"`, "dark", "!dark", "desktopfont=tuesday", "desktopfont=default",
+	} {
+		if err := conn.Host().Set(prop); err != nil {
+			t.Errorf("set host %s: %v", prop, err)
 		}
 	}
 }

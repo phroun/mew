@@ -12,22 +12,23 @@ import (
 // spellings so shortcuts declared as "^\\" etc. fire under SDL too.
 func TestTranslateKeyControlPunctuation(t *testing.T) {
 	cases := []struct {
-		sym  sdl3.Keycode
-		mod  uint16
-		want string
+		sym      sdl3.Keycode
+		scancode uint32
+		mod      uint16
+		want     string
 	}{
-		{'\\', sdl3.KMOD_LCTRL, "^\\"},
-		{']', sdl3.KMOD_LCTRL, "^]"},
-		{'[', sdl3.KMOD_LCTRL, "Escape"},
-		{' ', sdl3.KMOD_LCTRL, "^@"},
-		{'6', sdl3.KMOD_LCTRL | sdl3.KMOD_LSHIFT, "^^"},
-		{'-', sdl3.KMOD_LCTRL | sdl3.KMOD_LSHIFT, "^_"},
-		{'2', sdl3.KMOD_LCTRL | sdl3.KMOD_LSHIFT, "^@"},
-		{'\\', sdl3.KMOD_LCTRL | sdl3.KMOD_LALT, "M-^\\"},
-		{'h', sdl3.KMOD_LCTRL, "^H"}, // letters unchanged
+		{'\\', hidBackslash, sdl3.KMOD_LCTRL, "^\\"},
+		{']', hidRightBracket, sdl3.KMOD_LCTRL, "^]"},
+		{'[', hidLeftBracket, sdl3.KMOD_LCTRL, "Escape"},
+		{' ', 44, sdl3.KMOD_LCTRL, "^@"},
+		{'6', hid6, sdl3.KMOD_LCTRL | sdl3.KMOD_LSHIFT, "^^"},
+		{'-', hidMinus, sdl3.KMOD_LCTRL | sdl3.KMOD_LSHIFT, "^_"},
+		{'2', hid2, sdl3.KMOD_LCTRL | sdl3.KMOD_LSHIFT, "^@"},
+		{'\\', hidBackslash, sdl3.KMOD_LCTRL | sdl3.KMOD_LALT, "M-^\\"},
+		{'h', hidH, sdl3.KMOD_LCTRL, "^H"}, // letters unchanged
 	}
 	for _, c := range cases {
-		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod})
+		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod, Scancode: c.scancode})
 		if got != c.want {
 			t.Errorf("translateKey(%q, mod %#x) = %q, want %q", c.sym, c.mod, got, c.want)
 		}
@@ -77,8 +78,11 @@ func TestTranslateKeyHyper(t *testing.T) {
 		{"glyph (KMOD_MODE) yields keydown", 'x', sdl3.KMOD_MODE, ""},
 		{"glyph + ctrl still yields", 'x', sdl3.KMOD_MODE | sdl3.KMOD_LCTRL, ""},
 	}
+	// The shown keys need their position, which is what names them; the named
+	// ones are found by Sym and take no scancode here.
+	scan := map[sdl3.Keycode]uint32{'x': hidX, '5': hid5}
 	for _, c := range cases {
-		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod})
+		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod, Scancode: scan[c.sym]})
 		if got != c.want {
 			t.Errorf("%s: translateKey(%q, mod %#x) = %q, want %q", c.name, c.sym, c.mod, got, c.want)
 		}

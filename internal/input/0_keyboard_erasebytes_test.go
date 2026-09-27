@@ -53,7 +53,7 @@ func feedBytes(t *testing.T, raw string) []string {
 // same action. That only works if the two survive the trip. Under Mega they did
 // not: the upstream table spelled ESC DEL "M-Backspace", so both bytes arrived
 // as "M-back" and "M-del" was unreachable — and ESC DEL is what Alt+Backspace,
-// the delete-previous-word chord, sends from every terminal whose kbs is ^?.
+// the delete-prior-word chord, sends from every terminal whose kbs is ^?.
 func TestBothEraseBytesSurviveWithAndWithoutMega(t *testing.T) {
 	for _, tc := range []struct{ raw, want, what string }{
 		{"\x08", "back", "BS, the vt100 lineage's erase"},

@@ -39,7 +39,7 @@ func TestModalStackBlocks(t *testing.T) {
 		t.Error("the top modal must not be blocked")
 	}
 
-	// Closing the top modal makes the previous one top (unblocked) again.
+	// Closing the top modal makes the prior one top (unblocked) again.
 	m.CloseModal()
 	if m.isModalBlocked(modal) {
 		t.Error("modal is top again after CloseModal, must not be blocked")

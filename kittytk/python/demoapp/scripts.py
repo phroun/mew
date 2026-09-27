@@ -11,53 +11,53 @@ from kittytk.protocol import quote
 # The demo tree, shared by the Lists and Scroll Lists tabs (nested children
 # blocks ARE the tree).
 TREE_ITEMS_SCRIPT = r"""
-new item caption="Documents" expanded children={
-    new item caption="Work" expanded children={
+new item caption="Documents" expanded items={
+    new item caption="Work" expanded items={
         new item caption="Report.txt"
         new item caption="Presentation.pptx"
         new item caption="Budget.xlsx"
         new item caption="Meeting Notes.md"
     }
-    new item caption="Personal" children={
+    new item caption="Personal" items={
         new item caption="Notes.txt"
         new item caption="Journal.md"
         new item caption="Ideas.txt"
     }
-    new item caption="Projects" children={
+    new item caption="Projects" items={
         new item caption="Alpha"
         new item caption="Beta"
         new item caption="Gamma"
     }
 }
-new item caption="Pictures" children={
+new item caption="Pictures" items={
     new item caption="Vacation"
     new item caption="Family"
     new item caption="Pets"
     new item caption="Events"
     new item caption="Screenshots"
 }
-new item caption="Downloads" children={
+new item caption="Downloads" items={
     new item caption="Software"
     new item caption="Documents"
     new item caption="Music"
 }
-new item caption="Music" children={
+new item caption="Music" items={
     new item caption="Rock"
     new item caption="Jazz"
     new item caption="Classical"
     new item caption="Electronic"
 }
-new item caption="Videos" children={
+new item caption="Videos" items={
     new item caption="Movies"
     new item caption="TV Shows"
     new item caption="Tutorials"
 }
-new item caption="Code" children={
-    new item caption="Go" children={
+new item caption="Code" items={
+    new item caption="Go" items={
         new item caption="main.go"
         new item caption="utils.go"
     }
-    new item caption="Python" children={
+    new item caption="Python" items={
         new item caption="script.py"
     }
 }
@@ -94,21 +94,21 @@ b=new tab caption="Basic Trinkets" children={
 
 s=new tab caption="Selection" children={
     o=new panel layout=vbox spacing=0 children={
-        new panel layout=hbox spacing=8 align=fill children={
+        new panel layout=hbox spacing=8 children={
             new panel border layout=vbox fixed_width=256 children={
-                new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap align=fill
+                new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap
             }
             new panel border layout=vbox fixed_width=256 children={
-                new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap align=fill
+                new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap
             }
             new panel border layout=vbox fixed_width=288 children={
-                new panel layout=vbox align=fill children={
+                new panel layout=vbox children={
                     new checkbox caption="Enable the experimental feature that reticulates splines while the moon is full" wrap
                     new radiobutton caption="Prefer the long-form explanation whenever the assistant answers a question" wrap
                 }
             }
         }
-        sp=new splitter orientation=vertical position=0.4 stretch=1 align=fill children={
+        sp=new splitter orientation=vertical position=0.4 stretch=1 children={
             c=new panel layout=vbox spacing=0 children={
                 new label caption="Checkboxes:"
                 new checkbox caption="Enable feature A" checked
@@ -129,14 +129,14 @@ s=new tab caption="Selection" children={
                 bggreen=new radiobutton caption="Dark Green" group=selbg
                 bggray=new radiobutton caption="TrueColor #333" group=selbg
                 new label caption="ComboBox:"
-                new combobox children={
+                new combobox items={
                     new item caption="First item"
                     new item caption="Second item"
                     new item caption="Third item"
                     new item caption="Fourth item"
                 }
                 new label caption="Alphabet ComboBox:"
-                new combobox children={''')
+                new combobox items={''')
     for i in range(26):
         letter = chr(ord('A') + i)
         b.append("\n\t\t\t\t\tnew item caption=" + quote(letter + " - Letter " + letter))
@@ -151,7 +151,7 @@ new tab caption="Lists" children={
     new splitter orientation=horizontal position=0.5 children={
         new panel layout=vbox children={
             new label caption="ListView:"
-            new listview children={''')
+            new listview items={''')
     for i in range(1, 21):
         b.append('\n\t\t\t\tnew item caption="Item %d"' % i)
     b.append(r'''
@@ -159,7 +159,7 @@ new tab caption="Lists" children={
         }
         new panel layout=vbox children={
             new label caption="TreeView:"
-            new treeview children={''' + indent(TREE_ITEMS_SCRIPT, "\t\t\t\t") + r'''}
+            new treeview items={''' + indent(TREE_ITEMS_SCRIPT, "\t\t\t\t") + r'''}
         }
     }
 }
@@ -186,7 +186,7 @@ ss=new tab caption="Scroll Selection" children={
                 sbggreen=new radiobutton caption="Dark Green" group=scrollbg
                 sbggray=new radiobutton caption="TrueColor #333" group=scrollbg
                 new label caption="ComboBox:"
-                new combobox children={
+                new combobox items={
                     new item caption="First item"
                     new item caption="Second item"
                     new item caption="Third item"
@@ -202,7 +202,7 @@ new tab caption="Scroll Lists" children={
         new scrollarea children={
             new panel layout=vbox children={
                 new label caption="ListView (scrollable container):"
-                new listview children={''')
+                new listview items={''')
     for i in range(1, 21):
         b.append('\n\t\t\t\t\tnew item caption="Item %d"' % i)
     b.append(r'''
@@ -216,7 +216,7 @@ new tab caption="Scroll Lists" children={
         new scrollarea children={
             new panel layout=vbox children={
                 new label caption="TreeView (scrollable container):"
-                new treeview children={''' + indent(TREE_ITEMS_SCRIPT, "\t\t\t\t\t") + r'''}
+                new treeview items={''' + indent(TREE_ITEMS_SCRIPT, "\t\t\t\t\t") + r'''}
                 new label caption="Extra content below TreeView:"
                 new textinput placeholder="Type something..."
             }
@@ -263,11 +263,11 @@ new tab caption="Bottom Tabs" children={
 
 new tab caption="Vertical Tabs" children={
     new splitter orientation=horizontal position=0.5 children={
-        new tabs position=left children={
+        new tabs position=side children={
             new tab caption="First" children={
                 new panel layout=vbox children={
-                    new label caption="This is the first tab in a\nTabsLeft layout."
-                    new label caption="Tabs are displayed vertically\nalong the left edge."
+                    new label caption="position=side: the strip stands\non the edge the form reads from."
+                    new label caption="A form reading right to left\nwould stand it on the right."
                 }
             }
             new tab caption="Second" children={
@@ -281,20 +281,20 @@ new tab caption="Vertical Tabs" children={
                     new textinput placeholder="Type here..."
                 }
             }''')
-    for name in ["Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth",
+    for name in ["Fourth", "Fifth", "שישי", "שביעי", "Eighth", "Ninth",
                  "Tenth", "Eleventh", "Twelfth", "Thirteenth"]:
         b.append('\n\t\t\t\tnew tab caption=%s children={\n'
                  '\t\t\t\t\tnew panel layout=vbox children={\n'
-                 '\t\t\t\t\t\tnew label caption="%s tab content\\nin TabsLeft layout."\n'
+                 '\t\t\t\t\t\tnew label caption="%s tab content\\nin a side strip."\n'
                  '\t\t\t\t\t}\n'
                  '\t\t\t\t}' % (quote(name), name))
     b.append(r'''
         }
-        new tabs position=right children={
+        new tabs position=sideopposite children={
             new tab caption="Alpha" children={
                 new panel layout=vbox children={
-                    new label caption="This is the first tab in a\nTabsRight layout."
-                    new label caption="Tabs are displayed vertically\nalong the right edge."
+                    new label caption="position=sideopposite: the far side\nfrom the one the form reads from."
+                    new label caption="Unusual, and valid -- it stands\nwhere the content does not begin."
                 }
             }
             new tab caption="Beta" children={
@@ -309,10 +309,10 @@ new tab caption="Vertical Tabs" children={
                 }
             }''')
     for name in ["Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota",
-                 "Kappa", "Lambda", "Mu", "Nu"]:
+                 "קאפא", "למדא", "Mu", "Nu"]:
         b.append('\n\t\t\t\tnew tab caption=%s children={\n'
                  '\t\t\t\t\tnew panel layout=vbox children={\n'
-                 '\t\t\t\t\t\tnew label caption="%s tab content\\nin TabsRight layout."\n'
+                 '\t\t\t\t\t\tnew label caption="%s tab content\\nin a sideopposite strip."\n'
                  '\t\t\t\t\t}\n'
                  '\t\t\t\t}' % (quote(name), name))
     b.append(r'''
@@ -323,7 +323,7 @@ new tab caption="Vertical Tabs" children={
 mtab=new tab caption="MDI Demo" children={
     mdisp=new splitter orientation=vertical position=0.9 caption="Dock" children={
         mdisa=new scrollarea children={
-            mdi=new mdipane fill="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
+            mdi=new mdipane background_char="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
                 mdicp=new panel layout=vbox spacing=8 children={
                     new label caption="MDIPane Trinket Demo"
                     new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."
@@ -332,7 +332,7 @@ mtab=new tab caption="MDI Demo" children={
                         new button caption="Tile" action=demo.mdi.tile
                         new button caption="Cascade" action=demo.mdi.cascade
                         new button caption="Next" action=demo.mdi.next
-                        new button caption="Prev" action=demo.mdi.prev
+                        new button caption="Prior" action=demo.mdi.prior
                     }
                     mdistatus=new label caption="Active: none"
                     new spacer
@@ -395,7 +395,7 @@ mb=new menubar children={
         new menuitem caption="&Toolbar" checkable checked
         new menuitem caption="&Status Bar" checkable checked
         new menuitem separator
-        new menuitem caption="&Light/Dark Theme" shortcut="^T" action=demo.view.theme
+        new menuitem caption="&Light/Dark Theme" shortcut="^T" checkable checked action=demo.view.theme
         new menuitem separator
         new menuitem caption="Show A&nnouncements in Status Bar" checkable action=demo.view.announce
         new menuitem caption="Speak Announcements" checkable action=demo.view.speak
@@ -445,7 +445,7 @@ pw=new window title="Protocol Demo" x=64 y=64 width=448 height=256 children={
         new separator
         cb=new checkbox C="Tri-state checkbox (watch the label above)" tristate
         inp=new textinput placeholder="Type here..."
-        combo=new combobox children={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
+        combo=new combobox items={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
         btn=new button C="Dispatch demo.hello" action=demo.hello
     }
 }

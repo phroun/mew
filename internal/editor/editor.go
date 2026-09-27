@@ -295,10 +295,10 @@ type Editor struct {
 	// (nudge on -> line scrolls off -> condition false -> nudge off -> line back).
 	// After a short run of frame-to-frame toggles we latch the nudge on until the
 	// layout genuinely changes (resize/scroll/edit/viewport set), tracked by sig.
-	niqqudNudgeWantPrev  bool
-	niqqudNudgeToggleRun int
-	niqqudNudgeLatched   bool
-	niqqudNudgeLatchSig  string
+	niqqudNudgeWantPrevious bool
+	niqqudNudgeToggleRun    int
+	niqqudNudgeLatched      bool
+	niqqudNudgeLatchSig     string
 	// appliedMappingSet is the mapping-set name currently loaded into the key
 	// processor, so an unchanged set is not rebuilt.
 	appliedMappingSet string
@@ -1143,10 +1143,7 @@ func New(cfg Config) (*Editor, error) {
 	// decides (triggered by the first frame containing RTL content). The
 	// segmentation and ride-safe-selection axes ride the same sniff.
 	flip, wordwise, rideSafe, _ := flipSettings(cfg.FlipBidiForHost)
-	// Kitty applies its own bidi only while force_ltr is off; when the user has
-	// set force_ltr yes, mew must own the bidi and not flip. Sniff kitty.conf to
-	// pick the right path (there is no in-band way to detect force_ltr).
-	flip, wordwise, rideSafe, kittyFlipActive := adjustFlipForKitty(cfg.FlipBidiForHost, flip, wordwise, rideSafe)
+	kittyFlipActive := flippingForKitty(flip)
 	renderer.SetFlipBidiForHost(flip)
 	renderer.SetFlipWordwise(wordwise)
 	renderer.SetFlipRideSafeSelection(rideSafe)
@@ -1593,7 +1590,7 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navFollow(always))
 	})
 
-	// nav_next / nav_prior: move to the next/previous link (cycling).
+	// nav_next / nav_prior: move to the next/prior link (cycling).
 	//
 	// Bare, they ALWAYS act: from the caret's own link, or into the first link
 	// from the caret when it is in none. With the argument "false" they are
@@ -2079,7 +2076,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("go_word_prior", func(ctx *pawscript.Context) pawscript.Result {
-		e.moveToPrevWord()
+		e.moveToPriorWord()
 		e.trackMove()
 		return pawscript.BoolStatus(true)
 	})
@@ -3587,7 +3584,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("viewport_prior", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.ViewportManager.FocusPrevInZone()
+		ok := e.ViewportManager.FocusPriorInZone()
 		if ok {
 			e.announceFocusedViewport()
 		}
@@ -3679,7 +3676,7 @@ func (e *Editor) registerCommands() {
 
 	// set_option_next / set_option_prior <name> - rotate an option through its
 	// canonical value sequence (from optionSpecs): read the current value via the
-	// cascade, step to the next/previous value, and set it. Fails with a warning
+	// cascade, step to the next/prior value, and set it. Fails with a warning
 	// for options that have no fixed value set (integers, counts, free text).
 	rotate := func(dir int) func(*pawscript.Context) pawscript.Result {
 		return func(ctx *pawscript.Context) pawscript.Result {
@@ -3980,64 +3977,17 @@ func flipSettings(mode string) (flip, wordwise, rideSafe, known bool) {
 	case "false":
 		return false, false, false, true
 	case "auto":
-		p := hostBidiProfileFor(hostterm.Detect())
-		return p.flip, p.wordwise, p.rideSafe, p.known
+		return hostterm.BidiProfile(hostterm.Detect())
 	}
 	return false, false, false, false
 }
 
-// adjustFlipForKitty overrides the flip axes when the host is Kitty and the
-// mode is "auto": Kitty applies its own bidi only while force_ltr is off, so if
-// the user's kitty.conf sets force_ltr yes, mew must own the bidi and NOT flip.
-// Nothing over the wire reveals force_ltr (see kittyconf.go), so this is the
-// one place the sniff feeds the renderer. Returns the (possibly adjusted) axes
-// and whether the flip is on afterwards (the imperfect path that the force_ltr
-// nudge watches for).
-func adjustFlipForKitty(mode string, flip, wordwise, rideSafe bool) (fl, ww, rs, flipOnKitty bool) {
-	if hostterm.Detect() != hostterm.TerminalKitty {
-		return flip, wordwise, rideSafe, false
-	}
-	if mode == "auto" {
-		if ltr, ok := kittyForceLTR(); ok && ltr {
-			flip, wordwise, rideSafe = false, false, false
-		}
-	}
-	return flip, wordwise, rideSafe, flip
-}
-
-// hostBidiProfile describes how a sniffed host handles RTL, so mew's emission
-// and selection match it.
-type hostBidiProfile struct {
-	flip     bool // emit RTL runs in logical order for the host's own bidi
-	wordwise bool // per-word run segmentation (Kitty) vs whole-run (Terminal.app)
-	rideSafe bool // host's bidi miscounts a background selection fill -> use fg+bold
-	known    bool // sniffing recognised the host (skip the DSR probe)
-}
-
-// hostBidiProfileFor classifies a sniffed host. A host it does not recognise
-// (known=false) falls to the runtime DSR probe.
-//
-//   - Apple Terminal applies its own bidi, keeps inter-word spaces inside the
-//     RTL run (whole-run), AND miscounts the selection fill (ride-safe).
-//   - Kitty reorders too but reverses each whitespace-separated word in place
-//     (word-wise); its selection fill is assumed to track the glyphs, so it
-//     keeps the real bar (ride-safe off) — pending confirmation.
-//   - iTerm2, Alacritty and Ghostty are stream-order: they render mew's visual
-//     output verbatim, so nothing flips.
-func hostBidiProfileFor(k hostterm.Kind) hostBidiProfile {
-	switch k {
-	case hostterm.TerminalAppleTerminal:
-		return hostBidiProfile{flip: true, wordwise: false, rideSafe: true, known: true}
-	case hostterm.TerminalKitty:
-		return hostBidiProfile{flip: true, wordwise: true, rideSafe: false, known: true}
-	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
-		return hostBidiProfile{known: true}
-	case hostterm.TerminalSDL:
-		// Native graphical rendering: mew emits visual order and the host draws
-		// it directly (its own shaper does the joining), so nothing flips.
-		return hostBidiProfile{known: true}
-	}
-	return hostBidiProfile{}
+// flippingForKitty reports whether mew is turning right-to-left runs back for
+// kitty -- the one path where kitty may drop niqqud, and so the condition the
+// force_ltr nudge watches for. hostterm.BidiProfile already reads the config to
+// decide whether kitty is reordering at all; this only asks which host it is.
+func flippingForKitty(flip bool) bool {
+	return flip && hostterm.Detect() == hostterm.TerminalKitty
 }
 
 // setOption sets a named editor option. Per-viewport options (tabSize,
@@ -4412,7 +4362,7 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		}
 		e.Config.FlipBidiForHost = v
 		flip, wordwise, rideSafe, known := flipSettings(v)
-		flip, wordwise, rideSafe, e.kittyFlipActive = adjustFlipForKitty(v, flip, wordwise, rideSafe)
+		e.kittyFlipActive = flippingForKitty(flip)
 		e.Renderer.SetFlipBidiForHost(flip)
 		e.Renderer.SetFlipWordwise(wordwise)
 		e.Renderer.SetFlipRideSafeSelection(rideSafe)
@@ -4487,9 +4437,9 @@ func (e *Editor) executeCommand(command string) {
 // runs several keys' commands within one dispatch, each needing its own
 // notion of "the key" for tinput_key to encode.
 func (e *Editor) runBoundCommand(key, command string) bool {
-	prev := e.dispatchingKey
+	previous := e.dispatchingKey
 	e.dispatchingKey = key
-	defer func() { e.dispatchingKey = prev }()
+	defer func() { e.dispatchingKey = previous }()
 	res := e.executeCommandResult(command)
 	if b, ok := res.(pawscript.BoolStatus); ok && !bool(b) {
 		return false
@@ -4816,7 +4766,7 @@ func (e *Editor) moveCursor(dx, dy int) {
 		lineLen := e.getEffectiveLineLen(w.Buffer, w.CursorPos().Line)
 
 		if newRune < 0 {
-			// Move to end of previous line
+			// Move to end of prior line
 			if w.CursorPos().Line > 0 {
 				w.SetCursorLine(w.CursorPos().Line - 1)
 				w.SetCursorRune(e.getEffectiveLineLen(w.Buffer, w.CursorPos().Line))
@@ -5390,15 +5340,15 @@ func (e *Editor) deleteCharBefore() {
 		w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
 		e.killCapture(w, w.Caret.DeleteBackwardCaptured(1), false)
 	} else if w.CursorPos().Line > 0 {
-		// Join with the previous line by deleting the terminator that ends it.
-		// Position the caret at the end of the previous line's content and
+		// Join with the prior line by deleting the terminator that ends it.
+		// Position the caret at the end of the prior line's content and
 		// delete the terminator runes forward: garland joins the lines and
 		// slides every decoration and cursor across the seam. Cursor-relative
 		// (a fresh seek, not a captured byte offset).
-		prevRaw := w.Buffer.GetLine(w.CursorPos().Line - 1)
-		prevLen := len([]rune(strings.TrimRight(prevRaw, "\n\r")))
-		termRunes := len([]rune(prevRaw)) - prevLen // 1 for "\n", 2 for "\r\n"
-		w.Caret.Seek(w.CursorPos().Line-1, prevLen)
+		priorRaw := w.Buffer.GetLine(w.CursorPos().Line - 1)
+		priorLen := len([]rune(strings.TrimRight(priorRaw, "\n\r")))
+		termRunes := len([]rune(priorRaw)) - priorLen // 1 for "\n", 2 for "\r\n"
+		w.Caret.Seek(w.CursorPos().Line-1, priorLen)
 		e.killCapture(w, w.Caret.DeleteForwardCaptured(termRunes), false)
 	}
 
@@ -5782,7 +5732,7 @@ func (e *Editor) slotWidth(layout *bidi.Layout, runes []rune, entry, col, tabSiz
 	}
 	// Base-aware, so an ill-formed mark measures the SPACING substitute painted
 	// for it rather than the zero cells a well-formed mark takes. Without that
-	// the caret walk would step over it as though it rode the previous cell,
+	// the caret walk would step over it as though it rode the preceding cell,
 	// and the columns this feeds would disagree with the paint.
 	return e.runeWidthAt(runes, entry, col, tabSize)
 }
@@ -6022,7 +5972,7 @@ func (e *Editor) visualColumnToRune(w *viewport.Viewport, line string, targetCol
 				// the next real slot for an entering-LTR marker, the
 				// previous for entering-RTL. An end marker ("|") maps to the
 				// position just past the fragment's reading-last rune: one
-				// past the previous real slot for an LTR fragment (the "|"
+				// past the prior real slot for an LTR fragment (the "|"
 				// follows the content), one past the next real slot for an
 				// RTL fragment (the "|" precedes the reversed content, whose
 				// leftmost cell is the fragment's logically last rune).
@@ -6817,14 +6767,14 @@ func (e *Editor) moveToNextWord() {
 	e.ensureCursorVisible(w)
 }
 
-// moveToPrevWord moves cursor to the previous word.
-func (e *Editor) moveToPrevWord() {
+// moveToPriorWord moves cursor to the prior word.
+func (e *Editor) moveToPriorWord() {
 	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
 
-	// If at beginning of line and not first line, go to end of previous line
+	// If at beginning of line and not first line, go to end of prior line
 	if w.CursorPos().Rune == 0 && w.CursorPos().Line > 0 {
 		w.SetCursorLine(w.CursorPos().Line - 1)
 		w.SetCursorRune(e.getEffectiveLineLen(w.Buffer, w.CursorPos().Line))
@@ -9440,7 +9390,7 @@ func (e *Editor) updateNiqqudNudge() {
 	if e.niqqudNudgeLatched {
 		want = true
 	} else {
-		if raw != e.niqqudNudgeWantPrev {
+		if raw != e.niqqudNudgeWantPrevious {
 			e.niqqudNudgeToggleRun++
 		} else {
 			e.niqqudNudgeToggleRun = 0
@@ -9453,7 +9403,7 @@ func (e *Editor) updateNiqqudNudge() {
 			want = true
 		}
 	}
-	e.niqqudNudgeWantPrev = raw
+	e.niqqudNudgeWantPrevious = raw
 
 	var existing *viewport.Viewport
 	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {

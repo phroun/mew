@@ -215,6 +215,103 @@ func (s *authStore) record(req AuthRequest, d AuthDecision) error {
 	return err
 }
 
+// The three standings a rule can express: an allow, a deny, or no line at all
+// -- which leaves the client to whatever else decides, and in the end to being
+// asked about again.
+const (
+	ruleNone  = ""
+	ruleAllow = "allow"
+	ruleDeny  = "deny"
+)
+
+// setClientRule makes the store say one thing about a client, whatever it said
+// before: allow it every app, refuse it outright, or say nothing.
+func (s *authStore) setClientRule(identity, rule string) error {
+	return s.replaceRule(identity, "", rule)
+}
+
+// setAppRule is the same for one app of one client. Saying nothing here leaves
+// the app to the client-wide rule.
+func (s *authStore) setAppRule(identity, app, rule string) error {
+	if app == "" {
+		return nil
+	}
+	return s.replaceRule(identity, app, rule)
+}
+
+// forget drops everything the store says about a client, the apps it named
+// included.
+func (s *authStore) forget(identity string) error {
+	if identity == "" {
+		return nil
+	}
+	return s.edit(func(_, _, fp, _ string) bool { return fp != identity }, "")
+}
+
+// forgetApp drops what the store says about one app of a client.
+func (s *authStore) forgetApp(identity, app string) error {
+	if identity == "" || app == "" {
+		return nil
+	}
+	return s.edit(func(_, scope, fp, a string) bool {
+		return fp != identity || scope != "app" || a != app
+	}, "")
+}
+
+func (s *authStore) replaceRule(identity, app, rule string) error {
+	if identity == "" {
+		return nil
+	}
+	scope := "client"
+	if app != "" {
+		scope = "app"
+	}
+	line := ""
+	if rule == ruleAllow || rule == ruleDeny {
+		line = fmt.Sprintf("%s %s %s", rule, scope, identity)
+		if app != "" {
+			line += " " + app
+		}
+	}
+	return s.edit(func(_, sc, fp, a string) bool {
+		return fp != identity || sc != scope || a != app
+	}, line)
+}
+
+// edit rewrites the file with the lines the filter keeps, plus one more if
+// there is one to add. A line it cannot parse -- a comment, or anything
+// written by a hand other than this one -- is kept as it stands: the file
+// belongs to the user, and an editor that dropped what it did not recognise
+// would be a poor guest in it.
+func (s *authStore) edit(keep func(verdict, scope, fp, app string) bool, add string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var out []string
+	if f, err := os.Open(s.path); err == nil {
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			line := sc.Text()
+			if verdict, scope, fp, app, ok := parseAuthLine(line); ok && !keep(verdict, scope, fp, app) {
+				continue
+			}
+			out = append(out, line)
+		}
+		f.Close()
+	}
+	if add != "" {
+		out = append(out, add)
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return err
+	}
+	body := ""
+	if len(out) > 0 {
+		body = strings.Join(out, "\n") + "\n"
+	}
+	return os.WriteFile(s.path, []byte(body), 0o600)
+}
+
 // parseAuthLine parses "allow|deny app|client <fingerprint> [appname...]".
 // The app name is the remainder of the line (may contain spaces).
 func parseAuthLine(line string) (verdict, scope, fp, app string, ok bool) {
@@ -251,7 +348,7 @@ func (s *Server) admit(req AuthRequest, token string) bool {
 	// Local connections (unix socket / loopback) are same-machine and
 	// trusted by the OS already; never prompt for them unless the host
 	// opted into PromptLocal.
-	if req.Local && !s.promptLocal {
+	if req.Local && !s.promptLocal.Load() {
 		return true
 	}
 	// A persistent allow/deny is final.
@@ -296,4 +393,92 @@ func isLocalConn(nc net.Conn) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// authEntry is one client the store holds a standing decision about, with the
+// apps it names individually. It is what the Connections window reads: the
+// same lines `decide` consults, gathered per identity instead of answered for
+// one request.
+type authEntry struct {
+	identity string
+	allow    bool // a client-wide allow stands
+	deny     bool // a client-wide deny stands
+	apps     []authEntryApp
+}
+
+// authEntryApp is one app name a client was decided for by itself. Both
+// verdicts are kept rather than one flag, so deny wins wherever the two lines
+// happen to sit relative to each other -- which is what decide does.
+type authEntryApp struct {
+	name  string
+	allow bool
+	deny  bool
+}
+
+// allowed reports the standing verdict for this app: deny beats allow.
+func (a authEntryApp) allowed() bool { return a.allow && !a.deny }
+
+// app is what this client's rules say about one app of it. An app with no rule
+// of its own comes back with neither verdict set, which is the standing that
+// leaves it to the client's own.
+func (e authEntry) app(name string) authEntryApp {
+	for _, a := range e.apps {
+		if a.name == name {
+			return a
+		}
+	}
+	return authEntryApp{name: name}
+}
+
+// entries reads every standing decision, in the order identities first appear
+// in the file -- which is the order the user approved them. A repeated line
+// updates the entry it belongs to rather than adding another, matching
+// `decide`, which reads them all and lets deny win.
+func (s *authStore) entries() []authEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := os.Open(s.path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var out []authEntry
+	at := map[string]int{}    // identity -> index in out
+	appAt := map[string]int{} // identity+"\x00"+app -> index in that entry's apps
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		verdict, scope, id, app, ok := parseAuthLine(sc.Text())
+		if !ok {
+			continue
+		}
+		i, seen := at[id]
+		if !seen {
+			i = len(out)
+			at[id] = i
+			out = append(out, authEntry{identity: id})
+		}
+		switch {
+		case scope == "client" && verdict == "allow":
+			out[i].allow = true
+		case scope == "client" && verdict == "deny":
+			out[i].deny = true
+		case scope == "app" && app != "":
+			k := id + "\x00" + app
+			j, had := appAt[k]
+			if !had {
+				j = len(out[i].apps)
+				appAt[k] = j
+				out[i].apps = append(out[i].apps, authEntryApp{name: app})
+			}
+			if verdict == "deny" {
+				out[i].apps[j].deny = true
+			} else {
+				out[i].apps[j].allow = true
+			}
+		}
+	}
+	return out
 }

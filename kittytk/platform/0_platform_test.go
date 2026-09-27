@@ -26,7 +26,7 @@ func (f *fakeBackend) push(ev core.Event) {
 func (f *fakeBackend) Init() error { return nil }
 func (f *fakeBackend) Shutdown()   {}
 func (f *fakeBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (f *fakeBackend) Size() core.UnitSize { return core.UnitSize{Width: 640, Height: 320} }
 func (f *fakeBackend) BeginFrame() {
@@ -46,7 +46,7 @@ func (f *fakeBackend) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {}
 func (f *fakeBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, ft *core.Font) core.Unit {
 	return 0
 }
-func (f *fakeBackend) DrawTextAligned(core.UnitRect, string, core.Alignment, core.Alignment, style.CellStyle, *core.Font) {
+func (f *fakeBackend) DrawTextAligned(core.UnitRect, string, core.HSide, core.VAlign, style.CellStyle, *core.Font) {
 }
 func (f *fakeBackend) FillRect(core.UnitRect, rune, style.CellStyle)                     {}
 func (f *fakeBackend) DrawRect(core.UnitRect, style.BorderStyle, style.CellStyle)        {}

@@ -135,6 +135,79 @@ func TestApplyHostConfTitleBarScale(t *testing.T) {
 	}
 }
 
+// editor.conf reads menu_scale on titlebar_scale's terms.
+//
+// Per-parser for the reason the density test states: mew maps editor.conf's
+// keys itself, so menu_scale existing on hostcfg.Config and in upstream's
+// parser left it inert here -- which is how it shipped doing nothing, and the
+// note below had already said it would.
+func TestApplyHostConfMenuScale(t *testing.T) {
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.9", 0.9},
+		{"0.5", 0.5},
+		{"0", 1},
+		{"-2", 1},
+		{"nope", 1},
+	} {
+		sec := parseHostConfSections([]byte("[window]\nmenu_scale = " + c.val + "\n"))
+		cfg := hostcfg.Defaults()
+		applyHostConf(sec, &cfg)
+		if cfg.MenuScale != c.want {
+			t.Errorf("menu_scale = %q: got %v, want %v", c.val, cfg.MenuScale, c.want)
+		}
+	}
+	// An absent key keeps the default, and the two scales are independent.
+	cfg := hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\ntitlebar_scale = 0.7\n")), &cfg)
+	if cfg.MenuScale != 1 {
+		t.Errorf("titlebar_scale moved menu_scale to %v", cfg.MenuScale)
+	}
+	cfg = hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\nmenu_scale = 0.9\n")), &cfg)
+	if cfg.MenuScale != 0.9 || cfg.TitleBarScale != 1 {
+		t.Errorf("menu_scale 0.9 gave menu %v / titlebar %v, want 0.9 and 1",
+			cfg.MenuScale, cfg.TitleBarScale)
+	}
+}
+
+// editor.conf reads the two shortcut scales, on menu_scale's terms.
+//
+// Per-parser for the reason the density test states: mew maps editor.conf's
+// keys itself, so a key that exists on hostcfg.Config and in upstream's
+// parser is inert here until it is mapped.
+func TestApplyHostConfShortcutScales(t *testing.T) {
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.5", 0.5},
+		{"1", 1},
+		{"0", 0.8},
+		{"-2", 0.8},
+		{"nope", 0.8},
+	} {
+		cfg := hostcfg.Defaults()
+		applyHostConf(parseHostConfSections([]byte("[window]\nshortcut_scale = "+c.val+"\n")), &cfg)
+		if cfg.ShortcutScale != c.want {
+			t.Errorf("shortcut_scale = %q: got %v, want %v", c.val, cfg.ShortcutScale, c.want)
+		}
+		cfg = hostcfg.Defaults()
+		applyHostConf(parseHostConfSections([]byte("[window]\nshortcut_native_scale = "+c.val+"\n")), &cfg)
+		if cfg.ShortcutNativeScale != c.want {
+			t.Errorf("shortcut_native_scale = %q: got %v, want %v", c.val, cfg.ShortcutNativeScale, c.want)
+		}
+	}
+	// Absent keys keep the defaults, and the two are independent.
+	cfg := hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\nshortcut_scale = 0.5\n")), &cfg)
+	if cfg.ShortcutScale != 0.5 || cfg.ShortcutNativeScale != 0.8 {
+		t.Errorf("got %v / %v, want 0.5 / 0.8", cfg.ShortcutScale, cfg.ShortcutNativeScale)
+	}
+}
+
 // [system] density overrides what the window system reports about the screen.
 //
 // mew reads editor.conf with ITS OWN key mapping, so a key added to the shared

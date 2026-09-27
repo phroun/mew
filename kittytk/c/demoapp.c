@@ -40,6 +40,7 @@ typedef struct App {
     int mdi_count;
     int dock_seq;
     DockSlot dock[MAX_DOCK];
+    int dark;                 /* what the View menu believes the theme is */
     volatile int quit;
     pthread_mutex_t mu;
 } App;
@@ -47,7 +48,7 @@ typedef struct App {
 static void set_status(App *a, const char *text) {
     char *q = kt_quote(text);
     char *src = malloc(strlen(q) + 16);
-    sprintf(src, "status text=%s", q);
+    sprintf(src, "set host status=%s", q);
     kt_exec(a->conn, src);
     free(src);
     free(q);
@@ -71,7 +72,7 @@ static void on_wfont(const kt_event *ev, void *ud) {
 static void on_dfont(const kt_event *ev, void *ud) {
     App *a = ud;
     kt_exec(a->conn, kt_event_flag(ev, "checked") == KT_FLAG_TRUE
-            ? "desktopfont tuesday" : "desktopfont default");
+            ? "set host desktopfont=tuesday" : "set host desktopfont=default");
 }
 static void on_grid(const kt_event *ev, void *ud) {
     App *a = ud;
@@ -101,7 +102,16 @@ static void spawn_mdi_child(App *a);
 typedef struct { App *a; } AppCtx;
 static void on_mdi_spawn(void *ud) { spawn_mdi_child(((AppCtx *)ud)->a); }
 
-static void on_mdi_set(void *ud) { VerbCtx *v = ud; char s[32]; snprintf(s, sizeof s, "%s", v->verb); kt_set(v->a->conn, v->a->mdi, s); }
+/* The display's theme is a property with two values and nothing reads it back,
+   so the item keeps its own account: the display starts dark, which is what the
+   item is built ticked to say. */
+static void on_theme(void *ud) {
+    App *a = ((AppCtx *)ud)->a;
+    a->dark = !a->dark;
+    kt_exec(a->conn, a->dark ? "set host dark" : "set host !dark");
+}
+
+static void on_mdi_do(void *ud) { VerbCtx *v = ud; kt_do(v->a->conn, v->a->mdi, v->verb); }
 
 static void show_about(void *ud) {
     App *a = ((AppCtx *)ud)->a;
@@ -178,10 +188,10 @@ static void on_dock_click(const kt_event *ev, void *ud) {
     App *a = s->a;
     uint64_t win = s->win;
     if (!win) return;
-    /* Our own set does not echo a restore event, so drop the entry here. */
+    /* Our own action does not echo a restore event, so drop the entry here. */
     char args[48];
-    snprintf(args, sizeof args, "restore=%llu", (unsigned long long)win);
-    if (kt_set(a->conn, a->mdi, args) == 0) dock_drop(a, win);
+    snprintf(args, sizeof args, "restore window=%llu", (unsigned long long)win);
+    if (kt_do(a->conn, a->mdi, args) == 0) dock_drop(a, win);
 }
 static void on_mdi_minimize(const kt_event *ev, void *ud) {
     App *a = ud;
@@ -255,11 +265,11 @@ typedef struct {
     uint64_t win;
 } SecApp;
 
-static void on_sec_cut(void *ud) { kt_exec(((SecApp *)ud)->c, "cut"); }
-static void on_sec_copy(void *ud) { kt_exec(((SecApp *)ud)->c, "copy"); }
-static void on_sec_paste(void *ud) { kt_exec(((SecApp *)ud)->c, "paste"); }
-static void on_sec_sall(void *ud) { kt_exec(((SecApp *)ud)->c, "selectall"); }
-static void on_sec_rawkey(void *ud) { kt_exec(((SecApp *)ud)->c, "rawkey"); }
+static void on_sec_cut(void *ud) { kt_exec(((SecApp *)ud)->c, "do host cut"); }
+static void on_sec_copy(void *ud) { kt_exec(((SecApp *)ud)->c, "do host copy"); }
+static void on_sec_paste(void *ud) { kt_exec(((SecApp *)ud)->c, "do host paste"); }
+static void on_sec_sall(void *ud) { kt_exec(((SecApp *)ud)->c, "do host selectall"); }
+static void on_sec_rawkey(void *ud) { kt_exec(((SecApp *)ud)->c, "do host rawkey"); }
 static void on_sec_close(void *ud) {
     SecApp *s = ud;
     if (s->win) kt_destroy(s->c, s->win);
@@ -315,6 +325,7 @@ int main(int argc, char **argv) {
 
     App a;
     memset(&a, 0, sizeof a);
+    a.dark = 1;               /* the display starts dark; the menu item is ticked */
     pthread_mutex_init(&a.mu, NULL);
     char *path = kt_default_socket_path();
     a.path = path;
@@ -358,11 +369,11 @@ int main(int argc, char **argv) {
     static AppCtx actx;
     actx.a = &a;
     static VerbCtx v_cut = {0}, v_copy = {0}, v_paste = {0}, v_sall = {0}, v_rawkey = {0},
-                   v_theme = {0}, v_announce = {0}, v_speak = {0}, v_tile = {0}, v_cascade = {0};
+                   v_announce = {0}, v_speak = {0}, v_tile = {0}, v_cascade = {0};
 #define VC(var, verbstr) var.a = &a; var.verb = verbstr;
-    VC(v_cut, "cut") VC(v_copy, "copy") VC(v_paste, "paste") VC(v_sall, "selectall")
-    VC(v_rawkey, "rawkey") VC(v_theme, "theme") VC(v_announce, "announce_visual")
-    VC(v_speak, "announce_speak") VC(v_tile, "tile") VC(v_cascade, "cascade")
+    VC(v_cut, "do host cut") VC(v_copy, "do host copy") VC(v_paste, "do host paste") VC(v_sall, "do host selectall")
+    VC(v_rawkey, "do host rawkey") VC(v_announce, "announce_visual")
+    VC(v_speak, "announce_speak") VC(v_tile, "do host tile") VC(v_cascade, "do host cascade")
 
     kt_on_command(a.conn, "demo.file.new", open_terminal_window, &actx);
     kt_on_command(a.conn, "demo.edit.cut", on_verb, &v_cut);
@@ -370,7 +381,7 @@ int main(int argc, char **argv) {
     kt_on_command(a.conn, "demo.edit.paste", on_verb, &v_paste);
     kt_on_command(a.conn, "demo.edit.selectall", on_verb, &v_sall);
     kt_on_command(a.conn, "demo.edit.rawkey", on_verb, &v_rawkey);
-    kt_on_command(a.conn, "demo.view.theme", on_verb, &v_theme);
+    kt_on_command(a.conn, "demo.view.theme", on_theme, &actx);
     kt_on_command(a.conn, "demo.view.announce", on_verb, &v_announce);
     kt_on_command(a.conn, "demo.view.speak", on_verb, &v_speak);
     kt_on_command(a.conn, "demo.window.new", on_new_window, &actx);
@@ -386,14 +397,14 @@ int main(int argc, char **argv) {
     kt_on_command(a.conn, "demo.basic.apply", on_status_msg, &m_apply);
 
     /* MDI */
-    static VerbCtx mdi_tile = {0}, mdi_cascade = {0}, mdi_next = {0}, mdi_prev = {0};
-    mdi_tile.a = mdi_cascade.a = mdi_next.a = mdi_prev.a = &a;
-    mdi_tile.verb = "tile"; mdi_cascade.verb = "cascade"; mdi_next.verb = "next"; mdi_prev.verb = "prev";
+    static VerbCtx mdi_tile = {0}, mdi_cascade = {0}, mdi_next = {0}, mdi_prior = {0};
+    mdi_tile.a = mdi_cascade.a = mdi_next.a = mdi_prior.a = &a;
+    mdi_tile.verb = "tile"; mdi_cascade.verb = "cascade"; mdi_next.verb = "next"; mdi_prior.verb = "prior";
     kt_on_command(a.conn, "demo.mdi.spawn", on_mdi_spawn, &actx);
-    kt_on_command(a.conn, "demo.mdi.tile", on_mdi_set, &mdi_tile);
-    kt_on_command(a.conn, "demo.mdi.cascade", on_mdi_set, &mdi_cascade);
-    kt_on_command(a.conn, "demo.mdi.next", on_mdi_set, &mdi_next);
-    kt_on_command(a.conn, "demo.mdi.prev", on_mdi_set, &mdi_prev);
+    kt_on_command(a.conn, "demo.mdi.tile", on_mdi_do, &mdi_tile);
+    kt_on_command(a.conn, "demo.mdi.cascade", on_mdi_do, &mdi_cascade);
+    kt_on_command(a.conn, "demo.mdi.next", on_mdi_do, &mdi_next);
+    kt_on_command(a.conn, "demo.mdi.prior", on_mdi_do, &mdi_prior);
     kt_on(a.conn, a.mdi, "active", on_mdi_active, &a);
     kt_on(a.conn, a.mdi, "minimize", on_mdi_minimize, &a);
     kt_on(a.conn, a.mdi, "restore", on_mdi_drop_ev, &a);

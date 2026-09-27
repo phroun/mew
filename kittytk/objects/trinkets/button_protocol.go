@@ -5,7 +5,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for Button (see docs/property-vocabulary.md).
+// Wire registration for Button; the wiki's Button page is
+// generated from it.
 func init() {
 	regTrinket("button",
 		func() core.Trinket { return NewButton("") },

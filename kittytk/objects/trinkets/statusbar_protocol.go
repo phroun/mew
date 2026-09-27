@@ -43,14 +43,16 @@ func init() {
 	protocol.RegisterType("statusbar", &protocol.TypeSpec{
 		Virtual: true,
 		New:     func() any { return &wireStatusBar{} },
-		Append: func(parent, child any) error {
-			b := parent.(*wireStatusBar)
-			s, ok := child.(*wireSection)
-			if !ok {
-				return fmt.Errorf("statusbar: children must be sections, got %T", child)
-			}
-			b.sections = append(b.sections, s.section)
-			return nil
+		Props: map[string]protocol.Property{
+			"children": protocol.NewCollection(func(parent, child any) error {
+				b := parent.(*wireStatusBar)
+				s, ok := child.(*wireSection)
+				if !ok {
+					return fmt.Errorf("statusbar: children must be sections, got %T", child)
+				}
+				b.sections = append(b.sections, s.section)
+				return nil
+			}).Members("section").Tip("The sections along the bar, left to right."),
 		},
 	})
 
@@ -96,15 +98,15 @@ func init() {
 				s.section.Alignment = n
 				return nil
 			})).OneOf("left", "center", "right").Tip("Text alignment within section"),
-		},
-		Append: func(parent, child any) error {
-			s := parent.(*wireSection)
-			sp, ok := child.(*wireSpan)
-			if !ok {
-				return fmt.Errorf("section: children must be spans, got %T", child)
-			}
-			s.section.Spans = append(s.section.Spans, sp.span)
-			return nil
+			"children": protocol.NewCollection(func(parent, child any) error {
+				s := parent.(*wireSection)
+				sp, ok := child.(*wireSpan)
+				if !ok {
+					return fmt.Errorf("section: children must be spans, got %T", child)
+				}
+				s.section.Spans = append(s.section.Spans, sp.span)
+				return nil
+			}).Members("span").Tip("Separately colored runs, which replace the section's own text."),
 		},
 	})
 

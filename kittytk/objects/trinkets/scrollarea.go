@@ -30,6 +30,7 @@ type ScrollBar struct {
 
 	// Whether the pointer is hovering over the thumb.
 	thumbHovered bool
+	showFocus    bool // the owner is focused; see SetShowFocus
 
 	// Smooth (pixel-surface) drag state: the thumb follows the
 	// pointer at unit granularity while the value still snaps to
@@ -164,18 +165,18 @@ func (s *ScrollBar) SetOnValueChanged(handler func(value int)) {
 func (s *ScrollBar) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
 	if s.orientation == core.Horizontal {
-		height := metrics.CellHeight
+		height := metrics.UnitsPerCellHeight
 		if core.FindSmoothPositioning(s.Self()) {
-			height = metrics.CellHeight / 2
+			height = metrics.UnitsPerCellHeight / 2
 		}
 		return core.UnitSize{
-			Width:  metrics.CellWidth * 20,
+			Width:  metrics.UnitsPerCellWidth * 20,
 			Height: height,
 		}
 	}
 	return core.UnitSize{
-		Width:  metrics.CellWidth,
-		Height: metrics.CellHeight * 10,
+		Width:  metrics.UnitsPerCellWidth,
+		Height: metrics.UnitsPerCellHeight * 10,
 	}
 }
 
@@ -194,7 +195,7 @@ func (s *ScrollBar) thumbSpanUnits(bounds core.UnitRect, metrics core.CellMetric
 		trackCells = metrics.CharsForWidth(bounds.Width)
 	} else {
 		trackU = float64(bounds.Height)
-		trackCells = int(bounds.Height / metrics.CellHeight)
+		trackCells = int(bounds.Height / metrics.UnitsPerCellHeight)
 	}
 	// The visible amount: pageStep when the owner set one (ScrollArea
 	// keeps it at the viewport size in the bar's own denomination -
@@ -256,8 +257,8 @@ func (s *ScrollBar) overThumb(x, y core.Unit) bool {
 		clickPos = metrics.UnitsToCellX(x)
 		trackCells = metrics.CharsForWidth(bounds.Width)
 	} else {
-		clickPos = int(y / metrics.CellHeight)
-		trackCells = int(bounds.Height / metrics.CellHeight)
+		clickPos = int(y / metrics.UnitsPerCellHeight)
+		trackCells = int(bounds.Height / metrics.UnitsPerCellHeight)
 	}
 	totalItems := s.maximum - s.minimum + trackCells
 	if totalItems <= 0 {
@@ -290,6 +291,18 @@ func (s *ScrollBar) UpdateThumbHover(x, y core.Unit) bool {
 	return false
 }
 
+// SetShowFocus tells the bar to paint in the focused colours.
+//
+// A scrollbar takes no focus of its own, so the trinket it belongs to is what
+// knows: a scroll area passes its own focus in, because its bars are the whole
+// of its chrome and nothing else would show a keyboard user where they are.
+func (s *ScrollBar) SetShowFocus(on bool) {
+	if s.showFocus != on {
+		s.showFocus = on
+		s.Update()
+	}
+}
+
 // Paint renders the scrollbar.
 func (s *ScrollBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
@@ -312,7 +325,7 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
+			thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 			p.FillRect(core.UnitRect{
 				X:      core.Unit(posU + 0.5),
 				Width:  core.Unit(thumbU + 0.5),
@@ -349,9 +362,9 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
+		thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 		for i := 0; i < thumbSize; i++ {
-			x := core.Unit(thumbPos+i) * metrics.CellWidth
+			x := core.Unit(thumbPos+i) * metrics.UnitsPerCellWidth
 			p.DrawCell(x, 0, '█', thumbStyle)
 		}
 	}
@@ -366,7 +379,7 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
+			thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 			p.FillRect(core.UnitRect{
 				Y:      core.Unit(posU + 0.5),
 				Width:  bounds.Width,
@@ -380,7 +393,7 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 	// thumbSize = visibleCount² / totalItems
 	// where visibleCount = trackCells, totalItems = maximum + trackCells (when min=0)
 	if s.maximum > s.minimum {
-		trackCells := int(bounds.Height / metrics.CellHeight)
+		trackCells := int(bounds.Height / metrics.UnitsPerCellHeight)
 		// totalItems = scrollRange + visibleCount = (max - min) + trackCells
 		totalItems := s.maximum - s.minimum + trackCells
 		thumbSize := trackCells * trackCells / totalItems
@@ -403,10 +416,10 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
+		thumbStyle := scheme.GetScrollbarThumbState(s.showFocus, s.thumbHovered && p.Graphical())
 		for i := 0; i < thumbSize; i++ {
-			y := core.Unit(thumbPos+i) * metrics.CellHeight
-			p.FillRect(core.UnitRect{Y: y, Width: bounds.Width, Height: metrics.CellHeight}, '█', thumbStyle)
+			y := core.Unit(thumbPos+i) * metrics.UnitsPerCellHeight
+			p.FillRect(core.UnitRect{Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight}, '█', thumbStyle)
 		}
 	}
 }
@@ -471,8 +484,8 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 			s.SetValue(s.value + s.pageStep)
 		}
 	} else {
-		clickPos := int(event.Y / metrics.CellHeight)
-		trackCells := int(bounds.Height / metrics.CellHeight)
+		clickPos := int(event.Y / metrics.UnitsPerCellHeight)
+		trackCells := int(bounds.Height / metrics.UnitsPerCellHeight)
 		// Use ListView-style formula
 		totalItems := s.maximum - s.minimum + trackCells
 		thumbSize := trackCells * trackCells / totalItems
@@ -579,8 +592,8 @@ func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 			s.SetValue(newValue)
 		}
 	} else {
-		dragPos := int(event.Y / metrics.CellHeight)
-		trackCells := int(bounds.Height / metrics.CellHeight)
+		dragPos := int(event.Y / metrics.UnitsPerCellHeight)
+		trackCells := int(bounds.Height / metrics.UnitsPerCellHeight)
 		// Use ListView-style formula
 		totalItems := s.maximum - s.minimum + trackCells
 		thumbSize := trackCells * trackCells / totalItems
@@ -638,11 +651,20 @@ type ScrollArea struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	content       core.Trinket
-	scrollX       int
-	scrollY       int
+	content core.Trinket
+	scrollX int
+	scrollY int
+
+	// hAtStart records that nothing has scrolled the area across yet, so it
+	// is still showing the beginning of its content. Which end of the content
+	// that IS depends on the direction, so the area re-seeks it whenever the
+	// range changes; the first sideways move of any kind ends it.
+	hAtStart      bool
 	contentWidth  core.Unit
 	contentHeight core.Unit
+	// contentHeightForWidth records whether the content's height was
+	// measured from its width rather than taken from its size hint.
+	contentHeightForWidth bool
 
 	// Scrollbars
 	hScrollBar *ScrollBar
@@ -688,6 +710,7 @@ func NewScrollArea() *ScrollArea {
 
 	// Create scrollbars. They are parented so ancestry-based
 	// capability lookups (smooth positioning, metrics) resolve.
+	s.hAtStart = true
 	s.hScrollBar = NewScrollBar(core.Horizontal)
 	s.hScrollBar.SetParent(s)
 	s.hScrollBar.SetOnValueChanged(func(value int) {
@@ -793,8 +816,14 @@ func (s *ScrollArea) ScrollX() int {
 	return s.scrollX
 }
 
-// SetScrollX sets the horizontal scroll position.
+// SetScrollX sets the horizontal scroll position, which is counted from the
+// LEFT of the content in both directions -- it is a place in the content, not
+// a distance travelled.
+//
+// Asking for one is what says the area is no longer sitting at the beginning
+// of its content, so it stops seeking that end when the range changes.
 func (s *ScrollArea) SetScrollX(x int) {
+	s.hAtStart = false
 	s.hScrollBar.SetValue(x)
 }
 
@@ -843,7 +872,7 @@ func (s *ScrollArea) scrollOffsetUnits() (core.Unit, core.Unit) {
 		return core.Unit(s.scrollX), core.Unit(s.scrollY)
 	}
 	metrics := s.EffectiveCellMetrics()
-	return core.Unit(s.scrollX) * metrics.CellWidth, core.Unit(s.scrollY) * metrics.CellHeight
+	return core.Unit(s.scrollX) * metrics.UnitsPerCellWidth, core.Unit(s.scrollY) * metrics.UnitsPerCellHeight
 }
 
 // EnsureVisible scrolls to make a point visible.
@@ -882,9 +911,9 @@ func (s *ScrollArea) EnsureRectVisible(rect core.UnitRect) {
 
 	// Calculate cell positions
 	cellX := metrics.UnitsToCellX(rect.X)
-	cellY := int(rect.Y / metrics.CellHeight)
+	cellY := int(rect.Y / metrics.UnitsPerCellHeight)
 	cellWidth := metrics.CharsForWidth(rect.Width)
-	cellHeight := int(rect.Height / metrics.CellHeight)
+	cellHeight := int(rect.Height / metrics.UnitsPerCellHeight)
 	if cellWidth < 1 {
 		cellWidth = 1
 	}
@@ -893,7 +922,7 @@ func (s *ScrollArea) EnsureRectVisible(rect core.UnitRect) {
 	}
 
 	viewCellWidth := metrics.CharsForWidth(viewport.Width)
-	viewCellHeight := int(viewport.Height / metrics.CellHeight)
+	viewCellHeight := int(viewport.Height / metrics.UnitsPerCellHeight)
 
 	// Adjust horizontal scroll if needed - prioritize showing left edge
 	if cellX < s.scrollX {
@@ -1024,9 +1053,9 @@ func (s *ScrollArea) SetTrinketResizable(resizable bool) {
 func (s *ScrollArea) hScrollBarHeight() core.Unit {
 	metrics := s.EffectiveCellMetrics()
 	if core.FindSmoothPositioning(s.Self()) {
-		return metrics.CellHeight / 2
+		return metrics.UnitsPerCellHeight / 2
 	}
-	return metrics.CellHeight
+	return metrics.UnitsPerCellHeight
 }
 
 // viewportBounds returns the viewport bounds (excluding scrollbars).
@@ -1041,13 +1070,66 @@ func (s *ScrollArea) viewportBounds() core.UnitRect {
 	needsV, needsH := s.calculateScrollBarNeeds()
 
 	if needsV {
-		width -= metrics.CellWidth
+		width -= metrics.UnitsPerCellWidth
 	}
 	if needsH {
 		height -= s.hScrollBarHeight()
 	}
 
-	return core.UnitRect{Width: width, Height: height}
+	// The vertical bar takes the TRAILING edge -- the right of a left-to-right
+	// area, the left of a right-to-left one -- so where the viewport starts is
+	// the lane's width in the second case and nothing in the first.
+	return core.UnitRect{X: core.LeadingX(s, bounds.Width, 0, width), Width: width, Height: height}
+}
+
+// contentWidthShown is how wide the content is drawn: the viewport's width
+// where the area resizes its trinket to fit, and the content's own otherwise.
+func (s *ScrollArea) contentWidthShown() core.Unit {
+	if s.trinketResizable {
+		return s.viewportBounds().Width
+	}
+	return s.contentWidth
+}
+
+// contentOriginX is where the content's left edge goes.
+//
+// Content narrower than the viewport sits against the LEADING edge, and the
+// room left over falls behind it -- so a panel in a right-to-left area is
+// flush right rather than parked at the left with a gap where the eye starts.
+// Content wider than the viewport has no slack: which part of it shows is the
+// scroll position's to say (see seekHorizontalStart), not this.
+func (s *ScrollArea) contentOriginX() core.Unit {
+	viewport := s.viewportBounds()
+	if slack := viewport.Width - s.contentWidthShown(); slack > 0 && core.ChromeMirrored(s) {
+		return viewport.X + slack
+	}
+	return viewport.X
+}
+
+// vLaneX is where the vertical bar's column begins, on the side the viewport
+// does not occupy.
+func (s *ScrollArea) vLaneX() core.Unit {
+	viewport := s.viewportBounds()
+	return core.LeadingX(s, s.Bounds().Width, viewport.Width, s.EffectiveCellMetrics().UnitsPerCellWidth)
+}
+
+// seekHorizontalStart puts an area that has not been scrolled across at the
+// BEGINNING of its content, which is the far end in a right-to-left area.
+//
+// Content wider than the viewport is read from where it begins, and where a
+// run begins is what the direction settles. Scrolling forward from there
+// travels towards the left of the screen, so the thumb starts against the far
+// side of its track and walks back -- the same journey either way round, told
+// from the other end.
+func (s *ScrollArea) seekHorizontalStart() {
+	if !s.hAtStart {
+		return
+	}
+	at := s.hScrollBar.Minimum()
+	if core.ChromeMirrored(s) {
+		at = s.hScrollBar.Maximum()
+	}
+	s.hScrollBar.SetValue(at)
 }
 
 // calculateScrollBarNeeds determines if scrollbars are needed without recursion.
@@ -1080,7 +1162,7 @@ func (s *ScrollArea) calculateScrollBarNeeds() (bool, bool) {
 
 	// Second pass: if one scrollbar is shown, it reduces space for the other
 	if needsV && s.hScrollBarPolicy == ScrollBarAsNeeded {
-		needsH = s.contentWidth > (bounds.Width - metrics.CellWidth)
+		needsH = s.contentWidth > (bounds.Width - metrics.UnitsPerCellWidth)
 	}
 	if needsH && s.vScrollBarPolicy == ScrollBarAsNeeded {
 		needsV = s.contentHeight > (bounds.Height - s.hScrollBarHeight())
@@ -1108,6 +1190,33 @@ func (s *ScrollArea) updateScrollBars() {
 	s.contentWidth = hint.Width
 	s.contentHeight = hint.Height
 
+	// Content whose height depends on its width -- anything that wraps -- is
+	// measured at the width it will be GIVEN, not the width it would have
+	// liked. Measured at its hint, a paragraph reflowing into a narrower
+	// viewport reports fewer lines than it draws, and the scroll range stops
+	// short of its own last line.
+	hfw, _ := s.content.(core.HeightForWidther)
+	s.contentHeightForWidth = hfw != nil && hfw.HasHeightForWidth()
+	if s.contentHeightForWidth {
+		width := s.contentWidth
+		if s.trinketResizable {
+			// Content that tracks the viewport is as wide as the viewport,
+			// and a vertical scrollbar takes a column out of that -- which
+			// can make the content taller still. Ask without the column, and
+			// again with it when the first answer overflows.
+			bounds := s.Bounds()
+			width = bounds.Width
+			if s.vScrollBarPolicy == ScrollBarAlwaysOn ||
+				(s.vScrollBarPolicy == ScrollBarAsNeeded && hfw.HeightForWidth(width) > bounds.Height) {
+				width -= s.EffectiveCellMetrics().UnitsPerCellWidth
+			}
+			s.contentWidth = width
+		}
+		if h := hfw.HeightForWidth(width); h > 0 {
+			s.contentHeight = h
+		}
+	}
+
 	viewport := s.viewportBounds()
 	metrics := s.EffectiveCellMetrics()
 
@@ -1121,7 +1230,7 @@ func (s *ScrollArea) updateScrollBars() {
 		}
 		s.hScrollBar.SetRange(0, maxScrollX)
 		s.hScrollBar.SetPageStep(int(viewport.Width))
-		s.hScrollBar.SetSingleStep(int(metrics.CellWidth))
+		s.hScrollBar.SetSingleStep(int(metrics.UnitsPerCellWidth))
 
 		maxScrollY := int(s.contentHeight - viewport.Height)
 		if maxScrollY < 0 {
@@ -1129,7 +1238,8 @@ func (s *ScrollArea) updateScrollBars() {
 		}
 		s.vScrollBar.SetRange(0, maxScrollY)
 		s.vScrollBar.SetPageStep(int(viewport.Height))
-		s.vScrollBar.SetSingleStep(int(metrics.CellHeight))
+		s.vScrollBar.SetSingleStep(int(metrics.UnitsPerCellHeight))
+		s.seekHorizontalStart()
 		return
 	}
 
@@ -1146,8 +1256,8 @@ func (s *ScrollArea) updateScrollBars() {
 	s.hScrollBar.SetSingleStep(1)
 
 	// Update vertical scrollbar using ListView-style calculation
-	viewCellHeight := int(viewport.Height / metrics.CellHeight)
-	contentCellHeight := int(s.contentHeight / metrics.CellHeight)
+	viewCellHeight := int(viewport.Height / metrics.UnitsPerCellHeight)
+	contentCellHeight := int(s.contentHeight / metrics.UnitsPerCellHeight)
 	maxScrollY := contentCellHeight - viewCellHeight
 	if maxScrollY < 0 {
 		maxScrollY = 0
@@ -1155,15 +1265,16 @@ func (s *ScrollArea) updateScrollBars() {
 	s.vScrollBar.SetRange(0, maxScrollY)
 	s.vScrollBar.SetPageStep(viewCellHeight)
 	s.vScrollBar.SetSingleStep(1)
+	s.seekHorizontalStart()
 }
 
-// SizeHint returns the preferred size.
+// SizeHint returns the preferred size. The width is the fallback for when
+// nothing sets one (see defaultSizeCells).
 func (s *ScrollArea) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
-	font := s.EffectiveFont()
 	return core.UnitSize{
-		Width:  font.MeasureRunes(30), // 30 chars wide
-		Height: metrics.TextHeight(10),
+		Width:  metrics.UnitsPerCellWidth * defaultSizeCells,
+		Height: metrics.UnitsPerCellHeight * defaultContainerHeightCells,
 	}
 }
 
@@ -1200,8 +1311,8 @@ func (s *ScrollArea) paintEdgeFades(p *core.Painter, viewport core.UnitRect) {
 	}
 	// Fade thickness: one row deep on the top/bottom, two columns on the
 	// left/right - clamped so opposing fades can't cross a small viewport.
-	htPx := p.UnitSpanPxY(0, metrics.CellHeight)
-	wtPx := p.UnitSpanPxX(0, metrics.CellWidth*2)
+	htPx := p.UnitSpanPxY(0, metrics.UnitsPerCellHeight)
+	wtPx := p.UnitSpanPxX(0, metrics.UnitsPerCellWidth*2)
 	if htPx > hvPx/2 {
 		htPx = hvPx / 2
 	}
@@ -1311,18 +1422,33 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 			Height: s.contentHeight,
 		}
 
+		contentBounds.Width = s.contentWidthShown()
 		if s.trinketResizable {
-			contentBounds.Width = viewport.Width
-			contentBounds.Height = viewport.Height
+			// The height stays the measured one for content that answers
+			// height-for-width: it was measured at the width it is getting,
+			// and that measurement is what the vertical scroll range was
+			// built from. Squashing it to the viewport would draw a
+			// paragraph shorter than the range says it is.
+			if !s.contentHeightForWidth {
+				contentBounds.Height = viewport.Height
+			}
 		}
 
+		// The content stands where the viewport does, which is a column in
+		// when the vertical bar has taken the leading edge. Its BOUNDS say so
+		// as well as its painter: MapToScreen walks bounds to place a popup,
+		// and a drop-down opened from a control in here would otherwise land a
+		// column off the control it belongs to. The scroll offset stays out of
+		// them -- MapToScreen asks for that separately.
+		origin := s.contentOriginX()
 		s.content.SetBounds(core.UnitRect{
+			X:      origin,
 			Width:  contentBounds.Width,
 			Height: contentBounds.Height,
 		})
 
 		// Create clipped painter
-		contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
+		contentPainter := p.WithOffset(origin+contentBounds.X, contentBounds.Y).
 			WithClip(core.UnitRect{
 				X:      scrollOffsetX,
 				Y:      scrollOffsetY,
@@ -1335,17 +1461,22 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 	// Fade the content toward the scroll-area background on any edge that has
 	// more content beyond it. Painted over the content (even an MDI window)
 	// but under the scrollbars, and it never touches event handling.
-	s.paintEdgeFades(p, viewport)
+	s.paintEdgeFades(p.WithOffset(viewport.X, 0), viewport)
 
 	// Draw vertical scrollbar (use offset painter since scrollbar paints at 0,0)
+	// The bars are this area's only chrome, so they carry its focus.
+	focused := s.HasFocus()
+	s.vScrollBar.SetShowFocus(focused)
+	s.hScrollBar.SetShowFocus(focused)
+
 	if s.needsVScrollBar() {
 		s.vScrollBar.SetBounds(core.UnitRect{
 			X:      0,
 			Y:      0,
-			Width:  metrics.CellWidth,
+			Width:  metrics.UnitsPerCellWidth,
 			Height: viewport.Height,
 		})
-		s.vScrollBar.Paint(p.WithOffset(viewport.Width, 0))
+		s.vScrollBar.Paint(p.WithOffset(s.vLaneX(), 0))
 	}
 
 	// Draw horizontal scrollbar (use offset painter since scrollbar paints at 0,0)
@@ -1356,16 +1487,16 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 			Width:  viewport.Width,
 			Height: s.hScrollBarHeight(),
 		})
-		s.hScrollBar.Paint(p.WithOffset(0, viewport.Height))
+		s.hScrollBar.Paint(p.WithOffset(viewport.X, viewport.Height))
 	}
 
 	// Draw corner if both scrollbars visible (sized to the lanes, not
 	// a full cell: the horizontal lane may be thinner than a row)
 	if s.needsHScrollBar() && s.needsVScrollBar() {
 		p.FillRect(core.UnitRect{
-			X:      viewport.Width,
+			X:      s.vLaneX(),
 			Y:      viewport.Height,
-			Width:  metrics.CellWidth,
+			Width:  metrics.UnitsPerCellWidth,
 			Height: s.hScrollBarHeight(),
 		}, ' ', scheme.GetScrollbar())
 	}
@@ -1426,12 +1557,16 @@ func (s *ScrollArea) HandleResize(oldSize, newSize core.UnitSize) {
 func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 	viewport := s.viewportBounds()
 
-	// Check if click is on vertical scrollbar
-	if s.needsVScrollBar() && event.X >= viewport.Width {
+	// Check if click is on vertical scrollbar. The lane is a column beside
+	// the viewport, on whichever side the viewport left free, so what says a
+	// click is on it is being outside the viewport rather than past its
+	// trailing edge.
+	vLane := s.vLaneX()
+	if s.needsVScrollBar() && (event.X < viewport.X || event.X >= viewport.X+viewport.Width) {
 		// Clear horizontal scrollbar drag state
 		s.hScrollBar.dragging = false
 		return s.vScrollBar.HandleMousePress(core.MousePressEvent{
-			X:      event.X - viewport.Width,
+			X:      event.X - vLane,
 			Y:      event.Y,
 			Button: event.Button,
 		})
@@ -1442,7 +1577,7 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 		// Clear vertical scrollbar drag state
 		s.vScrollBar.dragging = false
 		return s.hScrollBar.HandleMousePress(core.MousePressEvent{
-			X:      event.X,
+			X:      event.X - viewport.X,
 			Y:      event.Y - viewport.Height,
 			Button: event.Button,
 		})
@@ -1457,7 +1592,7 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 	if s.content != nil {
 		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 		le := event
-		le.X = event.X + scrollOffsetX
+		le.X = event.X - s.contentOriginX() + scrollOffsetX
 		le.Y = event.Y + scrollOffsetY
 		return s.content.HandleMousePress(le)
 	}
@@ -1470,16 +1605,17 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 	viewport := s.viewportBounds()
 
 	// Forward to scrollbars if dragging
+	vLane := s.vLaneX()
 	if s.vScrollBar.dragging {
 		return s.vScrollBar.HandleMouseMove(core.MouseMoveEvent{
-			X: event.X - viewport.Width,
+			X: event.X - vLane,
 			Y: event.Y,
 		})
 	}
 
 	if s.hScrollBar.dragging {
 		return s.hScrollBar.HandleMouseMove(core.MouseMoveEvent{
-			X: event.X,
+			X: event.X - viewport.X,
 			Y: event.Y - viewport.Height,
 		})
 	}
@@ -1489,8 +1625,8 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Hover is a no-button affordance: while a button is held (a drag begun
 	// elsewhere passing over), clear rather than highlight (off-point clears).
 	if event.Buttons == 0 {
-		s.vScrollBar.UpdateThumbHover(event.X-viewport.Width, event.Y)
-		s.hScrollBar.UpdateThumbHover(event.X, event.Y-viewport.Height)
+		s.vScrollBar.UpdateThumbHover(event.X-vLane, event.Y)
+		s.hScrollBar.UpdateThumbHover(event.X-viewport.X, event.Y-viewport.Height)
 	} else {
 		s.vScrollBar.UpdateThumbHover(-1, -1)
 		s.hScrollBar.UpdateThumbHover(-1, -1)
@@ -1502,11 +1638,11 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// scrolled (the move handler bailed on the missing button).
 	if s.content != nil {
 		le := event
-		inViewport := event.X >= 0 && event.Y >= 0 &&
-			event.X < viewport.Width && event.Y < viewport.Height
+		inViewport := event.X >= viewport.X && event.Y >= 0 &&
+			event.X < viewport.X+viewport.Width && event.Y < viewport.Height
 		if inViewport {
 			scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
-			le.X = event.X + scrollOffsetX
+			le.X = event.X - s.contentOriginX() + scrollOffsetX
 			le.Y = event.Y + scrollOffsetY
 		} else {
 			// Over a scrollbar lane (or outside the viewport): the content
@@ -1525,14 +1661,14 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 // scrolls itself only when it has a scrollbar on the wheel's axis.
 func (s *ScrollArea) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	viewport := s.viewportBounds()
-	if s.content != nil && event.X >= 0 && event.X < viewport.Width &&
+	if s.content != nil && event.X >= viewport.X && event.X < viewport.X+viewport.Width &&
 		event.Y >= 0 && event.Y < viewport.Height {
 		if handler, ok := s.content.(interface {
 			HandleMouseWheel(core.MouseWheelEvent) bool
 		}); ok {
 			offX, offY := s.scrollOffsetUnits()
 			contentEvent := event
-			contentEvent.X += offX
+			contentEvent.X += offX - s.contentOriginX()
 			contentEvent.Y += offY
 			if handler.HandleMouseWheel(contentEvent) {
 				return true
@@ -1583,7 +1719,7 @@ func (s *ScrollArea) scrollSelfWheel(event core.MouseWheelEvent) bool {
 			} else if event.PreciseY != 0 {
 				delta = event.PreciseY
 			}
-			s.wheelCarryX += delta * 3 * float64(metrics.CellWidth)
+			s.wheelCarryX += delta * 3 * float64(metrics.UnitsPerCellWidth)
 			step := int(s.wheelCarryX)
 			s.wheelCarryX -= float64(step)
 			s.SetScrollX(s.scrollX + step)
@@ -1592,7 +1728,7 @@ func (s *ScrollArea) scrollSelfWheel(event core.MouseWheelEvent) bool {
 			if event.PreciseY != 0 {
 				delta = event.PreciseY
 			}
-			s.wheelCarryY += delta * 3 * float64(metrics.CellHeight)
+			s.wheelCarryY += delta * 3 * float64(metrics.UnitsPerCellHeight)
 			step := int(s.wheelCarryY)
 			s.wheelCarryY -= float64(step)
 			s.SetScrollY(s.scrollY + step)
@@ -1617,7 +1753,7 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Forward to scrollbars
 	if s.vScrollBar.dragging {
 		return s.vScrollBar.HandleMouseRelease(core.MouseReleaseEvent{
-			X:      event.X - viewport.Width,
+			X:      event.X - s.vLaneX(),
 			Y:      event.Y,
 			Button: event.Button,
 		})
@@ -1625,7 +1761,7 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 	if s.hScrollBar.dragging {
 		return s.hScrollBar.HandleMouseRelease(core.MouseReleaseEvent{
-			X:      event.X,
+			X:      event.X - viewport.X,
 			Y:      event.Y - viewport.Height,
 			Button: event.Button,
 		})
@@ -1635,7 +1771,7 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if s.content != nil {
 		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 		le := event
-		le.X = event.X + scrollOffsetX
+		le.X = event.X - s.contentOriginX() + scrollOffsetX
 		le.Y = event.Y + scrollOffsetY
 		return s.content.HandleMouseRelease(le)
 	}

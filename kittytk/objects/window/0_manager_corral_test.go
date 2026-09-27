@@ -28,7 +28,7 @@ func TestProvisionalCorralRespread(t *testing.T) {
 		t.Errorf("shrunk: window not corralled (display X=%d)", disp.X)
 	}
 	metrics := m.ScreenCellMetrics()
-	if maxX := 300 - metrics.CellWidth*minVisibleColumns; disp.X > maxX {
+	if maxX := 300 - metrics.UnitsPerCellWidth*minVisibleColumns; disp.X > maxX {
 		t.Errorf("shrunk: display X %d leaves < %d columns visible", disp.X, minVisibleColumns)
 	}
 	// Provisional: logical bounds must NOT have moved.

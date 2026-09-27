@@ -74,7 +74,7 @@ func TestFontSizeScalesDesktop(t *testing.T) {
 		b, win := buildDemoWindow(t, size)
 
 		// font_size does NOT change the denomination.
-		if m := b.Metrics(); m.CellWidth != 8 || m.CellHeight != 16 {
+		if m := b.Metrics(); m.UnitsPerCellWidth != 8 || m.UnitsPerCellHeight != 16 {
 			t.Fatalf("%dpt root denomination = %+v, want 8x16", size, m)
 		}
 

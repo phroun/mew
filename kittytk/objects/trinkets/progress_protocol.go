@@ -5,7 +5,8 @@ import (
 	"github.com/phroun/kittytk/protocol"
 )
 
-// Wire registration for the progress bar trinket (see docs/property-vocabulary.md).
+// Wire registration for the progress bar trinket; the wiki's ProgressBar page is
+// generated from it.
 func init() {
 	regTrinket("progress",
 		func() core.Trinket { return NewProgressBar() },

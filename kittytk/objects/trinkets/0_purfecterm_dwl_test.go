@@ -116,7 +116,7 @@ func columnPeaks(t *testing.T, feed string, cols int) []int {
 // default 2x-and-resample path deliberately trades it for finer outline
 // detail, so this test selects the widen path rather than the default.
 func TestGraphicalDECDWLWidenPreservesPixelDensity(t *testing.T) {
-	defer func(prev bool) { dwlWiden = prev }(dwlWiden)
+	defer func(previous bool) { dwlWiden = previous }(dwlWiden)
 	dwlWiden = true
 
 	const glyph = "ש" // shin: three uprights, the thinnest test in the alphabet

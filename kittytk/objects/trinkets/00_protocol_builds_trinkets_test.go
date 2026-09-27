@@ -122,7 +122,7 @@ press=root.btn
 
 func TestProtocolComboBoxItems(t *testing.T) {
 	f, _ := buildUI(t, nil, `
-new combobox children={new item caption="Alpha"; new item caption="Beta"} selected=1
+new combobox items={new item caption="Alpha"; new item caption="Beta"} selected=1
 `)
 	combo := f.targets[0].(*ComboBox)
 	if combo.Count() != 2 || combo.ItemText(1) != "Beta" {
@@ -162,8 +162,8 @@ new label caption="dense" row_units=32 min_width=80 !enabled
 	if lbl.IsEnabled() {
 		t.Error("label should be disabled")
 	}
-	if got := lbl.EffectiveCellMetrics().CellHeight; got != 32 {
-		t.Errorf("row_units: CellHeight = %d, want 32", got)
+	if got := lbl.EffectiveCellMetrics().UnitsPerCellHeight; got != 32 {
+		t.Errorf("row_units: UnitsPerCellHeight = %d, want 32", got)
 	}
 	if got := lbl.MinimumSize().Width; got != 80 {
 		t.Errorf("min_width = %d, want 80", got)

@@ -43,6 +43,13 @@ type ApplicationProvider interface {
 	// See Application.SetMultiWindow for the window-creation contract.
 	MultiWindow() bool
 
+	// ShowConnections asks for the desktop's Connections item on this app's
+	// own menu, where it sits directly above Quit. The Ψ menu carries it
+	// whatever any app says; this is for an app that expects to be the only
+	// thing on screen and wants the user able to reach it anyway. See
+	// Application.SetShowConnections.
+	ShowConnections() bool
+
 	// ContextOnly, on a graphical surface, suppresses the automatic Edit
 	// menu and its standard Cut/Copy/Paste/Select All items (the app relies
 	// on context menus instead). It is ignored in the text/TUI version, where
@@ -174,6 +181,23 @@ type Desktop struct {
 	// System menu (always present, upper-left)
 	systemMenu *Menu
 
+	// Narration and the announcement trace: what becomes of an accessibility
+	// announcement. There is ONE AccessibilityManager with ONE OnAnnounce
+	// handler, and announcements come from every trinket on the desktop
+	// whoever put it there -- so this is the desktop's setting, not any one
+	// app's or any one connection's.
+	//
+	// narrate speaks them. announceTrace writes them into the status bar,
+	// which is a debugging affordance rather than an accessibility one: it
+	// shows what WOULD be said.
+	//
+	// speaker is how this host speaks, since the desktop itself knows no way
+	// to. A host that has one installs it (SetSpeaker); until one does,
+	// narration is a setting that reaches nothing.
+	narrate       bool
+	announceTrace bool
+	speaker       func(string)
+
 	// soleAppChromeSuppression, when enabled (SetSoleAppChromeSuppression), lets
 	// the sole-single-window-app condition hide the desktop chrome (Ψ menu, menu
 	// bar, status bar). Opt-in per host: a TUI host turns it on so a lone
@@ -181,6 +205,10 @@ type Desktop struct {
 	// mode already handles fullscreen there). Off by default - so the standalone
 	// hosts keep their normal chrome.
 	soleAppChromeSuppression bool
+
+	// openConnections is what the Connections menu item calls, installed by
+	// whatever answers for who has connected here. Nil means no item.
+	openConnections func()
 
 	// hideMenuBarSoleApp, when set (SetHideMenuBarForSoleApp), extends the
 	// suppression to the menu bar too (see menuBarShown) - an experimental toggle
@@ -210,7 +238,7 @@ type Desktop struct {
 	//   - launched ALONE, with no application of its own (see RunOn). A host
 	//     that starts with an app is that app's frame, and goes when it goes;
 	//     a host that starts bare was run as a desktop environment.
-	//   - revealed later, by show_desktop / the `spawndesktop` verb. Asking
+	//   - revealed later, by show_desktop / `set host desktop`. Asking
 	//     for the desktop is asking for somewhere to go back TO, which turns
 	//     an app's frame into a desktop environment after the fact.
 	desktopEnvironment bool
@@ -248,6 +276,28 @@ type Desktop struct {
 
 	// Window manager (optional - used when Desktop.Run() is called)
 	windowManager *window.WindowManager
+
+	// tooltip is what the desktop is showing for whoever asked, nil when it is
+	// showing nothing: see desktop_tooltip.go.
+	tooltip *desktopTooltip
+	// tooltipPending is an offer taken but not yet shown: a note raised over
+	// the screen waits for the pointer to settle, and tooltipTimer is that
+	// wait. pointerMovedAt is what the wait is measured from, and
+	// tooltipShownAt is when the last note left the screen, which is what
+	// lets the next one come without waiting.
+	tooltipPending *core.TooltipRequest
+	tooltipTimer   *DesktopTimer
+	// tooltipLeaving is a note still fading off the layer, and
+	// tooltipLeavingTimer the wait for it to finish so it can be taken off.
+	tooltipLeaving      *desktopTooltip
+	tooltipLeavingTimer *DesktopTimer
+	pointerMovedAt      time.Time
+	tooltipShownAt      time.Time
+	// tooltipDwell overrides how long the pointer rests before a note
+	// appears, and tooltipFade how long one takes to arrive and to leave.
+	// Zero takes tooltipDwellDefault and tooltipFadeDur.
+	tooltipDwell time.Duration
+	tooltipFade  time.Duration
 
 	// Focus manager
 	focusManager *core.GlobalFocusManager
@@ -314,6 +364,28 @@ type Desktop struct {
 	// dialog closes. Guarded by d.mu.
 	aboutBox *window.Window
 
+	// quitWanted is a quit that stopped at a window still waiting on an answer
+	// about closing, with the code it was asked to exit with. Resumed by
+	// CloseDecided when that answer lands; cleared by a refusal, which is final.
+	// Guarded by d.mu.
+	quitWanted bool
+	quitCode   int
+
+	// appQuitWanted is the same for one APPLICATION's quit, which sweeps its own
+	// windows and stops the same way. Keyed by the application, because two of them
+	// can be waiting at once. Guarded by d.mu.
+	appQuitWanted map[ApplicationProvider]bool
+
+	// quitConfirm is the "exit the desktop?" question while it is up, so pressing the
+	// desktop's close button again joins it rather than asking twice. Guarded by d.mu.
+	quitConfirm *MessageBox
+
+	// forceClose is the "did not respond" question currently up about each window,
+	// so a second close attempt joins the answer the first is waiting for rather
+	// than putting up a second dialog about the same window. Guarded by d.mu; see
+	// AskForceClose.
+	forceClose map[*window.Window]*MessageBox
+
 	// The Event Viewer accessory while its window is open, and the flag that
 	// remembers its event filter was installed. The filter is permanent
 	// (AddEventFilter has no counterpart) so it is installed at most once and
@@ -321,6 +393,10 @@ type Desktop struct {
 	// by clearing the pointer, not by removing anything. Guarded by d.mu.
 	eventViewer          *eventViewer
 	eventViewerInstalled bool
+
+	// reported is what the display was told went wrong, kept whether or not the
+	// Event Viewer happens to be open. Guarded by d.mu. See LogError.
+	reported []reported
 
 	// soloHosting is true while a window is being lifted onto the primary
 	// surface. The lift removes the window from the manager, which fires
@@ -382,6 +458,12 @@ type Desktop struct {
 	// Callbacks
 	onStartup  func()
 	onShutdown func()
+
+	// onShutdownAlso are the observers that accumulate, for the several things
+	// that want to know the desktop has stopped. onShutdown is one slot and
+	// belongs to whoever set it; anything the library itself hangs off the end
+	// of a run goes here, so taking that slot is never the price of it.
+	onShutdownAlso []func()
 
 	// Event filters
 	eventFilters []func(core.Event) bool
@@ -515,6 +597,23 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.AddItem(NewMenuItem("&About Desktop").SetOnTriggered(func() {
 		d.showAboutDesktop()
 	}))
+
+	// Narration: whether the desktop speaks what it announces. It belongs to
+	// the desktop rather than to whichever app is in front -- there is one
+	// announcement handler and announcements come from everywhere -- so the Ψ
+	// menu is where it is turned on.
+	narration := NewMenuItem("&Narration").SetCheckable(true)
+	narration.SetOnTriggered(func() { d.SetNarration(!d.Narration()) })
+	menu.AddItem(narration)
+
+	// The tick has to be right whoever last changed it, which may be a client
+	// over the wire rather than this item.
+	menu.SetOnAboutToShow(func() { narration.SetChecked(d.Narration()) })
+
+	if open := d.connectionsOpener(); open != nil {
+		menu.AddItem(NewMenuItem("&Connections...").
+			SetCommand(core.CmdDesktopConnections).SetOnTriggered(open))
+	}
 	menu.AddItem(NewSeparator())
 
 	// Desktop Accessories: the small tools that belong to the desktop rather
@@ -574,6 +673,78 @@ func (d *Desktop) modeSource() core.ModeSource {
 // It is desktop-wide for the same reason. Events bound for any application's
 // windows pass through, so this can be opened to watch the program being
 // debugged rather than only itself.
+// A reported is one thing the display was told went wrong, held until somebody
+// looks.
+type reported struct{ source, reason string }
+
+// reportedKept bounds the held log. These are rare -- an event filter logs
+// thousands a minute and this logs one when something goes wrong -- so the bound is
+// about a runaway rather than about volume.
+const reportedKept = 500
+
+// LogError records something that went wrong where there is nowhere else to put it,
+// and shows it in the Event Viewer.
+//
+// **The display is told things it cannot pass on.** A bundle's optional include that
+// resolved to nothing, a complaint with no statement to carry it back across the
+// wire: they are real, they are the author's to fix, and what used to happen to
+// them was nothing at all. A silent drop is the worst answer available -- it is
+// indistinguishable from nothing having gone wrong.
+//
+// `source` is who is reporting, which for a data source is its name; `reason` is
+// what it said, in its own words. They become the Key and Detail of a row whose
+// Event reads `Error`.
+//
+// It is kept whether or not the viewer is open, because the interesting ones happen
+// while nobody is watching -- a name misspelled in a bundle goes wrong once, as the
+// window is built. Opening the viewer afterwards is how a programmer finds out.
+func (d *Desktop) LogError(source, reason string) {
+	if reason == "" {
+		return
+	}
+	d.mu.Lock()
+	d.reported = append(d.reported, reported{source: source, reason: reason})
+	if len(d.reported) > reportedKept {
+		d.reported = d.reported[len(d.reported)-reportedKept:]
+	}
+	open := d.eventViewer
+	d.mu.Unlock()
+
+	// **Onto the platform thread**, because a row is a trinket and whoever noticed
+	// is on whatever thread noticed -- a connection's reader, most often.
+	if open != nil {
+		d.Post(func() {
+			d.mu.RLock()
+			v := d.eventViewer
+			d.mu.RUnlock()
+			if v == open {
+				v.logError(source, reason)
+			}
+		})
+	}
+}
+
+// Reported is what the display has been told went wrong, oldest first, as
+// `source: reason` lines. It is what the Event Viewer shows, for anything that
+// wants it without a window.
+func (d *Desktop) Reported() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	out := make([]string, 0, len(d.reported))
+	for _, r := range d.reported {
+		out = append(out, r.source+": "+r.reason)
+	}
+	return out
+}
+
+// forgetReported drops the held log, which is what the viewer's Clear means: the
+// window and what would refill it.
+func (d *Desktop) forgetReported() {
+	d.mu.Lock()
+	d.reported = nil
+	d.mu.Unlock()
+}
+
 func (d *Desktop) showEventViewer() {
 	wm := d.WindowManager()
 	if wm == nil {
@@ -593,10 +764,21 @@ func (d *Desktop) showEventViewer() {
 	// Built before the lock is taken: modeSource takes d.mu itself, and
 	// nothing below here should hold the desktop's lock across trinket
 	// construction.
-	v := &eventViewer{modes: d.modeSource()}
+	v := &eventViewer{modes: d.modeSource(), forget: d.forgetReported}
 	win := window.NewWindow("Event Viewer")
 	win.SetContent(v.build())
 	v.win = win
+
+	// **What went wrong before anybody was looking.** The errors worth seeing
+	// happened while the viewer was closed -- a name misspelled in a bundle goes
+	// wrong once, as the window is built -- so opening it shows them rather than
+	// starting from whatever happens next.
+	d.mu.RLock()
+	held := append([]reported{}, d.reported...)
+	d.mu.RUnlock()
+	for _, r := range held {
+		v.logError(r.source, r.reason)
+	}
 
 	d.mu.Lock()
 	if lost := d.eventViewer; lost != nil {
@@ -638,8 +820,8 @@ func (d *Desktop) showEventViewer() {
 	// axis, which on a small desktop is what actually decides the size.
 	metrics := d.EffectiveCellMetrics()
 	area := wm.ClientArea()
-	w := metrics.CellWidth * 96
-	h := metrics.CellHeight * 24
+	w := metrics.UnitsPerCellWidth * 96
+	h := metrics.UnitsPerCellHeight * 24
 	// Each axis capped only when the desktop's size on it is actually known -
 	// a client area not established yet reads as zero, and capping to that
 	// would open the viewer with no size at all.
@@ -690,18 +872,25 @@ func aboutDesktopText() string {
 		core.Name, core.Tagline, core.FullVersion())
 }
 
-// showAboutDesktop opens the About KittyTK dialog - the About entry in the
-// system (Ψ) menu - as a modal message box on the desktop.
-func (d *Desktop) showAboutDesktop() {
-	mb := NewMessageBox("About KittyTK", aboutDesktopText(), ButtonOK)
-	mb.SetIcon(IconInformation)
+// showModal puts one of the display's OWN dialogs on the desktop, centred, and
+// reports whether there was a desktop to put it on.
+//
+// Written out three times before this, identically each time, which is two more
+// chances than a centring calculation needs to drift.
+func (d *Desktop) showModal(mb *MessageBox) bool { return d.showModalAbout(mb, nil) }
+
+// showModalAbout is showModal for a dialog that is ABOUT a particular window, which is
+// what decides where it goes. See placeToAsk.
+func (d *Desktop) showModalAbout(mb *MessageBox, about *window.Window) bool {
+	d.placeToAsk(about)
+
 	wm := d.WindowManager()
 	if wm == nil {
-		return
+		return false
 	}
 	wm.AddWindow(&mb.Window)
 	// Now parented to the desktop, the window knows its real (graphical vs
-	// cell) chrome: re-measure so the content holds the text and OK button,
+	// cell) chrome: re-measure so the content holds the text and its buttons,
 	// then center the dialog in the desktop's client area.
 	mb.ResizeToFitContent()
 	area := wm.ClientArea()
@@ -717,6 +906,294 @@ func (d *Desktop) showAboutDesktop() {
 		y = metrics.RoundDownToCellY(y)
 	}
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+	closeTrace("showModal: dialog %s placed at %d,%d %dx%d",
+		closeTraceWindow(&mb.Window), x, y, b.Width, b.Height)
+	d.bringForwardToAsk(&mb.Window)
+	closeTrace("showModal: done, dialog %s", closeTraceWindow(&mb.Window))
+	return true
+}
+
+// revealModal makes sure a dialog of the display's OWN is somewhere a person can see
+// and answer it.
+//
+// **The desktop's surface may not be on the screen at all.** In solo mode it has been
+// given over to one application's window and there is no desktop behind it, so a
+// dialog added to the window manager is painted where nobody is looking. A question
+// nobody can see is not a question, and a MODAL one is worse than useless: it blocks,
+// invisibly, and explains nothing. The same is true, less completely, when the
+// desktop's own surface is minimized or sitting behind a torn-off window.
+//
+// So, cheapest case first:
+//
+//	the desktop is showing -- raise the dialog within it, the way a window that
+//	refused a close is raised
+//
+//	the desktop is there but not in front -- restore and raise its surface first,
+//	and only when something else could be covering it
+//
+//	there is no desktop (solo) -- give the dialog a surface of ITS own, which is
+//	what a dialog from a program with no window of its own looks like everywhere
+//	else. Failing that, on a host that cannot hold a second surface, reveal the
+//	desktop: heavier, and at least visible.
+//
+// placeToAsk makes sure there is somewhere to ask about `about`, before the dialog is
+// put anywhere.
+//
+// **The question goes where the window it is about already lives.** That is the whole
+// rule, and it is the subject's home that decides, not the desktop's state:
+//
+//	the window has a surface of its own -- torn off, or filling the display in solo
+//	mode -- so the question gets one too, a dialog over the thing it is about. Solo
+//	mode already gives one to every window added to it, so there is nothing to do
+//
+//	the window lives on the desktop, so the question belongs on the desktop, and the
+//	desktop has to be showing for either of them to be seen
+//
+// Keying on the subject is what keeps both halves from being absurd. Summoning a whole
+// desktop to hold one small question about the only window on the screen is absurd; so
+// is floating a lone dialog over an application to ask about a window docked on a
+// desktop nobody can see. And a host that holds ONE surface needs no special case: its
+// windows are never detached, so a question is always about something on the desktop,
+// and the desktop is always what comes back.
+func (d *Desktop) placeToAsk(about *window.Window) {
+	if about != nil && about.IsDetached() {
+		closeTrace("placeToAsk: %s has a surface of its own; the question gets one too",
+			closeTraceWindow(about))
+		return
+	}
+	if !d.IsSolo() {
+		return
+	}
+	closeTrace("placeToAsk: %s lives on the desktop, which is hidden; showing it",
+		closeTraceWindow(about))
+	d.ExitSoloMode()
+}
+
+// bringForwardToAsk puts the dialog in front, once it is wherever placeToAsk decided.
+func (d *Desktop) bringForwardToAsk(win *window.Window) {
+	closeTrace("bringForwardToAsk: %s solo=%v", closeTraceWindow(win), d.IsSolo())
+	if d.IsSolo() {
+		// Its own surface arrives on the next turn of the queue, so this waits.
+		d.Post(func() {
+			closeTrace("bringForwardToAsk/posted: %s", closeTraceWindow(win))
+			d.SurfaceWindow(win)
+		})
+		return
+	}
+	d.raisePrimarySurface()
+	d.SurfaceWindow(win)
+}
+
+// raisePrimarySurface restores and raises the desktop's own OS surface, so a dialog
+// on it is not left behind the window the person is actually looking at.
+//
+// Only where something could be in front of it: with everything in-surface the desktop
+// IS the only surface, and raising it would be a focus grab that changes nothing.
+func (d *Desktop) raisePrimarySurface() {
+	d.mu.RLock()
+	surf := d.surface
+	torn := len(d.tornHosts)
+	d.mu.RUnlock()
+	native, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return
+	}
+	if native.Minimized() {
+		if r, ok := surf.(platform.NativeRestorer); ok {
+			r.Restore()
+		}
+	} else if torn == 0 {
+		return
+	}
+	native.Raise()
+}
+
+// AskBeforeQuitting is the desktop's own close button: it asks first, and sweeps only
+// if the answer is yes.
+//
+// **Closing the desktop is not closing a window.** It ends every application running on
+// it -- the Program Manager rather than a program -- and a button that does that on one
+// click, in the corner of a window, next to the buttons that minimize and maximize it,
+// is a button in the wrong place for what it does. So it asks, and names the cost in
+// the only terms that make it a decision: how many applications go with it.
+//
+// With nothing running there is nothing to warn about and no question worth a click, so
+// it goes straight through.
+//
+// The quit it then performs is the ordinary one, which asks each application in turn
+// and stops at the first that says no. This question is not that one; it is the one
+// before it, about whether to start asking at all.
+func (d *Desktop) AskBeforeQuitting(code int) {
+	running := d.runningApplications()
+	if running == 0 {
+		closeTrace("AskBeforeQuitting: nothing is running; quitting")
+		d.QuitWithCode(code)
+		return
+	}
+
+	// **One question, however many times the button is pressed.** Pressing it again
+	// while somebody is reading this would put up a second copy of it.
+	d.mu.Lock()
+	if d.quitConfirm != nil {
+		d.mu.Unlock()
+		closeTrace("AskBeforeQuitting: already asking")
+		return
+	}
+	d.mu.Unlock()
+
+	were := "applications"
+	if running == 1 {
+		were = "application"
+	}
+	mb := NewMessageBox("Exit Desktop", fmt.Sprintf(
+		"Exiting the desktop will quit %d running %s.\n\nAre you sure?",
+		running, were), ButtonYes|ButtonNo)
+	mb.SetIcon(IconWarning)
+	// No for a dialog dismissed without a choice -- Escape, or its own [x]. The safe
+	// half: nothing has happened yet, and nothing needs to.
+	mb.SetOnFinished(func(r DialogResult) {
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+		closeTrace("AskBeforeQuitting: answered yes=%v", r == ResultYes)
+		if r == ResultYes {
+			d.QuitWithCode(code)
+		}
+	})
+
+	d.mu.Lock()
+	d.quitConfirm = mb
+	d.mu.Unlock()
+	closeTrace("AskBeforeQuitting: asking about %d running %s", running, were)
+	if !d.showModal(mb) {
+		// Nowhere to ask it, so it was not asked -- and a quit nobody confirmed does
+		// not happen.
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+	}
+}
+
+// runningApplications is how many applications have something open on the desktop,
+// which is what exiting it would end.
+func (d *Desktop) runningApplications() int {
+	n := 0
+	for _, a := range d.Applications() {
+		if len(a.Windows()) > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// AskForceClose asks the PERSON whether to close a window anyway, because the
+// application that owns it asked to be consulted about closing and then did not
+// answer.
+//
+// **The display cannot tell a thoughtful application from a hung one.** One that
+// subscribed to `window_closing` may be putting a save-your-work dialog in front of
+// somebody, which can take as long as it takes, or it may be in a loop and never
+// going to answer at all. Both look exactly alike from here: a decision that was
+// asked and has not come back.
+//
+// So the display stops guessing and asks the one party that can actually tell, who
+// is looking at the screen. Waiting for ever would be a window that cannot be
+// closed; forcing it after a few seconds would throw away work. Asking is neither.
+//
+// It is implemented here, and not where the close is decided, because a window in
+// front of a person is the desktop's to put there -- see window.forceCloseAsker for
+// the seam.
+func (d *Desktop) AskForceClose(win *window.Window, then func(force bool)) {
+	if then == nil {
+		return
+	}
+	// **One question per window.** Pressing [x] again while the person is reading
+	// this would start a second close, wait its own five seconds and put up a
+	// second dialog about the same window -- so the second press joins the answer
+	// the first is waiting for.
+	d.mu.Lock()
+	if d.forceClose == nil {
+		d.forceClose = map[*window.Window]*MessageBox{}
+	}
+	if open := d.forceClose[win]; open != nil {
+		d.mu.Unlock()
+		open.alsoTell(then)
+		return
+	}
+	d.mu.Unlock()
+
+	d.closeTraceDesktop("AskForceClose " + closeTraceWindow(win))
+
+	name := "An application"
+	for _, a := range d.Applications() {
+		for _, w := range a.Windows() {
+			if w == win {
+				if n := a.Name(); n != "" {
+					name = n
+				}
+			}
+		}
+	}
+	title := win.Title()
+	if title == "" {
+		title = "an untitled window"
+	}
+
+	mb := NewMessageBox("Not Responding", fmt.Sprintf(
+		"%s did not respond while trying to close %q.\n\n"+
+			"Force the window closed? Anything unsaved in it will be lost.",
+		name, title), ButtonYes|ButtonNo)
+	mb.SetIcon(IconWarning)
+	mb.alsoTell(then)
+	// Answered once, whichever way it goes, and No for a dialog dismissed without
+	// a choice -- the safe half, the same as the close it is about.
+	mb.SetOnFinished(func(r DialogResult) {
+		d.mu.Lock()
+		delete(d.forceClose, win)
+		d.mu.Unlock()
+		mb.tellThem(r == ResultYes)
+	})
+
+	d.mu.Lock()
+	d.forceClose[win] = mb
+	d.mu.Unlock()
+	if !d.showModalAbout(mb, win) {
+		// Nowhere to ask, so nobody was asked: leave the window alone.
+		d.mu.Lock()
+		delete(d.forceClose, win)
+		d.mu.Unlock()
+		mb.tellThem(false)
+	}
+}
+
+// dismissForceClose takes down a "did not respond" question about a window whose
+// close has been settled some other way, and tells whoever was waiting on it that
+// nobody forced anything.
+//
+// Left up, it would be a MODAL dialog blocking the desktop and asking whether to
+// force closed a window that has already gone -- a question about nothing, which a
+// person cannot answer sensibly and should not have to.
+func (d *Desktop) dismissForceClose(win *window.Window) {
+	d.mu.Lock()
+	mb := d.forceClose[win]
+	delete(d.forceClose, win)
+	d.mu.Unlock()
+	if mb == nil {
+		return
+	}
+	// Nobody forced it: it went on its own, or stayed on its own.
+	mb.tellThem(false)
+	mb.Window.Close()
+}
+
+// showAboutDesktop opens the About KittyTK dialog - the About entry in the
+// system (Ψ) menu - as a modal message box on the desktop.
+func (d *Desktop) showAboutDesktop() {
+	mb := NewMessageBox("About KittyTK", aboutDesktopText(), ButtonOK)
+	mb.SetIcon(IconInformation)
+	if !d.showModal(mb) {
+		return
+	}
 
 	// Track it while open so the R-key rotation easter egg can be gated to its
 	// focus (aboutBoxFocused). Clear the reference when it closes.
@@ -759,7 +1236,7 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		})
 	}
 
-	// The desktop roots the grid-metrics inheritance chain: seed its
+	// The desktop roots the cell-metrics inheritance chain: seed its
 	// override from the backend so every trinket inherits the display
 	// service's default unless a container overrides it.
 	rootMetrics := backend.Metrics()
@@ -1187,6 +1664,92 @@ func (d *Desktop) AccessibilityManager() *core.AccessibilityManager {
 	return d.accessibilityManager
 }
 
+// SetSpeaker installs how this host speaks an announcement. The desktop knows
+// no way to on its own, so narration reaches nothing until a host offers one.
+func (d *Desktop) SetSpeaker(speak func(string)) {
+	d.mu.Lock()
+	d.speaker = speak
+	d.mu.Unlock()
+	d.applyAnnounce()
+}
+
+// Narration reports whether announcements are spoken.
+func (d *Desktop) Narration() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.narrate
+}
+
+// SetNarration turns speaking announcements on or off, and says so: a person
+// who needs this on cannot see the menu item's tick.
+func (d *Desktop) SetNarration(on bool) {
+	d.mu.Lock()
+	changed := d.narrate != on
+	d.narrate = on
+	d.mu.Unlock()
+	d.applyAnnounce()
+	if !changed {
+		return
+	}
+	if am := d.AccessibilityManager(); am != nil {
+		if on {
+			am.AnnouncePolite("Narration on")
+		} else {
+			am.AnnouncePolite("Narration off")
+		}
+	}
+}
+
+// AnnouncementTrace reports whether announcements are written to the status
+// bar as they happen.
+func (d *Desktop) AnnouncementTrace() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.announceTrace
+}
+
+// SetAnnouncementTrace turns the status-bar trace on or off. It shows what
+// would be said, for someone watching rather than listening.
+func (d *Desktop) SetAnnouncementTrace(on bool) {
+	d.mu.Lock()
+	d.announceTrace = on
+	d.mu.Unlock()
+	d.applyAnnounce()
+}
+
+// applyAnnounce installs the one handler the AccessibilityManager has, or
+// clears it when nothing is asked for.
+func (d *Desktop) applyAnnounce() {
+	am := d.AccessibilityManager()
+	if am == nil {
+		return
+	}
+	d.mu.RLock()
+	narrate, trace := d.narrate, d.announceTrace
+	d.mu.RUnlock()
+	if !narrate && !trace {
+		am.OnAnnounce = nil
+		return
+	}
+	am.OnAnnounce = func(a core.AccessibilityAnnouncement) {
+		d.mu.RLock()
+		narrate, trace, speak := d.narrate, d.announceTrace, d.speaker
+		d.mu.RUnlock()
+		if trace {
+			if sb := d.StatusBar(); sb != nil {
+				prefix := "\U0001F4E2"
+				if a.Priority == "assertive" {
+					prefix = "⚠️"
+				}
+				sb.SetText(fmt.Sprintf("%s [%s] %s", prefix, a.Priority, a.Message))
+			}
+		}
+		if narrate && a.Vocal && speak != nil {
+			speak(a.Message)
+		}
+	}
+}
+
 // Theme returns the current theme.
 func (d *Desktop) Theme() *style.Theme {
 	d.mu.RLock()
@@ -1435,7 +1998,7 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 	// quasi-active torn window it named must go fully inactive, since the
 	// desktop now has a real active window rather than merely holding
 	// focus on the torn window's behalf.
-	prevTorn := d.tornFocusOwner
+	previousTorn := d.tornFocusOwner
 	if w.IsDetached() {
 		d.tornFocusOwner = w
 	} else {
@@ -1443,8 +2006,8 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 	}
 	d.mu.Unlock()
 
-	if prevTorn != nil && prevTorn != w && !w.IsDetached() {
-		prevTorn.SetActive(false)
+	if previousTorn != nil && previousTorn != w && !w.IsDetached() {
+		previousTorn.SetActive(false)
 	}
 
 	d.updateMenuBarContent()
@@ -1484,6 +2047,9 @@ func (d *Desktop) SetDesktopEnvironment(on bool) {
 // desktop environment shows itself -- that is what it is for. Anything else
 // was the frame around the application that just ended, and ends with it.
 func (d *Desktop) lastWindowClosed() {
+	if closeTracing() {
+		closeTraceFrom("lastWindowClosed: desktopEnvironment=%v", d.IsDesktopEnvironment())
+	}
 	if !d.IsDesktopEnvironment() {
 		// Nothing is left to ask -- that is the circumstance this is -- so
 		// this quit goes through rather than sweeping an empty desktop.
@@ -1575,6 +2141,11 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 			d.Post(func() { d.soloRebalance(false) })
 		})
 	}
+	// **Hosting can fail, and solo mode is still solo mode.** A single-surface host
+	// -- a terminal, headless polling -- has no surface to hand over, so the window
+	// stays docked; what solo mode MEANS there is that this desktop is the frame
+	// around one application and ends with it, which is about lastWindowClosed and
+	// not about surfaces. ExitSoloMode is what has to cope with the difference.
 	if win != nil {
 		d.soloHostOnPrimary(win)
 	}
@@ -1601,35 +2172,58 @@ func (d *Desktop) RaiseToFront() {
 // again) and re-homes the window that filled it as an ordinary tearable
 // torn-off window at the same screen rectangle - so it floats over the
 // freshly revealed desktop with its redock handle and can be dragged in to
-// dock. Any client can request this over the protocol (the `spawndesktop`
-// verb); it is a no-op when not in solo mode or when the platform can't
-// host surfaces. Runs on the platform thread.
+// dock. Any client can request this over the protocol (`set host desktop`);
+// it is a no-op when not in solo mode. Runs on the platform thread.
+//
+// **It works with no host behind the solo mode, and has to.** A single-surface host --
+// a terminal, headless polling -- has nothing to hand over, so solo mode there means
+// only that the desktop is the frame around one application; its windows stayed
+// docked, and there is nothing to re-home. This used to return early on that, which
+// made hiding the desktop a ONE-WAY DOOR: `solo` stayed true for ever, and every path
+// that reveals the desktop to show something silently did nothing -- including the one
+// that puts a force-close question where a person can see it. Hide the desktop, try to
+// close an application, and from then on no desktop, no question, and no way back to
+// either.
 func (d *Desktop) ExitSoloMode() {
+	if closeTracing() {
+		closeTraceFrom("ExitSoloMode: revealing the desktop")
+		defer d.closeTraceDesktop("ExitSoloMode: done")
+	}
 	d.mu.RLock()
 	solo := d.solo
 	host := d.soloPrimaryHost
 	surf := d.surface
 	wm := d.windowManager
 	d.mu.RUnlock()
-	if !solo || host == nil || surf == nil || wm == nil {
+	if !solo || surf == nil || wm == nil {
 		return
 	}
-	win := host.Window()
-	if win == nil {
-		return
+	var win *window.Window
+	if host != nil {
+		win = host.Window()
 	}
 
 	// Give the primary surface back to the desktop: re-border it (unless the
 	// themed frame paints its own chrome) and point its handler at the
 	// desktop again so it paints its own chrome.
+	//
+	// **Whether or not there is a window to re-home.** The surface is what a person
+	// is looking at, and until its handler points at the desktop it goes on painting
+	// through whatever was there before -- which, once the solo window has closed and
+	// its host has been dropped, is a dead frame. Revealing the desktop and leaving
+	// the screen exactly as it was is worse than not revealing it at all: every flag
+	// says the desktop is back, nothing on the screen agrees, and clicking the one
+	// thing still showing does nothing.
 	if bt, ok := surf.(platform.BorderToggler); ok {
 		bt.SetBordered(d.wantsNativeBorder())
 	}
 	surf.SetHandler(&desktopSurfaceHandler{d: d})
 
-	// Retire the solo host without closing the primary surface (it lives on
-	// as the desktop's surface).
-	host.SetOnClosed(nil)
+	// Retire the solo host, if there is one, without closing the primary surface
+	// (it lives on as the desktop's surface).
+	if host != nil {
+		host.SetOnClosed(nil)
+	}
 	d.mu.Lock()
 	d.solo = false
 	// Revealing the desktop is asking for somewhere to go back to, so from
@@ -1669,6 +2263,14 @@ func (d *Desktop) ExitSoloMode() {
 	// and now have a desktop to dock to.
 	d.restoreSoloSuppressedTear()
 
+	if win == nil {
+		// Nothing to re-home: either nothing was ever hosted on the primary surface,
+		// or the window that was has closed. The desktop has its surface back, which
+		// is the whole of what a person needs from this.
+		d.invalidateSurface()
+		return
+	}
+
 	win.SetDetached(false) // createTornHost re-detaches and re-wires it
 	win.SetTearable(true)  // its redock handle returns; it can dock now
 	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -1681,7 +2283,7 @@ func (d *Desktop) ExitSoloMode() {
 	// and menu bars peek out above and to the left of the desktop rather than
 	// being fully covered by it.
 	if ns, ok := surf.(platform.NativeSurface); ok {
-		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + d.TitleBarHeight() + core.FindFrameBorderUnits(win))
+		off := d.unitToPx(d.EffectiveCellMetrics().UnitsPerCellHeight + d.MenuBarHeight() + d.TitleBarHeight() + core.FindFrameBorderUnits(win))
 		x, y := ns.ScreenPositionPx()
 		ns.SetScreenPositionPx(x+off, y+off)
 	}
@@ -1693,12 +2295,16 @@ func (d *Desktop) ExitSoloMode() {
 // torn-off window (preferring an app's main window) and hosts it filling
 // the primary surface borderless, dismissing the desktop. This is the
 // inverse of ExitSoloMode - "promote a detached app" - so any client can
-// toggle the root back to solo over the protocol (the `gosolo` verb). A
+// put the desktop away again over the protocol (`set host !desktop`). A
 // no-op when already solo or when no detached window exists. The primary
 // surface adopts the promoted window's screen rectangle, so the app stays
 // exactly where it was floating rather than snapping to where the desktop
 // sat. Runs on the platform thread.
 func (d *Desktop) EnterSoloFromDesktop() {
+	if closeTracing() {
+		closeTraceFrom("EnterSoloFromDesktop: hiding the desktop")
+		defer d.closeTraceDesktop("EnterSoloFromDesktop: done")
+	}
 	d.mu.RLock()
 	solo := d.solo
 	wm := d.windowManager
@@ -1749,26 +2355,183 @@ func pickDockedMain(wins []*window.Window) *window.Window {
 	return nil
 }
 
-// ExitDesktop handles the system menu's "Exit Desktop" command. If any
-// application window remains, the desktop is dismissed and that app takes
-// over the whole display as a solo app (promote a detached app again);
-// otherwise nothing is left to run, so the desktop process quits. A no-op
-// distinction only matters off solo - a solo app has no desktop to exit.
+// ExitDesktop is the desktop's own close button and the system menu's "Exit Desktop"
+// item, which are the same verb.
+//
+// **It ends the desktop, not the session.** An application torn out onto a surface of
+// its own is not inside the desktop and does not go with it: it keeps running, and one
+// of them takes the primary surface as the desktop leaves it. What IS at stake is the
+// applications DOCKED in the desktop -- they have nowhere to be once it is gone.
+//
+// So it asks about exactly those, and only when there are any:
+//
+//	Yes         close them, the sweep the desktop's own quit would do
+//	Pop It Out  give them windows of their own instead, so nothing is lost
+//	No          nothing at all
+//
+// Pop Out is offered only where a window can HAVE a surface of its own. On a host that
+// holds one, there is nowhere to pop out to and the offer would be a lie.
 func (d *Desktop) ExitDesktop() {
-	d.mu.RLock()
-	solo := d.solo
-	wm := d.windowManager
-	tornCount := len(d.tornHosts)
-	d.mu.RUnlock()
-	docked := 0
-	if wm != nil {
-		docked = len(wm.Windows())
+	inside := d.applicationsInsideDesktop()
+	if len(inside) == 0 {
+		closeTrace("ExitDesktop: nothing is docked; closing the desktop")
+		d.closeDesktop(nil)
+		return
 	}
-	if !solo && tornCount+docked > 0 {
+
+	// One question, however many times the button is pressed.
+	d.mu.Lock()
+	if d.quitConfirm != nil {
+		d.mu.Unlock()
+		closeTrace("ExitDesktop: already asking")
+		return
+	}
+	d.mu.Unlock()
+
+	// The windows as they are NOW: the answer comes later, and what it applies to is
+	// what was inside the desktop when the question was put.
+	docked := d.dockedWindows()
+	n := len(inside)
+	word, it := "applications", "Them"
+	if n == 1 {
+		word, it = "application", "It"
+	}
+
+	buttons := ButtonYes | ButtonNo
+	popOut := d.canTearOff()
+	if popOut {
+		buttons |= ButtonPopOut
+	}
+	mb := NewMessageBox("Exit Desktop", fmt.Sprintf(
+		"Exiting the desktop will quit %d running %s.\n\nAre you sure?", n, word), buttons)
+	mb.SetIcon(IconWarning)
+	if popOut {
+		mb.SetButtonText(ResultPopOut, "Pop "+it+" Out")
+	}
+	mb.SetOnFinished(func(r DialogResult) {
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+		closeTrace("ExitDesktop: answered %v", r)
+		switch r {
+		case ResultYes:
+			for _, a := range inside {
+				d.quitApplication(a)
+			}
+			// Everything except THIS dialog, which is a docked window too and is
+			// about to close itself: counting it would read as work left to do.
+			if len(d.dockedWindowsExcept(&mb.Window)) > 0 {
+				// A quit stopped to ask something of its own. The desktop is
+				// where those windows live and where that question has to be
+				// seen, so it stays until they are gone.
+				closeTrace("ExitDesktop: a quit is still asking; the desktop stays")
+				return
+			}
+			d.closeDesktop(&mb.Window)
+		case ResultPopOut:
+			d.popOutWindows(docked)
+			d.closeDesktop(&mb.Window)
+		}
+	})
+
+	d.mu.Lock()
+	d.quitConfirm = mb
+	d.mu.Unlock()
+	closeTrace("ExitDesktop: asking about %d docked %s (popOut=%v)", n, word, popOut)
+	if !d.showModal(mb) {
+		d.mu.Lock()
+		d.quitConfirm = nil
+		d.mu.Unlock()
+	}
+}
+
+// closeDesktop ends the desktop itself: a remaining application takes the primary
+// surface, and with nothing left to take it the host quits.
+func (d *Desktop) closeDesktop(ignoring *window.Window) {
+	d.mu.RLock()
+	torn := len(d.tornHosts)
+	d.mu.RUnlock()
+	left := torn + len(d.dockedWindowsExcept(ignoring))
+	closeTrace("closeDesktop: %d windows left to take the primary surface", left)
+	if left > 0 {
 		d.EnterSoloFromDesktop()
 		return
 	}
 	d.Quit()
+}
+
+// dockedWindows are the windows living IN the desktop rather than on surfaces of their
+// own -- the ones with nowhere to be once it is gone.
+func (d *Desktop) dockedWindows() []*window.Window { return d.dockedWindowsExcept(nil) }
+
+// dockedWindowsExcept is dockedWindows without one of them, for a caller that is holding
+// a dialog of its own on the desktop and must not count it as work left to do.
+func (d *Desktop) dockedWindowsExcept(skip *window.Window) []*window.Window {
+	wm := d.WindowManager()
+	if wm == nil {
+		return nil
+	}
+	var out []*window.Window
+	for _, w := range wm.Windows() {
+		if w != skip && !w.IsDetached() {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// applicationsInsideDesktop are the applications with at least one window docked in it,
+// which is what exiting the desktop would end.
+func (d *Desktop) applicationsInsideDesktop() []ApplicationProvider {
+	var out []ApplicationProvider
+	for _, a := range d.Applications() {
+		for _, w := range a.Windows() {
+			if w != nil && !w.IsDetached() {
+				out = append(out, a)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// popOutWindows gives each window a surface of its own, which is what makes exiting the
+// desktop lossless: the applications inside it come out rather than being closed.
+func (d *Desktop) popOutWindows(wins []*window.Window) {
+	for _, w := range wins {
+		if w == nil || w.IsDetached() || !d.managesWindow(w) {
+			continue
+		}
+		// Forced tearable only so the tear can happen, the same way solo mode adopts
+		// a window; what it really was is put back.
+		was := w.IsTearable()
+		w.SetTearable(true)
+		d.tearOffInPlace(w)
+		w.SetTearable(was)
+		closeTrace("popOutWindows: %s", closeTraceWindow(w))
+	}
+}
+
+// canTearOff reports whether a window can be given a surface of its own here, which is
+// what the platform has to support for the tear-off handler to be wired at all (see
+// setupTearOff). A host that holds one surface cannot, and is not offered it.
+func (d *Desktop) canTearOff() bool {
+	d.mu.RLock()
+	plat := d.platform
+	surf := d.surface
+	d.mu.RUnlock()
+	if plat == nil || surf == nil {
+		return false
+	}
+	ms, ok := plat.(platform.MultiSurfacePlatform)
+	if !ok || !ms.SupportsMultipleSurfaces() {
+		return false
+	}
+	if _, ok := surf.(platform.NativeSurface); !ok {
+		return false
+	}
+	_, ok = plat.(platform.GlobalPointerPlatform)
+	return ok
 }
 
 // screenRect is a surface's OS-window geometry in screen pixels.
@@ -1786,7 +2549,14 @@ func (d *Desktop) soloHostOnPrimary(win *window.Window) {
 // surface repositions and resizes to where that peer's window was, so the
 // primary surface "takes on the personality" of the promoted window
 // including its screen placement.
+// It can do nothing at all -- a host with no surface to hand over -- and solo mode is
+// entered either way: what it means there is that the desktop is the frame around one
+// application, which is about lastWindowClosed and not about surfaces. ExitSoloMode is
+// what copes with the difference.
 func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
+	if closeTracing() {
+		closeTraceFrom("soloHostOnPrimaryAt: %s becomes the primary host", closeTraceWindow(win))
+	}
 	d.mu.RLock()
 	plat := d.platform
 	surf := d.surface
@@ -1892,12 +2662,16 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 // back to) and are not zoomed - only the main window fills the display.
 func (d *Desktop) soloAdoptWindow(win *window.Window) {
 	if win == nil || !d.IsSolo() || win.IsDetached() {
+		closeTrace("soloAdoptWindow: skipping %s (solo=%v)", closeTraceWindow(win), d.IsSolo())
 		return
 	}
 	// Only genuinely managed windows tear off (a closed one has left).
 	if !d.managesWindow(win) {
+		closeTrace("soloAdoptWindow: %s is not in the window manager", closeTraceWindow(win))
 		return
 	}
+	closeTrace("soloAdoptWindow: tearing %s", closeTraceWindow(win))
+	defer func() { closeTrace("soloAdoptWindow: after, %s", closeTraceWindow(win)) }()
 	// Forced tearable only so the tear can happen; the handle then goes away
 	// because a solo peer has no desktop to dock back to. Remember what it
 	// really was, so revealing a desktop restores it rather than guessing.
@@ -1980,6 +2754,10 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
 	havePrimary := d.soloPrimaryHost != nil
 	d.mu.RUnlock()
+	if closeTracing() {
+		closeTraceFrom("soloRebalance(primaryClosed=%v): solo=%v hosting=%v hosts=%d docked=%d havePrimary=%v",
+			primaryClosed, solo, hosting, len(hosts), len(wm.Windows()), havePrimary)
+	}
 	if !solo || wm == nil || hosting {
 		// Mid-lift: a window was just removed to be hosted, not closed.
 		return
@@ -1990,8 +2768,23 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 	}
 	if primaryClosed && !havePrimary {
 		if h := pickPromotable(hosts); h != nil {
+			closeTraceFrom("soloRebalance: PROMOTING %s onto the primary surface",
+				closeTraceWindow(h.Window()))
 			d.promoteToPrimary(h, true)
+			return
 		}
+		// **Nothing has a surface to be promoted, and windows remain.** They are
+		// docked on the desktop, which is not on the screen -- so there is nothing
+		// to put on the primary surface, and nobody left who could be asked to.
+		//
+		// The desktop takes it back. Otherwise the surface goes on painting the
+		// window that just closed: it looks alive, it answers the mouse through the
+		// host that was dropped, and pressing its [x] again does nothing -- while
+		// the windows that ARE still open sit on a desktop nobody can see. Revealing
+		// the desktop is what closing the last thing on the screen should do.
+		closeTraceFrom("soloRebalance: nothing to promote and %d windows left; showing the desktop",
+			len(wm.Windows()))
+		d.ExitSoloMode()
 	}
 }
 
@@ -2087,6 +2880,67 @@ func (d *Desktop) suppressSoleAppChrome() bool {
 		return false
 	}
 	return true
+}
+
+// SetConnectionsOpener installs what the Connections menu item calls, and by
+// installing it says the item should exist at all.
+//
+// The desktop knows nothing about who has connected to it -- that is the
+// display server's record, and a desktop without one has no connections to
+// show. So the item is offered only where something has offered to answer for
+// it, which is the display package (see display.NewConnectionsOpener).
+func (d *Desktop) SetConnectionsOpener(open func()) {
+	d.mu.Lock()
+	d.openConnections = open
+	d.mu.Unlock()
+
+	// The system menu is built once, at construction, and serving starts after
+	// the desktop exists -- so the item has to reach a menu that is already
+	// there. It is INSERTED rather than the menu rebuilt: the menu bar holds
+	// that object from construction and addHostWindowMenuItems adds Minimize
+	// and Zoom to it later, so a replacement shows one set or the other
+	// depending on which of them happened to run last.
+	d.mu.RLock()
+	menu, commands := d.systemMenu, d.commands
+	d.mu.RUnlock()
+	if menu == nil || open == nil {
+		return
+	}
+	for _, it := range menu.Items() {
+		if it != nil && it.Command == core.CmdDesktopConnections {
+			return // already there; installing twice must not double it
+		}
+	}
+	item := NewMenuItem("&Connections...").SetCommand(core.CmdDesktopConnections)
+	item.SetOnTriggered(open)
+	// Item 0 is About Desktop and item 1 is Narration, so Connections goes
+	// third -- the order createSystemMenu builds when the opener was already
+	// installed.
+	menu.InsertItem(2, item)
+	if commands != nil {
+		menu.BindCommands(commands)
+	}
+	d.updateMenuBarContent()
+}
+
+// ConnectionsOpener returns what SetConnectionsOpener installed, or nil when
+// nothing has -- which is what decides whether the item is offered.
+func (d *Desktop) ConnectionsOpener() func() { return d.connectionsOpener() }
+
+// connectionsOpener is what the menu items ask for; nil means no item.
+func (d *Desktop) connectionsOpener() func() {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.openConnections
+}
+
+// appShowsConnections reports whether the active app asked for the item on its
+// own menu. The Ψ menu does not consult this: the desktop's own menu carries
+// the item whatever any app thinks.
+func (d *Desktop) appShowsConnections() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.activeApp != nil && d.activeApp.ShowConnections()
 }
 
 // SetSoleAppChromeSuppression enables the sole-app chrome suppression (Ψ menu,
@@ -2377,8 +3231,12 @@ func (d *Desktop) appendStandardAppItems(menu *Menu, appName string) {
 // Others, Show All. When leadingSeparator is true a separator first
 // offsets them from the menu's own items (as in the desktop's app
 // menu); the standalone Psi menu passes false.
+//
+// The separator only appears when there is something above it to offset from:
+// an app that declared no app-menu items would otherwise open with a stray rule
+// as its first row, the same way appendQuitSection guards Quit's.
 func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator bool) {
-	if leadingSeparator {
+	if leadingSeparator && len(menu.Items()) > 0 {
 		menu.AddSeparator()
 	}
 
@@ -2405,6 +3263,35 @@ func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator
 // that declared no app-menu items (the synthesized "≡" menu) would otherwise
 // open with a stray separator as its first row, with nothing but Quit below.
 func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
+	// The desktop's own items sit directly above Quit, in one section: the
+	// app's items, a rule, what the desktop offers, a rule, Quit.
+	//
+	// Narration is there whatever the app thinks, because it is the route to
+	// turning narration on and a person who needs it cannot be asked to find an
+	// app that opted in. Connections is offered only where the app asked for it
+	// -- the Ψ menu carries that one for everybody.
+	if len(menu.Items()) > 0 {
+		menu.AddSeparator()
+	}
+	narration := NewMenuItem("&Narration").SetCheckable(true)
+	narration.SetChecked(d.Narration())
+	narration.SetOnTriggered(func() { d.SetNarration(!d.Narration()) })
+	menu.AddItem(narration)
+
+	// The tick has to be right whoever last changed it -- the Ψ menu's own
+	// item, another app's, or a client over the wire. Anything the menu was
+	// already going to do on the way open still happens.
+	prior := menu.OnAboutToShow()
+	menu.SetOnAboutToShow(func() {
+		if prior != nil {
+			prior()
+		}
+		narration.SetChecked(d.Narration())
+	})
+
+	if open := d.connectionsOpener(); open != nil && d.appShowsConnections() {
+		menu.AddItem(NewMenuItem("&Connections...").SetOnTriggered(open))
+	}
 	if len(menu.Items()) > 0 {
 		menu.AddSeparator()
 	}
@@ -3231,46 +4118,11 @@ func (d *Desktop) tileableDesktopWindows() []*window.Window {
 	return out
 }
 
-// activateWindowFromMenu raises a window chosen from a Window menu, from
-// whichever surface it lives on, restoring it first if it was minimized.
-// A torn-off window's own OS surface is raised; an in-surface desktop
-// window is raised/activated within the desktop and the desktop's own OS
-// window is brought to the front.
+// activateWindowFromMenu is the Window menu raising the window that was picked, which is
+// bringing a window to attention like any other -- including materialising the desktop
+// when the window picked is on one that is hidden. See bringToAttention.
 func (d *Desktop) activateWindowFromMenu(win *window.Window) {
-	if win == nil {
-		return
-	}
-	d.mu.RLock()
-	hosts := make([]*window.TearOffHost, len(d.tornHosts))
-	copy(hosts, d.tornHosts)
-	surface := d.surface
-	d.mu.RUnlock()
-
-	// Torn-off window: raise its own OS surface (restore first if needed).
-	for _, th := range hosts {
-		if th.Window() == win {
-			if win.IsMinimized() {
-				win.Restore()
-			}
-			if n, ok := th.Surface().(platform.NativeSurface); ok {
-				n.Raise()
-			}
-			return
-		}
-	}
-
-	// In-surface desktop window: raise/restore within the desktop, then
-	// bring the desktop's own OS window forward.
-	if wm := d.WindowManager(); wm != nil {
-		if win.IsMinimized() {
-			wm.RestoreWindow(win)
-		} else {
-			wm.ActivateWindow(win)
-		}
-	}
-	if n, ok := surface.(platform.NativeSurface); ok {
-		n.Raise()
-	}
+	d.bringToAttention(win)
 }
 
 // buildWindowTileCascadeMenu builds the reduced Window menu shown on the
@@ -3451,11 +4303,36 @@ func (d *Desktop) quitApplication(app ApplicationProvider) {
 	// reason being unsaved work, asked through its close handler), and a
 	// refusal cancels the quit: the application stays on the desktop rather
 	// than being torn off it with a window still open.
-	for _, win := range app.Windows() {
-		if win != nil && !win.Close() {
-			return
-		}
+	if closeTracing() {
+		closeTraceFrom("quitApplication(%q): %d windows", app.Name(), len(app.Windows()))
 	}
+	for _, win := range app.Windows() {
+		if win == nil || win.Close() {
+			continue
+		}
+		closeTrace("quitApplication(%q): STOPPED at %s (deciding=%v)",
+			app.Name(), closeTraceWindow(win), win.Deciding())
+		// **A window still DECIDING is not a refusal.** Same as a desktop quit:
+		// one means give up, the other means not yet, and read as a refusal the
+		// application would silently fail to quit, its window would close a moment
+		// later, and it would be left on the desktop with nothing open. Remembered
+		// instead, and CloseDecided tries it again when the answer lands.
+		d.mu.Lock()
+		if win.Deciding() {
+			if d.appQuitWanted == nil {
+				d.appQuitWanted = map[ApplicationProvider]bool{}
+			}
+			d.appQuitWanted[app] = true
+		} else {
+			delete(d.appQuitWanted, app)
+		}
+		d.mu.Unlock()
+		return
+	}
+
+	d.mu.Lock()
+	delete(d.appQuitWanted, app)
+	d.mu.Unlock()
 
 	// Remove the application from the desktop
 	d.RemoveApplication(app)
@@ -3511,6 +4388,31 @@ func (d *Desktop) SetOnShutdown(handler func()) {
 	d.mu.Lock()
 	d.onShutdown = handler
 	d.mu.Unlock()
+}
+
+// AddOnShutdown registers an observer for the same moment, and they accumulate.
+//
+// SetOnShutdown is one slot and belongs to whoever set it -- the host. This is for
+// everything else that needs to know the desktop has stopped, a display server
+// hanging up on its applications being the first of them, so wanting to know is never
+// the same as taking the host's handler away.
+func (d *Desktop) AddOnShutdown(fn func()) {
+	if fn == nil {
+		return
+	}
+	d.mu.Lock()
+	d.onShutdownAlso = append(d.onShutdownAlso, fn)
+	d.mu.Unlock()
+}
+
+// ExitCode is what the desktop stopped with: nought where it was asked to stop, and
+// whatever was passed to QuitWithCode otherwise. It is what tells a deliberate exit
+// from one something went wrong in, which is the difference an application is told
+// about when the display hangs up.
+func (d *Desktop) ExitCode() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.exitCode
 }
 
 // FocusedTrinket returns the trinket with keyboard focus in the active
@@ -3765,9 +4667,13 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 
 	d.mu.RLock()
 	onShutdown := d.onShutdown
+	also := append([]func(){}, d.onShutdownAlso...)
 	d.mu.RUnlock()
 	if onShutdown != nil {
 		onShutdown()
+	}
+	for _, fn := range also {
+		fn()
 	}
 	return code
 }
@@ -4047,7 +4953,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 	// Handle event based on type
 	switch e := event.(type) {
 	case core.QuitEvent:
-		d.QuitWithCode(0)
+		d.AskBeforeQuitting(0)
 		return true
 
 	case core.KeyPressEvent:
@@ -4246,7 +5152,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// Pointer left the desktop surface: drop any resize-edge highlight,
 		// clear per-widget hover in windows and the desktop chrome, and reset
 		// the cursor to the arrow.
-		wm.ClearResizeHover()
+		wm.ClearResizeBands()
 		wm.ClearHover()
 		d.hostHoverClear()
 		d.hostTitleHoverClear()
@@ -4477,11 +5383,112 @@ func (d *Desktop) Quit() {
 }
 
 // QuitWithCode is Quit with an exit code: it asks, and a refusal abandons it.
+//
+// **A window still DECIDING is not a refusal.** Once an application can be consulted
+// about a close, a window that has not closed is either refusing or waiting for an
+// answer, and those are opposites: one means give up, the other means not yet. Read
+// as a refusal, a quit would be abandoned, the answer would arrive a moment later,
+// every window would close -- and the desktop would still be running, with nothing
+// on it and nothing to say why.
+//
+// So a quit that stopped on a pending answer is REMEMBERED, and CloseDecided tries
+// it again when the answer lands. Trying again costs nothing and asks nobody twice:
+// a window that already agreed is closed, so it is no longer among the windows to
+// close.
 func (d *Desktop) QuitWithCode(code int) {
-	if !d.closeEveryWindow() {
+	if closeTracing() {
+		closeTraceFrom("QuitWithCode(%d)", code)
+		defer d.closeTraceDesktop("QuitWithCode: done")
+	}
+	allClosed, deciding := d.closeEveryWindow()
+	closeTrace("QuitWithCode: sweep says allClosed=%v deciding=%v", allClosed, deciding)
+	if allClosed {
+		d.mu.Lock()
+		d.quitWanted = false
+		d.mu.Unlock()
+		d.ForceQuitWithCode(code)
 		return
 	}
-	d.ForceQuitWithCode(code)
+	// A refusal is final, and clears any quit that was waiting: otherwise closing
+	// some unrelated window an hour later would quit the desktop out from under
+	// somebody who had already said no.
+	d.mu.Lock()
+	d.quitWanted = deciding
+	d.quitCode = code
+	d.mu.Unlock()
+}
+
+// CloseDecided is told that a close which was being decided has resolved, and either
+// resumes a quit that stopped for it or abandons it. Nothing else: a close nobody was
+// waiting on leaves this doing nothing at all, which is the ordinary case.
+//
+// **The outcome is what decides between the two, and it has to be.** A window that
+// closed means the sweep can carry on, and it will not see that window again. One
+// that did NOT close is the refusal the quit was waiting to hear about -- and going
+// back round would put the same question to an application that has just answered it,
+// which is a loop, not a retry.
+func (d *Desktop) CloseDecided(win *window.Window, closed bool) {
+	// **A question about this window is over, however it was answered.** Usually
+	// that question IS what settled it and has taken itself down already; this is
+	// for the other way round -- the window destroyed, or its application gone,
+	// while somebody was reading a dialog about closing it.
+	d.dismissForceClose(win)
+
+	d.mu.Lock()
+	wanted, code := d.quitWanted, d.quitCode
+	if !closed {
+		d.quitWanted = false
+	}
+	d.mu.Unlock()
+	if closed {
+		d.resumeAppQuit(win)
+	} else {
+		d.abandonAppQuit(win)
+	}
+	if !wanted || !closed {
+		return
+	}
+	d.QuitWithCode(code)
+}
+
+// resumeAppQuit carries on an application quit that stopped at a window waiting on
+// an answer about closing, now that one has arrived and the window has gone.
+//
+// A refusal abandons it, for the reason a desktop quit's does: going back round would
+// put the same question to an application that has just answered it.
+func (d *Desktop) resumeAppQuit(win *window.Window) {
+	for _, app := range d.appsQuittingOn(win) {
+		d.quitApplication(app)
+	}
+}
+
+// abandonAppQuit ends an application quit that was waiting on this window, because the
+// close it was waiting for was REFUSED. Left waiting, the next of that application's
+// windows to close would carry out a quit its own user had said no to.
+func (d *Desktop) abandonAppQuit(win *window.Window) {
+	d.mu.Lock()
+	for _, app := range d.appsQuittingOnLocked(win) {
+		delete(d.appQuitWanted, app)
+	}
+	d.mu.Unlock()
+}
+
+// appsQuittingOn is the applications whose quit stopped at this window.
+func (d *Desktop) appsQuittingOn(win *window.Window) []ApplicationProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.appsQuittingOnLocked(win)
+}
+
+// appsQuittingOnLocked is appsQuittingOn with d.mu already held.
+func (d *Desktop) appsQuittingOnLocked(win *window.Window) []ApplicationProvider {
+	var found []ApplicationProvider
+	for app := range d.appQuitWanted {
+		if appOwnsWindow(app, win) {
+			found = append(found, app)
+		}
+	}
+	return found
 }
 
 // ForceQuit ends the desktop without asking anything on it. It is for the
@@ -4494,9 +5501,13 @@ func (d *Desktop) ForceQuit() {
 // closeEveryWindow attempts to close everything on the desktop -- every
 // application's windows, whatever the window manager still holds, and the
 // windows living on their own torn-off surfaces -- and reports whether they
-// all agreed. It stops at the first refusal; child windows go with their
-// parents, since a window closes its children first.
-func (d *Desktop) closeEveryWindow() bool {
+// all agreed. It stops at the first window that did not close; child windows go
+// with their parents, since a window closes its children first.
+//
+// `deciding` says WHY it stopped, which the caller cannot otherwise tell: true where
+// the window is waiting on an answer about closing, false where it refused. See
+// QuitWithCode, which treats them as opposites.
+func (d *Desktop) closeEveryWindow() (allClosed, deciding bool) {
 	d.mu.RLock()
 	apps := append([]ApplicationProvider(nil), d.applications...)
 	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
@@ -4526,11 +5537,16 @@ func (d *Desktop) closeEveryWindow() bool {
 	}
 
 	for _, w := range all {
-		if !w.Close() {
-			return false
+		if w.Close() {
+			closeTrace("closeEveryWindow: closed %s", closeTraceWindow(w))
+			continue
 		}
+		closeTrace("closeEveryWindow: STOPPED at %s (deciding=%v); %d windows were not reached",
+			closeTraceWindow(w), w.Deciding(), len(all))
+		return false, w.Deciding()
 	}
-	return true
+	closeTrace("closeEveryWindow: everything agreed (%d windows)", len(all))
+	return true, false
 }
 
 // ForceQuitWithCode is ForceQuit with an exit code.
@@ -4770,21 +5786,7 @@ func (d *Desktop) clipboardGraceElapsed(w *clipboardWait) {
 		d.resolveClipboard(w, w.internal)
 	})
 	w.modal = mb
-
-	if wm := d.WindowManager(); wm != nil {
-		wm.AddWindow(&mb.Window)
-		mb.ResizeToFitContent()
-		area := wm.ClientArea()
-		b := mb.Bounds()
-		x := area.X + (area.Width-b.Width)/2
-		y := area.Y + (area.Height-b.Height)/2
-		if !wm.SmoothPositioning() {
-			metrics := d.EffectiveCellMetrics()
-			x = metrics.RoundDownToCellX(x)
-			y = metrics.RoundDownToCellY(y)
-		}
-		mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
-	}
+	d.showModal(mb)
 }
 
 // onClipboardResponse handles a clipboard reply arriving from the backend
@@ -4872,12 +5874,12 @@ func (d *Desktop) ChildAt(pos core.UnitPoint) core.Trinket {
 	}
 
 	// Check menu bar
-	if d.menuBarShown() && pos.Y < by+metrics.CellHeight {
+	if d.menuBarShown() && pos.Y < by+metrics.UnitsPerCellHeight {
 		return d.menuBar
 	}
 
 	// Check status bar
-	if d.statusBarShown() && pos.Y >= bounds.Height-bx-metrics.CellHeight && pos.Y < bounds.Height-bx {
+	if d.statusBarShown() && pos.Y >= bounds.Height-bx-metrics.UnitsPerCellHeight && pos.Y < bounds.Height-bx {
 		return d.statusBar
 	}
 
@@ -4893,6 +5895,10 @@ func (d *Desktop) ChildAt(pos core.UnitPoint) core.Trinket {
 }
 
 // Layout arranges children within the desktop.
+// IsLayoutRoot marks the desktop as where a child's change stops climbing: it
+// is the size of the screen it is on, whatever it holds.
+func (d *Desktop) IsLayoutRoot() bool { return true }
+
 func (d *Desktop) Layout() {
 	d.layoutChildren()
 }
@@ -5244,7 +6250,7 @@ func (d *Desktop) layoutChildren() {
 			X:      bx,
 			Y:      by,
 			Width:  innerW,
-			Height: metrics.CellHeight,
+			Height: d.MenuBarHeight(),
 		})
 	}
 
@@ -5265,15 +6271,15 @@ func (d *Desktop) layoutChildren() {
 	if d.statusBarShown() {
 		d.statusBar.SetBounds(core.UnitRect{
 			X:      bx,
-			Y:      bounds.Height - bx - metrics.CellHeight,
+			Y:      bounds.Height - bx - metrics.UnitsPerCellHeight,
 			Width:  innerW,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		})
 	}
 
 	// Dock row above status bar
 	if d.dockVisible() {
-		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.UnitsPerCellHeight - dockHeight
 		if !d.statusBarShown() {
 			dockY = bounds.Height - bx - dockHeight
 		}
@@ -5310,10 +6316,10 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	bottom := bounds.Height - bx
 
 	if d.menuBarShown() {
-		top += metrics.CellHeight
+		top += d.MenuBarHeight()
 	}
 	if d.statusBarShown() {
-		bottom -= metrics.CellHeight
+		bottom -= metrics.UnitsPerCellHeight
 	}
 	// Account for dock row height (when not empty)
 	if d.dockVisible() {
@@ -5336,7 +6342,22 @@ func (d *Desktop) MenuBarHeight() core.Unit {
 	if !d.menuBarShown() {
 		return 0
 	}
-	return d.EffectiveCellMetrics().CellHeight
+	// The kit's (possibly scaled) row, the same one the bar paints and hit
+	// tests with -- reserving a full cell for a shortened bar would leave a
+	// dead strip below it that the bar does not answer for.
+	return d.hostMenuMetrics().RowH
+}
+
+// hostMenuMetrics resolves the desktop menu bar's kit metrics. Lock-free
+// like hostTitleMetrics, and for the same reason: MenuBarHeight sits under
+// layout paths that run while d.mu is held, so d.font is read directly
+// rather than through EffectiveFont's lock.
+func (d *Desktop) hostMenuMetrics() MenuMetrics {
+	f := d.font
+	if f == nil {
+		f = core.DefaultFont()
+	}
+	return MenuMetricsFor(d.EffectiveCellMetrics(), f, d.graphicalFrames)
 }
 
 // StatusBarHeight returns the height of the status bar area (0 when there is no
@@ -5345,7 +6366,7 @@ func (d *Desktop) StatusBarHeight() core.Unit {
 	if !d.statusBarShown() {
 		return 0
 	}
-	return d.EffectiveCellMetrics().CellHeight
+	return d.EffectiveCellMetrics().UnitsPerCellHeight
 }
 
 // StatusBarBounds returns the bounds of the status bar area (empty rect when
@@ -5360,9 +6381,9 @@ func (d *Desktop) StatusBarBounds() core.UnitRect {
 	b := d.hostFrameInset()
 	return core.UnitRect{
 		X:      b,
-		Y:      bounds.Height - b - metrics.CellHeight,
+		Y:      bounds.Height - b - metrics.UnitsPerCellHeight,
 		Width:  bounds.Width - 2*b,
-		Height: metrics.CellHeight,
+		Height: metrics.UnitsPerCellHeight,
 	}
 }
 
@@ -5391,7 +6412,7 @@ func (d *Desktop) DockBounds() core.UnitRect {
 	dockHeight := d.dockRow.RequiredHeight()
 	dockY := bounds.Height - b - dockHeight
 	if d.statusBar != nil {
-		dockY = bounds.Height - b - metrics.CellHeight - dockHeight
+		dockY = bounds.Height - b - metrics.UnitsPerCellHeight - dockHeight
 	}
 	return core.UnitRect{
 		X:      b,
@@ -5461,8 +6482,8 @@ func (d *Desktop) Paint(p *core.Painter) {
 		tile, _ := d.WallpaperTile()
 		if !p.TileImage(full, tile, d.WallpaperLayout()) &&
 			!p.FillPattern(full, d.wallpaperPattern, d.wallpaperChunkPx, bgStyle) {
-			for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-				for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
+			for y := core.Unit(0); y < bounds.Height; y += metrics.UnitsPerCellHeight {
+				for x := core.Unit(0); x < bounds.Width; x += metrics.UnitsPerCellWidth {
 					p.DrawCell(x, y, d.bgChar, bgStyle)
 				}
 			}
@@ -5495,7 +6516,7 @@ func (d *Desktop) Paint(p *core.Painter) {
 			X:      bx,
 			Y:      by,
 			Width:  innerW,
-			Height: metrics.CellHeight,
+			Height: d.MenuBarHeight(),
 		})
 		d.menuBar.Paint(p.WithOffset(bx, by))
 	}
@@ -5503,7 +6524,7 @@ func (d *Desktop) Paint(p *core.Painter) {
 	// Draw dock row above status bar (if not empty)
 	if d.dockVisible() {
 		dockHeight := d.dockRow.RequiredHeight()
-		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.UnitsPerCellHeight - dockHeight
 		if d.statusBar == nil {
 			dockY = bounds.Height - bx - dockHeight
 		}
@@ -5519,12 +6540,12 @@ func (d *Desktop) Paint(p *core.Painter) {
 
 	// Draw status bar at bottom
 	if d.statusBar != nil {
-		y := bounds.Height - bx - metrics.CellHeight
+		y := bounds.Height - bx - metrics.UnitsPerCellHeight
 		d.statusBar.SetBounds(core.UnitRect{
 			X:      bx,
 			Y:      y,
 			Width:  innerW,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		})
 		statusPainter := p.WithOffset(bx, y)
 		d.statusBar.Paint(statusPainter)
@@ -5533,7 +6554,7 @@ func (d *Desktop) Paint(p *core.Painter) {
 	// The genuine window border around the themed surface, over the chrome
 	// like a window's re-stroked frame; then the resize affordance over all.
 	d.paintHostFrame(p, bounds)
-	d.paintHostEdgeHover(p, bounds)
+	d.paintHostEdgeBands(p, bounds)
 
 	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
 	// They must be rendered AFTER windows as separate layers for drop shadows.
@@ -5592,6 +6613,11 @@ func (d *Desktop) takePassNextKey(event core.KeyPressEvent, wm *window.WindowMan
 
 // HandleKeyPress handles keyboard input.
 func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
+	// A tooltip answers a pointer resting somewhere, and a reader who has
+	// started typing is no longer resting. It goes before the key is even
+	// dispatched, so an idle pointer cannot leave one standing for ever.
+	d.HideTooltip(nil)
+
 	// Before the menu bar gets a look at it: a key claimed by pass-next-key
 	// mode belongs to the trinket, F10 included.
 	if d.takePassNextKey(event, nil) {
@@ -5797,7 +6823,7 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Check menu bar first - either in menu bar area or when menu is open.
 	if d.menuBar != nil {
-		if (event.Y >= by && event.Y < by+metrics.CellHeight) || d.menuBar.ActiveMenu() != nil {
+		if (event.Y >= by && event.Y < by+d.MenuBarHeight()) || d.menuBar.ActiveMenu() != nil {
 			// Cancel drags on other children
 			cancelDrag(d.statusBar)
 			cancelDrag(d.dockRow)
@@ -5811,7 +6837,7 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Check status bar
 	if d.statusBar != nil {
-		statusY := bounds.Height - bx - metrics.CellHeight
+		statusY := bounds.Height - bx - metrics.UnitsPerCellHeight
 		if event.Y >= statusY {
 			// Cancel drags on other children
 			cancelDrag(d.menuBar)
@@ -5827,7 +6853,7 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	// Check dock row (above status bar)
 	if d.dockVisible() {
 		dockHeight := d.dockRow.RequiredHeight()
-		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.UnitsPerCellHeight - dockHeight
 		if d.statusBar == nil {
 			dockY = bounds.Height - bx - dockHeight
 		}
@@ -5868,6 +6894,11 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement.
 func (d *Desktop) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Every move on the screen reaches the desktop before it reaches
+	// anything under it, which is what makes this the place to keep the
+	// clock a waiting tooltip is measured against.
+	d.notePointerMoved()
+
 	// Forward to menu bar for drag navigation (origin-local: the themed
 	// frame's shift is subtracted on the way in).
 	bx, by := d.hostChromeOffset()
@@ -5887,7 +6918,7 @@ func (d *Desktop) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds := d.Bounds()
 		metrics := d.EffectiveCellMetrics()
 		dockHeight := d.dockRow.RequiredHeight()
-		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.UnitsPerCellHeight - dockHeight
 		if d.statusBar == nil {
 			dockY = bounds.Height - bx - dockHeight
 		}
@@ -5998,7 +7029,7 @@ func (s *StatusBar) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
 	return core.UnitSize{
 		Width:  0, // Will stretch to fill
-		Height: metrics.CellHeight,
+		Height: metrics.UnitsPerCellHeight,
 	}
 }
 
@@ -6030,18 +7061,18 @@ func (s *StatusBar) Paint(p *core.Painter) {
 			var textW core.Unit
 			if len(section.Spans) > 0 {
 				for _, span := range section.Spans {
-					textW += font.MeasureText(span.Text)
+					textW += s.MeasureText(span.Text)
 				}
 			} else {
-				textW = font.MeasureText(section.Text)
+				textW = s.MeasureText(section.Text)
 			}
-			sectionWidth = textW + 2*metrics.CellWidth
+			sectionWidth = textW + 2*metrics.UnitsPerCellWidth
 		} else {
-			sectionWidth = core.Unit(section.Width) * metrics.CellWidth
+			sectionWidth = core.Unit(section.Width) * metrics.UnitsPerCellWidth
 		}
 
 		// Draw text - either from spans or plain text - clipped to the slot.
-		textX := x + metrics.CellWidth
+		textX := x + metrics.UnitsPerCellWidth
 		slot := p.WithClip(core.UnitRect{X: x, Y: 0, Width: sectionWidth, Height: bounds.Height})
 
 		if len(section.Spans) > 0 {
@@ -6058,10 +7089,10 @@ func (s *StatusBar) Paint(p *core.Painter) {
 				}
 				segs = append(segs, textSegment{span.Text, spanStyle})
 			}
-			drawTextSegments(slot, textX, 0, font, segs...)
+			drawTextSegments(slot, textX, 0, font, s.EffectiveCellMetrics(), segs...)
 		} else {
 			// Draw plain text
-			slot.DrawText(textX, 0, section.Text, statusBarStyle, font)
+			slot.DrawText(textX, 0, s.CellRun(section.Text), statusBarStyle, font)
 		}
 
 		x += sectionWidth

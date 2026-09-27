@@ -15,7 +15,7 @@ type Event struct {
 }
 
 // NewEvent creates an event record of the given type ("click",
-// "toggle", "change", "command", ...; see docs/property-vocabulary.md).
+// "toggle", "change", "command", ...; the wiki's Events page lists them).
 func NewEvent(eventType string) *Event {
 	return &Event{Type: eventType}
 }
@@ -23,7 +23,7 @@ func NewEvent(eventType string) *Event {
 // WithUint adds an integer field (object IDs, indices).
 func (e *Event) WithUint(name string, v uint64) *Event {
 	e.Fields = append(e.Fields, &Arg{Name: name, Value: &Value{
-		Kind: NumberValue, Number: float64(v), IsInt: true,
+		Kind: NumberValue, Number: float64(v), Int: int64(v), IsInt: true,
 	}})
 	return e
 }
@@ -31,7 +31,7 @@ func (e *Event) WithUint(name string, v uint64) *Event {
 // WithInt adds an integer field.
 func (e *Event) WithInt(name string, v int) *Event {
 	e.Fields = append(e.Fields, &Arg{Name: name, Value: &Value{
-		Kind: NumberValue, Number: float64(v), IsInt: true,
+		Kind: NumberValue, Number: float64(v), Int: int64(v), IsInt: true,
 	}})
 	return e
 }
@@ -71,10 +71,10 @@ func (e *Event) field(name string) *Arg {
 // Uint reads an integer field (false if absent or not an integer).
 func (e *Event) Uint(name string) (uint64, bool) {
 	a := e.field(name)
-	if a == nil || a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt || a.Value.Number < 0 {
+	if a == nil || a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt || a.Value.Int < 0 {
 		return 0, false
 	}
-	return uint64(a.Value.Number), true
+	return uint64(a.Value.Int), true
 }
 
 // Int reads an integer field.
@@ -83,7 +83,7 @@ func (e *Event) Int(name string) (int, bool) {
 	if a == nil || a.Value == nil || a.Value.Kind != NumberValue || !a.Value.IsInt {
 		return 0, false
 	}
-	return int(a.Value.Number), true
+	return int(a.Value.Int), true
 }
 
 // Text reads a string field.
@@ -113,14 +113,36 @@ func (e *Event) Flag(name string) FlagState {
 	return a.Flag
 }
 
+// WithBlob adds a field carrying arbitrary bytes, escaped so every one of
+// them survives the trip. See QuoteBlob.
+func (e *Event) WithBlob(name string, b []byte) *Event {
+	e.Fields = append(e.Fields, &Arg{Name: name, Value: &Value{
+		Kind: StringValue, Str: string(b), Blob: true,
+	}})
+	return e
+}
+
+// Blob reads a field written with WithBlob back as the bytes it carried.
+func (e *Event) Blob(name string) ([]byte, bool) {
+	s, ok := e.Text(name)
+	return []byte(s), ok
+}
+
 // Trinket reads the conventional trinket-identity field.
 func (e *Event) Trinket() (uint64, bool) {
 	if id, ok := e.Uint("trinket"); ok {
 		return id, ok
 	}
-	// Window events name their source window= rather than trinket=;
-	// both are ObjectIDs, and subscriptions key on the source.
-	return e.Uint("window")
+	// Window events name their source window= rather than trinket=, a store's
+	// name it store=, and the display's name it host=. All of them are
+	// ObjectIDs, and subscriptions key on the source whichever word names it.
+	if id, ok := e.Uint("window"); ok {
+		return id, ok
+	}
+	if id, ok := e.Uint("store"); ok {
+		return id, ok
+	}
+	return e.Uint("host")
 }
 
 // Encode renders the event as protocol text: a parseable statement.
@@ -130,30 +152,7 @@ func (e *Event) Encode() string {
 	sb.WriteString(e.Type)
 	for _, a := range e.Fields {
 		sb.WriteByte(' ')
-		if a.Value == nil {
-			switch a.Flag {
-			case FlagFalse:
-				sb.WriteByte('!')
-			case FlagIndeterminate:
-				sb.WriteByte('?')
-			}
-			sb.WriteString(a.Name)
-			continue
-		}
-		sb.WriteString(a.Name)
-		sb.WriteByte('=')
-		switch a.Value.Kind {
-		case WordValue:
-			sb.WriteString(a.Value.Word)
-		case NumberValue:
-			if a.Value.IsInt {
-				fmt.Fprintf(&sb, "%d", int64(a.Value.Number))
-			} else {
-				fmt.Fprintf(&sb, "%g", a.Value.Number)
-			}
-		case StringValue:
-			sb.WriteString(quoteString(a.Value.Str))
-		}
+		sb.WriteString(EncodeArg(a))
 	}
 	return sb.String()
 }
@@ -164,6 +163,37 @@ func (e *Event) Encode() string {
 // control bytes as \xNN). Script builders use it to interpolate
 // arbitrary text safely.
 func Quote(s string) string { return quoteString(s) }
+
+// QuoteBlob renders arbitrary bytes as a protocol string literal, byte for
+// byte: everything outside printable ASCII becomes a \xNN escape.
+//
+// Quote is for TEXT and cannot carry a byte stream. A statement is parsed as
+// runes, so a byte that is not part of valid UTF-8 is replaced before the
+// parser ever sees the escape it should have been -- and a payload that
+// arrived as PNG or as a compressed bundle would come back altered, with
+// nothing to say it had been.
+//
+// The cost is four characters per escaped byte, which for binary is the whole
+// payload. That is the price of a text protocol carrying bytes at all, and
+// the bulk frame the parser's \x note anticipates is where it goes away.
+func QuoteBlob(b []byte) string {
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for _, c := range b {
+		switch {
+		case c == '"':
+			sb.WriteString(`\"`)
+		case c == '\\':
+			sb.WriteString(`\\`)
+		case c >= 0x20 && c < 0x7f:
+			sb.WriteByte(c)
+		default:
+			fmt.Fprintf(&sb, `\x%02x`, c)
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
 
 func quoteString(s string) string {
 	var sb strings.Builder

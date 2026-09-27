@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // Platform owns the main loop, surface creation, and the services
@@ -211,6 +212,18 @@ type Surface interface {
 	SetCursorStyle(style int)
 }
 
+// CursorColorSetter is an optional Surface capability: draw the platform's own
+// caret in a given colour, or hand the reader's own setting back.
+//
+// A terminal's caret colour is one global preference, chosen once against the
+// terminal's own background. A trinket that paints a background of its own can
+// leave a caret standing on ink it cannot be told apart from -- and it is the
+// only thing that knows what it painted, so it is the only thing that can say.
+// style.ColorDefault means it has no better answer than the reader's.
+type CursorColorSetter interface {
+	SetCursorColor(c style.Color)
+}
+
 // TextInputAreaSetter is an optional Surface capability: report where
 // text is being typed, so an input method can place its candidate window
 // there. Distinct from the caret methods, which are about a caret the
@@ -303,13 +316,24 @@ func ApplyTextCaret(s Surface, f TextInputFrame) {
 			setter.SetTextInputArea(0, 0, false)
 		}
 	}
-	if !f.Caret.Visible {
+	// Focus overrules the request. A trinket asks for the caret from its own
+	// paint, where all it knows is its own state -- and a trinket that goes on
+	// believing itself focused, or one painted below whatever now holds focus,
+	// asks anyway. The answer to "is there an insertion point on this surface
+	// at all" is a question about FOCUS, and it has already been asked: if what
+	// holds focus does not type, there is no insertion point for anything to
+	// have asked for, and a caret left standing points at where typing used to
+	// go.
+	if !f.Caret.Visible || f.Sink == core.TextSinkAbsent {
 		// Same evidence, same rule: a partial frame that drew no caret is
 		// not a surface being told to stop drawing one.
 		if f.Complete || f.Sink == core.TextSinkAbsent {
 			s.SetCursorVisible(false)
 		}
 		return
+	}
+	if setter, ok := s.(CursorColorSetter); ok {
+		setter.SetCursorColor(f.Caret.Color)
 	}
 	s.SetCursorStyle(f.Caret.Style)
 	s.SetCursorPosition(f.Caret.X, f.Caret.Y)
@@ -623,6 +647,14 @@ func (s *pollingSurface) SetCursorVisible(v bool)     { s.platform.backend.SetCu
 func (s *pollingSurface) SetCursorStyle(style int)    { s.platform.backend.SetCursorStyle(style) }
 func (s *pollingSurface) SetCursorPosition(x, y core.Unit) {
 	s.platform.backend.SetCursorPosition(x, y)
+}
+
+// SetCursorColor implements CursorColorSetter where the backend can draw its
+// caret in a colour it is given; a backend that cannot is left alone.
+func (s *pollingSurface) SetCursorColor(c style.Color) {
+	if setter, ok := s.platform.backend.(core.CursorColorer); ok {
+		setter.SetCursorColor(c)
+	}
 }
 
 // Invalidate implements Surface: damage coalesces into "repaint on

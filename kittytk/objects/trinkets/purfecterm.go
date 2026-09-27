@@ -548,32 +548,42 @@ func (t *PurfecTerm) renderTermFont() *core.Font {
 
 // cellDims returns the terminal's cell size in units.
 //
-// On graphical targets the grid must follow the real font: the cell is
-// the effective terminal font's measured advance width and line height
-// at its point size (answered by the render target - G1), so glyphs and
-// the grid share one pitch. On the text-based system a cell is a
-// character cell, so the inherited denomination (which a container may
-// override) governs - and there MeasureText answers in cell units
-// anyway, keeping the two paths identical for the default font.
+// On graphical targets the grid must follow the real font: the cell is the
+// effective terminal font's measured advance width and line box at its point
+// size (answered by the render target - G1), so glyphs and the grid share one
+// pitch. Both are DEFAULT-denomination quantities, which is the currency this
+// answer is in and has to be: the graphical path multiplies it by the
+// backend's pixels-per-unit, and that counts default-denomination units.
+// Denominating it instead scales the terminal's whole geometry by the
+// container's denomination -- a 7x16 pixel cell became 14x32 at 16x32 and 4x8
+// at 4x8, glyphs and all.
+//
+// On the text-based system a cell is a character cell, so the inherited
+// denomination (which a container may override) governs - and there MeasureText
+// answers in cell units anyway, keeping the two paths identical for the default
+// font.
 func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
 	if core.HasTextMeasurer() {
 		f := t.renderTermFont()
 		cw = f.MeasureText("M")
-		ch = f.LineHeight()
+		ch = core.FontLineBudget(f)
 		if cw > 0 && ch > 0 {
 			return cw, ch
 		}
 	}
 	m := t.EffectiveCellMetrics()
-	return m.CellWidth, m.CellHeight
+	return m.UnitsPerCellWidth, m.UnitsPerCellHeight
 }
 
-// SizeHint returns the preferred size based on terminal dimensions.
+// SizeHint returns the size a terminal asks for when nothing sets one (see
+// defaultSizeCells). It used to report the current grid -- but the grid is
+// set FROM the bounds (updateTerminalSize), and a vertical box sets the
+// bounds from this, so the two only ever agreed with each other.
 func (t *PurfecTerm) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.TextWidth(t.cols),
-		Height: metrics.TextHeight(t.rows),
+		Width:  metrics.UnitsPerCellWidth * defaultWideWidthCells,
+		Height: metrics.UnitsPerCellHeight * defaultContainerHeightCells,
 	}
 }
 
@@ -812,7 +822,11 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 					// surface reaches this — Paint hands graphical targets to
 					// paintGraphical, which draws its own cursor and reports
 					// the insertion point itself.)
-					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle())
+					// A terminal's own caret colour is the reader's, and this trinket
+					// paints the terminal's own ground under it, so nothing here
+					// has a better answer than theirs.
+					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle(),
+						style.ColorDefault)
 				} else {
 					// Painted fallback for an unfocused terminal.
 					var ch rune = ' '
@@ -1259,7 +1273,7 @@ func (t *PurfecTerm) AccessibleInfo() core.AccessibleInfo {
 // cell holds a bar or a glyph.
 func (t *PurfecTerm) paintScrollbarsCell(p *core.Painter, bounds core.UnitRect) {
 	m := t.EffectiveCellMetrics()
-	cw, ch := m.CellWidth, m.CellHeight
+	cw, ch := m.UnitsPerCellWidth, m.UnitsPerCellHeight
 	if cw <= 0 || ch <= 0 {
 		return
 	}
@@ -1268,7 +1282,7 @@ func (t *PurfecTerm) paintScrollbarsCell(p *core.Painter, bounds core.UnitRect) 
 	// the hover state never paints (see ScrollBar.paintHorizontal).
 	scheme := t.GetScheme()
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumbState(false)
+	thumbStyle := scheme.GetScrollbarThumbState(false, false)
 
 	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
 		// Geometry is in render px, which on a cell surface is units

@@ -13,8 +13,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
+	"github.com/phroun/khatool"
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/hebrew"
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/style"
 	"github.com/phroun/purfecterm"
 	"golang.org/x/term"
@@ -161,6 +162,11 @@ type TUIBackend struct {
 	// stays off the wire. Emitted only while the cursor is visible.
 	cursorStyle     int
 	cursorStyleSent int
+	// cursorColor is the ink the focused trinket asked its caret be drawn in
+	// (ColorDefault: the reader's own), cursorColorSent what the terminal was
+	// last told. Written beside the cursor for the same reason the shape is.
+	cursorColor     style.Color
+	cursorColorSent style.Color
 
 	// Input handling
 	keyboard   *keyboard.Handler
@@ -173,6 +179,10 @@ type TUIBackend struct {
 	// (outerToUnits* does the mode-dependent conversion).
 	pendingMouseX int
 	pendingMouseY int
+
+	// havePendingMouse says a position has been reported at all, so the very
+	// first report is a move even when it names the origin.
+	havePendingMouse bool
 
 	// Outer-terminal pixel mouse (SGR-Pixels, ?1016). When the real terminal
 	// answers the startup probe — DECRQM says ?1016 is recognized AND CSI 16 t
@@ -325,9 +335,13 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 	if opts.HoldOpensPalette == 0 {
 		opts.HoldOpensPalette = DefaultHoldOpensPalette
 	}
-	if opts.CellMetrics.CellWidth == 0 {
+	if opts.CellMetrics.UnitsPerCellWidth == 0 {
 		opts.CellMetrics = core.DefaultCellMetrics()
 	}
+
+	// What a layout measures has to be what this backend advances, so the
+	// rule it emits by is the rule core hands out (see core.CellWidth).
+	core.SetCellWidth(cellRuneWidth)
 
 	t := &TUIBackend{
 		metrics:    opts.CellMetrics,
@@ -340,6 +354,19 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		hasUnicode: true, // Assume Unicode support
 		osc52:      opts.OSC52Clipboard,
 		osc52Paste: opts.OSC52Paste,
+		// The terminal starts on the reader's own caret colour, and so does
+		// what we believe about it -- the zero Color is black, which would let
+		// a trinket asking for black go unwritten.
+		cursorColor:     style.ColorDefault,
+		cursorColorSent: style.ColorDefault,
+	}
+	// What this terminal does with what it is sent. Recognising it here is what
+	// lets a row of right-to-left text come out right without an application
+	// having to know, or having to tell us; one that has PROBED the terminal --
+	// and so can answer for a terminal no name recognises -- says so through
+	// core.SetHostAppliesBidi, and that answer stands over this one.
+	if applies, wordwise, rideSafe, known := hostterm.BidiProfile(hostterm.Detect()); known {
+		core.SetSniffedHostBidi(applies, wordwise, rideSafe)
 	}
 	return t
 }
@@ -632,8 +659,10 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Leave alternate screen
 		t.writeTTY("\033[?1049l")
 
-		// Reset colors
+		// Reset colors, the caret's own among them: a caret left in a colour
+		// this process chose would follow the shell that inherits the terminal.
 		t.writeTTY("\033[0m")
+		t.writeTTY("\033]112\033\\")
 
 		unregisterLive(t)
 	})
@@ -808,6 +837,18 @@ func (t *TUIBackend) EndFrame() {
 			termY, termX = y, 0
 		}
 
+		// A host that runs its own bidi over what it is sent reorders a row
+		// this backend has already ordered, so each right-to-left run goes out
+		// turned BACK and the host's own pass turns it forward again. That is a
+		// whole-ROW job -- a run cannot be reversed by re-emitting only the
+		// cells inside it that changed -- so a row with any right-to-left
+		// content on such a host escalates out of the diff.
+		if t.emitFlippedRow(&sb, y, lineCleared) {
+			penStyle = ""
+			termX, termY = -1, -1
+			continue
+		}
+
 		for x := 0; x < t.cols; {
 			cell := t.backBuffer[y][x]
 
@@ -909,6 +950,18 @@ func (t *TUIBackend) EndFrame() {
 			out.WriteString(fmt.Sprintf("\033[%d q", t.cursorStyle))
 			t.cursorStyleSent = t.cursorStyle
 		}
+		// The ink, likewise: OSC 12 sets the caret's colour and OSC 112 hands
+		// the reader's own back. A terminal that knows neither drops both, and
+		// the caret keeps the colour it always had.
+		if t.cursorColor != t.cursorColorSent {
+			if t.cursorColor == style.ColorDefault {
+				out.WriteString("\033]112\033\\")
+			} else {
+				r, g, b := t.cursorColor.RGBComponents()
+				out.WriteString(fmt.Sprintf("\033]12;#%02X%02X%02X\033\\", r, g, b))
+			}
+			t.cursorColorSent = t.cursorColor
+		}
 		if !t.cursorShown {
 			out.WriteString("\033[?25h")
 			t.cursorShown = true
@@ -959,8 +1012,8 @@ func (t *TUIBackend) cellFitsInClip(col, row int) bool {
 	x := t.metrics.CellToUnitsX(col)
 	y := t.metrics.CellToUnitsY(row)
 	// Check if cell end position is within clip (cell end = start + cell width)
-	cellEndX := x + t.metrics.CellWidth
-	cellEndY := y + t.metrics.CellHeight
+	cellEndX := x + t.metrics.UnitsPerCellWidth
+	cellEndY := y + t.metrics.UnitsPerCellHeight
 	return x >= t.clipRect.X && cellEndX <= t.clipRect.X+t.clipRect.Width &&
 		y >= t.clipRect.Y && cellEndY <= t.clipRect.Y+t.clipRect.Height
 }
@@ -1031,7 +1084,7 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	isTuesday := font.Name == "Tuesday"
 
 	for _, ch := range text {
-		// Zero-width combining marks attach to the previously drawn cell —
+		// Zero-width combining marks attach to the preceding drawn cell —
 		// they never occupy a cell of their own.
 		if cellRuneWidth(ch) == 0 {
 			t.appendCombining(col-1, row, ch)
@@ -1061,6 +1114,116 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	}
 
 	return t.metrics.TextWidth(col - startCol)
+}
+
+// emitFlippedRow writes row y turned back for a host that applies its own bidi,
+// and reports whether it did.
+//
+// It does nothing at all unless the host reorders and the row holds something
+// right-to-left: a flip sent to a terminal that leaves what it is given alone
+// is itself the bug, and a row with nothing to turn is the same row either way.
+//
+// The whole row goes out, and the STYLE goes out per glyph rather than coalesced
+// on a pen. A host that reorders re-processes each parsed line, and run-level
+// attributes do not survive that reordering -- the colours vanish -- while
+// per-glyph ones do.
+func (t *TUIBackend) emitFlippedRow(sb *strings.Builder, y int, lineCleared bool) bool {
+	applies, wordwise := core.HostAppliesBidi()
+	if !applies {
+		return false
+	}
+
+	// The row as SLOTS: one per base cell, a wide glyph's continuation folded
+	// into the base that wrote both columns.
+	var slots []emitSlot
+	anyRTL, changed := false, lineCleared
+	for x := 0; x < t.cols; {
+		cell := t.backBuffer[y][x]
+		if cell.Char == 0 && x > 0 && cellRuneWidth(t.backBuffer[y][x-1].Char) == 2 {
+			x++
+			continue // continuation: its base wrote it
+		}
+		w := 1
+		if cell.Char != 0 && cellRuneWidth(cell.Char) == 2 {
+			w = 2
+		}
+		cell.Char, cell.Combining = t.driftEmit(y, x, cell)
+		if cell.Char != 0 && khatool.IsStrongRTL(cell.Char) {
+			anyRTL = true
+		}
+		if cell != t.frontBuffer[y][x] {
+			changed = true
+		}
+		slots = append(slots, emitSlot{x: x, cell: cell, w: w})
+		x += w
+	}
+	if !anyRTL {
+		return false
+	}
+	if !changed {
+		return true // nothing to say, but the row is still this backend's to skip
+	}
+
+	bases := make([]rune, len(slots))
+	for i, s := range slots {
+		bases[i] = s.cell.Char
+	}
+	order, styleOf, mirror := khatool.FlipRuns(bases, wordwise)
+
+	// Where this host stops placing a background where it was written, in
+	// emission order. Everything from there on is laid down after a run it
+	// cannot count, so anything painted at the cell reaches the screen
+	// somewhere other than the cell it was written for.
+	driftFrom := -1
+	if core.HostMiscountsFill() {
+		driftFrom = driftStart(slots, order, mirror)
+	}
+
+	t.markDamage(y, 0, t.cols-1)
+	sb.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[2K", y+1))
+	for k, i := range order {
+		cs := slots[styleOf[k]].cell.Style
+		c := slots[i].cell
+		// Past the drift, nothing painted at the cell is trusted. A blank draws
+		// its own background instead of being given one, so a filled region
+		// keeps its shape; anything with a glyph keeps the glyph and its colour
+		// and loses the ground. A cell some other rule has already dealt with
+		// arrives with no ground left, and this finds nothing to do.
+		shade := rune(0)
+		if driftFrom >= 0 && k >= driftFrom {
+			if ink, ok := groundAsInk(cs); ok && (c.Char == 0 || c.Char == ' ') {
+				cs, shade = ink, fallbackBlank
+			} else {
+				cs = dropGround(cs)
+			}
+		}
+		st := cs.CodeDepth(t.colorDepth)
+		if st == "" {
+			st = "\033[0m"
+		}
+		sb.WriteString(st)
+		if shade != 0 {
+			sb.WriteRune(shade)
+			continue
+		}
+		if c.Char == 0 {
+			sb.WriteByte(' ')
+			continue
+		}
+		r := c.Char
+		if mirror[k] {
+			r = khatool.Mirror(r)
+		}
+		sb.WriteRune(r)
+		sb.WriteString(c.Combining)
+	}
+	for _, s := range slots {
+		t.frontBuffer[y][s.x] = s.cell
+		if s.w == 2 && s.x+1 < t.cols {
+			t.frontBuffer[y][s.x+1] = t.backBuffer[y][s.x+1]
+		}
+	}
+	return true
 }
 
 // driftEmit returns the base rune and the combining marks to emit for the cell
@@ -1094,7 +1257,7 @@ func (t *TUIBackend) driftEmit(y, x int, cell Cell) (rune, string) {
 	}
 	base := cell.Char
 	var b strings.Builder
-	if folded, ok := hebrew.PrecomposeCluster(own); ok {
+	if folded, ok := khatool.PrecomposeCluster(own); ok {
 		base = folded[0]
 		b.WriteString(string(folded[1:])) // non-folding non-drifting marks (LTR)
 	} else {
@@ -1211,7 +1374,7 @@ func isAlphanumeric(ch rune) bool {
 }
 
 // DrawTextAligned draws text aligned within a box using the given font.
-func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAlign core.Alignment, s style.CellStyle, font *core.Font) {
+func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hSide core.HSide, vAlign core.VAlign, s style.CellStyle, font *core.Font) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -1254,7 +1417,7 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	for _, ch := range text {
 		w := cellRuneWidth(ch)
 		if w == 0 {
-			continue // combining marks ride the previous cell
+			continue // combining marks ride the preceding cell
 		}
 		textCells += w
 		if w == 1 && isTuesday && isAlphanumeric(ch) {
@@ -1264,12 +1427,10 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 
 	// Calculate horizontal position
 	var col int
-	switch hAlign {
-	case core.AlignLeft:
-		col = col1
-	case core.AlignCenter:
+	switch hSide {
+	case core.SideCenter:
 		col = col1 + (boxWidth-textCells)/2
-	case core.AlignRight:
+	case core.SideRight:
 		col = col2 - textCells
 	default:
 		col = col1
@@ -1314,7 +1475,7 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 			// Tuesday font: add space after alphabetic/numeric chars
 			// Only add the space if the cell fully fits within bounds,
 			// allowing "half" of a wide Tuesday character to be shown when truncated
-			cellEndX := t.metrics.CellToUnitsX(col) + t.metrics.CellWidth
+			cellEndX := t.metrics.CellToUnitsX(col) + t.metrics.UnitsPerCellWidth
 			if col < col2 && col >= col1 && cellEndX <= bounds.X+bounds.Width {
 				t.setCell(col, row, ' ', effectiveStyle)
 			}
@@ -1484,12 +1645,23 @@ func (t *TUIBackend) SetCursorVisible(visible bool) {
 // SetCursorStyle records the DECSCUSR shape for the next present. It is not
 // written immediately: a shape only reaches the terminal beside the cursor it
 // belongs to, so it can never reveal or restyle a hidden cursor.
-func (t *TUIBackend) SetCursorStyle(style int) {
-	if style < 0 || style > 6 {
+func (t *TUIBackend) SetCursorStyle(shape int) {
+	if shape < 0 || shape > 6 {
 		return
 	}
 	t.mu.Lock()
-	t.cursorStyle = style
+	t.cursorStyle = shape
+	t.mu.Unlock()
+}
+
+// SetCursorColor records the caret's ink for the next present, implementing
+// core.CursorColorer. ColorDefault hands the reader's own colour back.
+//
+// Recorded rather than written, for the reason the shape is: it reaches the
+// terminal beside the cursor it belongs to.
+func (t *TUIBackend) SetCursorColor(c style.Color) {
+	t.mu.Lock()
+	t.cursorColor = c
 	t.mu.Unlock()
 }
 
@@ -1697,24 +1869,29 @@ func (t *TUIBackend) handleKey(key string) {
 		return
 	}
 
-	// Check for mouse events from direct-key-handler
-	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
+	// Mouse events come as two keys: "Mouse@x,y" (position) followed by the
+	// action it belongs to, so every click carries a position report of its
+	// own and a stationary click reports the position it already had.
 	if strings.HasPrefix(key, "Mouse@") {
 		// Parse position: Mouse@x,y. Store the RAW 1-based coordinate — a cell
 		// column normally, an outer pixel under ?1016 — and let outerToUnits*
 		// resolve it to units at action time (it knows the current mode).
 		var x, y int
+		moved := true
 		if _, err := fmt.Sscanf(key, "Mouse@%d,%d", &x, &y); err == nil {
 			t.mu.Lock()
+			moved = !t.havePendingMouse || x != t.pendingMouseX || y != t.pendingMouseY
 			t.pendingMouseX = x
 			t.pendingMouseY = y
+			t.havePendingMouse = true
 			t.mu.Unlock()
 		}
-		// The pointer is somewhere it was not, which is a move — the only kind
-		// there is with no button held. An action arriving right behind this
-		// one resolves against the same position, so a click reads as a move to
-		// the spot and then the press, which is what the pointer did.
-		t.handleMouseAction("MouseMove")
+		// A move is the pointer somewhere it was not — the only kind of move
+		// there is with no button held. Where it is where it was, the report
+		// is the coordinate its action resolves against and nothing more.
+		if moved {
+			t.handleMouseAction("MouseMove")
+		}
 		return
 	}
 
@@ -2145,7 +2322,7 @@ func (t *TUIBackend) outerToUnitsX(raw int, f outerMouseFrame) core.Unit {
 		}
 		cell := px / f.cellW
 		frac := px % f.cellW
-		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(f.cellW)
+		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.UnitsPerCellWidth/core.Unit(f.cellW)
 	}
 	return t.metrics.CellToUnitsX(raw - 1)
 }
@@ -2159,7 +2336,7 @@ func (t *TUIBackend) outerToUnitsY(raw int, f outerMouseFrame) core.Unit {
 		}
 		cell := px / f.cellH
 		frac := px % f.cellH
-		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(f.cellH)
+		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.UnitsPerCellHeight/core.Unit(f.cellH)
 	}
 	return t.metrics.CellToUnitsY(raw - 1)
 }

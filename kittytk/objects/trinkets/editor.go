@@ -101,7 +101,7 @@ func NewEditor() *Editor {
 	e.box.AddTrinketWithStretch(e.scroll, 1)
 	e.box.AddTrinket(e.button)
 	if it := e.box.ItemAt(e.box.Count() - 1); it != nil {
-		it.Align = core.AlignCenter // center the button horizontally in the box
+		it.Align.H, it.Align.FillH = core.AlignCenter, false // center the button horizontally in the box
 	}
 
 	e.refreshPreview()
@@ -125,18 +125,18 @@ func (e *Editor) Layout() {
 	b := e.Bounds()
 	m := e.EffectiveCellMetrics()
 	interior := core.UnitRect{
-		X:      m.CellWidth,
-		Y:      m.CellHeight,
-		Width:  b.Width - 2*m.CellWidth,
-		Height: b.Height - 2*m.CellHeight,
+		X:      m.UnitsPerCellWidth,
+		Y:      m.UnitsPerCellHeight,
+		Width:  b.Width - 2*m.UnitsPerCellWidth,
+		Height: b.Height - 2*m.UnitsPerCellHeight,
 	}
 	e.box.Layout(e, interior)
 
 	// Re-wrap the preview to the scroll's viewport width (reserve a column for
 	// the vertical scrollbar) whenever that width changes.
-	w := e.scroll.Bounds().Width - m.CellWidth
-	if w < m.CellWidth {
-		w = m.CellWidth
+	w := e.scroll.Bounds().Width - m.UnitsPerCellWidth
+	if w < m.UnitsPerCellWidth {
+		w = m.UnitsPerCellWidth
 	}
 	if w != e.wrapWidth {
 		e.wrapWidth = w
@@ -238,7 +238,7 @@ func (e *Editor) refreshPreview() {
 		t = "(empty)"
 	}
 	if e.wrapWidth > 0 {
-		t = strings.Join(wrapText(t, e.wrapWidth, e.label.EffectiveFont()), "\n")
+		t = strings.Join(wrapText(t, e.wrapWidth, e.label.EffectiveFont(), e.label.EffectiveCellMetrics()), "\n")
 	}
 	e.label.SetText(t)
 	e.scroll.Layout() // re-measure content so the scroll range and preview refresh
@@ -389,8 +389,8 @@ func (e *Editor) Paint(p *core.Painter) {
 func (e *Editor) SizeHint() core.UnitSize {
 	m := e.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  m.TextWidth(40) + m.CellWidth*4,
-		Height: m.CellHeight * 8, // border + a few preview rows + button + border
+		Width:  m.UnitsPerCellWidth * defaultWideWidthCells,
+		Height: m.UnitsPerCellHeight * defaultContainerHeightCells,
 	}
 }
 

@@ -14,12 +14,12 @@ func TestTitleEllipsisUsesThreePeriods(t *testing.T) {
 	cell := font.MeasureText("x")
 
 	// A wide-enough avail returns the string unchanged.
-	if got := ellipsizeToWidth("Report", 100*cell, font); got != "Report" {
+	if got := ellipsizeToWidth("Report", 100*cell, font, core.DefaultCellMetrics()); got != "Report" {
 		t.Errorf("fitting title changed: %q", got)
 	}
 
 	// Too narrow: the result ends in "..." (not "…") and fits.
-	got := ellipsizeToWidth("Report Viewer", 8*cell, font)
+	got := ellipsizeToWidth("Report Viewer", 8*cell, font, core.DefaultCellMetrics())
 	if !strings.HasSuffix(got, "...") {
 		t.Errorf("ellipsis = %q, want a '...' suffix", got)
 	}

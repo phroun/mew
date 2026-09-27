@@ -124,6 +124,7 @@ func TestHostWindowMenuItemsOnTheRealSystemMenu(t *testing.T) {
 
 	want := []string{
 		"About Desktop",
+		"Narration",
 		"---",
 		"Desktop Accessories",
 		"Event Viewer",

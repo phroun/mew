@@ -32,11 +32,11 @@ func TestEllipsizeText(t *testing.T) {
 	d.SetBackend(b)
 	font := d.EffectiveFont()
 
-	if got := ellipsizeText(font, "short", 400); got != "short" {
+	if got := ellipsizeText(font, core.DefaultCellMetrics(), "short", 400); got != "short" {
 		t.Errorf("fitting text changed: %q", got)
 	}
 	long := "a rather long caption"
-	got := ellipsizeText(font, long, 60)
+	got := ellipsizeText(font, core.DefaultCellMetrics(), long, 60)
 	if !strings.HasSuffix(got, "…") {
 		t.Errorf("graphical ellipsis missing: %q", got)
 	}
@@ -44,7 +44,7 @@ func TestEllipsizeText(t *testing.T) {
 		t.Errorf("ellipsized text still overflows: %q", got)
 	}
 	// Rune safety: multibyte text must not split mid-rune.
-	got = ellipsizeText(font, "ααααααααααααααα", 40)
+	got = ellipsizeText(font, core.DefaultCellMetrics(), "ααααααααααααααα", 40)
 	for _, r := range got {
 		if r == '�' {
 			t.Errorf("mid-rune split: %q", got)
@@ -74,7 +74,7 @@ func TestTreeColumnNoDividerCellOnPixels(t *testing.T) {
 	// Same tree without a smooth ancestor: one divider cell between spans.
 	tv2 := newColumnsTree(60, 10)
 	lay2 := tv2.columnLayout()
-	cw := tv2.EffectiveCellMetrics().CellWidth
+	cw := tv2.EffectiveCellMetrics().UnitsPerCellWidth
 	if got := lay2.spans[1].x - (lay2.spans[0].x + lay2.spans[0].w); got != cw {
 		t.Errorf("TUI divider gap = %d, want one cell (%d)", got, cw)
 	}
@@ -131,7 +131,7 @@ func TestTreeChooserDimsSelection(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for _, name := range []string{"aaa", "bbb"} {
 		tv.AddRootItem(NewTreeItem(name))
 	}
@@ -210,7 +210,7 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
-	size := NewTreeColumn("size", "Size", 10)
+	size := NewTreeColumn("size", "Size", 10*cell)
 	size.Editable = true
 	tv.AddColumn(size)
 	for _, name := range []string{"aaa", "bbb"} {
@@ -285,7 +285,7 @@ func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
 	tv.SetEditable(true) // only the key column is editable: it IS the target
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for _, name := range []string{"aaa", "bbb"} {
 		tv.AddRootItem(NewTreeItem(name))
 	}
@@ -306,11 +306,15 @@ func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
 	item := tv.CurrentItem()
 	zx, zw := tv.treeCellEditZone(lay.spans[0], item)
 
-	c := b.Image().RGBAAt(int(zx+zw/2), 16+8) // inside the zone
+	// Two rows down from the row's top, which is above the cap height and so
+	// clear of the item's own glyphs: what is being read here is which
+	// BACKGROUND fills the zone, and a sample that lands on ink reads the
+	// text's colour instead.
+	c := b.Image().RGBAAt(int(zx+zw/2), 16+2) // inside the zone
 	if c.R != itR || c.G != itG || c.B != itB {
 		t.Errorf("zone = %d,%d,%d want FocusedListItem %d,%d,%d", c.R, c.G, c.B, itR, itG, itB)
 	}
-	c = b.Image().RGBAAt(int(zx+zw+16), 16+8) // right of the zone
+	c = b.Image().RGBAAt(int(zx+zw+16), 16+2) // right of the zone
 	if c.R != rowR || c.G != rowG || c.B != rowB {
 		t.Errorf("right of zone = %d,%d,%d want SelectedListItem %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
 	}
@@ -330,7 +334,7 @@ func TestTreeLedgerRows(t *testing.T) {
 	tv := NewTreeView()
 	tv.SetParent(d)
 	tv.SetShowHeader(true)
-	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	tv.AddColumn(NewTreeColumn("size", "Size", 10*cell))
 	for _, name := range []string{"aaa", "bbb", "ccc"} {
 		tv.AddRootItem(NewTreeItem(name))
 	}

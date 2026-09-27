@@ -21,6 +21,10 @@ type Panel struct {
 	fixedWidth core.Unit
 
 	// Appearance
+	// layingOut guards against a layout pass that reaches a child which asks
+	// for another one from inside it.
+	layingOut bool
+
 	background    style.CellStyle
 	backgroundSet bool // true if SetBackground was called
 	border        bool
@@ -76,7 +80,7 @@ func (p *Panel) RemoveChild(child core.Trinket) {
 	p.Update()
 }
 
-// denominations returns the grid-metrics currency of this panel's own
+// denominations returns the cell-metrics currency of this panel's own
 // coordinate space (outer: the parent's, in which bounds live) and of
 // its interior (honoring a per-panel override). Equal unless an
 // override is set on this panel.
@@ -121,6 +125,17 @@ func (p *Panel) childAtInterior(pos core.UnitPoint) core.Trinket {
 
 // Layout arranges children within this container.
 func (p *Panel) Layout() {
+	// A layout can reach a child that answers by changing its own content --
+	// a resize handler that rewrites a caption, say -- and that asks for the
+	// arrangement to be done again from the top. The pass already running is
+	// the one doing it, so it finishes rather than starting over inside
+	// itself.
+	if p.layingOut {
+		return
+	}
+	p.layingOut = true
+	defer func() { p.layingOut = false }()
+
 	if p.layoutManager != nil {
 		bounds := p.Bounds()
 		// Use local coordinates - children are positioned relative to
@@ -134,10 +149,10 @@ func (p *Panel) Layout() {
 		}
 		if p.border {
 			contentBounds = core.UnitRect{
-				X:      interior.CellWidth,
-				Y:      interior.CellHeight,
-				Width:  contentBounds.Width - 2*interior.CellWidth,
-				Height: contentBounds.Height - 2*interior.CellHeight,
+				X:      interior.UnitsPerCellWidth,
+				Y:      interior.UnitsPerCellHeight,
+				Width:  contentBounds.Width - 2*interior.UnitsPerCellWidth,
+				Height: contentBounds.Height - 2*interior.UnitsPerCellHeight,
 			}
 		}
 		p.layoutManager.Layout(p, contentBounds)
@@ -158,7 +173,7 @@ func (p *Panel) SetLayoutManager(layout core.LayoutManager) {
 			adder.AddTrinket(child)
 		}
 	}
-	// Let the layout resolve grid metrics through this container's
+	// Let the layout resolve cell metrics through this container's
 	// inheritance chain (layouts are not trinkets themselves).
 	if ms, ok := layout.(interface{ SetMetricsSource(core.Trinket) }); ok {
 		ms.SetMetricsSource(p.Self())
@@ -166,6 +181,9 @@ func (p *Panel) SetLayoutManager(layout core.LayoutManager) {
 	p.Layout()
 	p.Update()
 }
+
+// Border reports whether the panel draws a frame inside its own bounds.
+func (p *Panel) Border() bool { return p.border }
 
 // SetBorder enables or disables the border. Enabling defaults the
 // border style to single lines if none was set (the zero-value
@@ -198,18 +216,35 @@ func (p *Panel) SizeHint() core.UnitSize {
 	outer, interior := p.denominations()
 	var sh core.UnitSize
 	if p.layoutManager != nil {
-		sh = core.ExchangeSize(p.layoutManager.SizeHint(p), interior, outer)
+		// What the content needs, plus the frame that has to go round it.
+		sh = p.plusChrome(p.layoutManager.SizeHint(p), interior)
 	} else {
-		font := p.EffectiveFont()
-		sh = core.ExchangeSize(core.UnitSize{
-			Width:  font.MeasureRunes(20), // 20 chars wide
-			Height: interior.TextHeight(10),
-		}, interior, outer)
+		// The fallback is the whole of what a panel nobody has sized asks
+		// for, frame included: it is there to be seen and corrected, not to
+		// hold anything.
+		sh = core.UnitSize{
+			Width:  interior.UnitsPerCellWidth * defaultSizeCells,
+			Height: interior.UnitsPerCellHeight * defaultContainerHeightCells,
+		}
 	}
+	sh = core.ExchangeSize(sh, interior, outer)
 	if p.fixedWidth > 0 {
 		sh.Width = p.fixedWidth
 	}
 	return sh
+}
+
+// plusChrome adds what the panel's own frame takes out of its content. Layout
+// hands the manager the rect INSIDE the border, so a panel that asked only for
+// what its content needs was two rows and two columns short of holding it --
+// and a panel sitting at its hint drew its frame through its own children.
+func (p *Panel) plusChrome(sz core.UnitSize, interior core.CellMetrics) core.UnitSize {
+	if !p.border {
+		return sz
+	}
+	sz.Width += 2 * interior.UnitsPerCellWidth
+	sz.Height += 2 * interior.UnitsPerCellHeight
+	return sz
 }
 
 // SetFixedWidth pins the panel's SizeHint width (0 clears it). Height
@@ -222,11 +257,22 @@ func (p *Panel) SetFixedWidth(w core.Unit) {
 
 // MinimumSize returns the minimum size in the outer currency.
 func (p *Panel) MinimumSize() core.UnitSize {
+	size := core.UnitSize{Width: 16, Height: 16}
 	if p.layoutManager != nil {
 		outer, interior := p.denominations()
-		return core.ExchangeSize(p.layoutManager.MinimumSize(p), interior, outer)
+		size = core.ExchangeSize(p.plusChrome(p.layoutManager.MinimumSize(p), interior), interior, outer)
 	}
-	return core.UnitSize{Width: 16, Height: 16}
+	// What its content needs, or what min_width and min_height demanded of it,
+	// whichever is larger: a panel that answered only for its content dropped
+	// a minimum written on it.
+	own := p.TrinketBase.MinimumSize()
+	if own.Width > size.Width {
+		size.Width = own.Width
+	}
+	if own.Height > size.Height {
+		size.Height = own.Height
+	}
+	return size
 }
 
 // HasHeightForWidth reports whether this panel's content height depends
@@ -247,11 +293,11 @@ func (p *Panel) HeightForWidth(width core.Unit) core.Unit {
 	inner := core.ExchangeX(width, outer, interior)
 	var chrome core.Unit
 	if p.border {
-		inner -= 2 * interior.CellWidth
+		inner -= 2 * interior.UnitsPerCellWidth
 		if inner < 0 {
 			inner = 0
 		}
-		chrome = 2 * interior.CellHeight
+		chrome = 2 * interior.UnitsPerCellHeight
 	}
 	return core.ExchangeY(hfw.HeightForWidth(inner)+chrome, interior, outer)
 }

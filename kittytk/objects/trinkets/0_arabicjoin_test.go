@@ -10,7 +10,7 @@ func TestArabicKashida(t *testing.T) {
 		kaf   = 0x0643 // dual
 		meem  = 0x0645 // dual
 		ba    = 0x0628 // dual
-		alef  = 0x0627 // right-joining (joins prev only)
+		alef  = 0x0627 // right-joining (joins preceding only)
 		hamza = 0x0621 // non-joining
 	)
 	space := rune(' ')
@@ -22,16 +22,16 @@ func TestArabicKashida(t *testing.T) {
 	}{
 		// "عليكم" visual cells: م ك ي ل ع. A medial dual letter (lam) with dual
 		// neighbours on both sides joins both edges.
-		{"medial lam", lam, yeh /*left=next*/, ain /*right=prev*/, true, true},
+		{"medial lam", lam, yeh /*left=following*/, ain /*right=preceding*/, true, true},
 		// Meem at the visual left end (word start in visual terms) — its left
 		// neighbour is a space, so no kashida on the left; joins right.
 		{"final-ish meem", meem, space, kaf, false, true},
 		// Ain at the visual right end — right neighbour space, joins left only.
 		{"initial ain", ain, lam, space, true, false},
-		// Alef is right-joining: connects to the previous (right) but NEVER to
+		// Alef is right-joining: connects to the preceding (right) but NEVER to
 		// the following (left), even with a dual neighbour there.
-		{"alef joins prev only", alef, ba /*next*/, ba /*prev*/, false, true},
-		// A dual letter whose next neighbour is alef: alef joins-prev, so the
+		{"alef joins preceding only", alef, ba /*following*/, ba /*preceding*/, false, true},
+		// A dual letter whose following neighbour is alef: alef joins-preceding, so the
 		// letter DOES connect to it on the left.
 		{"ba before alef", ba, alef, space, true, false},
 		// Hamza joins nothing.

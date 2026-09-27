@@ -23,8 +23,9 @@ func TestMenuBarFirstItemFittsHitArea(t *testing.T) {
 	mb.SetBounds(core.UnitRect{Width: mb.SizeHint().Width + 40, Height: 16})
 
 	// The first item is indented from the left edge.
-	if got := mb.calculateMenuX(0); got != menuBarLeftInset {
-		t.Fatalf("first item X = %d, want indented by %d", got, menuBarLeftInset)
+	inset := mb.leftInset()
+	if got := mb.calculateMenuX(0); got != inset {
+		t.Fatalf("first item X = %d, want indented by %d", got, inset)
 	}
 
 	// A click at the very left edge - inside the indent, left of the item -

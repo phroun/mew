@@ -49,7 +49,7 @@ type RenderBackend interface {
 
 	// DrawTextAligned draws text aligned within a box using the given font.
 	// If font is nil, uses DefaultFont().
-	DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle, font *Font)
+	DrawTextAligned(bounds UnitRect, text string, hSide HSide, vAlign VAlign, s style.CellStyle, font *Font)
 
 	// FillRect fills a rectangle with a character and style.
 	FillRect(r UnitRect, ch rune, s style.CellStyle)
@@ -462,6 +462,72 @@ func SetTitleBarScale(s float64) {
 // TitleBarScale returns the current graphical title-bar scale.
 func TitleBarScale() float64 { return titleBarScale }
 
+// menuScale scales every GRAPHICAL menu's rows and their contents: the menu
+// bar, the dropdowns it opens, and context menus. 1.0 is the classic
+// full-cell row; 0.9 renders the rows at 90% of it with the fonts and the
+// cell-based gutters and pads scaled to match. Cell (terminal) surfaces
+// cannot subdivide a character cell and always render at 1.0 regardless.
+// Read by the menu kit (objects/trinkets/menu_metrics.go), which is the only
+// place menus measure.
+var menuScale = 1.0
+
+// SetMenuScale sets the graphical menu scale; values at or below zero
+// restore 1.0.
+func SetMenuScale(s float64) {
+	if s <= 0 {
+		s = 1
+	}
+	menuScale = s
+}
+
+// MenuScale returns the current graphical menu scale.
+func MenuScale() float64 { return menuScale }
+
+// shortcutScale sizes a menu's shortcut column against the menu's body face:
+// 0.8 draws the shortcuts at four fifths of the item text, so the column
+// sits quietly beside it rather than competing with it. Graphical only -- a
+// terminal draws one size, its cell's. Read by the menu kit.
+var shortcutScale = 0.8
+
+// shortcutNativeScale is applied ON TOP of shortcutScale for the face
+// macOS-native mode swaps in: Apple's UI face renders visually larger than
+// the menu's own at the same point size, so it is taken down again. The two
+// compound, so the defaults put a native shortcut at 0.64 of the body.
+var shortcutNativeScale = 0.8
+
+// SetShortcutScale sets the menu shortcut column's size against the body
+// face; values at or below zero restore the default.
+func SetShortcutScale(s float64) {
+	if s <= 0 {
+		s = 0.8
+	}
+	shortcutScale = s
+}
+
+// ShortcutScale returns the menu shortcut column's size against the body face.
+func ShortcutScale() float64 { return shortcutScale }
+
+// SetShortcutNativeScale sets the further reduction applied to Apple's face
+// in macOS-native mode; values at or below zero restore the default.
+func SetShortcutNativeScale(s float64) {
+	if s <= 0 {
+		s = 0.8
+	}
+	shortcutNativeScale = s
+}
+
+// ShortcutNativeScale returns that further reduction.
+func ShortcutNativeScale() float64 { return shortcutNativeScale }
+
+// MenuRowProvider is the optional capability a chrome bar has when it can
+// state its own row height: the menu kit's row at the current MenuScale,
+// counted in the bar's OWN denomination. A window reserves that much for it
+// rather than assuming a whole cell, so a shortened bar leaves no dead strip
+// below it that nothing answers for. A bar that cannot say keeps the cell.
+type MenuRowProvider interface {
+	MenuRowHeight() Unit
+}
+
 // FrameBorderProvider is the trinket-side carrier of the graphical
 // window-frame border reservation: the desktop reports how many units the
 // frame border occupies (the device-pixel width converted at its
@@ -487,6 +553,33 @@ func FindFrameBorderUnits(w Trinket) Unit {
 		current = parent
 	}
 	return 0
+}
+
+// FindFrameBorderUnitsIn is FindFrameBorderUnits stated in m's
+// denomination. The provider answers in ITS OWN units -- device pixels
+// divided by its surface's pixels-per-unit -- and a window whose frame
+// counts in another denomination spends a different number for the same
+// physical thickness. A top-level window's frame denomination IS the
+// desktop's, so the two agree there; an MDI child's is its pane's, which
+// follows whatever the host window's content was re-expressed to.
+//
+// Both axes come back because a unit is square only where the cell is: a
+// 16x16 denomination over an 8x16 desktop spends 4 units on the same
+// border across and 2 down.
+func FindFrameBorderUnitsIn(w Trinket, m CellMetrics) (x, y Unit) {
+	for current := Trinket(w); current != nil; {
+		if p, ok := current.(FrameBorderProvider); ok {
+			b := p.WindowFrameBorderUnits()
+			from := FindEffectiveCellMetrics(current)
+			return ExchangeX(b, from, m), ExchangeY(b, from, m)
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return 0, 0
+		}
+		current = parent
+	}
+	return 0, 0
 }
 
 // PxPerUnitProvider is the trinket-side carrier of the surface's
@@ -528,6 +621,18 @@ type SnapOriginSetter interface {
 	// SetSnapOrigin anchors snapping at (ux, uy) and returns the previous
 	// origin for restore. (0,0) is the global default.
 	SetSnapOrigin(ux, uy Unit) (Unit, Unit)
+}
+
+// CursorColorer is an optional RenderBackend capability: draw the backend's own
+// caret in a given colour, and hand the reader's own setting back when asked
+// for style.ColorDefault.
+//
+// It belongs to backends whose caret is drawn by something else -- a terminal,
+// whose caret colour is one global preference chosen against the terminal's own
+// background. A trinket that paints a background of its own is the only thing
+// that knows a thin caret in that preference would vanish into what it painted.
+type CursorColorer interface {
+	SetCursorColor(c style.Color)
 }
 
 // CaretDrawer is an optional RenderBackend capability: pixel surfaces
@@ -805,16 +910,16 @@ func (p *Painter) WithTransform(t Transform) *Painter {
 // WithDenomination returns a Painter whose local coordinates are
 // denominated in `child` metrics, given the current space is
 // denominated in `parent` metrics. Used when descending into a
-// container that carries a grid-metrics override: the same number of
+// container that carries a cell-metrics override: the same number of
 // rows/columns, re-expressed, so re-denomination is visually invariant.
 // Identity when the denominations match.
 func (p *Painter) WithDenomination(parent, child CellMetrics) *Painter {
-	if parent == child || child.CellWidth <= 0 || child.CellHeight <= 0 {
+	if parent == child || child.UnitsPerCellWidth <= 0 || child.UnitsPerCellHeight <= 0 {
 		return p
 	}
 	return p.WithTransform(Transform{
-		ScaleX: float64(parent.CellWidth) / float64(child.CellWidth),
-		ScaleY: float64(parent.CellHeight) / float64(child.CellHeight),
+		ScaleX: float64(parent.UnitsPerCellWidth) / float64(child.UnitsPerCellWidth),
+		ScaleY: float64(parent.UnitsPerCellHeight) / float64(child.UnitsPerCellHeight),
 	})
 }
 
@@ -1296,10 +1401,10 @@ func (p *Painter) DrawCaret(x, y, height Unit, s style.CellStyle) bool {
 }
 
 // ScreenHeightToLocal converts a screen-space height into local
-// units under the painter's current transform. Font metrics
-// (LineHeight, MeasureText) are screen-space: glyph rasters ignore
-// denomination scaling, so layout math inside re-denominated
-// interiors must convert them before mixing with local coordinates.
+// units under the painter's current transform. MeasureText is
+// screen-space: glyph rasters ignore denomination scaling, so layout
+// math inside re-denominated interiors must convert its answer before
+// mixing it with local coordinates.
 func (p *Painter) ScreenHeightToLocal(h Unit) Unit {
 	r := p.transform.Inverse().ApplyRect(UnitRect{Height: h})
 	return r.Height
@@ -1309,6 +1414,44 @@ func (p *Painter) ScreenHeightToLocal(h Unit) Unit {
 func (p *Painter) ScreenWidthToLocal(w Unit) Unit {
 	r := p.transform.Inverse().ApplyRect(UnitRect{Width: w})
 	return r.Width
+}
+
+// HairlineWidth is the thinnest local width that still paints, and
+// HairlineHeight is the same down the page.
+//
+// One screen unit converted into local units is the physical thickness wanted,
+// but the conversion answers in whole units and the count it lands on can span
+// no device pixel at all: inside an interior at column_units=12 a local unit is
+// two-thirds of a pixel, so a 1-unit fill paints NOTHING and the rule, the
+// divider, the line is simply absent. Clamping the unit count at 1 does not
+// reach it -- 1 was already the answer -- so the floor belongs on the pixels,
+// which is what these put it on.
+//
+// A separator's rule and a splitter's divider are drawn with these.
+func (p *Painter) HairlineWidth() Unit {
+	return p.hairline(p.ScreenWidthToLocal(1), func(u Unit) int { return p.UnitSpanPxX(0, u) })
+}
+
+// HairlineHeight is HairlineWidth for the Y axis.
+func (p *Painter) HairlineHeight() Unit {
+	return p.hairline(p.ScreenHeightToLocal(1), func(u Unit) int { return p.UnitSpanPxY(0, u) })
+}
+
+// hairline grows a local thickness until it spans a device pixel.
+//
+// It counts up rather than scaling: the span is the backend's own snapped
+// geometry, not a ratio to compute against, and the answer is a unit or two in
+// every denomination a surface is likely to carry. The cap is there so a
+// backend that reports no pixels for any span ends the loop rather than
+// running it out.
+func (p *Painter) hairline(u Unit, spanPx func(Unit) int) Unit {
+	if u < 1 {
+		u = 1
+	}
+	for i := 0; i < 64 && spanPx(u) < 1; i++ {
+		u++
+	}
+	return u
 }
 
 // DrawText draws a string using the specified font.
@@ -1321,10 +1464,10 @@ func (p *Painter) DrawText(x, y Unit, text string, s style.CellStyle, font *Font
 
 // DrawTextAligned draws text aligned within a box using the specified font.
 // If font is nil, uses DefaultFont().
-func (p *Painter) DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle, font *Font) {
+func (p *Painter) DrawTextAligned(bounds UnitRect, text string, hSide HSide, vAlign VAlign, s style.CellStyle, font *Font) {
 	screenBounds := p.transform.ApplyRect(bounds)
 	p.applyClip()
-	p.backend.DrawTextAligned(screenBounds, text, hAlign, vAlign, s, font)
+	p.backend.DrawTextAligned(screenBounds, text, hSide, vAlign, s, font)
 }
 
 // FillRect fills a rectangle.
@@ -1365,15 +1508,6 @@ func (p *Painter) DrawBox(r UnitRect, border style.BorderStyle, title string, s 
 // Clear fills a rectangle with space characters.
 func (p *Painter) Clear(r UnitRect, s style.CellStyle) {
 	p.FillRect(r, ' ', s)
-}
-
-// TextWidth returns the width needed for text in units using the specified font.
-// If font is nil, uses DefaultFont().
-func (p *Painter) TextWidth(text string, font *Font) Unit {
-	if font == nil {
-		font = DefaultFont()
-	}
-	return font.MeasureText(text)
 }
 
 // Size returns a size in units for the given cell dimensions.

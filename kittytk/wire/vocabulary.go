@@ -13,6 +13,9 @@ type PropInfo struct {
 	Default string
 	Doc     string
 	Enum    []string
+	// Members are the types a collection property accepts; empty on a
+	// collection means any trinket.
+	Members []string
 }
 
 // EventFieldDesc is one field an event record carries. It names itself,
@@ -34,14 +37,33 @@ type EventInfo struct {
 	Fields []EventFieldDesc
 }
 
+// CallInfo is one question a type answers or one action it performs.
+type CallInfo struct {
+	Name string
+	Doc  string
+	Args []EventFieldDesc
+}
+
+// AskInfo is a question a type answers; DoInfo is an action it performs. One
+// shape, because they are the same declaration under a different verb.
+type (
+	AskInfo = CallInfo
+	DoInfo  = CallInfo
+)
+
 // TypeInfo describes one registered type, its type-specific props, and
 // the events it emits (common props are reported once at the vocabulary
 // level).
 type TypeInfo struct {
 	Name    string
 	Virtual bool
-	Props   []PropInfo
-	Events  []EventInfo
+	// Hosted marks a type the wire cannot construct: the host registers
+	// an instance and hands over its ID, and `new <name>` is refused.
+	Hosted bool
+	Props  []PropInfo
+	Asks   []AskInfo
+	Does   []DoInfo
+	Events []EventInfo
 }
 
 // Vocabulary is the full introspection result: the common properties
@@ -53,7 +75,7 @@ type Vocabulary struct {
 
 // DecodeVocabulary parses the flat describe stream (the statements the
 // describe verb emits, one per line) back into a Vocabulary. Lines are
-// proptype/prop/propcommon/event/eventfield statements; unknown lines
+// proptype/prop/propcommon/ask/askarg/do/doarg/event/eventfield statements; unknown lines
 // are ignored, so a newer host can add statement kinds without breaking
 // an older client.
 func DecodeVocabulary(lines []string) (*Vocabulary, error) {
@@ -71,7 +93,11 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 			switch st.Verb {
 			case "proptype":
 				name := stmtStr(st, "name")
-				v.Types = append(v.Types, TypeInfo{Name: name, Virtual: stmtFlag(st, "virtual")})
+				v.Types = append(v.Types, TypeInfo{
+					Name:    name,
+					Virtual: stmtFlag(st, "virtual"),
+					Hosted:  stmtFlag(st, "hosted"),
+				})
 				byType[name] = len(v.Types) - 1
 			case "propcommon":
 				v.Common = append(v.Common, stmtToPropInfo(st))
@@ -79,6 +105,42 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 				of := stmtStr(st, "of")
 				if i, ok := byType[of]; ok {
 					v.Types[i].Props = append(v.Types[i].Props, stmtToPropInfo(st))
+				}
+			case "ask", "do":
+				of := stmtStr(st, "of")
+				i, ok := byType[of]
+				if !ok {
+					continue
+				}
+				c := CallInfo{
+					Name: stmtStr(st, "name"),
+					Doc:  stmtStr(st, "doc"),
+				}
+				if st.Verb == "ask" {
+					v.Types[i].Asks = append(v.Types[i].Asks, c)
+				} else {
+					v.Types[i].Does = append(v.Types[i].Does, c)
+				}
+			case "askarg", "doarg":
+				i, ok := byType[stmtStr(st, "of")]
+				if !ok {
+					continue
+				}
+				calls := v.Types[i].Asks
+				name := stmtStr(st, "ask")
+				if st.Verb == "doarg" {
+					calls, name = v.Types[i].Does, stmtStr(st, "do")
+				}
+				for j := range calls {
+					if calls[j].Name != name {
+						continue
+					}
+					calls[j].Args = append(calls[j].Args, EventFieldDesc{
+						Name: stmtStr(st, "name"),
+						Kind: stmtStr(st, "kind"),
+						Doc:  stmtStr(st, "doc"),
+					})
+					break
 				}
 			case "event":
 				of := stmtStr(st, "of")
@@ -115,6 +177,14 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 	return v, nil
 }
 
+// splitList reads a comma-separated field, empty for an empty one.
+func splitList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
+
 func stmtToPropInfo(st *Statement) PropInfo {
 	p := PropInfo{
 		Name:    stmtStr(st, "name"),
@@ -123,7 +193,10 @@ func stmtToPropInfo(st *Statement) PropInfo {
 		Doc:     stmtStr(st, "doc"),
 	}
 	if e := stmtStr(st, "enum"); e != "" {
-		p.Enum = strings.Split(e, ",")
+		p.Enum = splitList(e)
+	}
+	if m := stmtStr(st, "members"); m != "" {
+		p.Members = splitList(m)
 	}
 	return p
 }

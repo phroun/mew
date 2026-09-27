@@ -8,7 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/phroun/kittytk/hebrew"
+	"github.com/phroun/khatool"
 
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/textwidth"
@@ -702,54 +702,13 @@ func (b *backBuffer) rowVisualCells(y int) []rowCell {
 //     reversed glyph settles on, not its mirror. The block marks are untouched;
 //     only where the paint lands changes.
 func flipEmitPlan(cells []rowCell, wordwise bool) (order, styleOrder []int, mirror []bool) {
-	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
-	isStrongLTR := func(c bbCell) bool {
-		if len(c.runes) == 0 {
-			return false
+	bases := make([]rune, len(cells))
+	for i, c := range cells {
+		if len(c.cell.runes) > 0 {
+			bases[i] = c.cell.runes[0]
 		}
-		r := c.runes[0]
-		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
 	}
-	order = make([]int, 0, len(cells))
-	styleOrder = make([]int, 0, len(cells))
-	mirror = make([]bool, 0, len(cells))
-	for i := 0; i < len(cells); {
-		if !isRTL(cells[i].cell) {
-			order = append(order, i)
-			styleOrder = append(styleOrder, i)
-			mirror = append(mirror, false)
-			i++
-			continue
-		}
-		// Extend the run. Word-wise stops at the first non-RTL cell (each word
-		// reverses in place); otherwise absorb interior neutrals as long as
-		// another RTL cell follows before any strong LTR content.
-		end := i
-		for j := i + 1; j < len(cells); j++ {
-			if isRTL(cells[j].cell) {
-				end = j
-				continue
-			}
-			if wordwise || isStrongLTR(cells[j].cell) {
-				break
-			}
-		}
-		for j := end; j >= i; j-- {
-			order = append(order, j)
-			mirror = append(mirror, true)
-		}
-		if wordwise {
-			for j := i; j <= end; j++ { // attributes at the physical column
-				styleOrder = append(styleOrder, j)
-			}
-		} else {
-			for j := end; j >= i; j-- { // attributes reverse with the glyph
-				styleOrder = append(styleOrder, j)
-			}
-		}
-		i = end + 1
-	}
-	return order, styleOrder, mirror
+	return khatool.FlipRuns(bases, wordwise)
 }
 
 // emitRow writes one full row's cells into sb (left to right) and syncs disp.
@@ -772,22 +731,46 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 	// glyphCell. The two are the same cell everywhere except a word-wise flip's
 	// RTL runs, where the glyph reverses but the attribute stays at the physical
 	// column so a positional-painting host lands it on the right letter.
-	emit := func(glyphCell, styleCell bbCell, mirror bool) {
+	// Where the drift starts, in emission order. Everything from there on is
+	// laid down after a run this host cannot count, so a background reaches the
+	// screen somewhere other than the cell it was written for.
+	driftFrom := -1
+
+	emit := func(glyphCell, styleCell bbCell, mirror bool, drifting bool) {
 		// Style emission depends on the mode. flipBidi exists for Terminal.app,
 		// whose own bidi engine re-processes each parsed line: coalesced
 		// run-level SGR does not survive that reordering (colors vanish), while
 		// per-glyph attributes do — and since it shapes from parsed characters,
 		// per-glyph SGR cannot break its Arabic joining. Everywhere else
 		// (logicalCUP whole-row escalation) coalesce via the pen as usual.
+		style := styleCell.style
+		blank := len(glyphCell.runes) == 0 ||
+			(len(glyphCell.runes) == 1 && glyphCell.runes[0] == ' ')
+		// Past the drift, nothing painted at the cell is trusted. A blank draws
+		// its own background instead of being given one, so a filled region
+		// keeps its shape; anything with a glyph keeps the glyph and its colour
+		// and loses the ground. A cell some other rule has already dealt with
+		// arrives with no ground left, and this finds nothing to do.
+		shade := ""
+		if drifting {
+			if ink, ok := groundAsInk(style); ok && blank {
+				style, shade = ink, fallbackBlank
+			} else {
+				style = dropGround(style)
+			}
+		}
 		if b.flipBidi {
-			style := styleCell.style
 			if style == "" {
 				style = defaultStyleSeq
 			}
 			sb.WriteString(style)
 			b.emitPen = style
 		} else {
-			b.putStyle(sb, styleCell.style)
+			b.putStyle(sb, style)
+		}
+		if shade != "" {
+			sb.WriteString(shade)
+			return
 		}
 		if len(glyphCell.runes) == 0 {
 			sb.WriteByte(' ')
@@ -801,7 +784,7 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		// its point back out as a free-standing mark.
 		runes := glyphCell.runes
 		if modeFoldsMarks(b.rtlMarkMode) {
-			if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+			if folded, ok := khatool.PrecomposeCluster(runes); ok {
 				runes = folded
 			}
 		}
@@ -817,7 +800,7 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 
 	if !b.flipBidi {
 		for _, c := range cells {
-			emit(c.cell, c.cell, false)
+			emit(c.cell, c.cell, false, false)
 		}
 		return
 	}
@@ -827,9 +810,42 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 	// order, the attributes from styleOrder — identical except in a word-wise
 	// host's RTL runs.
 	order, styleOrder, mirror := flipEmitPlan(cells, b.flipWordwise)
-	for k, idx := range order {
-		emit(cells[idx].cell, cells[styleOrder[k]].cell, mirror[k])
+	if b.flipRideSafe {
+		driftFrom = b.driftStart(cells, order, mirror)
 	}
+	for k, idx := range order {
+		emit(cells[idx].cell, cells[styleOrder[k]].cell, mirror[k],
+			driftFrom >= 0 && k >= driftFrom)
+	}
+}
+
+// driftStart is the emission slot where this host stops placing a background
+// where it was written: the first slot of the first right-to-left run still
+// carrying a mark once folding has had its way. -1 when the row has none.
+//
+// A run is a stretch of slots the plan turned over, which is what mirror marks.
+// The whole run is affected, not just the marked cell, so the answer is the
+// run's first slot rather than the mark's.
+func (b *backBuffer) driftStart(cells []rowCell, order []int, mirror []bool) int {
+	folding := modeFoldsMarks(b.rtlMarkMode)
+	for k := 0; k < len(order); {
+		if !mirror[k] {
+			k++
+			continue
+		}
+		end := k
+		for end+1 < len(order) && mirror[end+1] {
+			end++
+		}
+		for j := k; j <= end; j++ {
+			runes := cells[order[j]].cell.runes
+			if khatool.HasZeroWidthAfterFold(runes, folding, isZeroWidthMark) {
+				return k
+			}
+		}
+		k = end + 1
+	}
+	return -1
 }
 
 // isHebrewCombiningMark reports whether r is a Hebrew combining point or
@@ -856,7 +872,7 @@ func (b *backBuffer) frameHasUncomposedNiqqud() bool {
 				continue
 			}
 			if folds {
-				if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+				if folded, ok := khatool.PrecomposeCluster(runes); ok {
 					runes = folded
 				}
 			}
@@ -945,13 +961,13 @@ func modeFoldsMarks(mode string) bool {
 }
 
 // precomposeCell folds a Hebrew cell into a single presentation-form glyph where
-// one exists (delegating to the shared kittytk/hebrew package), so no
+// one exists (delegating to khatool), so no
 // free-standing point is left for a terminal to drift. It covers well-formed
 // clusters and the anchored points that render poorly on a dotted circle (an
 // isolated shin dot, sin dot, or holam-haser is shown on its faux base). The
 // cell keeps whatever colour it already carries.
 func precomposeCell(c bbCell) (string, bool) {
-	if folded, ok := hebrew.PrecomposeCluster(c.runes); ok {
+	if folded, ok := khatool.PrecomposeCluster(c.runes); ok {
 		return string(folded), true
 	}
 	return "", false

@@ -32,6 +32,13 @@
 //	                          ;   paints its own title bar) / native_titlebar / native
 //	titlebar_scale =          ; graphical title-bar height and content scale
 //	                          ;   (1.0 = classic full-cell row, the default)
+//	menu_scale   =            ; graphical menu bar / dropdown / context menu row
+//	                          ;   height and content scale (1.0 = the default)
+//	shortcut_scale =          ; menu shortcut column size against the item text
+//	                          ;   (0.8 = the default)
+//	shortcut_native_scale =   ; further reduction for Apple's face in [system]
+//	                          ;   native mode, compounded on shortcut_scale
+//	                          ;   (0.8 = the default, so 0.64 together)
 //	host_type    =            ; force the desktop the keymap's (kde) / (gnome) /
 //	                          ;   … hints are tested against, overriding what the
 //	                          ;   session advertises (blank = detect)
@@ -48,6 +55,13 @@
 //	[service]
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
 //	token    =            ; optional shared secret
+//	pre_trusted_only =    ; true = admit only clients already decided about,
+//	                      ;   refusing anything else without asking
+//	prompt_local     =    ; true = ask about same-machine connections too,
+//	                      ;   instead of admitting them for being local
+//	                      ; Both are also switches in the Connections window;
+//	                      ;   changing one there writes `current`, which is read
+//	                      ;   after this file (see policies.go)
 //
 //	[system]
 //	density  =            ; the PHYSICAL screen's content scale (2 on a HiDPI
@@ -83,7 +97,10 @@
 //	                      ;   fraktur cipher; default), off (normal font).
 //
 // Environment variables still take precedence over the file: KITTYTK_DISPLAY
-// for the endpoint and KITTYTK_TOKEN for the token.
+// for the endpoint, KITTYTK_TOKEN for the token, and KITTYTK_PRE_TRUSTED_ONLY /
+// KITTYTK_PROMPT_LOCAL for the two connection policies -- which they START
+// rather than govern, since a user who changes one in the desktop has said
+// something newer than the variable did.
 package hostcfg
 
 import (
@@ -148,6 +165,19 @@ type Config struct {
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
 
+	// The two connection policies the Connections window also offers. They are
+	// the settings a user changes while the desktop is running, so they arrive
+	// from three places -- the ini, the `current` overlay written when the
+	// window is used, and the environment -- and policyOrigins remembers which,
+	// to be shown beside the switch.
+	PreTrustedOnly bool
+	PromptLocal    bool
+
+	// layer is the file being read, and policyOrigins what each policy traces
+	// back to. Both are for showing, not deciding.
+	layer         string
+	policyOrigins map[string]string
+
 	// Native/TUINative set the menu-shortcut glyph style ("true" = native on
 	// macOS, "mac" = force native, else default) for the graphical ([system])
 	// and terminal ([tui]) hosts respectively.
@@ -160,6 +190,25 @@ type Config struct {
 	// disabled group renders plain instead of the styled Unicode. Absent =
 	// enabled.
 	TUIPseudoFontsDisabled map[string]bool
+
+	// RtlMarkMode ([options] rtlMarkMode) is how a cell target emits the
+	// combining marks that ride a right-to-left letter, mirroring mew's option
+	// of the same name: "compose" folds a cluster's points into their letter's
+	// presentation form so nothing is left free-standing for a terminal to
+	// misplace, "" leaves them as written. Empty = leave them.
+	RtlMarkMode string
+
+	// RtlCombining ([options] rtlCombining) is whether those marks are SHOWN at
+	// all, again mirroring mew's. They are what a reordering terminal miscounts
+	// a background fill over, and the only part of such a line that can be given
+	// up -- so a display that wants its selection bars, its highlights and its
+	// gutter more than its vowels turns this off, and pointed Hebrew renders one
+	// codepoint per cell the way pre-shaped Arabic does. Under a folding
+	// RtlMarkMode the points survive even so, folded into their letters.
+	//
+	// Only a cell target is affected; the graphical one composes marks properly
+	// and has no terminal to disagree with. Absent = shown.
+	RtlCombining *bool
 
 	// TUIFrakturMode ([tui] fraktur_mode) is a SEPARATE concern: how a
 	// terminal's VT100 fraktur REQUEST (font 20 / SGR 20) is handled — "native"
@@ -228,6 +277,30 @@ type Config struct {
 	// terminal host ignores it.
 	TitleBarScale float64
 
+	// MenuScale scales every GRAPHICAL menu's row height and its contents --
+	// the menu bar, the dropdowns it opens, and context menus -- read from
+	// [window] menu_scale. 1.0 (the default) is the classic full-cell row;
+	// 0.9 renders the rows at 90% of it, ceiled to a whole unit of the
+	// denomination they count in, with the fonts and the cell-based gutters
+	// and pads scaled to match. Values at or below zero, or that don't
+	// parse, keep 1.0. Cell surfaces cannot subdivide a character cell and
+	// always render at 1.0 regardless, so the terminal host ignores it.
+	MenuScale float64
+
+	// ShortcutScale sizes a menu's shortcut column against the menu's body
+	// face, read from [window] shortcut_scale. 0.8 (the default) draws the
+	// shortcuts at four fifths of the item text. Graphical only: a terminal
+	// draws one size, its cell's. Values at or below zero, or that don't
+	// parse, keep the default.
+	ShortcutScale float64
+
+	// ShortcutNativeScale is applied ON TOP of ShortcutScale for the face
+	// macOS-native mode swaps in, read from [window] shortcut_native_scale.
+	// Apple's UI face renders visually larger than the menu's own at the same
+	// point size, so it is taken down again; the two compound, so the
+	// defaults put a native shortcut at 0.64 of the body.
+	ShortcutNativeScale float64
+
 	// HostType overrides the desktop environment the keymap's environment hints
 	// are tested against, read from [window] host_type. The session normally
 	// says what it is (XDG_CURRENT_DESKTOP), so this is for where it says
@@ -258,7 +331,12 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1, MenuScale: 1,
+		ShortcutScale: 0.8, ShortcutNativeScale: 0.8,
+		policyOrigins: map[string]string{
+			PolicyPreTrustedOnly: OriginBuiltIn,
+			PolicyPromptLocal:    OriginBuiltIn,
+		}}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -276,7 +354,8 @@ func SearchPaths() []string {
 }
 
 // Load returns the configuration from the first readable kittytk.ini in
-// SearchPaths (whole file wins), or Defaults() if none is found.
+// SearchPaths (whole file wins), or Defaults() if none is found, with the
+// `current` overlay applied over the top of it (see policies.go).
 func Load() Config {
 	cfg := Defaults()
 	for _, p := range SearchPaths() {
@@ -284,6 +363,7 @@ func Load() Config {
 		if err != nil {
 			continue
 		}
+		cfg.layer = filepath.Base(p)
 		apply(data, &cfg)
 		cfg.Source = p
 		// Resolve relative font paths against the ini's own directory, so a
@@ -302,6 +382,10 @@ func Load() Config {
 		}
 		break // first found wins
 	}
+	// What the user has changed in the desktop itself, over the top of what the
+	// ini says. Only ever the user config dir: it is this machine's record of
+	// what was done here, not something shipped beside a program.
+	cfg.ApplyCurrent()
 	return cfg
 }
 
@@ -415,6 +499,21 @@ func apply(data []byte, cfg *Config) {
 			}
 			continue
 		}
+		// [options] mirrors mew's section of the same name, for the two knobs
+		// that mean the same thing on either side of the wire. Both spellings
+		// are taken -- mew writes rtlMarkMode, this file's own keys are
+		// underscored -- since a reader has one of them in mind already.
+		if section == "options" {
+			switch key {
+			case "rtlmarkmode", "rtl_mark_mode":
+				cfg.RtlMarkMode = strings.ToLower(val)
+				continue
+			case "rtlcombining", "rtl_combining":
+				show := !isFalsey(val)
+				cfg.RtlCombining = &show
+				continue
+			}
+		}
 		// [tui] font knobs (two separate things): pseudofont_<group> = off
 		// disables a by-name cipher pseudo-font; fraktur_mode = native|pseudo|off
 		// governs how a terminal's VT100 fraktur request is rendered.
@@ -454,6 +553,21 @@ func apply(data []byte, cfg *Config) {
 			// doesn't parse, or is zero or negative, keeps the classic 1.0.
 			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
 				cfg.TitleBarScale = f
+			}
+		case "menu_scale":
+			// Graphical menu row height and content scale, on the same terms.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.MenuScale = f
+			}
+		case "shortcut_scale":
+			// The shortcut column against the item text.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.ShortcutScale = f
+			}
+		case "shortcut_native_scale":
+			// Compounded on top of it for Apple's face.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.ShortcutNativeScale = f
 			}
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
@@ -515,6 +629,12 @@ func apply(data []byte, cfg *Config) {
 			cfg.Endpoint = val
 		case "token":
 			cfg.Token = val
+		case PolicyPreTrustedOnly:
+			cfg.PreTrustedOnly = parseBool(val)
+			cfg.notePolicy(PolicyPreTrustedOnly)
+		case PolicyPromptLocal:
+			cfg.PromptLocal = parseBool(val)
+			cfg.notePolicy(PolicyPromptLocal)
 		case "native":
 			// The only section-sensitive key: [tui] configures the terminal
 			// host, every other section (including none) the graphical host.
@@ -699,5 +819,17 @@ func (c Config) UseTUIOSC52Paste() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// ApplyText pushes the settings that govern how TEXT is prepared into the
+// toolkit, so every host applies them the same way and a trinket never has to
+// ask. Both are answered only where a cell target is drawing: the graphical one
+// composes marks properly and has no terminal to disagree with, so calling this
+// from either host is right.
+func ApplyText(cfg Config) {
+	core.SetRtlMarkMode(cfg.RtlMarkMode)
+	if cfg.RtlCombining != nil {
+		core.SetRtlCombining(*cfg.RtlCombining)
 	}
 }

@@ -16,7 +16,7 @@ func TestCascadeKeepsNonResizableSize(t *testing.T) {
 	fixed := NewWindow("fixed")
 	fixed.SetFlags(WindowFlagNoResize)
 	m.AddWindow(fixed)
-	fixed.SetBounds(core.UnitRect{X: 10, Y: 10, Width: 120, Height: 80})
+	fixed.SetBounds(core.UnitRect{X: 8, Y: 16, Width: 120, Height: 80})
 
 	flex := NewWindow("flex")
 	m.AddWindow(flex)
@@ -29,8 +29,11 @@ func TestCascadeKeepsNonResizableSize(t *testing.T) {
 	}
 
 	metrics := core.DefaultCellMetrics()
-	wantW := metrics.RoundDownToCellX(800 * 3 / 4)
-	wantH := metrics.RoundDownToCellY(600 * 3 / 4)
+	// From the room the manager actually offers, which on a cell surface is
+	// the screen floored onto the grid.
+	room := m.ClientArea()
+	wantW := metrics.RoundDownToCellX(room.Width * 3 / 4)
+	wantH := metrics.RoundDownToCellY(room.Height * 3 / 4)
 	if xb := flex.Bounds(); xb.Width != wantW || xb.Height != wantH {
 		t.Errorf("cascade sized the resizable window to %dx%d, want %dx%d", xb.Width, xb.Height, wantW, wantH)
 	}

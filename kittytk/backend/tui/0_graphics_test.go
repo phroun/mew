@@ -518,7 +518,7 @@ func TestITermVersionGatesKittyFallback(t *testing.T) {
 // keeps going, because nothing downstream knows where the window ended.
 func TestImageIsCroppedToTheClip(t *testing.T) {
 	b := &TUIBackend{cols: 80, rows: 25}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	// A window occupying cells (2,1)..(11,5): 10 cells wide, 5 tall.
@@ -557,7 +557,7 @@ func TestImageIsCroppedToTheClip(t *testing.T) {
 // and without asking, it is emitted over the very window that covers it.
 func TestImageIsOccludedByWhatIsPaintedOverIt(t *testing.T) {
 	b := &TUIBackend{cols: 80, rows: 25}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	b.dmgMin, b.dmgMax = make([]int, b.rows), make([]int, b.rows)
@@ -638,7 +638,7 @@ func TestEarlierPaintDoesNotOccludeAnImage(t *testing.T) {
 func TestKittyPlacesBeforeDeleting(t *testing.T) {
 	var out strings.Builder
 	b := &TUIBackend{output: &out, cols: 40, rows: 20}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	b.allocateBuffers()
@@ -699,7 +699,7 @@ func TestKittyPlacesBeforeDeleting(t *testing.T) {
 func TestOcclusionChangeCountsAsAChange(t *testing.T) {
 	var out strings.Builder
 	b := &TUIBackend{output: &out, cols: 40, rows: 20}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	b.allocateBuffers()
@@ -765,7 +765,7 @@ func TestOcclusionChangeCountsAsAChange(t *testing.T) {
 func TestClippedImageIsNotResentEveryFrame(t *testing.T) {
 	var out strings.Builder
 	b := &TUIBackend{output: &out, cols: 40, rows: 20}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	b.allocateBuffers()
@@ -936,7 +936,7 @@ func TestMotionTrackingFollowsDemand(t *testing.T) {
 func TestKittyDeltaPatchesSmallChanges(t *testing.T) {
 	var out strings.Builder
 	b := &TUIBackend{output: &out, cols: 40, rows: 20}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	b.allocateBuffers()
@@ -995,7 +995,7 @@ func TestKittyDeltaPatchesSmallChanges(t *testing.T) {
 func TestKittyDeltaGivesUpOnLargeChanges(t *testing.T) {
 	var out strings.Builder
 	b := &TUIBackend{output: &out, cols: 40, rows: 20}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	b.allocateBuffers()
@@ -1026,7 +1026,7 @@ func TestKittyDeltaGivesUpOnLargeChanges(t *testing.T) {
 func TestKittyDeltaRefusesWhenGeometryMoves(t *testing.T) {
 	var out strings.Builder
 	b := &TUIBackend{output: &out, cols: 40, rows: 20}
-	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.metrics = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	b.graphics = GraphicsKitty
 	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
 	b.allocateBuffers()

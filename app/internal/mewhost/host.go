@@ -17,8 +17,6 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/objects/app"
@@ -314,11 +312,7 @@ func windowManaged(wm *window.WindowManager, win *window.Window) bool {
 // serveSocket starts the display service so apps appear as they connect,
 // reporting the outcome in the status bar.
 func serveSocket(desktop *trinkets.Desktop, cfg hostcfg.Config) {
-	dcfg := display.DefaultConfig(desktop, cfg.ResolveEndpoint())
-	if dcfg.Token == "" {
-		dcfg.Token = cfg.ResolveToken()
-	}
-	if srv, err := display.ServeConfig(desktop, dcfg); err != nil {
+	if srv, err := hostcfg.Serve(desktop, cfg); err != nil {
 		if sb := desktop.StatusBar(); sb != nil {
 			sb.SetText("display service unavailable: " + err.Error())
 		}
@@ -453,43 +447,6 @@ func firstOperand(argv []string) string {
 	return ""
 }
 
-// ClearHostShortcuts removes the KittyTK host's built-in menu accelerators from
-// the global keybinding registry so their keys fall through to the mew editor
-// instead of being swallowed by the host: ^Q (Quit), ^H/M-^H (Hide/Hide Others),
-// M-^X (Exit Desktop), and ^X/^C/^V/M-a (Cut/Copy/Paste/Select All). mew is a
-// full text editor and binds most of these itself, so the host must not
-// intercept them.
-//
-// Call this BEFORE trinkets.NewDesktop(): the Ψ system menu (which carries Exit
-// Desktop) is built once inside NewDesktop by reading this registry, and is not
-// rebuilt afterward - so clearing later leaves M-^X on it. The app/edit/window
-// menus are rebuilt on every menu-bar composition, so those pick up the cleared
-// registry regardless; the system menu is the one that must be cleared up front.
-//
-// The actions stay reachable from the menus (clicking still works; the
-// synthesized items just render without an accelerator - all synthesis sites
-// guard on len(keys) > 0, so an empty binding is safe). New Window and Raw Key
-// Input are app-declared in buildMenus below and simply carry no shortcut.
-//
-// This is a deliberate stopgap: it removes the conflicts now. Real rebinding and
-// the accessibility story (keyboard reachability of these actions) come with the
-// planned keybinding overhaul.
-func ClearHostShortcuts() {
-	for _, action := range []string{
-		core.ActionQuit,
-		core.ActionAppHide,
-		core.ActionAppHideOthers,
-		core.ActionAppShowAll,
-		core.ActionExitDesktop,
-		core.ActionCut,
-		core.ActionCopy,
-		core.ActionPaste,
-		core.ActionSelectAll,
-	} {
-		core.DefaultKeyBindings.ClearAction(action)
-	}
-}
-
 // buildMenus builds the host menu bar from protocol text and registers the
 // action handlers. Raw Key Input passes the next keystroke straight to the
 // focused trinket (so control keys reach the mew editor), exactly as the demo.
@@ -510,9 +467,10 @@ var desktopReveal struct {
 }
 
 func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWindow bool) []*trinkets.Menu {
-	// No shortcut= on these: like the host accelerators cleared in
-	// ClearHostShortcuts, New Window and Raw Key Input are menu-only for now so
-	// their keys stay free for the mew editor. Rebinding comes later.
+	// No shortcut= on these: New Window and Raw Key Input are menu-only, so
+	// their keys stay free for the mew editor -- which takes the keyboard with a
+	// captured registry of its own while it has the focus (see
+	// trinkets.capturedEditorKeys), rather than anything here clearing them.
 	//
 	// The app menu and Window menu carry New Window only in the multi-window
 	// (graphical) host; on the TUI both are dropped.

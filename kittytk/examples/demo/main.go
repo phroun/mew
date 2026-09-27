@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/client"
-	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
+	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/layout"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
@@ -36,7 +36,7 @@ func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	f.AddChild(content)
 	f.SetLayoutManager(boxLayout)
-	boxLayout.ItemAt(0).WithAlign(core.AlignFill)
+	boxLayout.ItemAt(0).WithAlign(core.DefaultAlignment())
 	return f
 }
 
@@ -109,7 +109,7 @@ root=new panel layout=vbox children={
 	new separator
 	cb=new checkbox C="Tri-state checkbox (watch the label above)" tristate
 	inp=new textinput placeholder="Type here..."
-	combo=new combobox children={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
+	combo=new combobox items={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
 	btn=new button C="Dispatch demo.hello" action=demo.hello
 }
 watch=root.status

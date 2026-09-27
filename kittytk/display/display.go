@@ -12,14 +12,17 @@ package display
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/app"
@@ -27,6 +30,7 @@ import (
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/wire"
 )
 
 // Config configures a display server's transport and authorization.
@@ -58,7 +62,37 @@ type Config struct {
 	// connections to the same authorization as remote ones instead of
 	// trusting them automatically (for shared machines).
 	PromptLocal bool
+
+	// PreTrustedOnly starts the server in lockdown: connections without a
+	// standing allow are refused rather than asked about.
+	PreTrustedOnly bool
+
+	// PolicyOrigins says where each policy's starting value came from, keyed
+	// by policy name, in words meant to be read: the file it was written in,
+	// or the environment variable that set it. The Connections window shows it
+	// beside the switch, so a value nobody in this session chose can still
+	// account for itself.
+	PolicyOrigins map[string]string
+
+	// OnPolicyChanged is called when the user throws one of those switches in
+	// the Connections window, and answers with what to call the place the
+	// change was kept -- which becomes the switch's new origin. A host that
+	// keeps nothing between runs returns "", and the window says as much.
+	//
+	// This is the whole of the server's part in remembering a policy: it holds
+	// the value, reports the change, and knows nothing about files.
+	OnPolicyChanged func(name string, on bool) string
 }
+
+// The policies the Connections window offers, named so a host can tell which
+// one changed. Each has an environment variable that sets its starting value.
+const (
+	PolicyPreTrustedOnly = "pre_trusted_only"
+	PolicyPromptLocal    = "prompt_local"
+
+	PreTrustedOnlyEnv = "KITTYTK_PRE_TRUSTED_ONLY"
+	PromptLocalEnv    = "KITTYTK_PROMPT_LOCAL"
+)
 
 // Server accepts display-protocol connections for one desktop.
 type Server struct {
@@ -67,21 +101,106 @@ type Server struct {
 	sessions atomic.Uint64
 	closed   atomic.Bool
 
-	endpoint    endpoint
-	token       string
-	store       *authStore
-	authorize   Authorizer
-	prompt      Authorizer
-	promptLocal bool
+	endpoint  endpoint
+	token     string
+	store     *authStore
+	known     *knownStore
+	nicks     *pairStore
+	authorize Authorizer
+	prompt    Authorizer
+
+	// promptLocal, when set, asks about same-machine connections too instead
+	// of admitting them on the strength of the OS having let them reach the
+	// socket. The Connections window offers it as "Automatically Approve
+	// Loopback Connections", which is this turned around.
+	promptLocal atomic.Bool
 
 	// preTrustedOnly, when set, auto-rejects any connection without an
 	// existing stored allow instead of prompting (a lockdown mode the
-	// Psi menu's "Pre-Trusted Clients Only" toggles at runtime).
+	// Connections window's "Allow Previously Trusted Clients Only"
+	// toggles at runtime).
 	preTrustedOnly atomic.Bool
+
+	// Where each policy's value came from, and who to tell when the user
+	// changes one. The mutex is held only for these two.
+	policyMu      sync.Mutex
+	policyOrigins map[string]string
+	onPolicy      func(name string, on bool) string
 
 	// TLSFingerprint is the host certificate's sha256:<hex> for tls://
 	// endpoints (what clients pin); empty otherwise.
 	TLSFingerprint string
+
+	// The connections currently served, so one can be found by the name its
+	// application goes under. Only the debug relay needs this; nothing about
+	// ordinary traffic reaches across connections.
+	connMu sync.Mutex
+	conns  []*conn
+
+	// relayEnabled opens the host's debug relay, which lets one connection put
+	// statements to another. It is off unless something turns it on, because
+	// it is a way for one application to speak as the display to another.
+	relayEnabled atomic.Bool
+}
+
+// isTruthy reads an environment switch the way every other one here is read.
+func isTruthy(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// RelayEnv opens the host's debug relay when set to a truthy value. It is the
+// only thing that turns it on by itself; a host with a surface of its own can
+// call SetRelayEnabled instead.
+const RelayEnv = "KITTYTK_DEBUG_RELAY"
+
+// SetRelayEnabled opens or closes the host's debug relay (`do host relay`).
+// It is off until this is called: an application that can relay can address
+// another application's objects, which is the display's business and nobody
+// else's.
+func (s *Server) SetRelayEnabled(v bool) { s.relayEnabled.Store(v) }
+
+// RelayEnabled reports whether the debug relay is open.
+func (s *Server) RelayEnabled() bool { return s.relayEnabled.Load() }
+
+// connNamed is the live connection whose application goes under this name, and
+// nil for a name nothing is connected under.
+func (s *Server) connNamed(name string) *conn {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	for _, c := range s.conns {
+		if c.app != nil && c.app.Name() == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func (s *Server) addConn(c *conn) {
+	s.connMu.Lock()
+	s.conns = append(s.conns, c)
+	s.connMu.Unlock()
+	// **A connection that arrived while the display was stopping is stopped too.**
+	// The hang-up walks the connections it can see, so one added after it looked
+	// would be left holding a socket to a display that has gone -- which is the
+	// whole fault, arriving through the one door left open.
+	if s.closed.Load() {
+		c.hangUp(wire.GoodbyeQuit)
+	}
+}
+
+func (s *Server) dropConn(c *conn) {
+	s.connMu.Lock()
+	for i, other := range s.conns {
+		if other == c {
+			s.conns = append(s.conns[:i], s.conns[i+1:]...)
+			break
+		}
+	}
+	s.connMu.Unlock()
 }
 
 // SetPreTrustedOnly toggles lockdown: while true, connections that are
@@ -90,6 +209,51 @@ func (s *Server) SetPreTrustedOnly(v bool) { s.preTrustedOnly.Store(v) }
 
 // PreTrustedOnly reports the lockdown state.
 func (s *Server) PreTrustedOnly() bool { return s.preTrustedOnly.Load() }
+
+// SetPromptLocal chooses whether same-machine connections are asked about
+// rather than admitted for being local.
+func (s *Server) SetPromptLocal(v bool) { s.promptLocal.Store(v) }
+
+// PromptLocal reports whether same-machine connections are asked about.
+func (s *Server) PromptLocal() bool { return s.promptLocal.Load() }
+
+// SetPolicy is a policy changed BY THE USER, which is the one path that tells
+// the host to keep it. What the host answers with is what the value now traces
+// back to; a host that keeps nothing leaves the change standing for as long as
+// this server runs, and the window says so.
+func (s *Server) SetPolicy(name string, on bool) {
+	switch name {
+	case PolicyPreTrustedOnly:
+		s.SetPreTrustedOnly(on)
+	case PolicyPromptLocal:
+		s.SetPromptLocal(on)
+	default:
+		return
+	}
+	s.policyMu.Lock()
+	keep := s.onPolicy
+	s.policyMu.Unlock()
+
+	origin := ""
+	if keep != nil {
+		origin = keep(name, on)
+	}
+	s.policyMu.Lock()
+	if s.policyOrigins == nil {
+		s.policyOrigins = map[string]string{}
+	}
+	s.policyOrigins[name] = origin
+	s.policyMu.Unlock()
+}
+
+// PolicyOrigin is where a policy's value traces back to, in the words the host
+// gave: a file, an environment variable, or "" for one this session changed
+// and nothing kept.
+func (s *Server) PolicyOrigin(name string) string {
+	s.policyMu.Lock()
+	defer s.policyMu.Unlock()
+	return s.policyOrigins[name]
+}
 
 // Serve listens on the unix socket at path (creating its directory,
 // 0700) and serves connections until Close. Call from desktop wiring
@@ -103,14 +267,35 @@ func Serve(desktop *trinkets.Desktop, path string) (*Server, error) {
 func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 	ep := parseEndpoint(cfg.Endpoint)
 	s := &Server{
-		desktop:     desktop,
-		endpoint:    ep,
-		token:       cfg.Token,
-		store:       newAuthStore(""),
-		authorize:   cfg.Authorize,
-		prompt:      cfg.Prompt,
-		promptLocal: cfg.PromptLocal,
+		desktop:   desktop,
+		endpoint:  ep,
+		token:     cfg.Token,
+		store:     newAuthStore(""),
+		known:     newKnownStore(""),
+		nicks:     newNicknameStore(""),
+		authorize: cfg.Authorize,
+		prompt:    cfg.Prompt,
 	}
+	s.promptLocal.Store(cfg.PromptLocal)
+	s.preTrustedOnly.Store(cfg.PreTrustedOnly)
+	// The debug relay is off unless the environment opens it, because an
+	// application that can relay can address another application's objects.
+	s.relayEnabled.Store(isTruthy(os.Getenv(RelayEnv)))
+	// Narration is the desktop's setting; speaking it is this host's doing.
+	if runtime.GOOS == "darwin" {
+		desktop.SetSpeaker(speak)
+	}
+	s.onPolicy = cfg.OnPolicyChanged
+	s.policyOrigins = map[string]string{}
+	for name, origin := range cfg.PolicyOrigins {
+		s.policyOrigins[name] = origin
+	}
+
+	// Serving is what gives the desktop connections to show, so this is where
+	// the Connections item earns its place -- not in DefaultConfig, which a
+	// host is free not to use, and which would have left a hand-configured
+	// server with no way to see who it had let in.
+	desktop.SetConnectionsOpener(NewConnectionsOpener(desktop, s))
 
 	var ln net.Listener
 	var err error
@@ -151,17 +336,56 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 	}
 	s.listener = ln
 	go s.acceptLoop()
+
+	// **A display that has stopped serves nobody, and its applications are told.**
+	// Until this, they were left holding a socket to a desktop that had gone, and
+	// the shipped binaries got away with it only because the process exited and the
+	// operating system closed the sockets for them. A host that embeds a display,
+	// or keeps running after it, got nothing at all.
+	//
+	// An observer rather than the shutdown handler, which belongs to the host.
+	desktop.AddOnShutdown(func() {
+		// What kind of going it was, from how the desktop stopped: nought is a
+		// desktop that was asked to stop, and anything else is one that stopped
+		// because something was wrong.
+		reason := wire.GoodbyeQuit
+		if desktop.ExitCode() != 0 {
+			reason = wire.GoodbyeCrash
+		}
+		_ = s.CloseWith(reason)
+	})
 	return s, nil
 }
 
 // Addr returns the listener address (the socket path or host:port).
 func (s *Server) Addr() string { return s.listener.Addr().String() }
 
-// Close stops accepting and closes the listener. Existing
-// connections end when their sockets close.
-func (s *Server) Close() error {
+// Close stops accepting, says goodbye to every application connected, and closes
+// their sockets. A server that is closed serves nobody, so leaving them connected to
+// it would leave each one holding a socket to a display that has stopped.
+func (s *Server) Close() error { return s.CloseWith(wire.GoodbyeQuit) }
+
+// CloseWith is Close, saying which kind of going this is.
+//
+// **A closed socket cannot say why it closed.** The display quitting and the
+// connection breaking are the same silence from the far end, and they call for
+// opposite things: one is over, the other is worth waiting out. So each application
+// is told, and then hung up on -- see wire.GoodbyeVerb.
+//
+// What an application does about it is its own business. It may have work of its own
+// that outlives its display, and nothing here is an instruction: this says the
+// display is gone, and stops.
+func (s *Server) CloseWith(reason string) error {
 	s.closed.Store(true)
-	return s.listener.Close()
+	err := s.listener.Close()
+
+	s.connMu.Lock()
+	conns := append([]*conn(nil), s.conns...)
+	s.connMu.Unlock()
+	for _, c := range conns {
+		c.hangUp(reason)
+	}
+	return err
 }
 
 func (s *Server) acceptLoop() {
@@ -183,22 +407,100 @@ type conn struct {
 	factory *hostFactory
 	app     *app.Application
 
+	// ctx is the connection's event seam: what the store verbs answer
+	// through, so their events pass the same subscription filter a trinket's
+	// do rather than arriving whether or not the app asked for them.
+	ctx *protocol.BindContext
+
+	// troubles is what went wrong on this batch's behalf without stopping it, held
+	// until the batch is answered. Guarded by answerMu, which is the lock the
+	// other held-until-the-reply queue uses. See conn.trouble.
+	troubles []wire.Trouble
+
+	// The connection's store, as a wire object: the handshake hands the client
+	// its id, and everything it holds is addressed through it.
+	store *storeObject
+
+	// The connection's handle on the display, as a wire object: what an app
+	// asks for that belongs to nobody's app in particular.
+	host *hostObject
+
+	// Who this connection is, as the folders on disk are keyed: the client's
+	// identity and the name the app was ADMITTED under. The app may rename
+	// itself over the wire where its trust allows; its shelf does not move
+	// when it does.
+	identity string
+	appName  string
+
 	// solo marks a connection that asked (via the handshake) to be the
 	// whole display: its main window replaces the desktop entirely.
 	solo bool
 
-	// Accessibility routing state (the "Show/Speak Announcements"
-	// toggles): the connection owns the intent, and installs a desktop
-	// OnAnnounce handler reflecting it. Speech serializes through
-	// speechMu so a new utterance cancels the previous one.
-	announceVisual bool
-	announceSpeak  bool
-	speechMu       sync.Mutex
-	speechCmd      *exec.Cmd
+	// relayTo is the connection this one's answers are being shown to, set by
+	// the host's debug relay and nil the rest of the time.
+	relayMu sync.Mutex
+	relayTo *conn
+
+	// sources is the far ends this connection has stood up: one per source name
+	// a trinket on it named that the process registry did not hold. See
+	// appsources.go.
+	sources *appSources
+
+	// What the store was asked during a batch and will say when the batch is
+	// over: `set` runs with emission suppressed, so an answer to one waits here
+	// (see storeObject.answer).
+	answerMu sync.Mutex
+	answers  []*protocol.Event
 
 	// outbound statements; the writer goroutine owns the socket's
 	// write side.
 	out chan string
+
+	// gone is closed when this connection is finished with, and is what makes
+	// `send` safe from anywhere.
+	//
+	// **Events outlive the reader.** The reader goroutine returns when the socket
+	// does, and the desktop goes on holding this connection's trinkets for a
+	// moment longer -- closing its windows, which raises `window_closed`, which
+	// sends. Closing `out` to stop the writer therefore turned a late event into a
+	// send on a closed channel, and a panic in the display. Nothing is closed now
+	// but this, and a send after it is dropped, because there is nowhere to say it
+	// and nobody to hear it.
+	gone     chan struct{}
+	goneOnce sync.Once
+
+	// written is closed when the writer has stopped, which is how a hang-up knows
+	// its farewell is on the wire and the socket can go.
+	written chan struct{}
+}
+
+// finish marks the connection done, which stops the writer and makes every later
+// send a no-op. Safe to call more than once.
+func (c *conn) finish() { c.goneOnce.Do(func() { close(c.gone) }) }
+
+// goodbyeWait is how long the display will wait for its farewell to reach an
+// application before hanging up anyway.
+//
+// Short, because it is a courtesy and not a handshake: an application that is not
+// reading its socket cannot hold a display open by that. It is normally over at once
+// -- one short line into a socket that has room for it -- and this is only what
+// happens when there is not.
+const goodbyeWait = 250 * time.Millisecond
+
+// hangUp says goodbye and closes the socket, in that order and no faster.
+//
+// The order is the whole of it. The farewell is queued like any other statement, and
+// the writer drains what is queued when the connection finishes -- so this waits for
+// the writer to be done before taking the socket away, or the last thing the display
+// says would be the thing it never sent.
+func (c *conn) hangUp(reason string) {
+	c.send(wire.GoodbyeVerb + " " + wire.ReasonField + "=" + reason)
+	c.finish()
+	select {
+	case <-c.written:
+	case <-time.After(goodbyeWait):
+	}
+	c.nc.Close()
 }
 
 func (s *Server) serveConn(nc net.Conn) {
@@ -253,14 +555,27 @@ func (s *Server) serveConn(nc net.Conn) {
 		fmt.Fprintf(nc, "%s\n", protocol.EncodeError("connection refused"))
 		return
 	}
+	// Admitted: this client has said who it is and been let in, which is what
+	// the Connections window means by having spoken to us. Both it and the app
+	// it came as are written down here, so a client allowed for this session
+	// only -- which leaves no rule behind it -- is still shown and still has a
+	// folder of its own. A peer with no identity, which over a unix socket is
+	// this machine, has no row there to record.
+	id := req.identity()
+	_ = s.known.admitted(id, req.AppName, s.nicks.get(id), time.Now())
+
 	sessionID := s.sessions.Add(1)
 
 	c := &conn{
-		server:  s,
-		nc:      nc,
-		session: protocol.NewSession(),
-		solo:    solo,
-		out:     make(chan string, 1024),
+		server:   s,
+		nc:       nc,
+		session:  protocol.NewSession(),
+		identity: id,
+		appName:  req.AppName,
+		solo:     solo,
+		out:      make(chan string, 1024),
+		gone:     make(chan struct{}),
+		written:  make(chan struct{}),
 	}
 
 	// Per-connection BindContext: events encode onto the wire.
@@ -268,8 +583,25 @@ func (s *Server) serveConn(nc net.Conn) {
 	// across the seam (the app-side registry lives in the app).
 	ctx := &protocol.BindContext{
 		Emit: func(ev *protocol.Event) { c.send(ev.Encode()) },
+		// An answer goes out the same way an event does and passes neither of the
+		// gates an event passes: nothing has to have subscribed, and it does not
+		// wait for the suppression to lift. See protocol.BindContext.EmitAnswer.
+		Answer: func(a *protocol.Answer) { c.send(a.Encode()) },
+		// What a decision needs: an id the client can name while the question is
+		// open, and no id once it is answered. Both run on the desktop thread --
+		// a decision is minted where the thing being decided happens, and decided
+		// inside a batch, which executes there too.
+		Adopt: func(obj protocol.Object) { c.session.Register(obj) },
+		Drop:  func(id uint64) { c.session.Forget(id) },
+		Post:  func(fn func()) { s.desktop.Post(fn) },
 	}
+	c.ctx = ctx
 	c.factory = &hostFactory{inner: protocol.NewRegistryFactory(ctx)}
+	c.sources = &appSources{}
+
+	// How a trinket on this connection turns a NAME into a source. Per
+	// connection because a store is: see findSource.
+	trinkets.SetSourceFinder(ctx, c.findSource)
 
 	// The connection is a full Application (D22). It is a protocol object in
 	// its own right: register it in the session so the client can address it
@@ -285,36 +617,191 @@ func (s *Server) serveConn(nc net.Conn) {
 	// (A future step could re-prompt instead of rejecting.)
 	application.SetWireNameChangeAllowed(req.Local || s.store.allowsAllApps(req))
 	c.app = application
-	c.session.Register(application)
+	s.addConn(c)
+	defer s.dropConn(c)
+	c.session.RegisterAs(protocol.AppName, application)
 	s.desktop.Post(func() { s.desktop.AddApplication(application) })
 	defer s.desktop.Post(func() { c.teardown() })
 
 	go c.writeLoop()
-	defer close(c.out)
+	// Before the teardown below, not after: the windows it closes raise events,
+	// and by now there is no socket to carry them.
+	defer c.finish()
 
-	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d", sessionID, application.ObjectID()))
-	dbg("welcome sent session=%d app=%q id=%d", sessionID, appName, application.ObjectID())
+	// The store is an object of this connection's too, registered the same way
+	// and handed over in the same breath, so an app addresses what it has kept
+	// without a verb of its own.
+	c.store = newStoreObject(c, storeObjectID())
+	c.session.RegisterAs(protocol.StoreName, c.store)
+
+	// And its handle on the display, registered the same way: one object per
+	// connection onto the one desktop they all share.
+	c.host = newHostObject(c, hostObjectID())
+	c.session.RegisterAs(protocol.HostName, c.host)
+
+	c.send(fmt.Sprintf("welcome version=1 session=%d", sessionID))
+	// And then what this connection was handed, one field per object. Every
+	// field of this statement is an object, which is why it is a statement of
+	// its own: the welcome carries integers that are not ids, so a client
+	// cannot tell them apart by shape. A display that hands over a fourth
+	// object adds a field here and needs no client taught about it.
+	c.send(fmt.Sprintf("%s %s=%d %s=%d %s=%d",
+		protocol.InitVerb,
+		protocol.AppName, application.ObjectID(),
+		protocol.StoreName, c.store.ID(),
+		protocol.HostName, c.host.ID()))
+	dbg("welcome sent session=%d app=%q id=%d store=%d host=%d",
+		sessionID, appName, application.ObjectID(), c.store.ID(), c.host.ID())
+
+	// onDesktop runs one batch on the desktop thread and waits for it, which is
+	// where everything that touches a trinket happens (D21).
+	//
+	// Waiting is for the REPLY: a request is answered when it has been done, and
+	// this connection's next batch must not start before that. Ordering costs
+	// nothing here -- the desktop drains its posts in the order they arrive -- so
+	// what is waited for is the reply, and only a request has one.
+	onDesktop := func(fn func()) {
+		done := make(chan struct{})
+		s.desktop.Post(func() {
+			defer close(done)
+			fn()
+		})
+		<-done
+	}
 
 	// Batch loop: read until end, execute on the UI thread, reply.
 	for {
 		batch, err := readBatch(scanner)
 		if err != nil {
+			var bad *badBatch
+			if errors.As(err, &bad) {
+				// The client said something the language could not read. Say
+				// so and read the next batch: a refusal is not a disconnect.
+				dbg("batch refused for app=%q: %v", appName, bad)
+				c.send(protocol.EncodeError(bad.Error()))
+				continue
+			}
 			dbg("batch read ended for app=%q: %v", appName, err)
 			return // disconnect -> deferred teardown
 		}
+		// An answer is not a request. When an application replies to
+		// something the display put to it, or produces the records a query
+		// asked for, those statements run against nothing and are answered by
+		// nothing -- they go to whoever is listening for them.
+		//
+		// **On the desktop thread, the same as a request.** Not being a request
+		// says nothing about what it TOUCHES: the records an application answers
+		// with go to the source that asked, into the cache under it and on into
+		// the spine of the view that is showing them -- which is a trinket, being
+		// painted, by the desktop thread. This ran here, on the connection's own
+		// reader, and wrote a view's spine while the desktop drew it.
+		//
+		// It was the one inbound path that did not go through the door ten lines
+		// below, and nothing said why. Now neither does.
+		//
+		// **Posted and not waited for**, which is the one way it differs from a
+		// request: nothing is answered, so nothing here depends on it having
+		// happened, and the desktop runs what it is posted in order either way.
+		// Waiting would cost a frame apiece -- the desktop drains its posts once a
+		// pass -- and a view paging through a long sequence pays that for every
+		// page of it. A tree asked for a row six hundred down took twenty seconds
+		// to get there.
+		if said(batch) {
+			s.desktop.Post(func() { c.relay(batch) })
+			continue
+		}
 		dbg("executing batch (%d statements) for app=%q", len(batch), appName)
-		done := make(chan struct{})
-		s.desktop.Post(func() {
-			defer close(done)
-			c.execute(batch)
-		})
-		<-done
+		onDesktop(func() { c.execute(batch) })
 	}
 }
 
+// isSaid reports whether a verb is something an application SAYS rather than
+// something it asks the display for.
+//
+// Most of these answer a question the display put -- a reply naming a query, the
+// results filling one, the places among them, an error refusing one. `stale` does
+// not: it is the application speaking first, because only it knows its records
+// moved. Both kinds are alike in the one way that matters here, which is that
+// neither runs against the display and neither is replied to.
+//
+// A verb missing from this list is read as a REQUEST, executed against the
+// session, and refused as an unknown verb -- which is what `place` and `stale`
+// both did before they were added.
+func isSaid(verb string) bool {
+	switch verb {
+	case "reply", "error", protocol.ResultVerb, protocol.PlaceVerb, protocol.StaleVerb:
+		return true
+	}
+	return false
+}
+
+// said reports whether a whole batch is the application speaking. One of those
+// neither runs nor is replied to; it goes to whoever is listening for it.
+func said(batch []*protocol.Statement) bool {
+	if len(batch) == 0 {
+		return false
+	}
+	for _, stmt := range batch {
+		if !isSaid(stmt.Verb) {
+			return false
+		}
+	}
+	return true
+}
+
+// relay hands an application's answers to whoever asked the display to put the
+// question -- the debug relay, and nothing else yet. When nobody is listening
+// they are dropped, which is what happens to an answer to a question the
+// display has stopped caring about.
+func (c *conn) relay(batch []*protocol.Statement) {
+	// The records a query asked for go to the source that asked, which is the
+	// ordinary path now that a trinket can read an application's own. Whatever is
+	// left over is somebody else's answer, and the debug relay is the only other
+	// thing listening.
+	batch = c.inbound(batch)
+	if len(batch) == 0 {
+		return
+	}
+	c.relayMu.Lock()
+	to := c.relayTo
+	c.relayMu.Unlock()
+	if to == nil {
+		dbg("answer from app=%q with nobody listening: %d statement(s)",
+			c.app.Name(), len(batch))
+		return
+	}
+	for _, stmt := range batch {
+		to.send(protocol.NewEvent(EventRelay).
+			WithUint("host", to.host.ID()).
+			WithString("from", c.app.Name()).
+			WithString("text", protocol.EncodeStatement(stmt)).
+			Encode())
+	}
+}
+
+// badBatch is a batch the language could not read: one of its statements did
+// not parse. The batch does not run, and the connection carries on.
+//
+// The two failures a read can have are different in kind. Framing is the
+// transport's: the scanner finds statement boundaries by the language's own
+// brace and string awareness, and if that fails the byte stream is no longer
+// trustworthy and there is nothing to do but hang up. Parsing is the
+// language's, and a client that sends a statement the parser refuses is in the
+// same position as one that sends a property an object has not got -- it has
+// said something wrong, not something unreadable.
+type badBatch struct{ err error }
+
+func (b *badBatch) Error() string { return b.err.Error() }
+func (b *badBatch) Unwrap() error { return b.err }
+
 // readBatch collects statements until the D22 end terminator.
+//
+// A malformed statement poisons the batch it is in, but the rest of the batch
+// is still read: the statements are framed whether or not they parse, so
+// consuming to the terminator leaves the stream in step for the next one.
 func readBatch(scanner *protocol.Scanner) ([]*protocol.Statement, error) {
 	var batch []*protocol.Statement
+	var bad error
 	for {
 		text, err := scanner.Next()
 		if err != nil {
@@ -322,13 +809,25 @@ func readBatch(scanner *protocol.Scanner) ([]*protocol.Statement, error) {
 		}
 		script, err := protocol.Parse(text)
 		if err != nil {
-			// A malformed statement poisons the batch; report at
-			// execution time by injecting a marker error.
-			return nil, fmt.Errorf("parse: %w", err)
+			if bad == nil {
+				bad = fmt.Errorf("parse: %w", err)
+			}
+			continue
 		}
 		for _, stmt := range script.Statements {
 			if stmt.Verb == "end" && stmt.Key == "" {
+				if bad != nil {
+					return nil, &badBatch{bad}
+				}
 				return batch, nil
+			}
+			// What an application SAYS is not a batch and carries no terminator:
+			// a request is terminated by `end` and answered, and these are not
+			// requests. They arrive one at a time, the way events go the other
+			// way, so waiting for an `end` that is never coming would stop the
+			// connection dead.
+			if len(batch) == 0 && isSaid(stmt.Verb) {
+				return []*protocol.Statement{stmt}, nil
 			}
 			batch = append(batch, stmt)
 		}
@@ -344,6 +843,8 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	script := &protocol.Script{Statements: batch}
 	reply, err := c.session.Execute(script, c.factory)
 	if err != nil {
+		c.flushAnswers()
+		c.flushTroubles()
 		c.send(protocol.EncodeError(err.Error()))
 		return
 	}
@@ -400,11 +901,46 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	dbg("batch adopted for app=%q: app now has %d window(s)", c.app.Name(), len(c.app.Windows()))
 
 	// Deliver any verb-produced statements (the describe verb's flat
-	// vocabulary stream) ahead of the reply that terminates the batch.
+	// vocabulary stream) ahead of the reply that terminates the batch, and with
+	// them whatever the store was asked and could not answer while emission was
+	// suppressed.
+	c.flushAnswers()
+	c.flushTroubles()
 	for _, line := range reply.Extra {
 		c.send(line)
 	}
 	c.send(protocol.EncodeReply(reply))
+}
+
+// trouble holds something that went wrong on this batch's behalf until the batch
+// is answered.
+//
+// **Held rather than sent at once**, because a batch's stream is request and reply
+// and a line arriving in the middle of one desyncs a client reading it. It goes out
+// with the describe stream and the store's held answers, immediately before the
+// reply that ends the batch, which is where everything else a batch produced goes.
+func (c *conn) trouble(t wire.Trouble) {
+	if t.Text == "" {
+		return
+	}
+	c.answerMu.Lock()
+	c.troubles = append(c.troubles, t)
+	c.answerMu.Unlock()
+}
+
+// flushTroubles sends what the batch had to say and forgets it.
+//
+// Before the reply AND before a refusal: a batch that went on to fail may still
+// have loaded something with a complaint in it, and the complaint is about the
+// load rather than about the failure.
+func (c *conn) flushTroubles() {
+	c.answerMu.Lock()
+	said := c.troubles
+	c.troubles = nil
+	c.answerMu.Unlock()
+	for _, t := range said {
+		c.send(wire.EncodeTrouble(t))
+	}
 }
 
 // resolveOwnerWindow returns the window an owner object id refers to in this
@@ -483,19 +1019,16 @@ func (c *conn) appHasMainWindow(except *window.Window) bool {
 // desktop-reaching actions a remote app can't perform through its own
 // trinket handles - the display does them on the app's behalf:
 //
-//	rawkey            - pass the next key straight to the focused trinket
-//	cut/copy/paste/   - the standard edit actions on the focused trinket
-//	  selectall
-//	tile/cascade      - arrange the desktop's windows
-//	spawndesktop      - leave solo mode: reveal a desktop, solo window
-//	                    becomes a torn-off dockable window
-//	gosolo            - the inverse: promote a detached app back to solo
-//	theme             - toggle the dark/light terminal theme (+ retheme)
-//	desktopfont NAME  - set the desktop font (tuesday | default)
-//	announce_visual   - toggle showing announcements in the status bar
-//	announce_speak    - toggle speaking announcements (macOS `say`)
+//	announce_visual   - toggle the desktop's announcement trace
+//	announce_speak    - toggle narration
+//
+// These two are the last of them. What they toggle is the DESKTOP's -- there is
+// one announcement handler and announcements come from every trinket on it --
+// so they reach Desktop.SetNarration and Desktop.SetAnnouncementTrace, and the
+// Ψ menu's Narration item is the same setting from the other side. They are
+// still bare verbs only because they have not been given their spelling on the
+// host object yet.
 func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement {
-	d := c.server.desktop
 	rest := batch[:0:0]
 	for _, stmt := range batch {
 		if stmt.Key != "" {
@@ -503,40 +1036,12 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 			continue
 		}
 		switch stmt.Verb {
-		case "rawkey":
-			d.ActivatePassNextKeyToTrinket()
-		case "status":
-			if sb := d.StatusBar(); sb != nil {
-				sb.SetText(argString(stmt, "text"))
-			}
-		case "cut", "copy", "paste", "selectall":
-			editAction(d.FocusedTrinket(), stmt.Verb)
-		case "tile":
-			if wm := d.WindowManager(); wm != nil {
-				wm.TileWindows()
-			}
-		case "cascade":
-			if wm := d.WindowManager(); wm != nil {
-				wm.CascadeWindows()
-			}
-		case "spawndesktop":
-			// Leave solo mode: reveal a desktop and turn the solo window
-			// into a torn-off, dockable window. Any client may request it.
-			d.ExitSoloMode()
-		case "gosolo":
-			// The inverse: promote a detached app back to solo (fill the
-			// display, dismiss the desktop).
-			d.EnterSoloFromDesktop()
-		case "theme":
-			toggleTerminalTheme(d)
-		case "desktopfont":
-			d.SetFont(namedDesktopFont(firstWord(stmt)))
 		case "announce_visual":
-			c.announceVisual = !c.announceVisual
-			c.updateAnnounce()
+			d := c.server.desktop
+			d.SetAnnouncementTrace(!d.AnnouncementTrace())
 		case "announce_speak":
-			c.announceSpeak = !c.announceSpeak
-			c.updateAnnounce()
+			d := c.server.desktop
+			d.SetNarration(!d.Narration())
 		default:
 			rest = append(rest, stmt)
 		}
@@ -600,10 +1105,9 @@ func editAction(w core.Trinket, verb string) {
 	}
 }
 
-// toggleTerminalTheme flips the active dark/light terminal theme and
+// setTerminalTheme puts the display in the dark or the light terminal theme and
 // repaints; embedded terminals follow via their own palette.
-func toggleTerminalTheme(d *trinkets.Desktop) {
-	dark := style.ActiveTermTheme() == style.TermThemeLight
+func setTerminalTheme(d *trinkets.Desktop, dark bool) {
 	if dark {
 		style.SetActiveTermTheme(style.TermThemeDark)
 	} else {
@@ -633,56 +1137,45 @@ func applyTerminalTheme(w core.Trinket, dark bool) {
 	}
 }
 
-// updateAnnounce installs or clears the desktop's OnAnnounce handler to
-// reflect this connection's visual/speech toggles.
-func (c *conn) updateAnnounce() {
-	am := c.server.desktop.AccessibilityManager()
-	if am == nil {
-		return
-	}
-	if !c.announceVisual && !c.announceSpeak {
-		am.OnAnnounce = nil
-		return
-	}
-	am.OnAnnounce = func(a core.AccessibilityAnnouncement) {
-		if c.announceVisual {
-			if sb := c.server.desktop.StatusBar(); sb != nil {
-				prefix := "\U0001F4E2"
-				if a.Priority == "assertive" {
-					prefix = "⚠️"
-				}
-				sb.SetText(fmt.Sprintf("%s [%s] %s", prefix, a.Priority, a.Message))
-			}
-		}
-		if c.announceSpeak && a.Vocal && runtime.GOOS == "darwin" {
-			c.speak(a.Message)
-		}
-	}
-	// Announce the toggle itself so the change is perceptible.
-	am.AnnouncePolite("Announcements updated")
+// speaking is the one utterance in flight. Narration is the desktop's, so the
+// speech is too: a new announcement cancels the last whichever app raised it.
+var speaking struct {
+	mu  sync.Mutex
+	cmd *exec.Cmd
 }
 
-// speak voices a message via macOS `say`, cancelling any in-flight
-// utterance first (navigation throttling already thinned the stream).
-func (c *conn) speak(msg string) {
+// speak voices a message through macOS `say`, cancelling any in-flight
+// utterance first (navigation throttling has already thinned the stream). It is
+// what the display offers the desktop as its speaker (Desktop.SetSpeaker); a
+// host with a better way to speak installs that instead, and one with no way at
+// all leaves narration reaching nothing.
+func speak(msg string) {
 	go func() {
-		c.speechMu.Lock()
-		if c.speechCmd != nil && c.speechCmd.Process != nil {
-			_ = c.speechCmd.Process.Kill()
-			_ = c.speechCmd.Wait()
+		speaking.mu.Lock()
+		if speaking.cmd != nil && speaking.cmd.Process != nil {
+			_ = speaking.cmd.Process.Kill()
+			_ = speaking.cmd.Wait()
 		}
-		c.speechCmd = exec.Command("say", "-r", "250", msg)
-		c.speechMu.Unlock()
-		_ = c.speechCmd.Run()
-		c.speechMu.Lock()
-		c.speechCmd = nil
-		c.speechMu.Unlock()
+		cmd := exec.Command("say", "-r", "250", msg)
+		speaking.cmd = cmd
+		speaking.mu.Unlock()
+		_ = cmd.Run()
+		speaking.mu.Lock()
+		if speaking.cmd == cmd {
+			speaking.cmd = nil
+		}
+		speaking.mu.Unlock()
 	}()
 }
 
 // teardown runs on the UI thread at disconnect: the app and its
 // windows leave the desktop (D22 v1; reattach arrives with D4).
 func (c *conn) teardown() {
+	// **The application is gone, so it decides nothing.** First, because what
+	// follows is closing its windows, and a window that asked a departed
+	// application whether it might close would wait for ever -- leaving the
+	// application removed with its windows still on the screen.
+	c.ctx.Undecided()
 	for _, w := range c.app.Windows() {
 		w.Close()
 	}
@@ -695,6 +1188,9 @@ func (c *conn) teardown() {
 // stalling the display).
 func (c *conn) send(statement string) {
 	select {
+	case <-c.gone:
+		// Nowhere to say it and nobody to hear it.
+		return
 	case c.out <- statement:
 	default:
 		// Queue full: drop the connection's socket; the reader will
@@ -704,9 +1200,27 @@ func (c *conn) send(statement string) {
 }
 
 func (c *conn) writeLoop() {
-	for line := range c.out {
-		if _, err := c.nc.Write([]byte(line + "\n")); err != nil {
-			return
+	defer close(c.written)
+	for {
+		select {
+		case line := <-c.out:
+			if _, err := c.nc.Write([]byte(line + "\n")); err != nil {
+				return
+			}
+		case <-c.gone:
+			// Whatever was already queued still goes: a reply the client is
+			// waiting on was written before the connection ended, and dropping it
+			// would leave that client waiting for ever.
+			for {
+				select {
+				case line := <-c.out:
+					if _, err := c.nc.Write([]byte(line + "\n")); err != nil {
+						return
+					}
+				default:
+					return
+				}
+			}
 		}
 	}
 }
@@ -747,6 +1261,18 @@ func (f *hostFactory) Unsubscribe(id uint64, typ string) {
 		ec.Unsubscribe(id, typ)
 	}
 }
+
+// Answers forwards to the registry factory, so a question asked on this connection
+// answers on it. Without this the capability is lost at the wrapper and a question
+// has nowhere to send an answer -- the same way round as everything else a wrapper
+// must hand on.
+func (f *hostFactory) Answers(key string) *protocol.Answers {
+	if ac, ok := f.inner.(protocol.AnswerControl); ok {
+		return ac.Answers(key)
+	}
+	return nil
+}
+
 func (f *hostFactory) Suppressed(fn func()) {
 	if ec, ok := f.inner.(protocol.EventControl); ok {
 		ec.Suppressed(fn)

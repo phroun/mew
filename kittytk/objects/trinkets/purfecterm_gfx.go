@@ -48,9 +48,7 @@ var arabicGeomOnce sync.Once
 const (
 	// Overlay lane thickness: one layout column, matching every other
 	// scrollbar in the toolkit.
-	gfxScrollbarLane  = core.Unit(8)
-	gfxMenuItemHeight = core.Unit(16) // context menu row height
-	gfxMenuWidth      = core.Unit(150)
+	gfxScrollbarLane = core.Unit(8)
 )
 
 // purfecTermGfx is the graphical-path state carried by PurfecTerm.
@@ -164,13 +162,13 @@ type purfecTermGfx struct {
 	schemeSet bool
 
 	// Caches + engine for scaled glyph imagery.
-	engine     *text.Engine
-	fontEpoch  uint64 // engine font-set epoch the text cache was built against
-	textCur    map[coverMaskKey]*image.RGBA
-	textPrev   map[coverMaskKey]*image.RGBA
-	glyphCur   map[purfecterm.GlyphCacheKey]*image.RGBA
-	glyphPrev  map[purfecterm.GlyphCacheKey]*image.RGBA
-	overlayCur map[string]*image.RGBA
+	engine        *text.Engine
+	fontEpoch     uint64 // engine font-set epoch the text cache was built against
+	textCurrent   map[coverMaskKey]*image.RGBA
+	textPrevious  map[coverMaskKey]*image.RGBA
+	glyphCurrent  map[purfecterm.GlyphCacheKey]*image.RGBA
+	glyphPrevious map[purfecterm.GlyphCacheKey]*image.RGBA
+	overlayCur    map[string]*image.RGBA
 
 	// Scratch for image blits that cannot be handed to the painter where they
 	// lie (a crop, a scale, or straight alpha that has to be premultiplied).
@@ -389,9 +387,9 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	if ds := p.DisplayDensity(); ds > 1 {
 		t.gfx.oversample = ds
 	}
-	prevCW, prevCH := t.gfx.advCW, t.gfx.advCH
+	previousCW, previousCH := t.gfx.advCW, t.gfx.advCH
 	t.pushCellPixelSizeGfx() // real cell size (CSI 16 t) + the ?1016 pointer unit
-	cellMoved := t.gfx.advCW != prevCW || t.gfx.advCH != prevCH
+	cellMoved := t.gfx.advCW != previousCW || t.gfx.advCH != previousCH
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
@@ -830,17 +828,17 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	if eng := t.gfxEngine(); eng != nil {
 		if ep := eng.Epoch(); ep != t.gfx.fontEpoch {
 			t.gfx.fontEpoch = ep
-			t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
-			t.gfx.textPrev = map[coverMaskKey]*image.RGBA{}
+			t.gfx.textCurrent = map[coverMaskKey]*image.RGBA{}
+			t.gfx.textPrevious = map[coverMaskKey]*image.RGBA{}
 		}
 	}
 
 	key := coverMaskKey{str: str, family: family, bold: bold, italic: italic, wPx: boxWPx, hPx: boxHPx, wide: wideCell, kashL: kashL, kashR: kashR}
-	if img, ok := t.gfx.textCur[key]; ok {
+	if img, ok := t.gfx.textCurrent[key]; ok {
 		return img
 	}
-	if img, ok := t.gfx.textPrev[key]; ok {
-		t.gfx.textCur[key] = img
+	if img, ok := t.gfx.textPrevious[key]; ok {
+		t.gfx.textCurrent[key] = img
 		return img
 	}
 	// Choose the point size whose line budget fills the box height. The box
@@ -899,7 +897,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
 	if actx != nil {
-		// Arabic: str is the shaping window (prev + tatweels + letter + tatweels
+		// Arabic: str is the shaping window (preceding + tatweels + letter + tatweels
 		// + next, joining sides only), shaped above as ONE run so the font's own
 		// GSUB produced the true joined forms with real connecting strokes. The
 		// cell keeps the slice between the neighbour letters — the letter WITH
@@ -912,7 +910,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 		// surplus tatweel fall outside the cell and are clipped.
 		keep0, keep1 := actx.seg0, actx.seg1
 		if actx.rt0 >= 0 {
-			keep0 = actx.rt0 // include the right-side tatweels; drop prev
+			keep0 = actx.rt0 // include the right-side tatweels; drop the preceding letter
 		}
 		if actx.lt0 >= 0 {
 			keep1 = actx.lt1 // include the left-side tatweels; drop next
@@ -1010,11 +1008,11 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 		compositeInto(out, placed, xOff, yShift)
 	}
 
-	if len(t.gfx.textCur) >= gfxCacheMax {
-		t.gfx.textPrev = t.gfx.textCur
-		t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
+	if len(t.gfx.textCurrent) >= gfxCacheMax {
+		t.gfx.textPrevious = t.gfx.textCurrent
+		t.gfx.textCurrent = map[coverMaskKey]*image.RGBA{}
 	}
-	t.gfx.textCur[key] = out
+	t.gfx.textCurrent[key] = out
 	return out
 }
 
@@ -1523,19 +1521,19 @@ func (t *PurfecTerm) renderCustomGlyphCell(p *core.Painter, buf *purfecterm.Buff
 		key.BgR, key.BgG, key.BgB = bgc.R, bgc.G, bgc.B
 	}
 
-	img, ok := t.gfx.glyphCur[key]
+	img, ok := t.gfx.glyphCurrent[key]
 	if !ok {
-		if img, ok = t.gfx.glyphPrev[key]; ok {
-			t.gfx.glyphCur[key] = img
+		if img, ok = t.gfx.glyphPrevious[key]; ok {
+			t.gfx.glyphCurrent[key] = img
 		}
 	}
 	if !ok {
 		img = t.buildCustomGlyphImage(buf, cell, glyph, wPx, hPx)
-		if len(t.gfx.glyphCur) >= gfxCacheMax {
-			t.gfx.glyphPrev = t.gfx.glyphCur
-			t.gfx.glyphCur = map[purfecterm.GlyphCacheKey]*image.RGBA{}
+		if len(t.gfx.glyphCurrent) >= gfxCacheMax {
+			t.gfx.glyphPrevious = t.gfx.glyphCurrent
+			t.gfx.glyphCurrent = map[purfecterm.GlyphCacheKey]*image.RGBA{}
 		}
-		t.gfx.glyphCur[key] = img
+		t.gfx.glyphCurrent[key] = img
 	}
 
 	xPx := int(math.Round(cellX * ppu))
@@ -2188,11 +2186,11 @@ func (t *PurfecTerm) stopGfxTimers() {
 }
 
 func (t *PurfecTerm) rotateGfxCaches() {
-	if t.gfx.textCur == nil {
-		t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
-		t.gfx.textPrev = map[coverMaskKey]*image.RGBA{}
-		t.gfx.glyphCur = map[purfecterm.GlyphCacheKey]*image.RGBA{}
-		t.gfx.glyphPrev = map[purfecterm.GlyphCacheKey]*image.RGBA{}
+	if t.gfx.textCurrent == nil {
+		t.gfx.textCurrent = map[coverMaskKey]*image.RGBA{}
+		t.gfx.textPrevious = map[coverMaskKey]*image.RGBA{}
+		t.gfx.glyphCurrent = map[purfecterm.GlyphCacheKey]*image.RGBA{}
+		t.gfx.glyphPrevious = map[purfecterm.GlyphCacheKey]*image.RGBA{}
 		t.gfx.overlayCur = map[string]*image.RGBA{}
 	}
 }
@@ -2263,7 +2261,7 @@ func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
 		return lane, lane
 	}
 	m := t.EffectiveCellMetrics()
-	return float64(m.CellWidth), float64(m.CellHeight)
+	return float64(m.UnitsPerCellWidth), float64(m.UnitsPerCellHeight)
 }
 
 // gfxPointerPx converts an incoming pointer position (trinket units) into the
@@ -3316,20 +3314,115 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 type termMenuLayout struct {
 	rowH, sepH, width, padTop, indent core.Unit
 	graphical                         bool
+
+	// font is the face the labels draw in, and yOff where they sit in a row.
+	// nil at menu scale 1.0, where the painter's own default face is what
+	// these menus have always drawn with.
+	font *core.Font
+	yOff core.Unit
 }
 
-func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
-	if core.FindGraphicalFrames(t) {
-		return termMenuLayout{rowH: gfxMenuItemHeight, sepH: 4, width: gfxMenuWidth, padTop: 2, indent: 8, graphical: true}
+// termMenuLabel is what an item actually draws. A checkable item keeps the
+// tick's room whether or not it is ticked, so ticking one does not shift its
+// text sideways.
+//
+// One function for the measuring and the painting, so a menu is never given a
+// width that does not hold the labels it goes on to draw.
+func termMenuLabel(it termMenuItem) string {
+	if it.checked == nil {
+		return it.label
 	}
-	// Popups are desktop-surface overlays: like the ComboBox popup, measure
-	// in the SCREEN's denomination (the popup controller's cell metrics),
-	// not this trinket's possibly re-denominated interior.
-	m := core.DefaultCellMetrics()
+	if it.checked() {
+		return "✓ " + it.label
+	}
+	return "  " + it.label
+}
+
+// termMenuScreenMetrics is the denomination a popup is measured in. Popups are
+// desktop-surface overlays: like the ComboBox popup, they follow the SCREEN's
+// cell metrics rather than the possibly re-denominated interior of the trinket
+// that opened them.
+func termMenuScreenMetrics(pc core.PopupController) core.CellMetrics {
 	if sm, ok := pc.(interface{ ScreenCellMetrics() core.CellMetrics }); ok {
-		if s := sm.ScreenCellMetrics(); s.CellWidth > 0 && s.CellHeight > 0 {
-			m = s
+		if s := sm.ScreenCellMetrics(); s.UnitsPerCellWidth > 0 && s.UnitsPerCellHeight > 0 {
+			return s
 		}
+	}
+	return core.DefaultCellMetrics()
+}
+
+// gridPopupRect puts a popup's screen rect where a cell surface can render
+// it: the origin FLOORS onto the cell grid and the extent CEILS.
+//
+// Drawing divides units by the cell size and hit-testing does not, so a popup
+// standing between cells paints its rows one cell from where it answers the
+// pointer. A popup's rect is one rect -- what it paints into and what it maps
+// the pointer against -- so putting it on the grid here settles both.
+func gridPopupRect(w core.Trinket, m core.CellMetrics, r core.UnitRect) core.UnitRect {
+	if w != nil && core.FindSmoothPositioning(w) {
+		return r
+	}
+	return m.GridRect(r)
+}
+
+// termMenuWidth is a popup context menu's width: the widest label as the FONT
+// draws it, with the indent it is drawn at kept on the far side too.
+//
+// Menu.calculateSize sizes a dropdown this way -- measured text, cell-based
+// padding around it -- so a context menu and a menu-bar menu read as one menu
+// system. A fixed width cannot: it clips the labels that outgrow it, leaves a
+// gutter beside the ones that do not, and means a different number of columns
+// at every denomination.
+func termMenuWidth(mm MenuMetrics, indent core.Unit, items []termMenuItem) core.Unit {
+	widest := core.Unit(0)
+	for _, it := range items {
+		if it.separator {
+			continue
+		}
+		if w := mm.TextWidth(termMenuLabel(it)); w > widest {
+			widest = w
+		}
+	}
+	width := widest + indent*2
+	// Below this it reads as a mistake rather than a menu, so a handful of
+	// one-word items still gets a menu-shaped popup.
+	if floor := mm.CellW * 12; width < floor {
+		width = floor
+	}
+	return width
+}
+
+// termMenuLayoutFrom measures a popup context menu in the denomination it will
+// be drawn in. PurfecTerm's menu and TextInput's are the same menu, so they are
+// measured by the same function.
+//
+// A row is a row on either surface: one cell down, which is what
+// UnitsPerCellHeight says. The graphical one differs in what it puts BETWEEN
+// the rows -- a thin separator band and a little padding, both fractions of a
+// cell rather than a full one -- and a cell is a fixed physical size, so
+// stating them against it is what keeps them that thickness at every
+// denomination. At 8x16 they are the 16, 4, 2 and 8 they have always been.
+func termMenuLayoutFrom(graphical bool, font *core.Font, m core.CellMetrics, items []termMenuItem) termMenuLayout {
+	// A context menu is a menu, so it takes [window] menu_scale with the bar
+	// and the dropdowns -- one system, one knob. The kit pins the scale to
+	// 1.0 on a cell surface, which is where the branch below already stood.
+	mm := MenuMetricsFor(m, font, graphical)
+	if graphical {
+		indent := mm.CellW
+		lay := termMenuLayout{
+			rowH:      mm.RowH,
+			sepH:      mm.RowH / 4,
+			width:     termMenuWidth(mm, indent, items),
+			padTop:    mm.RowH / 8,
+			indent:    indent,
+			graphical: true,
+		}
+		if mm.Scale != 1 {
+			// At 1.0 the labels keep drawing in the painter's own face, with
+			// no offset, exactly as they always have.
+			lay.font, lay.yOff = mm.Font, mm.YOff
+		}
+		return lay
 	}
 	cols := 12
 	for _, it := range items {
@@ -3338,12 +3431,38 @@ func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenu
 		}
 	}
 	return termMenuLayout{
-		rowH:   m.CellHeight,
-		sepH:   m.CellHeight, // a separator needs a full character row
-		width:  core.Unit(cols) * m.CellWidth,
-		indent: m.CellWidth, // one cell in
+		rowH:   m.UnitsPerCellHeight,
+		sepH:   m.UnitsPerCellHeight, // a separator needs a full character row
+		width:  core.Unit(cols) * m.UnitsPerCellWidth,
+		indent: m.UnitsPerCellWidth, // one cell in
 		// no sub-cell padding: rows land exactly on character rows
 	}
+}
+
+// paintTermMenuSeparator draws a context menu's rule between two groups of
+// items: a hairline inset from both edges, inked at MenuSeparatorAlpha over
+// whatever the menu's background is, so it reads as a division rather than as
+// a line drawn through the menu. Opaque where the surface cannot blend, since
+// a separator nobody can see is worse than one drawn too strongly.
+//
+// One function for PurfecTerm's menu and TextInput's, which are the same menu.
+func paintTermMenuSeparator(p *core.Painter, menuBounds core.UnitRect, pos core.Unit, lay termMenuLayout) {
+	inset := lay.indent / 2
+	x := menuBounds.X + inset
+	y := pos + lay.sepH/2
+	w := menuBounds.Width - inset*2
+	const r, g, b = 200, 200, 200
+	if !p.FillRectPixelsAlpha(x, y, 0, 0,
+		p.UnitSpanPxX(x, x+w), p.UnitSpanPxY(y, y+p.HairlineHeight()),
+		r, g, b, MenuSeparatorAlpha) {
+		p.FillRect(core.UnitRect{X: x, Y: y, Width: w, Height: p.HairlineHeight()},
+			' ', style.DefaultStyle().WithBg(style.RGB(r, g, b)))
+	}
+}
+
+func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
+	return termMenuLayoutFrom(core.FindGraphicalFrames(t), t.EffectiveFont(),
+		termMenuScreenMetrics(pc), items)
 }
 
 // showTermItemsMenu opens a context menu of the given items as a popup
@@ -3378,7 +3497,8 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 	if at.Y+height > screen.Y+screen.Height {
 		at.Y = screen.Y + screen.Height - height
 	}
-	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height}
+	menuBounds := gridPopupRect(t.Self(), termMenuScreenMetrics(pc),
+		core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height})
 	t.gfx.menuHover = -1
 
 	itemAt := func(y core.Unit) int {
@@ -3416,8 +3536,7 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 			for i, it := range items {
 				if it.separator {
 					if lay.graphical {
-						p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
-							style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+						paintTermMenuSeparator(p, menuBounds, pos, lay)
 					} else {
 						// Text cells: a full dim rule row.
 						p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.sepH}, '─',
@@ -3431,20 +3550,13 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 					st = hover
 					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
 				}
-				label := it.label
-				if it.checked != nil {
-					if it.checked() {
-						label = "✓ " + label
-					} else {
-						label = "  " + label
-					}
-				}
+				label := termMenuLabel(it)
 				// Draw with the style's EXPLICIT background: a transparent bg
 				// composites correctly on the graphical backend but resolves to
 				// the terminal's default (dark) background on the text backend,
 				// leaving dark boxes behind the labels. The explicit bg equals
 				// the fill (or hover) color, so the graphical look is unchanged.
-				p.DrawText(menuBounds.X+lay.indent, pos, label, st, nil)
+				p.DrawText(menuBounds.X+lay.indent, pos+lay.yOff, label, st, lay.font)
 				pos += lay.rowH
 			}
 		},

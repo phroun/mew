@@ -1,0 +1,1171 @@
+"""A query, in structured form (Python port of wire/query.go).
+
+An application hosts a query: one filter and one sort over its own records,
+which a display fills scopes out of as somebody scrolls. The wire carries that
+as text, and every client library would otherwise make its author walk a
+statement tree to find out what was being asked. So the walking happens once,
+here, and what reaches an application is an object.
+
+docs/hosting-a-query.md is the spelling this implements, and
+testdata/query.wire is the corpus every implementation of it answers.
+serval's docs/ordering.md defines the comparison the sort and filter stand on;
+docs/sort-and-filter.md is how the two are written down here.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+from .protocol import (
+    Arg,
+    COLLATE_EXACT,
+    COLLATE_FOLD,
+    COLLATE_NATURAL,
+    FlagState,
+    Script,
+    Statement,
+    Value,
+    ValueKind,
+    encode_arg,
+    encode_statement,
+    encode_value,
+    new_int,
+    new_string,
+    new_word,
+    quote,
+)
+
+# The verb a display opens and refills a query with, and the verb the
+# application answers it with.
+#
+# Three pairs, and nothing carries two of them: `query` is answered by
+# `result`, `ask` by `answer`, and `sub` -- or an object's mere existence -- by
+# `event`. So a record arriving for a list can never be mistaken for something
+# a subscription raised.
+QUERY_VERB = "query"      # `new query source="files" sort={ name } count=30`
+RESULT_VERB = "result"    # `result 9 id=42 record={ ... }`
+
+# PLACE_VERB carries a PLACE: a record's identity, in its position in the
+# sequence, and whatever is known of it so far with no claim about how much.
+#
+# A verb of its own, and that is the whole mechanism. Places are ADDITIONAL --
+# every record still arrives as a result, and the scope's own `complete` still
+# ends the answer -- so a reader that does not know this verb skips these
+# statements and is left with exactly the answer it gets otherwise. There is
+# nothing to negotiate and nothing it can be misled about, because it never saw
+# them.
+PLACE_VERB = "place"      # `place 9 id=42 fields={ name "x" }`
+
+# ANSWER_VERB is what an `ask` is answered with: the third pair, and the one
+# that was missing until the amendments a tree holds needed asking for.
+#
+# The correlation key was already in the language -- every statement may carry
+# one, the way `w=new window` does -- so the question side needs no new
+# grammar. An ask that carried one is answered quoting it back, so an
+# application with two questions outstanding can tell the answers apart:
+#
+#     q1=ask tree amendments
+#     -> answer to=q1 id=1 how=altered fields={ kind "Archive" }
+#        answer to=q1 complete count=1
+#
+# TO_ARG is named rather than bare, which is where a result puts its query id.
+# A query id is a NUMBER and cannot be mistaken for anything else in the
+# statement; a correlation key is a name, and `answer complete` would read the
+# terminator as the question it was answering.
+#
+# Reserved, so a question's own vocabulary may not use it. Every other argument
+# on an answer belongs to whatever was asked -- the envelope is the wire's and
+# the payload is the question's, because a result has a fixed shape (a query
+# answers with records) while an ask answers with whatever was asked.
+ANSWER_VERB = "answer"    # `answer to=q1 id=1 how=altered fields={ ... }`
+
+TO_ARG = "to"
+
+# ID_ARG carries a record's identity, beside its fields rather than among them.
+#
+# An identity is not a field. A record can hold a field called `key` and that
+# field is data like any other -- it sorts, it filters, it is shown in a column
+# -- while what names the record travels here.
+ID_ARG = "id"
+
+# What a result carries, and how much of the record it is.
+#
+# `record` is every field the record has; `fields` is some of them. The
+# difference is worth a word because a whole record answers any question about
+# that record, and a subset answers only the one that asked for it -- which is
+# what lets an answer be kept and reused rather than asked for again.
+RECORD_ARG = "record"
+FIELDS_ARG = "fields"
+
+# MAP_ARG and LEN_ARG are how many members the record HAS -- by name and by
+# position -- whether or not they were all sent. They ride beside `fields=` and
+# never beside `record=`, a whole record being its own totals.
+#
+# `map` and `len` because those are already the two halves of a PSL node, which
+# is what a record is read out of: `Len()` is its items and `Map()` its keyed
+# members. A count of nothing is not written.
+MAP_ARG = "map"
+LEN_ARG = "len"
+
+# RESULT_COMPLETE ends a scope: everything for it has been sent.
+#
+# It can ride on the statement carrying the last record, and `ordered` on the
+# one carrying the first, so a scope of a single record crosses as a single
+# line. Both forms are read.
+RESULT_COMPLETE = "complete"
+WATERMARK_ARG = "watermark"
+ORDERED_ARG = "ordered"
+ERROR_ARG = "error"
+
+# TOTAL_ARG is how many records the whole SEQUENCE has, and EXACT_ARG says that
+# figure is the whole story rather than a floor.
+#
+# Weak by default and strengthened out loud, the same way round as `fields`
+# against `record`: `total=20` alone says there are at LEAST twenty, which is
+# what a reader that has seen part of a sequence can say; `total=20 exact` says
+# twenty is all there are.
+#
+# It rides a completion, being a fact about the order rather than about any
+# record. A figure of nothing is not written, `total=0` alone saying only what
+# is true of every sequence there is; `total=0 exact` is a sequence counted and
+# found empty, and is written.
+TOTAL_ARG = "total"
+EXACT_ARG = "exact"
+
+# Where in the sequence the answer BEGAN: the position of its first record,
+# counted in the sequence's own order however the scope walked it. Beside
+# `total` the two are a scroll thumb -- how long, and where -- and it is what
+# answers `from`. It crosses only when it is known, and what crosses is exact:
+# a count can honestly be a floor, a position cannot, and silence means the
+# reader stays where it was rather than believing a figure nobody sent.
+FIRST_ARG = "first"
+FROM_ARG = "from"
+
+# EXTEND_ARG is the display saying it will HOLD the places it is sent, so a
+# result may leave out what its place already carried.
+#
+# It rides the query because it is about how this asker reads rather than about
+# which records it wants, and it is the ASKER's to say for the one reason that
+# matters: a reader that dropped the places would then silently lose fields.
+# Only the end doing the dropping can promise not to.
+#
+# Saying nothing is `replace`, where every result carries the lot.
+EXTEND_ARG = "extend"
+
+# Why a scope ended, which the asker cannot work out for itself: a scope that
+# filled and one that ran out of records look identical from the far end.
+STOP_FILLED = "filled"        # the count was reached; there is more past it
+STOP_JOINED = "joined"        # the walk reached `until`, joining two runs
+STOP_EXHAUSTED = "exhausted"  # no more records this way, so no watermark
+
+# The operators a filter is built from.
+OP_AND = "and"
+OP_OR = "or"
+OP_NOT = "not"
+OP_EQ = "eq"
+OP_NE = "ne"
+OP_LT = "lt"
+OP_LE = "le"
+OP_GT = "gt"
+OP_GE = "ge"
+OP_IN = "in"
+OP_CONTAINS = "contains"
+OP_STARTS = "starts"
+OP_ENDS = "ends"
+
+# OP_HAS and OP_LACKS ask whether a record carries a field at all, and take no
+# value. Every other operator compares one, and a field holding something with
+# no order of its own -- a nested list -- cannot be compared, so presence needs
+# an operator that does not try.
+OP_HAS = "has"
+OP_LACKS = "lacks"
+
+# OP_ID matches a record's identity against a set of them, the way `in` matches
+# a field against a set of values. It names no field, because an identity is not
+# one: it travels beside a record's fields rather than among them, and a field
+# called `key` is a field like any other.
+#
+#     filter={ id (left/1) (left/note) }
+OP_ID = "id"
+
+_GROUPS = (OP_AND, OP_OR, OP_NOT)
+_PREDICATES = (OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE, OP_IN,
+               OP_CONTAINS, OP_STARTS, OP_ENDS, OP_HAS, OP_LACKS)
+
+
+class QueryError(ValueError):
+    """A query, or part of one, that will not be read."""
+
+
+class Fields(list):
+    """A bag of named values, and one shape serves three jobs: the fields a
+    record carries, the position a boundary stands at, and -- with the values
+    left out -- the bare list of fields a query asks for.
+
+    It is written as a block of one statement per field, the field name first
+    and its value, if it has one, after: `{ name "src/parser.go"; size 1024 }`.
+    """
+
+    def get(self, name: str) -> Optional[Value]:
+        """The value under a name, or None where the bag does not name it. A
+        field present with no value reads as None too: a bare name is a name,
+        not a value of its own."""
+        for a in self:
+            if a.name == name:
+                return a.value
+        return None
+
+    def has(self, name: str) -> bool:
+        """Whether the bag names a field at all, valued or not."""
+        return any(a.name == name for a in self)
+
+    def names(self) -> List[str]:
+        """The fields, in the order they were written."""
+        return [a.name for a in self]
+
+    def block(self) -> Value:
+        """The bag as a block value, for a statement to carry."""
+        script = Script()
+        for a in self:
+            st = Statement(verb=a.name)
+            if a.value is not None:
+                st.args = [Arg(value=a.value)]
+            script.statements.append(st)
+        return Value(kind=ValueKind.BLOCK, block=script)
+
+    def encode(self) -> str:
+        """The text of that block."""
+        return encode_value(self.block())
+
+
+@dataclass
+class Filter:
+    """One node of the tree a filter block parses to: a predicate over one
+    field, or an and/or/not over other nodes.
+
+    A block is an AND, so the top of a parsed filter is always an OP_AND -- one
+    shape to walk, whether the filter held one predicate or twenty."""
+
+    op: str = OP_AND
+    field: str = ""                             # predicates: the field tested
+    values: List[Value] = dataclasses.field(default_factory=list)  # more than one only for `in`
+    collate: str = ""                           # text predicates; "" is the default
+    children: List["Filter"] = dataclasses.field(default_factory=list)
+
+    def value(self) -> Optional[Value]:
+        """The single operand of a comparison, and None where there is none."""
+        return self.values[0] if self.values else None
+
+    def encode(self) -> str:
+        """A filter node as wire text: a block for the top of a tree."""
+        if self.op in _GROUPS:
+            return self._encode_block()
+        return "{ " + self._encode_statement() + " }"
+
+    def _encode_block(self) -> str:
+        parts = [c._encode_statement() for c in self.children]
+        return "{ " + "; ".join(parts) + " }" if parts else "{}"
+
+    def _encode_statement(self) -> str:
+        if self.op in _GROUPS:
+            return self.op + " " + self._encode_block()
+        if self.op == OP_ID:
+            # Every other operator names the field it tests. This one tests an
+            # identity, which is not a field and has no name to write.
+            return self.op + ''.join(" " + encode_value(v) for v in self.values)
+        out = [self.op, " ", encode_field_name(self.field)]
+        for v in self.values:
+            out.append(" " + encode_value(v))
+        if self.collate:
+            out.append(" collate=" + self.collate)
+        return ''.join(out)
+
+
+@dataclass
+class SortLevel:
+    """One level of a sort: which field, which way, and -- for strings -- under
+    which collation."""
+
+    field: str = ""
+    descending: bool = False
+    collation: str = ""
+
+
+@dataclass
+class DataSetDescriptor:
+    """What sequence a query names: which records, in which order.
+
+    It is stated once, when the query is made, and never again. A query is the
+    sequence it was opened with and nothing restates it -- a different filter
+    or a different sort is a different sequence, which is a different query,
+    opened alongside this one and taking its place."""
+
+    source: str = ""
+    fields: Fields = dataclasses.field(default_factory=Fields)
+    exclude: Fields = dataclasses.field(default_factory=Fields)
+    filter: Optional[Filter] = None
+    sort: List[SortLevel] = dataclasses.field(default_factory=list)
+
+    def encode(self) -> str:
+        """The descriptor as the arguments of the statement that carries it."""
+        parts = []
+        if self.source:
+            parts.append("source=" + quote(self.source))
+        if self.fields:
+            parts.append("fields=" + self.fields.encode())
+        if self.exclude:
+            parts.append("exclude=" + self.exclude.encode())
+        if self.filter is not None:
+            parts.append("filter=" + self.filter.encode())
+        if self.sort:
+            parts.append("sort=" + encode_sort(self.sort))
+        return " ".join(parts)
+
+
+@dataclass
+class Scope:
+    """The run of records a query asks for: where to start, which way to walk,
+    how many, and where the asker's own knowledge picks up again.
+
+    It is not a filter and it names no field. The sequence is already decided
+    by the descriptor, and a scope only says which part of it to read -- so a source
+    prepares one ordering and serves every scope of it cheaply, rather than
+    preparing a new one because the reader scrolled.
+
+    after and until are identities, not positions. An identity means something
+    only to the source that issued it, which is why a source made of several
+    others never passes one down: it hands each of them that one's own.
+
+    reversed walks the sequence from its end rather than its beginning. Every
+    level turns over, the one the sort does not write included -- an identity
+    settles what the named levels leave equal, and a sequence read backwards
+    settles it backwards too. It belongs to the scope rather than the sequence
+    because it costs nothing: one prepared ordering is read either way.
+
+    from_ is a position to start NEAR, for a reader that has a place in mind
+    rather than a record: a thumb dragged down a long sequence knows how far
+    down it is and knows no identity there at all. Best effort and never a
+    promise -- the answer's `first` says where the scope really began, and a
+    reader that meant somewhere else asks again from what it learned. Nought is
+    the beginning, which is where a scope starts anyway, so an unset one asks
+    for nothing; `after` wins over it, and a scope naming both is refused."""
+
+    after: Optional[Value] = None
+    until: Optional[Value] = None
+    count: int = 0
+    from_: int = 0
+    reversed: bool = False
+
+    def encode(self) -> str:
+        """The scope as the arguments that carry it."""
+        parts = []
+        if self.after is not None:
+            parts.append("after=" + encode_value(self.after))
+        if self.until is not None:
+            parts.append("until=" + encode_value(self.until))
+        if self.from_:
+            parts.append("from=%d" % self.from_)
+        parts.append("count=%d" % self.count)
+        if self.reversed:
+            parts.append("reversed")
+        return " ".join(parts)
+
+
+@dataclass
+class Complete:
+    """What ends a scope: which of the three ways it ended, and how far the
+    answer is complete.
+
+    watermark says there is nothing between where the scope was asked from and
+    that record that the asker does not now have. STOP_EXHAUSTED carries none,
+    because there is no point past the end to be complete up to."""
+
+    watermark: Optional[Value] = None
+    stop: str = ""
+    error: str = ""
+
+    # How many records the whole sequence has, where the source volunteered it,
+    # and whether that figure is the whole story rather than a floor. Zero and
+    # not exact is nothing said.
+    total: int = 0
+    exact: bool = False
+
+    # Where the answer began, and None where the source could not say. Never a
+    # floor: a position is known or it is not.
+    first: Optional[int] = None
+
+
+@dataclass
+class Result:
+    """One `result` statement taken apart: the order declaration, a record, and
+    the terminator, any of which may be absent.
+
+    All three can ride on one statement. `ordered` is worth saying only before
+    the first record, and the terminator only after the last, so an answer of
+    one record carries all three and crosses as a single line. A reader takes
+    them in that order -- order, then record, then end -- whichever statement
+    they arrived on."""
+
+    ordered: bool = False
+    id: Optional[Value] = None   # nil where no record rides here
+    fields: Fields = dataclasses.field(default_factory=Fields)
+    whole: bool = False          # `record=` rather than `fields=`
+
+    # How many members the record has altogether, which a subset states and a
+    # whole record does not need to: what a whole record carries IS all of them.
+    named: int = 0
+    ordered_members: int = 0
+
+    # Whether this came under `place` rather than `result`: a position, and
+    # whatever is known, with no claim about how much. Its fields are true and
+    # its silence is not, so it carries no totals and never `record=`.
+    #
+    # A completion riding a place ends the ORDER rather than the scope: every
+    # record has now been named, under either verb, and no further one will turn
+    # up between two already sent.
+    place: bool = False
+
+    complete: Optional[Complete] = None
+
+    def args(self) -> List[Arg]:
+        """The result as the arguments after the query id."""
+        out: List[Arg] = []
+        if self.ordered:
+            out.append(Arg(name=ORDERED_ARG, flag=FlagState.TRUE))
+        if self.id is not None:
+            out.append(Arg(name=ID_ARG, value=self.id))
+            what = RECORD_ARG if self.whole else FIELDS_ARG
+            out.append(Arg(name=what, value=self.fields.block()))
+            if not self.whole:
+                # A count of nothing is not written: most records have no
+                # members standing by position, and saying so every time would
+                # be noise.
+                if self.named:
+                    out.append(Arg(name=MAP_ARG, value=new_int(self.named)))
+                if self.ordered_members:
+                    out.append(Arg(name=LEN_ARG, value=new_int(self.ordered_members)))
+        c = self.complete
+        if c is not None:
+            out.append(Arg(name=RESULT_COMPLETE, flag=FlagState.TRUE))
+            if c.watermark is not None:
+                out.append(Arg(name=WATERMARK_ARG, value=c.watermark))
+            if c.stop:
+                out.append(Arg(name=c.stop, flag=FlagState.TRUE))
+            if c.first is not None:
+                out.append(Arg(name=FIRST_ARG, value=new_int(c.first)))
+            if c.total or c.exact:
+                out.append(Arg(name=TOTAL_ARG, value=new_int(c.total)))
+                if c.exact:
+                    out.append(Arg(name=EXACT_ARG, flag=FlagState.TRUE))
+            if c.error:
+                out.append(Arg(name=ERROR_ARG, value=new_string(c.error)))
+        return out
+
+
+@dataclasses.dataclass
+class Answer:
+    """One `answer` statement taken apart.
+
+    Both the payload and the terminator can ride one statement, as they can on a
+    result, so an answer of one piece crosses as a single line."""
+
+    # The correlation key of the question, and empty for one that carried none.
+    to: str = ""
+
+    # What the answer holds, in the question's own words, with the envelope's own
+    # arguments taken out. Empty for a statement carrying only a terminator.
+    carries: List[Arg] = dataclasses.field(default_factory=list)
+
+    # Whether this is the last answer for that question. An asker holding
+    # anything for it lets go when this arrives, whether or not anything came.
+    complete: bool = False
+
+    # Why the question was refused, and empty where it was not. A refusal is
+    # still an answer: the question was put, so it has one, and an asker must
+    # not wait forever because the answer happened to be no.
+    error: str = ""
+
+    def args(self) -> List[Arg]:
+        """The answer as the arguments after the verb: the envelope first, so a
+        reader scanning the head of a statement finds the correlation before the
+        payload it belongs to, and the terminator last, where a result's is."""
+        out: List[Arg] = []
+        if self.to:
+            out.append(Arg(name=TO_ARG, value=new_word(self.to)))
+        out.extend(self.carries)
+        if self.complete:
+            out.append(Arg(name=RESULT_COMPLETE, flag=FlagState.TRUE))
+        if self.error:
+            out.append(Arg(name=ERROR_ARG, value=new_string(self.error)))
+        return out
+
+    def arg(self, name: str) -> Optional[Arg]:
+        """One of the answer's own arguments by name, and None for one it has
+        not got -- which is not the same as one carrying nothing."""
+        for a in self.carries:
+            if a.name == name:
+                return a
+        return None
+
+    # The readers, one per kind of thing an argument can be. Each answers None
+    # for an argument that is absent AND for one that is there in another kind,
+    # because an asker reading `size=` wants a size and "there is a size, but it
+    # is a word" is not one -- the same bargain an event's readers make, in the
+    # same words, so that moving a question off events does not change how its
+    # answer is read.
+
+    def uint(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.NUMBER \
+                or not a.value.is_int or a.value.number < 0:
+            return None
+        return int(a.value.number)
+
+    def int_(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.NUMBER \
+                or not a.value.is_int:
+            return None
+        return int(a.value.number)
+
+    def text(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.STRING:
+            return None
+        return a.value.str
+
+    def blob(self, name: str):
+        """The argument's bytes, for a value written with every byte outside
+        printable ASCII escaped -- a chunk of a blob, say.
+
+        latin-1 is what turns the string back into the bytes that were sent:
+        each \\xNN unescaped to one code point in 0..255, where utf-8 would
+        re-encode everything above 0x7f into two."""
+        s = self.text(name)
+        if s is None:
+            return None
+        return s.encode("latin-1", "replace")
+
+    def word(self, name: str):
+        a = self.arg(name)
+        if a is None or a.value is None or a.value.kind != ValueKind.WORD:
+            return None
+        return a.value.word
+
+    def flag(self, name: str) -> FlagState:
+        a = self.arg(name)
+        if a is None or a.value is not None:
+            return FlagState.NONE
+        return a.flag
+
+    def record(self) -> Tuple[Optional[Value], Fields, bool, bool]:
+        """The record this answer carries, where it carries one: its identity,
+        its fields, whether the record is WHOLE, and whether there was one.
+
+        The same two spellings a result uses -- `record=` is every member,
+        `fields=` is some of them -- so a record's identity has one spelling in
+        the language rather than one per verb."""
+        rid: Optional[Value] = None
+        fields = Fields()
+        whole = False
+        got = False
+        for a in self.carries:
+            if a.name == ID_ARG:
+                rid = a.value
+            elif a.name == RECORD_ARG:
+                fields, whole, got = parse_fields(a.value), True, True
+            elif a.name == FIELDS_ARG:
+                fields, got = parse_fields(a.value), True
+        return rid, fields, whole, got
+
+
+def parse_answer(args: List[Arg]) -> Answer:
+    """An answer from a statement's arguments.
+
+    The question's own arguments are kept and not read: whoever asked knows what
+    the answer to that question looks like, and a middle that had to know too
+    would need teaching about every question ever added."""
+    out = Answer()
+    for a in args:
+        if a.name == TO_ARG:
+            if a.value is None or a.value.kind != ValueKind.WORD:
+                raise QueryError("%s: expected the key the ask was given" % TO_ARG)
+            out.to = a.value.word
+        elif a.name == RESULT_COMPLETE:
+            if a.value is not None or a.flag != FlagState.TRUE:
+                raise QueryError("%s: takes no value" % RESULT_COMPLETE)
+            out.complete = True
+        elif a.name == ERROR_ARG:
+            if a.value is None or a.value.kind != ValueKind.STRING:
+                raise QueryError("%s: expected a reason" % ERROR_ARG)
+            out.error = a.value.str
+        else:
+            out.carries.append(a)
+    return out
+
+
+def encode_answer(a: Answer) -> str:
+    """The answer as a statement, the way an event is encoded."""
+    parts = [ANSWER_VERB]
+    for arg in a.args():
+        parts.append(encode_arg(arg))
+    return " ".join(parts)
+
+
+def parse_fields(v: Optional[Value]) -> Fields:
+    """A field bag, in either of the two forms it is written in.
+
+    A block carries names and values together, which is what a record is:
+    `{ name "src/parser.go"; size 1024 }`.
+
+    A string carries names alone, separated by commas, which is what a query
+    asking for a narrower record is: `fields=".name, .size"`. It is the shorter
+    spelling of a list that never has values in it, and comma because that is
+    what a list is separated by -- `;` is where a statement ends, one level up,
+    and would be doing a second job here.
+
+    A name holding a comma has no spelling in the string form. The block form
+    carries it, which is why both are read."""
+    if v is not None and v.kind == ValueKind.STRING:
+        return _parse_field_list(v.str)
+    if v is None or v.kind != ValueKind.BLOCK:
+        raise QueryError("expected a block of fields or a list of names")
+    out = Fields()
+    for st in v.block.statements:
+        if not st.verb:
+            raise QueryError("a field is a name, and %r is not one" % encode_statement(st))
+        if not st.args:
+            out.append(Arg(name=st.verb, flag=FlagState.TRUE))
+        elif len(st.args) == 1:
+            out.append(Arg(name=st.verb, value=_operand_value(st.verb, st.args[0])))
+        else:
+            raise QueryError("%s: a field carries one value, not %d" % (st.verb, len(st.args)))
+    return out
+
+
+def _parse_field_list(text: str) -> Fields:
+    """The string form: names separated by commas, each trimmed of the space
+    around it.
+
+    An empty list is a list of nothing, which is what `fields=""` says. An
+    empty NAME is refused rather than skipped: a stray comma is a typo, and
+    quietly dropping it would narrow a query by one field without saying so."""
+    out = Fields()
+    if not text.strip():
+        return out
+    for piece in text.split(','):
+        name = piece.strip()
+        if not name:
+            raise QueryError(
+                "%r: a field list holds names, and one of these is empty" % text)
+        out.append(Arg(name=name, flag=FlagState.TRUE))
+    return out
+
+
+def _operand_value(what: str, a: Arg) -> Value:
+    """One operand as a value.
+
+    A bare word in argument position is a flag as far as the grammar is
+    concerned -- that is what `wrap` and `!enabled` are -- so a word written
+    where a value belongs arrives as a flag carrying its own name, and this is
+    where it becomes the word it was written as. `!` and `?` say something a
+    value cannot, so they are refused rather than quietly read as words."""
+    if a.value is not None:
+        if a.name:
+            raise QueryError("%s: no argument called %r" % (what, a.name))
+        return a.value
+    if a.flag != FlagState.TRUE:
+        raise QueryError("%s: %r is asserted, not valued" % (what, a.name))
+    return new_word(a.name)
+
+
+def _operand_field(what: str, a: Arg) -> str:
+    """A predicate's first operand, as the name of the field it tests.
+
+    A field name is a NAME, whatever form it was written in. A bare word is the
+    ordinary spelling and is what nearly every filter uses; a protected symbol
+    carries a name the grammar has no bare spelling for, `(007)` among them; a
+    number is a positional member's index, taken as the decimal it spells; and
+    a quoted string is a name written as text, which is the only spelling left
+    for a name holding a `)` or a newline.
+
+    Reading the first operand rather than the first bare word is what lets an
+    index reach a filter. A head may begin with a digit and so a sort level and
+    a record field can already be called `0`, but a bare `0` in ARGUMENT
+    position is the number zero -- so a filter has to say that a name is what
+    it wanted, and it says it by position.
+
+    A float and a block name nothing: a float has more than one spelling for
+    one value, and a block is a set. Neither does a blob, which no parse
+    produces -- a caller building an Arg for itself can, and bytes are not a
+    name."""
+    if a.value is None:
+        if a.flag != FlagState.TRUE:
+            raise QueryError("%s: %r is asserted, and a field is named" % (what, a.name))
+        return a.name
+    if a.name:
+        raise QueryError("%s: names its field first, not %s=" % (what, a.name))
+    v = a.value
+    if v.kind == ValueKind.WORD:
+        return v.word
+    if v.kind == ValueKind.NUMBER and v.is_int:
+        return str(int(v.number))
+    if v.kind == ValueKind.STRING and not v.blob:
+        return v.str
+    raise QueryError("%s: %s is not a field name" % (what, encode_value(v)))
+
+
+def encode_field_name(name: str) -> str:
+    """A field's name, written so the parser reads back the name that went out:
+    bare where the grammar can read it as itself, a protected symbol where it
+    cannot -- an index among them, since a bare `0` in argument position is a
+    number -- and a quoted string for the names a symbol has no spelling for."""
+    if not name or ')' in name or '\n' in name:
+        return quote(name)
+    return encode_value(new_word(name))
+
+
+def parse_descriptor(args: List[Arg]) -> DataSetDescriptor:
+    """A query descriptor, from the arguments of the statement carrying it."""
+    s = DataSetDescriptor()
+    for a in args:
+        if a.name == "source":
+            if a.value is None:
+                raise QueryError("source: expected a name")
+            if a.value.kind == ValueKind.STRING:
+                s.source = a.value.str
+            elif a.value.kind == ValueKind.WORD:
+                s.source = a.value.word
+            else:
+                raise QueryError("source: expected a name")
+        elif a.name in ("fields", "exclude"):
+            try:
+                bag = parse_fields(a.value)
+            except QueryError as e:
+                raise QueryError("%s: %s" % (a.name, e))
+            setattr(s, a.name, bag)
+        elif a.name == "filter":
+            try:
+                s.filter = parse_filter(a.value)
+            except QueryError as e:
+                raise QueryError("filter: %s" % e)
+        elif a.name == "sort":
+            try:
+                s.sort = parse_sort(a.value)
+            except QueryError as e:
+                raise QueryError("sort: %s" % e)
+    return s
+
+
+def parse_extend(args: List[Arg]) -> bool:
+    """The display's declaration, off the same arguments.
+
+    Not part of the scope and not part of the descriptor: the sequence is the same
+    sequence and the records wanted are the same records, and this says only how
+    the answer may be spelled."""
+    for a in args:
+        if a.name == EXTEND_ARG:
+            if a.value is not None:
+                raise QueryError("extend: it takes no value")
+            return a.flag == FlagState.TRUE
+    return False
+
+
+def parse_scope(args: List[Arg]) -> Scope:
+    """The scope, from the same arguments the descriptor was read from.
+
+    The two travel together -- `new query` states the sequence and asks for a
+    run of it in one statement -- and they are read apart because they are
+    different things: the descriptor is what the query is, and the scope is what this
+    one question wanted."""
+    s = Scope()
+    for a in args:
+        if a.name == "count":
+            if a.value is None or a.value.kind != ValueKind.NUMBER or not a.value.is_int:
+                raise QueryError("count: expected a whole number")
+            if a.value.number < 0:
+                raise QueryError(
+                    "count: %d records is not a number of records" % a.value.number)
+            s.count = int(a.value.number)
+        elif a.name in ("after", "until"):
+            if a.value is None:
+                raise QueryError("%s: expected an identity" % a.name)
+            if a.value.kind == ValueKind.BLOCK:
+                raise QueryError("%s: an identity is a value, not a block" % a.name)
+            setattr(s, a.name, a.value)
+        elif a.name == "from":
+            if a.value is None or a.value.kind != ValueKind.NUMBER or not a.value.is_int:
+                raise QueryError("from: expected a whole number")
+            if a.value.number < 0:
+                raise QueryError("from: %d is not a position" % a.value.number)
+            s.from_ = int(a.value.number)
+        elif a.name == "reversed":
+            if a.value is not None:
+                raise QueryError("reversed: it takes no value")
+            s.reversed = a.flag == FlagState.TRUE
+    if s.after is not None and s.from_:
+        # A record is not a position. One names a thing and the other names a
+        # place in a sequence, and a scope carrying both has a bug that only
+        # ever shows here.
+        raise QueryError(
+            "from: a scope says where to start with after or with from, not both")
+    return s
+
+
+def _count_arg(a: Arg) -> int:
+    """One of the two totals: a whole number of members, and never a negative
+    one -- there is no such thing as fewer than none."""
+    v = a.value
+    if v is None or v.kind != ValueKind.NUMBER or not v.is_int or v.number < 0:
+        raise QueryError("%s: expected a count of members" % a.name)
+    return int(v.number)
+
+
+def parse_result(args: List[Arg]) -> Result:
+    """A result, from the arguments after the query id."""
+    return _parse_result(args, False)
+
+
+def parse_place(args: List[Arg]) -> Result:
+    """A place, from the arguments after the query id.
+
+    The same statement under the other verb, which changes what may be in it: a
+    place makes no claim about how much of the record there is, so it carries no
+    totals and never `record=`."""
+    return _parse_result(args, True)
+
+
+def _parse_result(args: List[Arg], place: bool) -> Result:
+    r = Result(place=place)
+    done = Complete()
+    ended = counted = exact = totalled = False
+    for a in args:
+        if a.name == ORDERED_ARG:
+            r.ordered = True
+        elif a.name == ID_ARG:
+            if a.value is None or a.value.kind == ValueKind.BLOCK:
+                raise QueryError("id: expected an identity")
+            r.id = a.value
+        elif a.name in (RECORD_ARG, FIELDS_ARG):
+            try:
+                r.fields = parse_fields(a.value)
+            except QueryError as e:
+                raise QueryError("%s: %s" % (a.name, e))
+            r.whole = a.name == RECORD_ARG
+        elif a.name in (MAP_ARG, LEN_ARG):
+            n = _count_arg(a)
+            if a.name == MAP_ARG:
+                r.named = n
+            else:
+                r.ordered_members = n
+            counted = True
+        elif a.name == RESULT_COMPLETE:
+            ended = True
+        elif a.name == WATERMARK_ARG:
+            if a.value is None or a.value.kind == ValueKind.BLOCK:
+                raise QueryError("watermark: expected an identity")
+            done.watermark = a.value
+            ended = True
+        elif a.name == TOTAL_ARG:
+            done.total = _count_arg(a)
+            ended = totalled = True
+        elif a.name == FIRST_ARG:
+            done.first = _count_arg(a)
+            ended = True
+        elif a.name == EXACT_ARG:
+            # It strengthens a figure rather than stating one, so it ends
+            # nothing on its own.
+            exact = True
+        elif a.name == ERROR_ARG:
+            if a.value is None or a.value.kind != ValueKind.STRING:
+                raise QueryError("error: expected a message")
+            done.error = a.value.str
+            ended = True
+        elif a.name in (STOP_FILLED, STOP_JOINED, STOP_EXHAUSTED):
+            done.stop = a.name
+            ended = True
+    if r.fields and r.id is None:
+        raise QueryError("a record carries an identity; this one has none")
+    if counted and r.whole:
+        # A whole record is everything the record has, so a count beside it is
+        # either saying that again or contradicting it, and there is no reading
+        # where it adds anything.
+        raise QueryError("record=: a whole record is its own totals")
+    if r.place and (counted or r.whole):
+        # Not making that claim is the entire difference between a place and a
+        # result. A place that said how much of the record there is would be a
+        # subset under the wrong verb, and one that said `record=` would be a
+        # whole record under it.
+        raise QueryError(
+            "place: a place says nothing about how much of the record there is")
+    if exact and not totalled:
+        raise QueryError("exact: nothing here states a total")
+    done.exact = exact
+    if ended:
+        r.complete = done
+    return r
+
+
+def parse_filter(v: Optional[Value]) -> Filter:
+    """A filter tree, from a block value. A block is an AND."""
+    if v is None or v.kind != ValueKind.BLOCK:
+        raise QueryError("expected a block")
+    return _parse_filter_block(v.block, OP_AND)
+
+
+def _parse_filter_block(script: Script, op: str) -> Filter:
+    node = Filter(op=op)
+    for st in script.statements:
+        node.children.append(_parse_predicate(st))
+    return node
+
+
+def _parse_id(st: Statement) -> Filter:
+    """`id <identity> <identity> ...`.
+
+    Every argument is a value, with no field in front of them: an identity is
+    not a field, so there is nothing to name. That is also what keeps it apart
+    from `in key ...`, which is a question about a field that happens to be
+    called key."""
+    f = Filter(op=OP_ID, children=[])
+    for a in st.args:
+        if a.value is None:
+            raise QueryError(
+                "id: %r names no identity; write the identities as values" % a.name)
+        if a.name:
+            raise QueryError("id: takes identities, not %s=" % a.name)
+        if a.value.kind == ValueKind.BLOCK:
+            raise QueryError("id: an identity is a value, not a block")
+        f.values.append(a.value)
+    if not f.values:
+        raise QueryError("id: takes at least one identity")
+    return f
+
+
+def _parse_predicate(st: Statement) -> Filter:
+    if st.verb in _GROUPS:
+        if len(st.args) != 1 or st.args[0].value is None \
+                or st.args[0].value.kind != ValueKind.BLOCK:
+            raise QueryError("%s: takes one block" % st.verb)
+        inner = _parse_filter_block(st.args[0].value.block, st.verb)
+        if st.verb == OP_NOT and not inner.children:
+            raise QueryError("not: takes something to negate")
+        return inner
+    if st.verb == OP_ID:
+        return _parse_id(st)
+    if st.verb not in _PREDICATES:
+        raise QueryError("no filter operator called %r" % st.verb)
+
+    f = Filter(op=st.verb, children=[])
+    named = False
+    for a in st.args:
+        if a.name == "collate" and a.value is not None:
+            # `collate=` is the one name a predicate reserves, and it reserves
+            # it WITH ITS VALUE. A bare `collate` is a word like any other bare
+            # word here, so a field can be called that and a dangling one is
+            # caught by the operand count rather than by its spelling.
+            if a.value.kind != ValueKind.WORD:
+                raise QueryError("%s: collate= expects a word" % st.verb)
+            f.collate = a.value.word
+        elif not named:
+            # The first operand is the field, in whatever form it was written.
+            # Naming it by position is what lets a filter read as a filter
+            # rather than naming an argument for every operand -- and what lets
+            # a name that is not a bare word be one.
+            f.field = _operand_field(st.verb, a)
+            named = True
+        elif a.value is not None and a.value.kind == ValueKind.BLOCK and f.op != OP_IN:
+            # A comparison takes a simple value. A block is a set, and a set is
+            # only something `in` can be asked about.
+            raise QueryError("%s %s: compares against a value, not a block"
+                             % (st.verb, f.field))
+        elif a.value is not None and a.value.kind == ValueKind.BLOCK and f.op == OP_IN:
+            # A set of words, which is what a block can hold: every statement
+            # in it is one bare name.
+            for item in a.value.block.statements:
+                if not item.verb or item.args:
+                    raise QueryError(
+                        "in: a set holds bare names; write other values after the field")
+                f.values.append(new_word(item.verb))
+        else:
+            f.values.append(_operand_value(st.verb, a))
+    if not f.field:
+        raise QueryError("%s: names no field" % st.verb)
+    if f.op in (OP_HAS, OP_LACKS):
+        if f.values:
+            raise QueryError("%s %s: asks whether the field is there, and takes no value"
+                             % (f.op, f.field))
+        return f
+    if not f.values:
+        raise QueryError("%s %s: nothing to compare against" % (st.verb, f.field))
+    if f.op != OP_IN and len(f.values) > 1:
+        raise QueryError("%s %s: compares against one value, not %d"
+                         % (st.verb, f.field, len(f.values)))
+    return f
+
+
+def parse_sort(v: Optional[Value]) -> List[SortLevel]:
+    """Sort levels, from a block value: one statement per level, naming a field
+    and saying which way and under which collation."""
+    if v is None or v.kind != ValueKind.BLOCK:
+        raise QueryError("expected a block")
+    out: List[SortLevel] = []
+    for st in v.block.statements:
+        if not st.verb:
+            raise QueryError("a level names a field")
+        level = SortLevel(field=st.verb)
+        for a in st.args:
+            if a.name == "collate" and a.value is not None \
+                    and a.value.kind == ValueKind.WORD:
+                level.collation = a.value.word
+            elif a.value is not None:
+                raise QueryError("%s: no argument called %r" % (st.verb, a.name))
+            elif a.name == "desc":
+                level.descending = a.flag == FlagState.TRUE
+            elif a.name == "asc":
+                level.descending = a.flag != FlagState.TRUE
+            elif a.name in (COLLATE_EXACT, COLLATE_FOLD, COLLATE_NATURAL):
+                level.collation = a.name
+            else:
+                raise QueryError("%s: %r says nothing about a sort level"
+                                 % (st.verb, a.name))
+        out.append(level)
+    return out
+
+
+def encode_sort(levels: List[SortLevel]) -> str:
+    """Sort levels as a block."""
+    parts = []
+    for l in levels:
+        s = l.field
+        if l.collation:
+            s += " " + l.collation
+        if l.descending:
+            s += " desc"
+        parts.append(s)
+    return "{ " + "; ".join(parts) + " }" if parts else "{}"
+
+
+# --- what a source says has stopped being true ---------------------------
+
+# STALE_VERB is the other direction from everything else an application says. A
+# `result` answers a question the display put; this is the application speaking
+# first, because only it knows its records changed and nothing on the other end
+# can find out. Invalidation is TOLD, never decided.
+#
+#     stale source="papers"                              nothing of it is trusted
+#     stale source="papers" id=42 how=removed            one record, and it has left
+#     stale source="papers" id=42 how=altered fields={ size }
+#     stale source="papers" how=altered fields={ size }  any record's size may have moved
+#
+# It is neither of the two verbs that would otherwise carry it. An `event`
+# belongs to a subscription or to an object reporting itself, and a source is
+# neither; an `answer` belongs to one question, and nobody asked.
+STALE_VERB = "stale"
+
+# SOURCE_ARG names which of the application's sources it is about. Required: an
+# application may serve several, and a notice that did not say which would be a
+# notice about all of them.
+SOURCE_ARG = "source"
+
+# HOW_ARG is which of the four things happened -- the same word an amendment is
+# held under, because they are the same four facts. What it COSTS is why it is
+# carried: a bare "forget this" throws away the one thing that settles whether
+# the order moved or only the values did.
+HOW_ARG = "how"
+
+# The four, in serval's order, so a word means the same thing in every client.
+CHANGE_ADDED = "added"
+CHANGE_REMOVED = "removed"
+CHANGE_REPLACED = "replaced"
+CHANGE_ALTERED = "altered"
+
+_CHANGES = (CHANGE_ADDED, CHANGE_REMOVED, CHANGE_REPLACED, CHANGE_ALTERED)
+
+
+@dataclasses.dataclass
+class Stale:
+    """One `stale` statement taken apart."""
+
+    # The name the application serves the records under.
+    source: str = ""
+
+    # The record it is about, and None for a notice about the whole source.
+    id: Optional[Value] = None
+
+    # Which of the four things happened. `replaced` where the statement did not
+    # say, that being the widest claim about one named record -- coarsening is
+    # always safe, and saying less than happened never is.
+    how: str = CHANGE_REPLACED
+
+    # The fields that may have moved, for an alteration. Empty says the source
+    # cannot tell, which is every field.
+    fields: List[str] = dataclasses.field(default_factory=list)
+
+    def args(self) -> List[Arg]:
+        """The notice as the arguments after the verb."""
+        out = [Arg(name=SOURCE_ARG, value=new_string(self.source))]
+        if self.id is not None:
+            out.append(Arg(name=ID_ARG, value=self.id))
+        out.append(Arg(name=HOW_ARG, value=new_word(self.how)))
+        if self.fields:
+            bag = Fields()
+            for f in self.fields:
+                bag.append(Arg(name=f, flag=FlagState.TRUE))
+            out.append(Arg(name=FIELDS_ARG, value=bag.block()))
+        return out
+
+
+def parse_stale(args: List[Arg]) -> Stale:
+    """A notice from a statement's arguments."""
+    out = Stale()
+    said = False
+    fields: Optional[Arg] = None
+    for a in args:
+        if a.name == SOURCE_ARG:
+            if a.value is None or a.value.kind != ValueKind.STRING:
+                raise QueryError(
+                    "%s: expected the name the application serves them under" % SOURCE_ARG)
+            out.source = a.value.str
+        elif a.name == ID_ARG:
+            if a.value is None:
+                raise QueryError("%s: expected a record's identity" % ID_ARG)
+            out.id = a.value
+        elif a.name == HOW_ARG:
+            if a.value is None or a.value.kind != ValueKind.WORD:
+                raise QueryError(
+                    "%s: expected one of added, removed, replaced, altered" % HOW_ARG)
+            if a.value.word not in _CHANGES:
+                raise QueryError("%s: %r is not one of added, removed, replaced, altered"
+                                 % (HOW_ARG, a.value.word))
+            out.how, said = a.value.word, True
+        elif a.name == FIELDS_ARG:
+            fields = a
+        else:
+            raise QueryError("%s: %s= is not one of its arguments" % (STALE_VERB, a.name))
+    if not out.source:
+        raise QueryError("%s: expected %s=" % (STALE_VERB, SOURCE_ARG))
+    # `fields=` only means anything on an alteration. On any other reason the
+    # values are gone entire, so a list of them contradicts the word beside it --
+    # and quietly dropping one half of a contradiction is how a source comes to
+    # believe it said something it did not.
+    if fields is not None:
+        if not said or out.how != CHANGE_ALTERED:
+            raise QueryError("%s: %s= names what an alteration touched, and this is %s"
+                             % (STALE_VERB, FIELDS_ARG, out.how))
+        for f in parse_fields(fields.value):
+            if not f.name:
+                raise QueryError("%s: a field is named, and %s carries one that is not"
+                                 % (FIELDS_ARG, FIELDS_ARG))
+            if f.value is not None:
+                raise QueryError("%s: %s names fields and not their values; %s carries one"
+                                 % (FIELDS_ARG, STALE_VERB, f.name))
+            out.fields.append(f.name)
+    return out
+
+
+def encode_stale(s: Stale) -> str:
+    """The notice as a statement."""
+    return " ".join([STALE_VERB] + [encode_arg(a) for a in s.args()])

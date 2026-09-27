@@ -69,6 +69,8 @@ func TestTearOffHostZoomKeepsMaximized(t *testing.T) {
 // pre-maximize bounds, undoing a resize the user just performed).
 func TestRestoreInPlaceKeepsBounds(t *testing.T) {
 	win := NewWindow("w")
+	// A torn window is an OS window, sized in device pixels on no cell grid.
+	win.SetSmoothPositioning(true)
 	win.SetBounds(core.UnitRect{X: 10, Y: 10, Width: 200, Height: 100})
 	win.Maximize()
 	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 1600, Height: 970})

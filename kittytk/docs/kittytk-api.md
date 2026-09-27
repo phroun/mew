@@ -762,8 +762,8 @@ trinket.ClearFocus()
 
 // Focus manager
 fm := window.FocusManager()
-fm.NextTrinket()      // Tab forward
-fm.PreviousTrinket()  // Tab backward
+fm.FocusNext()        // Tab forward
+fm.FocusPrior()       // Tab backward
 fm.SetWrapAround(true)
 
 // Callback
@@ -966,8 +966,8 @@ metrics := core.DefaultCellMetrics()
 
 // Window sized for 60x20 cells
 w.SetSize(core.UnitSize{
-    Width:  60 * metrics.CellWidth,   // 480 units
-    Height: 20 * metrics.CellHeight,  // 320 units
+    Width:  60 * metrics.UnitsPerCellWidth,   // 480 units
+    Height: 20 * metrics.UnitsPerCellHeight,  // 320 units
 })
 
 // Convert units to cells

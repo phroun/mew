@@ -31,25 +31,44 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 	}
 }
 
-// flipBidiForHost="auto": Apple Terminal flips whole-run and needs the ride-safe
-// selection; Kitty flips word-wise and keeps the real bar; the stream-order
-// terminals do not flip (all recognised, so all skip the probe); an unrecognised
-// host is left to the probe. Explicit true/false pass through.
+// flipBidiForHost="auto" takes its answer from hostterm.BidiProfile, the one
+// table that says what a terminal does with what it is sent. mew keeps no
+// second copy of it -- it had one, and the two disagreed about kitty for as
+// long as both existed. Explicit true/false do not consult it at all.
 func TestFlipBidiForHostResolve(t *testing.T) {
-	cases := map[hostterm.Kind]hostBidiProfile{
-		hostterm.TerminalAppleTerminal: {flip: true, wordwise: false, rideSafe: true, known: true},
-		hostterm.TerminalKitty:         {flip: true, wordwise: true, rideSafe: false, known: true},
-		hostterm.TerminalITerm2:        {known: true},
-		hostterm.TerminalAlacritty:     {known: true},
-		hostterm.TerminalGhostty:       {known: true},
-		hostterm.TerminalUnknown:       {},
-		hostterm.TerminalPurfecterm:    {},
+	t.Cleanup(func() { hostterm.Override(hostterm.TerminalUnknown) })
+
+	// A reordering host, whole-span, whose fill cannot be trusted.
+	hostterm.Override(hostterm.TerminalAppleTerminal)
+	if flip, wordwise, rideSafe, known := flipSettings("auto"); !flip || wordwise || !rideSafe || !known {
+		t.Errorf("Apple Terminal: auto gave flip=%v wordwise=%v rideSafe=%v known=%v",
+			flip, wordwise, rideSafe, known)
 	}
-	for k, want := range cases {
-		if got := hostBidiProfileFor(k); got != want {
-			t.Errorf("hostBidiProfileFor(%s) = %+v, want %+v", k, got, want)
-		}
+
+	// One that leaves what it is sent alone.
+	hostterm.Override(hostterm.TerminalITerm2)
+	if flip, _, rideSafe, known := flipSettings("auto"); flip || rideSafe || !known {
+		t.Errorf("iTerm2: auto gave flip=%v rideSafe=%v known=%v", flip, rideSafe, known)
 	}
+
+	// And one no name recognises, left to the probe.
+	hostterm.Override(hostterm.TerminalUnknown)
+	if _, _, _, known := flipSettings("auto"); known {
+		t.Error("an unrecognised host was answered for rather than left to the probe")
+	}
+
+	// Explicit settings ignore the host entirely.
+	hostterm.Override(hostterm.TerminalITerm2)
+	if flip, _, rideSafe, known := flipSettings("true"); !flip || !rideSafe || !known {
+		t.Errorf(`flipSettings("true") = flip=%v rideSafe=%v known=%v on a stream-order `+
+			"host, want the setting honoured", flip, rideSafe, known)
+	}
+	hostterm.Override(hostterm.TerminalAppleTerminal)
+	if flip, _, _, known := flipSettings("false"); flip || !known {
+		t.Errorf(`flipSettings("false") = flip=%v known=%v on a reordering host, want `+
+			"the setting honoured", flip, known)
+	}
+
 	if !resolveFlipBidiForHost("true") {
 		t.Errorf(`resolveFlipBidiForHost("true") = false, want true`)
 	}

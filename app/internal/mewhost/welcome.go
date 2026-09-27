@@ -290,35 +290,35 @@ func (c *welcomeContent) Paint(p *core.Painter) {
 	// Message text in the proportional font, wrapped to a reading width (or to
 	// the window, when the window is the narrower of the two).
 	font := c.EffectiveFont()
-	textW := m.CellWidth * welcomeWrapCols
-	if avail := bounds.Width - m.CellWidth*4; avail > 0 && avail < textW {
+	textW := m.UnitsPerCellWidth * welcomeWrapCols
+	if avail := bounds.Width - m.UnitsPerCellWidth*4; avail > 0 && avail < textW {
 		textW = avail
 	}
 	c.wrap(textW, font) // no-op when already wrapped to this width
 
 	// The block is the copy, a blank line, and the button row (two rows tall).
-	blockH := core.Unit(len(c.wrapped)+3) * m.CellHeight
+	blockH := core.Unit(len(c.wrapped)+3) * m.UnitsPerCellHeight
 	top := (bounds.Height - blockH) / 2
-	if top < m.CellHeight {
-		top = m.CellHeight
+	if top < m.UnitsPerCellHeight {
+		top = m.UnitsPerCellHeight
 	}
 	textX := (bounds.Width - textW) / 2
-	if textX < m.CellWidth {
-		textX = m.CellWidth
+	if textX < m.UnitsPerCellWidth {
+		textX = m.UnitsPerCellWidth
 	}
-	if m.CellWidth > 0 && !core.FindSmoothPositioning(c.Self()) {
-		textX = (textX / m.CellWidth) * m.CellWidth
-		top = (top / m.CellHeight) * m.CellHeight
+	if m.UnitsPerCellWidth > 0 && !core.FindSmoothPositioning(c.Self()) {
+		textX = (textX / m.UnitsPerCellWidth) * m.UnitsPerCellWidth
+		top = (top / m.UnitsPerCellHeight) * m.UnitsPerCellHeight
 	}
 
 	lineY := top
 	for _, line := range c.wrapped {
 		p.DrawText(textX, lineY, line, st, font)
-		lineY += m.CellHeight
+		lineY += m.UnitsPerCellHeight
 	}
 
 	// Buttons centered as a row under the copy.
-	c.layoutButtons(bounds, m, lineY+m.CellHeight)
+	c.layoutButtons(bounds, m, lineY+m.UnitsPerCellHeight)
 	for _, b := range c.buttons {
 		if !b.IsVisible() {
 			continue
@@ -335,25 +335,25 @@ func (c *welcomeContent) layoutButtons(bounds core.UnitRect, m core.CellMetrics,
 	widths := make([]core.Unit, len(c.buttons))
 	var row core.Unit
 	for i, b := range c.buttons {
-		widths[i] = core.Unit(len(b.Text())+4) * m.CellWidth
+		widths[i] = core.Unit(len(b.Text())+4) * m.UnitsPerCellWidth
 		row += widths[i]
 	}
 	if n := len(c.buttons); n > 1 {
-		row += core.Unit(n-1) * m.CellWidth
+		row += core.Unit(n-1) * m.UnitsPerCellWidth
 	}
 	x := (bounds.Width - row) / 2
-	if x < m.CellWidth {
-		x = m.CellWidth
+	if x < m.UnitsPerCellWidth {
+		x = m.UnitsPerCellWidth
 	}
-	if m.CellWidth > 0 && !core.FindSmoothPositioning(c.Self()) {
-		x = (x / m.CellWidth) * m.CellWidth
+	if m.UnitsPerCellWidth > 0 && !core.FindSmoothPositioning(c.Self()) {
+		x = (x / m.UnitsPerCellWidth) * m.UnitsPerCellWidth
 	}
-	if max := bounds.Height - m.CellHeight*2; y > max {
+	if max := bounds.Height - m.UnitsPerCellHeight*2; y > max {
 		y = max
 	}
 	for i, b := range c.buttons {
-		b.SetBounds(core.UnitRect{X: x, Y: y, Width: widths[i], Height: m.CellHeight * 2})
-		x += widths[i] + m.CellWidth
+		b.SetBounds(core.UnitRect{X: x, Y: y, Width: widths[i], Height: m.UnitsPerCellHeight * 2})
+		x += widths[i] + m.UnitsPerCellWidth
 	}
 }
 

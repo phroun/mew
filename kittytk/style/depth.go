@@ -196,3 +196,43 @@ func xterm256RGB(idx int) (r, g, b int) {
 		return g, g, g
 	}
 }
+
+// The weights the eye gives each channel: green carries most of what is seen,
+// red some, blue very little. Below this much of full, a colour cannot be told
+// from the ground a terminal shows where nothing has been painted.
+const (
+	groundLuminance = 0.14
+	weightRed       = 0.22
+	weightGreen     = 0.72
+	weightBlue      = 0.08
+)
+
+// NearBlack reports whether this colour is too dark to tell from the ground.
+//
+// A theme's black is rarely the pure one -- a near-black is the usual choice,
+// and it may be written as an index, as a palette entry, or in channels -- so
+// what settles it is not the value but whether there is enough light in it to
+// see. A blank cell drawing this as its own ground would put a shade over the
+// ground it already stands on, which costs a space its glyph and shows nothing.
+//
+// The default and the transparent are dark by the same reasoning: nothing has
+// been painted, so there is nothing to draw in its place.
+func (c Color) NearBlack() bool {
+	var r, g, b int
+	switch {
+	case c == ColorDefault || c == ColorTransparent:
+		return true
+	case c >= 0 && c < 16:
+		t := ActiveTermANSIColor(int(c))
+		r, g, b = int(t.R), int(t.G), int(t.B)
+	case c >= 256+0x1000000:
+		r, g, b = xterm256RGB((int(c) - 256 - 0x1000000) & 0xFF)
+	case c >= 256:
+		v := int(c) - 256
+		r, g, b = (v>>16)&0xFF, (v>>8)&0xFF, v&0xFF
+	default:
+		return false
+	}
+	lum := weightRed*float64(r) + weightGreen*float64(g) + weightBlue*float64(b)
+	return lum/255 < groundLuminance
+}

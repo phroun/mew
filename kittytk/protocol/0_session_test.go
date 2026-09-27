@@ -12,6 +12,7 @@ type mockObject struct {
 	typeName string
 	sets     []string // "name=value" / "name!" / "name?" / "name~" (false)
 	children []*mockObject
+	slots    []string // the collection property each child came through
 }
 
 func (m *mockObject) Set(name string, v *Value, flag FlagState) error {
@@ -37,7 +38,10 @@ func (m *mockObject) Set(name string, v *Value, flag FlagState) error {
 	return nil
 }
 
-func (m *mockObject) Append(child Object) error {
+// Append records the collection each child arrived through, so a test can
+// tell one named block from another.
+func (m *mockObject) Append(slot string, child Object) error {
+	m.slots = append(m.slots, slot)
 	m.children = append(m.children, child.(*mockObject))
 	return nil
 }
@@ -139,13 +143,13 @@ func TestTemplateInstantiationWithOverrides(t *testing.T) {
 	f := newMockFactory("button")
 	s := NewSession()
 	exec(t, s, f, `
-template MyBtn=button align=right caption="Click Me" visible
+template MyBtn=button halign=opticalright fill=none caption="Click Me" visible
 new MyBtn caption="Other" !visible
 `)
 	got := strings.Join(f.created[0].sets, " ")
 	// Template properties first, instance overrides after (later wins
 	// at the object layer); !visible un-sets the template's flag (D12).
-	want := `align=right caption="Click Me" visible! caption="Other" visible~`
+	want := `halign=opticalright fill=none caption="Click Me" visible! caption="Other" visible~`
 	if got != want {
 		t.Errorf("sets:\n got  %s\n want %s", got, want)
 	}

@@ -37,7 +37,7 @@ w=new window title="Graphical KittyTK" width=608 height=352 children={
 		new radiobutton caption="Radio option one" group=g checked
 		new radiobutton caption="Radio option two" group=g
 		new textinput text="Text input content"
-		new combobox children={new item caption="First item"; new item caption="Second"} selected=0
+		new combobox items={new item caption="First item"; new item caption="Second"} selected=0
 		new progress value=65
 		new panel border border_style=double layout=vbox children={
 			new label caption="A double border drawn with real lines"
@@ -75,17 +75,17 @@ w=new window title="Graphical KittyTK" width=608 height=352 children={
 	longestRun := 0
 	for y := 0; y < 384; y++ {
 		run := 1
-		prev := img.RGBAAt(0, y)
+		prior := img.RGBAAt(0, y)
 		for x := 1; x < 640; x++ {
 			c := img.RGBAAt(x, y)
-			if c == prev && c != bgAt && (c != color.RGBA{16, 16, 24, 255}) {
+			if c == prior && c != bgAt && (c != color.RGBA{16, 16, 24, 255}) {
 				run++
 				if run > longestRun {
 					longestRun = run
 				}
 			} else {
 				run = 1
-				prev = c
+				prior = c
 			}
 		}
 	}
