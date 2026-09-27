@@ -502,9 +502,9 @@ vt=new tab caption="Vertical Tabs" children={
 		vttrail=new checkbox direction=ltr caption="trailing -- the close buttons after the labels instead of before them" halign=textnatural fill=none
 		vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		vtside=new tabs position=side children={
-			new tab caption="First" children={
+			new tab caption="First" !closable children={
 				new panel layout=vbox children={
-					new label caption="position=side: the strip stands\non the edge the form reads from."
+					new label caption="position=side: the strip stands\non the edge the form reads from.\n\nThis tab says !closable: it keeps\nno close button when the others get one."
 					new label caption="A form reading right to left\nwould stand it on the right."
 				}
 			}

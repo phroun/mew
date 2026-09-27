@@ -494,7 +494,7 @@ func TestTheButtonsStopNeedsTheFocusAndAButton(t *testing.T) {
 	}
 
 	tt = closeStrip(t, TabsTop, core.DirLTR, false)
-	tt.Tab(2).Closable = true
+	tt.SetTabClosable(2, ClosableOn)
 	tt.SetOnTabCloseRequested(func(i int) { tt.RemoveTab(i) })
 	tt.SetFocus()
 	tt.HandleKeyPress(core.KeyPressEvent{Key: "Tab"})
@@ -960,5 +960,103 @@ func TestCloseSideArrivesOverTheWire(t *testing.T) {
 		if !found {
 			t.Errorf("%s: built no tab strip", tc.script)
 		}
+	}
+}
+
+// A tab can override its strip either way: kept without a button on a strip
+// whose tabs can all be closed, or given one on a strip whose tabs cannot.
+// Handed back, it follows the strip again. Setting it repaints, and a tab kept
+// without a button is not a stop for the keyboard either.
+func TestATabOverridesItsStripsClosable(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil); core.SetRepaintHook(nil) })
+	tt := leadingStrip(t, TabsTop, core.DirLTR, true)
+	repaints := 0
+	core.SetRepaintHook(func() { repaints++ })
+	tt.SetTabClosable(2, ClosableOff)
+	if repaints == 0 {
+		t.Error("setting a tab's closable asked for no repaint")
+	}
+	core.SetRepaintHook(nil)
+	if got, _ := paintCloseGrid(t, tt).row(0); got != ` ×Grid ×Flex_/ Limit \×Fixed` {
+		t.Errorf("one tab kept without a button on a closable strip: %q", got)
+	}
+	if tt.TabClosable(2) != ClosableOff || tt.TabClosable(1) != ClosableDefault {
+		t.Errorf("tabs report %v and %v", tt.TabClosable(2), tt.TabClosable(1))
+	}
+	tt.SetFocus()
+	if tt.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) {
+		t.Error("Tab stopped on a button the current tab does not have")
+	}
+
+	tt = leadingStrip(t, TabsTop, core.DirLTR, false)
+	tt.SetTabClosable(1, ClosableOn)
+	if got, _ := paintCloseGrid(t, tt).row(0); got != `  Grid ×Flex_/ Limit \_Fixed` {
+		t.Errorf("one tab given a button on a strip without them: %q", got)
+	}
+	tt.SetTabClosable(1, ClosableDefault)
+	if got, _ := paintCloseGrid(t, tt).row(0); got != `  Grid  Flex_/ Limit \_Fixed` {
+		t.Errorf("a tab handed back to its strip: %q", got)
+	}
+	tt.SetTabClosable(9, ClosableOn) // nothing there: ignored
+	if tt.TabClosable(9) != ClosableDefault {
+		t.Error("a tab that is not there reports a say of its own")
+	}
+}
+
+// On the wire a tab says closable, !closable or ?closable -- or closable=true,
+// false or default -- when it is built and at any time after, and the strip
+// follows.
+func TestATabSaysItsOwnClosableOnTheWire(t *testing.T) {
+	f := &captureFactory{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}
+	session := protocol.NewSession()
+	run := func(src string) {
+		t.Helper()
+		script, err := protocol.Parse(src)
+		if err != nil {
+			t.Fatalf("%s: %v", src, err)
+		}
+		if _, err := session.Execute(script, f); err != nil {
+			t.Fatalf("%s: %v", src, err)
+		}
+	}
+	run(`s=new tabs closable children={
+		a=new tab caption="Home" !closable children={new panel}
+		b=new tab caption="Doc" children={new panel}
+		c=new tab caption="Log" closable=false children={new panel}
+	}`)
+	var tt *TabTrinket
+	for _, tg := range f.targets {
+		if tw, ok := tg.(*TabTrinket); ok {
+			tt = tw
+		}
+	}
+	if tt == nil {
+		t.Fatal("no tab strip was built")
+	}
+	want := func(when string, says ...Closability) {
+		t.Helper()
+		for i, c := range says {
+			if got := tt.TabClosable(i); got != c {
+				t.Errorf("%s: tab %d says %v, want %v", when, i, got, c)
+			}
+		}
+	}
+	want("built", ClosableOff, ClosableDefault, ClosableOff)
+	if tt.closableTab(0) || !tt.closableTab(1) {
+		t.Error("the strip does not follow what its tabs said")
+	}
+	run(`set s.a ?closable`)
+	run(`set s.b !closable`)
+	run(`set s.c closable=default`)
+	want("set after", ClosableDefault, ClosableOff, ClosableDefault)
+	run(`set s.b closable=true`)
+	run(`set s.a closable`)
+	want("set on", ClosableOn, ClosableOn, ClosableDefault)
+	script, err := protocol.Parse(`set s.b closable=maybe`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Execute(script, f); err == nil {
+		t.Error("closable=maybe was taken")
 	}
 }

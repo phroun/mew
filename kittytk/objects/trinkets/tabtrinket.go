@@ -82,12 +82,29 @@ type Tab struct {
 	Text string
 	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
 	// picture. A name nothing has registered draws nothing.
-	Icon     string
-	Content  core.Trinket
-	Enabled  bool
-	Closable bool // Per-tab closable setting
+	Icon    string
+	Content core.Trinket
+	Enabled bool
+	// Closable is this tab's own say over its close button. Left at
+	// ClosableDefault it follows the strip (SetClosable); either of the others
+	// overrides the strip for this tab alone. Set it with SetTabClosable, which
+	// repaints.
+	Closable Closability
 	Data     interface{}
 }
+
+// Closability is a tab's own say over whether it has a close button.
+type Closability int
+
+const (
+	// ClosableDefault follows the strip: a button when the strip is closable.
+	ClosableDefault Closability = iota
+	// ClosableOn gives this tab a button whatever the strip says.
+	ClosableOn
+	// ClosableOff keeps this tab without one whatever the strip says -- the
+	// one tab that must stay on a strip whose others can all be closed.
+	ClosableOff
+)
 
 // TabPosition is where a tab strip is asked to stand.
 //
@@ -570,9 +587,48 @@ func (t *TabTrinket) IsClosable() bool {
 	return t.closable
 }
 
-// closableTab says whether tab i carries a close button.
+// closableTab says whether tab i carries a close button: its own say where it
+// has one, and the strip's where it does not.
 func (t *TabTrinket) closableTab(i int) bool {
-	return i >= 0 && i < len(t.tabs) && (t.closable || t.tabs[i].Closable)
+	if i < 0 || i >= len(t.tabs) {
+		return false
+	}
+	switch t.tabs[i].Closable {
+	case ClosableOn:
+		return true
+	case ClosableOff:
+		return false
+	}
+	return t.closable
+}
+
+// TabClosable is tab i's own say over its close button.
+func (t *TabTrinket) TabClosable(index int) Closability {
+	if index < 0 || index >= len(t.tabs) {
+		return ClosableDefault
+	}
+	return t.tabs[index].Closable
+}
+
+// SetTabClosable gives tab i its own say over its close button, overriding the
+// strip's closable for that tab alone, or hands it back with ClosableDefault.
+func (t *TabTrinket) SetTabClosable(index int, c Closability) {
+	if index < 0 || index >= len(t.tabs) {
+		return
+	}
+	t.tabs[index].Closable = c
+	t.Update()
+}
+
+// setClosableOf is SetTabClosable for a tab named by itself rather than by
+// where it stands, which moves as tabs come and go.
+func (t *TabTrinket) setClosableOf(tab *Tab, c Closability) {
+	for i, have := range t.tabs {
+		if have == tab {
+			t.SetTabClosable(i, c)
+			return
+		}
+	}
 }
 
 // closeFocusShown says the keyboard is on the current tab's close button.

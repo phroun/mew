@@ -56,3 +56,20 @@ func TestTheTrailingSwitchReachesEveryTabStrip(t *testing.T) {
 		}
 	}
 }
+
+// The side strip's First tab says !closable, so the closable switch leaves it
+// without a button while every other tab on the strip gets one.
+func TestTheFirstSideTabStaysWithoutAButton(t *testing.T) {
+	ui, win, _ := openTabWithUI(t, "Vertical Tabs")
+	(&app{ui: ui}).wireClosable()
+	box, _ := ui.Object("vtclose").Target().(*trinkets.Checkbox)
+	side, _ := ui.Object("vtside").Target().(*trinkets.TabTrinket)
+	if box == nil || side == nil {
+		t.Fatal("no closable switch or side strip")
+	}
+	box.Toggle()
+	win.Layout()
+	if side.TabClosable(0) != trinkets.ClosableOff || side.TabClosable(1) != trinkets.ClosableDefault {
+		t.Errorf("the side strip's tabs say %v and %v", side.TabClosable(0), side.TabClosable(1))
+	}
+}

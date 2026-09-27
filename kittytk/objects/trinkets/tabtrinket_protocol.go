@@ -17,10 +17,15 @@ import (
 //
 // Note: selected must follow the tabs that make it valid.
 
-// wireTab is the virtual tab target: caption + content trinket.
+// wireTab is the virtual tab target: caption + content trinket, and its own
+// say over its close button. Once the strip has taken it, strip and tab say
+// where it went, so a later set reaches the tab it built.
 type wireTab struct {
-	caption string
-	content core.Trinket
+	caption  string
+	content  core.Trinket
+	closable Closability
+	strip    *TabTrinket
+	tab      *Tab
 }
 
 func init() {
@@ -36,6 +41,37 @@ func init() {
 				t.caption = s
 				return nil
 			})).Tip("Tab label text."),
+			"closable": protocol.NewProperty("flag", wprop("closable", func(_ *protocol.BindContext, t *wireTab, v *protocol.Value, f protocol.FlagState) error {
+				c := ClosableDefault
+				switch f {
+				case protocol.FlagTrue:
+					c = ClosableOn
+				case protocol.FlagFalse:
+					c = ClosableOff
+				case protocol.FlagIndeterminate:
+				default:
+					w, err := protocol.AsWord("closable", v, f)
+					if err != nil {
+						return err
+					}
+					switch w {
+					case "true":
+						c = ClosableOn
+					case "false":
+						c = ClosableOff
+					case "default":
+					default:
+						return fmt.Errorf("closable: unknown value %q", w)
+					}
+				}
+				t.closable = c
+				if t.strip != nil {
+					t.strip.setClosableOf(t.tab, c)
+				}
+				return nil
+			})).Tip("This tab's own say over its close button: closable gives it one and !closable " +
+				"keeps it without, whatever the strip's closable says. ?closable, or closable=default, " +
+				"hands it back to the strip, which is where a tab starts."),
 			"children": protocol.NewCollection(func(parent, child any) error {
 				t := parent.(*wireTab)
 				w, ok := child.(core.Trinket)
@@ -167,7 +203,9 @@ func init() {
 				if t.content == nil {
 					return fmt.Errorf("tabs: tab %q has no content", t.caption)
 				}
-				tw.AddTab(t.caption, t.content)
+				i := tw.AddTab(t.caption, t.content)
+				t.strip, t.tab = tw, tw.Tab(i)
+				tw.SetTabClosable(i, t.closable)
 				return nil
 			}).Members("tab").Tip("The tabs on the strip, in order."),
 		},
