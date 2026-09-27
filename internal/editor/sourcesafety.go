@@ -13,6 +13,7 @@ import (
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // This file wires garland's source-safety cluster into the editor: save
@@ -823,4 +824,32 @@ func (e *Editor) forgetBufferSafety(buf *buffer.Buffer) {
 	delete(e.mewLockDeferred, buf)
 	delete(e.bufNotices, buf)
 	e.clearBufferLockState(buf)
+}
+
+// registerSourceSafetyCommands registers buffer_status.
+func (e *Editor) registerSourceSafetyCommands(ps *pawscript.PawScript) {
+	// buffer_status re-exposes the buffer's source-safety picture: source
+	// consistency, lock and backup state, and every captured notice (the
+	// transients that may have timed out unseen).
+	ps.RegisterCommand("buffer_status", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.resolveTargetMain()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		buf := e.lib.NewFromString(e.bufferStatusText(w.Buffer))
+		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type:             viewport.ToolViewport,
+			ViewportSet:      "help",
+			Class:            "bufstatus",
+			Dock:             viewport.DockTop,
+			Priority:         100,
+			MinHeight:        5,
+			MaxHeight:        15,
+			MessageTopCenter: "Buffer Status",
+			Buffer:           buf,
+			ShowLineNumbers:  false,
+		})
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
 }

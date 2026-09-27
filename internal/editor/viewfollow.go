@@ -1,10 +1,13 @@
 package editor
 
 import (
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // ensureCursorVisible scrolls the viewport so the cursor is visible both
@@ -345,4 +348,128 @@ func (e *Editor) reconcilePhantomColumn(w *viewport.Viewport) {
 	if w.ViewState.ViewOffsetX == 0 && e.caretWantsPhantom(w) {
 		w.ViewState.ViewOffsetX = phantomOff
 	}
+}
+
+// registerScrollCommands registers the commands that move the view rather than the caret.
+func (e *Editor) registerScrollCommands(ps *pawscript.PawScript) {
+	// Scroll commands park the viewport WITHOUT moving the caret — the
+	// programmatic analogue of the mouse wheel. Each detaches the view from
+	// caret-follow (ScrollDetached) so the per-frame follow leaves it put until a
+	// cursor-movement or edit command re-engages it. They mirror the go_* family
+	// name-for-name (scroll_line ~ go_line, scroll_line_next ~ go_line_next, ...).
+	ps.RegisterCommand("scroll_line_prior", func(ctx *pawscript.Context) pawscript.Result {
+		e.scrollViewByLines(e.resolveTargetMain(), -1)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_line_next", func(ctx *pawscript.Context) pawscript.Result {
+		e.scrollViewByLines(e.resolveTargetMain(), 1)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_page_prior", func(ctx *pawscript.Context) pawscript.Result {
+		if w := e.resolveTargetMain(); w != nil {
+			_, page := e.pageSize(w)
+			e.scrollViewByLines(w, -page)
+		}
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_page_next", func(ctx *pawscript.Context) pawscript.Result {
+		if w := e.resolveTargetMain(); w != nil {
+			_, page := e.pageSize(w)
+			e.scrollViewByLines(w, page)
+		}
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_buffer_beg", func(ctx *pawscript.Context) pawscript.Result {
+		e.scrollViewTo(e.resolveTargetMain(), 0)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_buffer_end", func(ctx *pawscript.Context) pawscript.Result {
+		if w := e.resolveTargetMain(); w != nil && w.Buffer != nil {
+			viewHeight, _ := e.pageSize(w)
+			// Park the last line on the bottom row (clamped when the buffer is
+			// shorter than the view).
+			e.scrollViewTo(w, w.Buffer.GetLineCount()-viewHeight)
+		}
+		return pawscript.BoolStatus(true)
+	})
+
+	// scroll_line parks a given 1-based line at the TOP of the view (the scroll
+	// analogue of go_line); it takes a line-number argument or, lacking one,
+	// prompts for it exactly as go_line does.
+	// scroll_viewport <id> <line>: park a NAMED viewport at a 0-based top
+	// line. The host's graphical scrollbar drives scrolling with this — it
+	// owns the bar in pixel space, so it computes the line itself and sends a
+	// whole number; mew never scrolls by a fraction of a line. Like the wheel
+	// and mew's own bar, it leaves the view detached and steals no focus, so a
+	// background pane can be scrolled without disturbing the caret.
+	ps.RegisterCommand("scroll_viewport", func(ctx *pawscript.Context) pawscript.Result {
+		id, ok := argString(ctx, 0)
+		if !ok {
+			return pawscript.BoolStatus(false)
+		}
+		lineArg, ok := argString(ctx, 1)
+		if !ok {
+			return pawscript.BoolStatus(false)
+		}
+		top, err := strconv.Atoi(strings.TrimSpace(lineArg))
+		if err != nil {
+			return pawscript.BoolStatus(false)
+		}
+		w := e.ViewportManager.GetViewport(strings.TrimSpace(id))
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		e.scrollViewTo(w, top)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_line", func(ctx *pawscript.Context) pawscript.Result {
+		scrollLine := func(input string) bool {
+			n, err := strconv.Atoi(strings.TrimSpace(input))
+			if err != nil || n < 1 {
+				e.ShowWarning("Invalid line number")
+				return false
+			}
+			e.scrollLineTop(n)
+			return true
+		}
+		if arg, ok := argString(ctx, 0); ok {
+			return pawscript.BoolStatus(scrollLine(arg))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		e.PromptMgr.PromptForInput("Scroll to line: ", "", func(accepted bool, _, input string) {
+			defer e.RequestRender()
+			if expired.Load() {
+				e.ShowWarning("Prompt timed out")
+				return
+			}
+			if !accepted || strings.TrimSpace(input) == "" {
+				ctx.ResumeToken(token, false)
+				return
+			}
+			ctx.ResumeToken(token, scrollLine(input))
+		}, "scrollline")
+		return pawscript.TokenResult(token)
+	})
+
+	// Scroll commands
+	// scroll_left / scroll_right are VISUAL, not reading-relative: unlike the
+	// _prior/_next commands, which follow the text's own direction, these move
+	// the view the way the words name whichever way the text runs. Under
+	// direction=rtl that is the opposite sign on the stored offset — see
+	// scrollViewHorizontal.
+	ps.RegisterCommand("scroll_left", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.scrollViewHorizontal(e.ViewportManager.GetFocusedViewport(), -1))
+	})
+
+	ps.RegisterCommand("scroll_right", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.scrollViewHorizontal(e.ViewportManager.GetFocusedViewport(), +1))
+	})
 }

@@ -2,12 +2,14 @@ package editor
 
 import (
 	"fmt"
+
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // contentLocked reports whether the focused viewport currently forbids content
@@ -678,4 +680,319 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	}
 	e.armSourceSafety(buf)
 	return buf, nil
+}
+
+// registerHistoryCommands registers undo, redo and the buffer transactions.
+func (e *Editor) registerHistoryCommands(ps *pawscript.PawScript) {
+	// Undo/Redo (using Garland's versioning, TypeScript naming convention)
+	ps.RegisterCommand("buffer_undo", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		if !w.Buffer.Undo() {
+			return pawscript.BoolStatus(false)
+		}
+		e.syncCursorAfterUndoRedo(w)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("buffer_redo", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		if !w.Buffer.Redo() {
+			return pawscript.BoolStatus(false)
+		}
+		e.syncCursorAfterUndoRedo(w)
+		return pawscript.BoolStatus(true)
+	})
+
+	// Explicit transaction control for script authors: bracket a run of edits
+	// so they collapse into ONE undo revision (named by the optional argument),
+	// or roll the whole run back. These nest, and pair with the automatic undo
+	// coalescing that already groups plain typing — a script wrapping a compound
+	// edit (search-and-replace, reformat, multi-step macro) gets one clean undo
+	// step. buffer_tx_start with no matching commit/cancel is closed at the end
+	// of the enclosing command dispatch, so a stray open transaction can't leak.
+	ps.RegisterCommand("buffer_tx_start", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		name := "transaction"
+		if len(ctx.Args) > 0 {
+			if s := fmt.Sprintf("%v", ctx.Args[0]); s != "" {
+				name = s
+			}
+		}
+		w.Buffer.BeginUserCommand(name)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("buffer_tx_commit", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		w.Buffer.EndUserCommand()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("buffer_tx_cancel", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		w.Buffer.CancelUserCommand()
+		e.syncCursorAfterUndoRedo(w) // rolled-back content: resync the caret
+		return pawscript.BoolStatus(true)
+	})
+}
+
+// registerBufferCommands registers the commands that open, save, switch and close buffers.
+func (e *Editor) registerBufferCommands(ps *pawscript.PawScript) {
+	// File commands
+	ps.RegisterCommand("buffer_save", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		filename := w.Buffer.GetFilename()
+		if filename == "" {
+			// No filename - prompt for one via buffer_save_as behavior (with history)
+			e.PromptMgr.PromptForFilename("Save as", "", func(accepted bool, _, cursorLineText string) {
+				if accepted && cursorLineText != "" {
+					e.requestSave(w.Buffer, cursorLineText, nil)
+				}
+				e.RequestRender()
+			})
+			return pawscript.BoolStatus(true)
+		}
+		e.requestSave(w.Buffer, filename, nil)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("buffer_save_as", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		currentFilename := w.Buffer.GetFilename()
+		e.PromptMgr.PromptForFilename("Save as", currentFilename, func(accepted bool, _, cursorLineText string) {
+			if accepted && cursorLineText != "" {
+				e.requestSave(w.Buffer, cursorLineText, nil)
+			}
+			e.RequestRender()
+		})
+		return pawscript.BoolStatus(true)
+	})
+
+	// buffer_write EXPORTS the whole buffer to a prompted-for file without
+	// adopting it as the source (garland's SaveCopyTo): the buffer keeps its
+	// original source, filename, modified flag, and save history. It is the
+	// whole-buffer parallel to block_write — a plain "write these bytes there",
+	// not a save-as. Distinct from buffer_save_as, which re-homes the buffer.
+	ps.RegisterCommand("buffer_write", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.writeBufferCopy())
+	})
+
+	// buffer_save_all saves every modified buffer, once each — including buffers
+	// stacked in a viewport's nav history (unsaved work parked behind a link
+	// follow). With the argument "true" it is NON-INTERACTIVE (for save-and-quit,
+	// `buffer_save_all true & exit`): it never prompts, skips unnamed/changed
+	// buffers with a notice, and returns false if anything was skipped or failed.
+	// Otherwise it is INTERACTIVE: it prompts per file (name / overwrite / create
+	// directory), and ANY ^C bails the whole remaining batch with a false result.
+	ps.RegisterCommand("buffer_save_all", func(ctx *pawscript.Context) pawscript.Result {
+		var pending []*buffer.Buffer
+		for _, b := range e.openDocViewports() {
+			if b.IsModified() {
+				pending = append(pending, b)
+			}
+		}
+		if len(pending) == 0 {
+			e.ShowNotification("No modified files to save")
+			return pawscript.BoolStatus(true)
+		}
+		nonInteractive := false
+		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "true") {
+			nonInteractive = true
+		}
+		// Both modes may prompt (the "true" mode only for never-saved buffers,
+		// which now surface with a Save-as instead of being skipped), and the
+		// prompts are async. If the whole batch finishes without suspending on
+		// a prompt, report the result synchronously; otherwise defer it
+		// through a token so a following `& exit` waits for — and respects —
+		// the outcome. The prompt callbacks cannot fire until this command
+		// returns to the main loop, so `token` is always set before any
+		// resume runs.
+		token := ""
+		completedSync, syncResult := false, false
+		finish := func(success bool) {
+			if token == "" {
+				completedSync, syncResult = true, success
+			} else {
+				ctx.ResumeToken(token, success)
+			}
+		}
+		if nonInteractive {
+			e.saveAllNonInteractive(pending, finish)
+		} else {
+			e.saveAllInteractive(pending, finish)
+		}
+		if completedSync {
+			return pawscript.BoolStatus(syncResult)
+		}
+		token = e.PawScript.RequestToken(nil, "", tokenTimeout(0))
+		return pawscript.TokenResult(token)
+	})
+
+	ps.RegisterCommand("buffer_insert_file", func(ctx *pawscript.Context) pawscript.Result {
+		e.PromptMgr.PromptForFilename("Insert file", "", func(accepted bool, _, filename string) {
+			if accepted && filename != "" {
+				e.insertFile(filename)
+			}
+			e.RequestRender()
+		})
+		return pawscript.BoolStatus(true)
+	})
+
+	// Multi-buffer commands
+	// buffer_open_file with an argument opens THAT file directly (no prompt) —
+	// the scripted/menu equivalent of typing the name at the Open prompt, e.g.
+	// `buffer_open_file "help:/"`. With no argument it raises the Open prompt.
+	ps.RegisterCommand("buffer_open_file", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) > 0 {
+			name := strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[0]))
+			if name != "" {
+				ok := e.openFile(name)
+				e.RequestRender()
+				return pawscript.BoolStatus(ok)
+			}
+		}
+		e.PromptMgr.PromptForFilename("Open", "", func(accepted bool, _, cursorLineText string) {
+			if accepted && cursorLineText != "" {
+				e.openFile(cursorLineText)
+			}
+			e.RequestRender()
+		})
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("buffer_new", func(ctx *pawscript.Context) pawscript.Result {
+		e.createNewBuffer()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("buffer_duplicate", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.duplicateCurrentBuffer())
+	})
+
+	// viewport_clone opens a second viewport onto the SAME buffer (not a content
+	// copy like buffer_duplicate) so you can edit in two places at once and switch
+	// between them. Each viewport keeps its own caret and viewport.
+	ps.RegisterCommand("viewport_clone", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.cloneCurrentViewport())
+	})
+
+	// viewport_close closes the focused viewport. A modified buffer asks
+	// first, and the question SUSPENDS the calling sequence on a token rather
+	// than reporting a success it has not had yet: `viewport_close &
+	// viewport_close` walks the viewports one at a time, and answering no
+	// stops the chain where it stood.
+	ps.RegisterCommand("viewport_close", func(ctx *pawscript.Context) pawscript.Result {
+		return e.promptedResult(ctx, e.closeCurrentBufferThen)
+	})
+
+	// session_close closes every viewport there is, asking about each piece of
+	// unsaved work in turn, and ends the session once the last one goes. It is
+	// viewport_close repeated until there is nothing left to close - and, like
+	// a chain of them, it stops the moment one is declined.
+	//
+	// This is what a host runs when something tries to close the WINDOW a mew
+	// session lives in: the window refuses the close outright, runs this, and
+	// closes for real only if the session ends. So unsaved work is answered by
+	// mew's own prompt, in mew's own terms, instead of being lost to a frame
+	// that never asked.
+	ps.RegisterCommand("session_close", func(ctx *pawscript.Context) pawscript.Result {
+		return e.promptedResult(ctx, e.closeSessionThen)
+	})
+
+	// buffer_close closes the focused viewport's buffer from EVERYWHERE it is
+	// referenced (viewport_close closes just the one viewport): active views
+	// mirror viewport_close and nav-history references become mew:/closed
+	// tombstones. Modified buffers prompt once first.
+	ps.RegisterCommand("buffer_close", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.closeBufferEverywhere())
+	})
+
+	// buffer_revert seeks the buffer's history back to its last save point.
+	// A pure history move: redo still reaches the abandoned edits.
+	ps.RegisterCommand("buffer_revert", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		if err := w.Buffer.RevertToLastSave(); err != nil {
+			e.ShowError("Revert: " + err.Error())
+			return pawscript.BoolStatus(false)
+		}
+		e.syncCursorAfterUndoRedo(w)
+		e.noteBuffer(w.Buffer, "save", "Reverted to last save (redo restores the edits)", false)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("buffer_next", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.cycleBuffer(1))
+	})
+
+	ps.RegisterCommand("buffer_prior", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.cycleBuffer(-1))
+	})
+}
+
+// registerFocusCommands registers the commands that move focus between viewports and zones.
+func (e *Editor) registerFocusCommands(ps *pawscript.PawScript) {
+	// Viewport navigation commands. These cycle only viewports currently on
+	// screen (SetCycleVisibleFilter), so they always land on an already-tiled
+	// pane — no adoptFocusInPlace needed. They stay WITHIN the focused viewport's
+	// zone (its ViewportSet): cycling documents never jumps into the help world,
+	// and vice versa — zone_next / zone_prior move between zones.
+	ps.RegisterCommand("viewport_next", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusNextInZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("viewport_prior", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusPriorInZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	// zone_next / zone_prior move focus to the NEXT / PRIOR zone (world/set): they
+	// take the focused main (non-prompt) viewport's ViewportSet, advance to the
+	// adjacent zone among the visible zones, and land on that zone's last-focused
+	// viewport (or its first visible member when the zone has no focus memory).
+	ps.RegisterCommand("zone_next", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusNextZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("zone_prior", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusPrevZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
+	})
 }

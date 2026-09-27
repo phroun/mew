@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/pawscript"
 )
 
 // filter.go runs a command as a FILTER — piping the marked block through it:
@@ -414,4 +415,24 @@ func (fr *filterRun) releaseAnchors() {
 		fr.blockEnd.Release()
 		fr.blockEnd = nil
 	}
+}
+
+// registerFilterCommands registers block_filter.
+func (e *Editor) registerFilterCommands(ps *pawscript.PawScript) {
+	// block_filter pipes the marked block through a shell command and replaces it
+	// with the result. The command may be given inline (block_filter sort -r);
+	// with none it prompts, recalling prior filter
+	// commands. It is the ergonomic spelling of exec --stdin=block --stdout=block
+	// --stderr=block, so stdout and stderr both flow back into the block.
+	ps.RegisterCommand("block_filter", func(ctx *pawscript.Context) pawscript.Result {
+		var parts []string
+		for i := 0; ; i++ {
+			v, ok := argString(ctx, i)
+			if !ok {
+				break
+			}
+			parts = append(parts, v)
+		}
+		return pawscript.BoolStatus(e.blockFilter(strings.Join(parts, " ")))
+	})
 }

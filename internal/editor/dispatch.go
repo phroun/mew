@@ -3,7 +3,9 @@ package editor
 import (
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/phroun/pawscript"
 
@@ -358,4 +360,207 @@ func maxPrecedence(origins map[string]config.MappingOrigin) int {
 		}
 	}
 	return max
+}
+
+// registerKeymapCommands registers the commands that inspect, change or drive the keymap.
+func (e *Editor) registerKeymapCommands(ps *pawscript.PawScript) {
+	// Key mapping commands (matching TypeScript version)
+	ps.RegisterCommand("map", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 2 {
+			e.ShowWarning("Usage: map <key>, <command>")
+			return pawscript.BoolStatus(false)
+		}
+		key := fmt.Sprintf("%v", ctx.Args[0])
+		command := fmt.Sprintf("%v", ctx.Args[1])
+		e.KeyProcessor.MapKey(key, command)
+		// A runtime remap: credit it to AuthorRemapped and give it a precedence
+		// above every config binding so it wins the key-badge tie-break.
+		if e.mappingOrigins == nil {
+			e.mappingOrigins = make(map[string]config.MappingOrigin)
+		}
+		e.remapPrec++
+		e.mappingOrigins[key] = config.MappingOrigin{
+			Source:     config.SourceRemap,
+			Precedence: e.remapPrec,
+			Author:     config.AuthorRemapped,
+		}
+		e.ShowNotification("Mapped " + key + " -> " + command)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("unmap", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: unmap <key>")
+			return pawscript.BoolStatus(false)
+		}
+		key := fmt.Sprintf("%v", ctx.Args[0])
+		e.KeyProcessor.UnmapKey(key)
+		e.ShowNotification("Unmapped " + key)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("remap", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: remap <key>")
+			return pawscript.BoolStatus(false)
+		}
+		key := fmt.Sprintf("%v", ctx.Args[0])
+		// Restore from original config
+		if cmd, ok := e.LoadedConfig.Mappings[key]; ok {
+			e.KeyProcessor.MapKey(key, cmd)
+			e.ShowNotification("Restored mapping: " + key + " -> " + cmd)
+			return pawscript.BoolStatus(true)
+		}
+		e.ShowWarning("No original mapping for " + key)
+		return pawscript.BoolStatus(false)
+	})
+
+	// after_key sets the focused viewport's after-key pseudo-binding: the
+	// PawScript command run each time a key's binding activity resolves while
+	// that viewport owns the keyboard (see viewport.Viewport.AfterKey). With no
+	// argument (or ""), it clears the binding.
+	ps.RegisterCommand("after_key", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil {
+			return pawscript.BoolStatus(false)
+		}
+		script, _ := argString(ctx, 0)
+		w.AfterKey = script
+		return pawscript.BoolStatus(true)
+	})
+
+	// not_implemented is a placeholder for a command that is planned but not
+	// written yet: it warns, names what was asked for, and reports FALSE so a
+	// chain falls through it exactly as an unhandled command would.
+	//
+	// It exists so a planned feature can be advertised in one place instead of
+	// two. Wiring only the MENU item to a toast would leave the key it
+	// advertises doing nothing at all, which is the worse half of the lie -
+	// the user presses the key the menu just taught them and gets silence.
+	// Bind the key here too and both routes answer the same way.
+	ps.RegisterCommand("not_implemented", func(ctx *pawscript.Context) pawscript.Result {
+		what, _ := argString(ctx, 0)
+		msg := "Not yet implemented"
+		if strings.TrimSpace(what) != "" {
+			msg = what + ": not yet implemented"
+		}
+		// One tag for the whole family, so trying several planned items in a
+		// row REPLACES the toast rather than stacking a pile of them - they all
+		// say the same thing, and the newest is the only one that is about what
+		// the user just pressed.
+		e.ShowWarningTagged(msg, "not_implemented")
+		return pawscript.BoolStatus(false)
+	})
+
+	ps.RegisterCommand("mappings_show", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: mappings_show <key>")
+			return pawscript.BoolStatus(false)
+		}
+		key := fmt.Sprintf("%v", ctx.Args[0])
+		if cmd := e.KeyProcessor.GetMapping(key); cmd != "" {
+			e.ShowWarning(key + " -> " + cmd)
+			return pawscript.BoolStatus(true)
+		}
+		e.ShowWarning("No mapping for " + key)
+		return pawscript.BoolStatus(false)
+	})
+
+	ps.RegisterCommand("mappings_list", func(ctx *pawscript.Context) pawscript.Result {
+		mappings := e.KeyProcessor.GetAllMappings()
+		if len(mappings) == 0 {
+			e.ShowWarning("No key mappings defined")
+			return pawscript.BoolStatus(false)
+		}
+		// Build list content
+		var content strings.Builder
+		content.WriteString("Key Mappings:\n")
+		for key, cmd := range mappings {
+			content.WriteString(fmt.Sprintf("  %s -> %s\n", key, cmd))
+		}
+		// Show in a work buffer viewport
+		buf := e.lib.NewFromString(content.String())
+		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type:             viewport.ToolViewport,
+			ViewportSet:      "help",
+			Class:            "mappings",
+			Dock:             viewport.DockTop,
+			Priority:         100,
+			MinHeight:        5,
+			MaxHeight:        15,
+			MessageTopCenter: "Key Mappings",
+			Buffer:           buf,
+			ShowLineNumbers:  false,
+		})
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
+	// nop does nothing, successfully. Bind a key to it to deliberately
+	// disable the key (unbinding instead restores the key's default
+	// handling, e.g. self-insert).
+	ps.RegisterCommand("nop", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(true)
+	})
+
+	// Command prompt (Esc X) - allows entering PawScript commands directly
+	ps.RegisterCommand("cmd", func(ctx *pawscript.Context) pawscript.Result {
+		e.PromptMgr.PromptForInput("18: Command: ", "", func(accepted bool, _, cursorLineText string) {
+			if accepted && cursorLineText != "" {
+				// ExecuteAsync, like executeCommand: this callback runs on
+				// the main loop goroutine, and a typed command that opens a
+				// prompt of its own suspends on a token that only the main
+				// loop can resume — the blocking Execute would deadlock.
+				e.PawScript.ExecuteAsync(cursorLineText)
+			}
+			e.RequestRender()
+		}, "command")
+		return pawscript.BoolStatus(true)
+	})
+
+	// repeat_next arms the next keybound command to run inside a PawScript
+	// repeat(...) N times. With a count argument it arms immediately; with none
+	// it prompts. The count is clamped to the maxRepeat option. The arming is
+	// tracked per-viewport (like Find); the command dispatcher consumes it.
+	ps.RegisterCommand("repeat_next", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.resolveTargetMain()
+		if w == nil {
+			return pawscript.BoolStatus(false)
+		}
+		arm := func(input string) bool {
+			n, err := strconv.Atoi(strings.TrimSpace(input))
+			if err != nil || n < 1 {
+				e.ShowWarning("Repeat count must be a positive integer")
+				return false
+			}
+			max := e.Config.MaxRepeat
+			if max < 1 {
+				max = 100
+			}
+			if n > max {
+				n = max
+			}
+			w.Repeat = viewport.RepeatState{Pending: true, Count: n}
+			return true
+		}
+		if arg, ok := argString(ctx, 0); ok {
+			return pawscript.BoolStatus(arm(arg))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		e.PromptMgr.PromptForInput("Repeat next command (count): ", "", func(accepted bool, _, input string) {
+			defer e.RequestRender()
+			if expired.Load() {
+				e.ShowWarning("Prompt timed out")
+				return
+			}
+			if !accepted || strings.TrimSpace(input) == "" {
+				ctx.ResumeToken(token, false)
+				return
+			}
+			ctx.ResumeToken(token, arm(input))
+		}, "repeatnext")
+		return pawscript.TokenResult(token)
+	})
 }

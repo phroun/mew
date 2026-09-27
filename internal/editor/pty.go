@@ -28,10 +28,12 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // sgrRE matches CSI-m sequences — SGR colour/style plus purfecterm's BGP
@@ -2058,4 +2060,212 @@ func (e *Editor) closePTYSessions() {
 	for _, s := range sessions {
 		_ = s.Close()
 	}
+}
+
+// registerTerminalCommands registers exec, shell and the terminal-viewport commands.
+func (e *Editor) registerTerminalCommands(ps *pawscript.PawScript) {
+	// insert_rune inserts one Unicode scalar by CODE POINT: insert_rune "05D0",
+	// or with no argument a prompt. Hex by default (U+xxxx, 0xxxxx or bare),
+	// "#" prefixes decimal. The companion to insert_bidi_control for
+	// every scalar that has no name of its own.
+	// exec turns the focused buffer into a terminal session. The working
+	// directory comes from the buffer itself (blank when it has no filename -
+	// the HOST decides what that means); the command is the argument, or a
+	// prompt when none is given.
+	//
+	// This deliberately shadows PawScript's own exec. PawScript is built for
+	// exactly that: a host replacing an internal with its own version so that
+	// client code reaches the sandboxed one. mew's exec cannot run anything by
+	// itself - it can only ask its host.
+	// A SECOND argument names the host's method — exec "cmd.exe" "2" — for a
+	// host that has more than one way to make a terminal and no way to know
+	// from here which one this machine wants. Blank is the host's default.
+	// exec takes ANY NUMBER of arguments, joins them with single spaces, and
+	// runs the whole line back through argwild — the same parser the host app
+	// uses on its own command line at boot, so there is one notation to learn
+	// rather than two. mew's switches come first (--pty=NAME), then the
+	// program, then the program's own arguments; argwild's phase model does the
+	// separating. See execargs.go for the spellings.
+	//
+	// shell is exec with the program left to the HOST: it asks for the user's
+	// login shell rather than naming bash or cmd.exe, because which one that is
+	// depends on the operating system and on the user's own account and mew can
+	// see neither. Everything else — the compositing, --pty=, named arguments,
+	// the phase rules — is identical, so the two are registered from one body.
+	// Any further words are the shell's own arguments, which is also how a
+	// program gets run through it: `shell "-c make"`.
+	registerExecLike := func(name string, shell bool) {
+		parse := parseExecLineNamed
+		if shell {
+			parse = parseShellLineNamed
+		}
+		request := func(spec execSpec) bool {
+			// A routed stream (--inblock/--outblock or --stdin/--stdout/--stderr)
+			// makes this a FILTER, not a terminal: the child runs on pipes and mew
+			// feeds/reads its streams itself. Handled on its own path.
+			if spec.filtering() {
+				return e.runFilter(spec)
+			}
+			pol := spec.sizePolicy()
+			if spec.Shell {
+				return e.execRequestShellPolicy(spec.Args, spec.Method, pol, spec.Capture, spec.CaptureFormat)
+			}
+			return e.execRequestArgsPolicy(spec.Program, spec.Args, spec.Method, pol, spec.Capture, spec.CaptureFormat)
+		}
+		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
+			var parts []string
+			for i := 0; ; i++ {
+				v, ok := argString(ctx, i)
+				if !ok {
+					break
+				}
+				parts = append(parts, v)
+			}
+			run := func(line string) bool {
+				spec, err := parse(line, ctx.NamedArgs)
+				if err != nil {
+					e.ShowWarning(name + ": " + err.Error())
+					return false
+				}
+				return request(spec)
+			}
+			if line := joinExecArgs(parts); strings.TrimSpace(line) != "" {
+				return pawscript.BoolStatus(run(line))
+			}
+			// Nothing positional still counts as a request when it can stand on
+			// its own: named arguments carrying a program, or shell, which needs
+			// no arguments at all to mean something.
+			spec, ok, err := namedOnlyRequest(ctx.NamedArgs, shell)
+			if err != nil {
+				e.ShowWarning(name + ": " + err.Error())
+				return pawscript.BoolStatus(false)
+			}
+			if ok {
+				return pawscript.BoolStatus(request(spec))
+			}
+			expired := &atomic.Bool{}
+			token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+				tokenTimeout(e.Config.PromptTimeout))
+			e.PromptMgr.PromptForInput("Execute what? ", "",
+				func(accepted bool, _, input string) {
+					defer e.RequestRender()
+					if expired.Load() {
+						e.ShowWarning("Prompt timed out")
+						return
+					}
+					if !accepted || strings.TrimSpace(input) == "" {
+						ctx.ResumeToken(token, false)
+						return
+					}
+					ctx.ResumeToken(token, run(input))
+				}, name)
+			return pawscript.TokenResult(token)
+		})
+	}
+	registerExecLike("exec", false)
+	registerExecLike("shell", true)
+
+	// tinput sends input to the focused viewport's terminal session — the same
+	// direction the TUI host sends keystrokes into mew, and in the same
+	// currency: raw terminal bytes.
+	//
+	// The argument takes whichever form the value already has. A PawScript
+	// {bytes ...} value goes verbatim and whole, which is how a control byte or
+	// an escape sequence is written without quoting games: {bytes 0x03} is
+	// Ctrl-C, and Up is either {bytes 0x1b5b41} or the comma-separated list
+	// {bytes 0x1b, 0x5b, 0x41}. The commas matter - without them it is symbol
+	// concatenation, not a byte list. A string sends its UTF-8 bytes, so
+	// tinput "ls\n" is what it looks like.
+	//
+	// pty_diag asks the host to test its terminal plumbing and writes the
+	// report into the buffer at the caret. For when exec produces a session
+	// that starts and stops with nothing to show for it.
+	ps.RegisterCommand("pty_diag", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.ptyDiagnose())
+	})
+
+	// viewport_pty_hide / _show / _toggle run the focused viewport's terminal
+	// under the hood or bring it back — bindable so a running session can be
+	// hidden or revealed part-way through. Each warns and does nothing when the
+	// focused buffer has no session.
+	ps.RegisterCommand("viewport_pty_hide", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(1, "viewport_pty_hide"))
+	})
+	ps.RegisterCommand("viewport_pty_show", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(-1, "viewport_pty_show"))
+	})
+	ps.RegisterCommand("viewport_pty_toggle", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(0, "viewport_pty_toggle"))
+	})
+
+	// viewport_pty_kill ends the focused viewport's session; a `final` capture
+	// then folds everything it produced up to that point. Warns and does nothing
+	// when the focused buffer has no session.
+	ps.RegisterCommand("viewport_pty_kill", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.killViewportPTY())
+	})
+
+	// raw_key_input hands the NEXT keystroke to a focused terminal's child
+	// instead of running mew's binding for it — the escape hatch for the keys
+	// mew itself claims. See armRawKey.
+	ps.RegisterCommand("raw_key_input", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.armRawKey())
+	})
+
+	// Reports FALSE when the focused buffer runs nothing, so a chain like
+	// tinput|insert falls through to ordinary editing.
+	ps.RegisterCommand("tinput", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) > 0 {
+			if sb, ok := ctx.Args[0].(pawscript.StoredBytes); ok {
+				return pawscript.BoolStatus(e.ptySendBytes(sb.Data()))
+			}
+		}
+		text, _ := argString(ctx, 0)
+		return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
+	})
+
+	// tinput_key forwards THE KEY BEING DISPATCHED to the focused viewport's
+	// child process, encoded by the host's emulator — so application cursor
+	// mode and its kin decide the bytes (\x1b[A vs \x1bOA for Up), not a
+	// table here. This is what `(capture) * = tinput_key` in [pty::mappings]
+	// runs: the terminal's first claim on every key. Reports FALSE — declining
+	// the key — when there is no session, no host encoder, or the name encodes
+	// to nothing, which drops resolution to the next level down. An explicit
+	// key name may be given as an argument for scripted use.
+	ps.RegisterCommand("tinput_key", func(ctx *pawscript.Context) pawscript.Result {
+		key := e.dispatchingKey
+		// Put back the repeat marker the dispatcher set aside, so the child
+		// learns the key was HELD rather than struck again (see dispatchKey).
+		// Only for the key that actually repeated: a sequence unwind runs
+		// several keys' commands within this one dispatch, and the earlier
+		// ones were separate presses.
+		if key != "" && key == e.repeatingKey {
+			key += ":Repeat"
+		}
+		if len(ctx.Args) > 0 {
+			if s, ok := argString(ctx, 0); ok && s != "" {
+				key = s
+			}
+		}
+		if key == "" {
+			return pawscript.BoolStatus(false)
+		}
+		return pawscript.BoolStatus(e.sendKeyToPTY(key))
+	})
+
+	// terminal_grid <id>, <cols>, <rows> — the host declaring how many cells
+	// of text its display actually renders for a session, which is not the
+	// same as the cell rectangle mew placed it in. See ptyState.gridCols.
+	ps.RegisterCommand("terminal_grid", func(ctx *pawscript.Context) pawscript.Result {
+		id, ok := argString(ctx, 0)
+		if !ok {
+			return pawscript.BoolStatus(false)
+		}
+		cols, okc := argInt(ctx, 1)
+		rows, okr := argInt(ctx, 2)
+		if !okc || !okr {
+			return pawscript.BoolStatus(false)
+		}
+		return pawscript.BoolStatus(e.SetTerminalGrid(id, cols, rows))
+	})
 }

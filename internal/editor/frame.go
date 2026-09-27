@@ -2,11 +2,13 @@ package editor
 
 import (
 	"fmt"
+
 	"math"
 	"strings"
 	"time"
 
 	"github.com/phroun/ifitfits"
+	"github.com/phroun/pawscript"
 
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/viewport"
@@ -346,4 +348,75 @@ func (e *Editor) cursorStyleFor(w *viewport.Viewport) int {
 	default:
 		return e.Config.InsertCursor
 	}
+}
+
+// registerScreenCommands registers the commands that act on the frame itself.
+func (e *Editor) registerScreenCommands(ps *pawscript.PawScript) {
+	// screen_refresh discards the renderer's knowledge of what the terminal is
+	// showing and forces a full clear-and-repaint on the next frame — recovery
+	// from external corruption of the display (a stray program writing over it,
+	// a garbled resize) that the incremental diff would otherwise preserve.
+	ps.RegisterCommand("screen_refresh", func(ctx *pawscript.Context) pawscript.Result {
+		e.Renderer.ForceRedraw()
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
+	// set_font re-points a host font alias at one or more font names on a
+	// graphical host (e.g. set_font "ui-term", "JetBrainsMono"): the first name
+	// that resolves is used, later names are fallbacks. The host loads unknown
+	// names (system scan / configured search paths) and repaints live. On a
+	// plain terminal (no FontSink) it warns — fonts are the terminal's there.
+	ps.RegisterCommand("set_font", func(ctx *pawscript.Context) pawscript.Result {
+		alias, ok := argString(ctx, 0)
+		if !ok || strings.TrimSpace(alias) == "" {
+			e.ShowWarning("set_font: usage: set_font \"<alias>\", \"<font>\" [, \"<fallback>\"...]")
+			return pawscript.BoolStatus(false)
+		}
+		var names []string
+		for i := 1; ; i++ {
+			n, ok := argString(ctx, i)
+			if !ok {
+				break
+			}
+			if n = strings.TrimSpace(n); n != "" {
+				names = append(names, n)
+			}
+		}
+		if len(names) == 0 {
+			e.ShowWarning("set_font: no font name given")
+			return pawscript.BoolStatus(false)
+		}
+		if e.Config.FontSink == nil {
+			e.ShowWarning("set_font: not supported on this terminal")
+			return pawscript.BoolStatus(false)
+		}
+		got := e.Config.FontSink(strings.TrimSpace(alias), names)
+		e.RequestRender()
+		if got {
+			e.ShowNotification(fmt.Sprintf("Font %q set to %s", alias, names[0]))
+		} else {
+			e.ShowWarning(fmt.Sprintf("Font %q: %q not found (using fallback)", alias, names[0]))
+		}
+		return pawscript.BoolStatus(got)
+	})
+
+	// debug_screen arms a full-frame ANSI snapshot of the screen, written to a
+	// timestamped ".ans" file in the box:/// support tree (~/.mew locally) — a
+	// capture that reproduces the screen when cat'd to a terminal. The write
+	// rides the NEXT render (see performRender): the command only arms the target
+	// and forces a full repaint, so it never re-renders (or re-locks renderMu)
+	// itself — snapshotting the exact frame that gets painted.
+	ps.RegisterCommand("debug_screen", func(ctx *pawscript.Context) pawscript.Result {
+		e.pendingScreenCapture = "box:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
+		e.Renderer.ForceRedraw()
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
+	// Render command
+	ps.RegisterCommand("render", func(ctx *pawscript.Context) pawscript.Result {
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
 }

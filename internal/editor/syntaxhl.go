@@ -13,6 +13,7 @@ import (
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/jsf"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // mew's own MIT-licensed grammar pack (and its help manual) ship inside the
@@ -974,4 +975,53 @@ func (e *Editor) pruneSyntaxCaches() {
 			delete(e.synCaches, b)
 		}
 	}
+}
+
+// registerSyntaxCommands registers syntax_context.
+func (e *Editor) registerSyntaxCommands(ps *pawscript.PawScript) {
+	// syntax_context reports what the syntax highlighter's machine is doing
+	// at the caret. With no argument the result is "comment", "string" or
+	// "code"; an argument selects a detail: 'state' (machine state name),
+	// 'class' (color class), 'syntax' (innermost grammar at the caret, which
+	// may be an embedded language), or 'stack' (embedded-language chain,
+	// innermost first, space-separated). Fails when no grammar applies.
+	ps.RegisterCommand("syntax_context", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		sc, ok := e.syntaxContextAt(w.Buffer, w.CursorPos().Line, w.CursorPos().Rune)
+		if !ok {
+			return pawscript.BoolStatus(false)
+		}
+		which := ""
+		if len(ctx.Args) > 0 {
+			which = strings.ToLower(fmt.Sprintf("%v", ctx.Args[0]))
+		}
+		var out string
+		switch which {
+		case "":
+			switch {
+			case sc.Comment:
+				out = "comment"
+			case sc.String:
+				out = "string"
+			default:
+				out = "code"
+			}
+		case "state":
+			out = sc.State
+		case "class":
+			out = sc.Class
+		case "syntax":
+			out = sc.Syntax
+		case "stack":
+			out = strings.Join(sc.Stack, " ")
+		default:
+			e.ShowWarning("syntax_context: unknown detail " + which)
+			return pawscript.BoolStatus(false)
+		}
+		ctx.SetResult(out)
+		return pawscript.BoolStatus(true)
+	})
 }

@@ -1,11 +1,14 @@
 package editor
 
 import (
+	"fmt"
+
 	"strings"
 	"time"
 
 	"github.com/phroun/mew/internal/plugins"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // transientNotificationClasses are the viewport classes used for the transient
@@ -220,4 +223,33 @@ func (e *Editor) expireStaleNotifications() {
 			e.ViewportManager.RemoveViewport(w.ID)
 		}
 	}
+}
+
+// registerMessageCommands registers verbose_log and status.
+func (e *Editor) registerMessageCommands(ps *pawscript.PawScript) {
+	// verbose_log appends text to the shared verbose-log viewport (class
+	// "verboseLog"), creating it in the background on first use - the
+	// logging counterpart of insert. Each argument becomes its own line.
+	ps.RegisterCommand("verbose_log", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) == 0 {
+			e.ShowWarning("Usage: verbose_log <text>")
+			return pawscript.BoolStatus(false)
+		}
+		for i := range ctx.Args {
+			if text, ok := argString(ctx, i); ok {
+				e.appendVerboseLog(text)
+			}
+		}
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
+	// Status command
+	ps.RegisterCommand("status", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) > 0 {
+			e.ShowNotification(fmt.Sprintf("%v", ctx.Args[0]))
+			return pawscript.BoolStatus(true)
+		}
+		return pawscript.BoolStatus(false)
+	})
 }

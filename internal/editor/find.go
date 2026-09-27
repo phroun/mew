@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // farCol is a column sentinel meaning "the far end of the line"; search
@@ -1065,4 +1066,65 @@ func clearMatchHighlight(w *viewport.Viewport) {
 	}
 	w.Buffer.ClearMatchMarks()
 	w.MatchHighlight = false
+}
+
+// registerFindCommands registers find, search and replace.
+func (e *Editor) registerFindCommands(ps *pawscript.PawScript) {
+	// Search commands. find takes up to three optional arguments -
+	// find [term], [options], [replacement] - and prompts only for what is
+	// missing and necessary (see startFind). Option letters: i=ignore case,
+	// b=backwards, a=all buffers, r=replace.
+	ps.RegisterCommand("find", func(ctx *pawscript.Context) pawscript.Result {
+		term, haveTerm := argString(ctx, 0)
+		options, haveOptions := argString(ctx, 1)
+		replacement, haveReplacement := argString(ctx, 2)
+		e.startFind(term, options, replacement, haveTerm, haveOptions, haveReplacement)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("find_next", func(ctx *pawscript.Context) pawscript.Result {
+		state := e.currentFindState()
+		if state.Term == "" {
+			// Nothing to repeat: fall into the interactive find flow.
+			e.startFind("", "", "", false, false, false)
+			return pawscript.BoolStatus(true)
+		}
+		// find_next always steps a single occurrence; a count in the stored
+		// options applies only to the invocation that gave it. The scan runs on
+		// a goroutine, so this reports only that the pass STARTED — the caret
+		// move and any "Not found" arrive from findPump (see findasync.go).
+		return pawscript.BoolStatus(e.findStepAsync(state, 1, true))
+	})
+
+	// search - incremental search: an "I-search:" prompt whose keystrokes
+	// drive the caret to matches live, JOE-style (see isearch.go). It starts
+	// in the direction the find state stored; search_reverse/search_forward
+	// set the direction (stepping one occurrence) inside an open search, or
+	// start one that way. isearch_key is the prompt's after-key classifier;
+	// confirm_key is the single-keystroke classifier armed on yes/no
+	// confirmation prompts (see confirmkey.go).
+	ps.RegisterCommand("search", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.startIncrementalSearch(0))
+	})
+	ps.RegisterCommand("search_reverse", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.isearchDirection(true))
+	})
+	ps.RegisterCommand("search_forward", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.isearchDirection(false))
+	})
+	ps.RegisterCommand("isearch_key", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.isearchKeystroke())
+	})
+	ps.RegisterCommand("confirm_key", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.confirmKeyStroke())
+	})
+
+	// find_replace [term], [replacement] - find with replace mode forced;
+	// prompts for whichever of the two is missing.
+	ps.RegisterCommand("find_replace", func(ctx *pawscript.Context) pawscript.Result {
+		term, haveTerm := argString(ctx, 0)
+		replacement, haveReplacement := argString(ctx, 1)
+		e.startFind(term, "r", replacement, haveTerm, true, haveReplacement)
+		return pawscript.BoolStatus(true)
+	})
 }

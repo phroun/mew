@@ -3,7 +3,9 @@ package editor
 import (
 	"strings"
 
+	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // deleteWouldRemoveNewline reports whether a delete at the caret would remove a
@@ -349,4 +351,109 @@ func (e *Editor) trimLineEnd() bool {
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	return true
+}
+
+// registerDeleteCommands registers the del_* and trim_* commands.
+func (e *Editor) registerDeleteCommands(ps *pawscript.PawScript) {
+	// Editing commands (using TypeScript naming convention)
+	ps.RegisterCommand("del_char_prior", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		// A backspace over a read-only buffer declines (false, no edit) but —
+		// unlike every other mutation — WITHOUT the "Buffer is read-only" toast: a
+		// key as ordinary as backspace should not nag. Other commands still warn.
+		if w != nil && e.viewportReadOnly(w) {
+			return pawscript.BoolStatus(false)
+		}
+		// When deleteNewlineAsChar is off for this viewport, a backspace at the
+		// start of a line declines rather than joining it with the line above.
+		// Fail with false and no visible error; no edit, so the undo coalescing run
+		// is untouched.
+		if w != nil && w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, false) {
+			return pawscript.BoolStatus(false)
+		}
+		e.deleteCharBefore()
+		e.trackEdit()
+		e.editCoalesced = true // a single-point edit: coalesce the undo run
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("del_char_next", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		// A forward-delete over a read-only buffer declines silently too — no
+		// "Buffer is read-only" toast (see del_char_prior).
+		if w != nil && e.viewportReadOnly(w) {
+			return pawscript.BoolStatus(false)
+		}
+		// Same guard forward: a forward-delete at end of line declines rather than
+		// pulling the next line up. No edit → coalescing untouched.
+		if w != nil && w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, true) {
+			return pawscript.BoolStatus(false)
+		}
+		e.deleteCharAt()
+		e.trackEdit()
+		e.editCoalesced = true // a single-point edit: coalesce the undo run
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("del_line", func(ctx *pawscript.Context) pawscript.Result {
+		e.deleteLine()
+		e.trackEdit()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("del_word_beg", func(ctx *pawscript.Context) pawscript.Result {
+		e.deleteToWordStart()
+		e.trackEdit()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("del_word_end", func(ctx *pawscript.Context) pawscript.Result {
+		e.deleteToWordEnd()
+		e.trackEdit()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("del_line_beg", func(ctx *pawscript.Context) pawscript.Result {
+		e.deleteToLineStart()
+		e.trackEdit()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("del_line_end", func(ctx *pawscript.Context) pawscript.Result {
+		e.deleteToLineEnd()
+		e.trackEdit()
+		return pawscript.BoolStatus(true)
+	})
+
+	// Whitespace trimming, mirroring the del_line_* family. These trim the
+	// current line's leading/trailing spaces and tabs; the line terminator
+	// itself is never removed. Each reports true only when something was
+	// actually trimmed, so scripts can chain alternatives with | and &.
+	ps.RegisterCommand("trim_line_beg", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.trimLineStart()
+		e.trackEdit()
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("trim_line_end", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.trimLineEnd()
+		e.trackEdit()
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("trim_line", func(ctx *pawscript.Context) pawscript.Result {
+		// Trims both ends: two separate deletes that must undo as one step.
+		var buf *buffer.Buffer
+		if w := e.ViewportManager.GetFocusedViewport(); w != nil {
+			buf = w.Buffer
+		}
+		if buf != nil {
+			buf.BeginUserCommand("trim_line")
+			defer buf.EndUserCommand()
+		}
+		trimmedStart := e.trimLineStart()
+		trimmedEnd := e.trimLineEnd()
+		e.trackEdit()
+		return pawscript.BoolStatus(trimmedStart || trimmedEnd)
+	})
 }

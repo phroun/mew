@@ -1,10 +1,13 @@
 package editor
 
 import (
+	"fmt"
+
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // There is ONE docked help viewport (Tag "help", top dock): help_toggle NAVIGATES
@@ -404,4 +407,30 @@ func (e *Editor) quickHelpBuffer() *buffer.Buffer {
 	buf := e.lib.NewFromString("No quick help is available.")
 	buf.SetFilename(quickHelpDocURL)
 	return buf
+}
+
+// registerHelpCommands registers help_toggle and help_open.
+func (e *Editor) registerHelpCommands(ps *pawscript.PawScript) {
+	// Help toggle command
+	// help_toggle with a page argument opens that help wiki page in the shared
+	// help slot (help_toggle "keys"); with no argument it toggles the built-in
+	// Quick Help. So one key can open the help index and another the Quick Help.
+	ps.RegisterCommand("help_toggle", func(ctx *pawscript.Context) pawscript.Result {
+		arg := ""
+		if len(ctx.Args) > 0 {
+			arg = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		return pawscript.BoolStatus(e.toggleHelp(arg))
+	})
+
+	// help_open is help_toggle that only ever opens/replaces (never closes) and
+	// FOCUSES the help viewport — for landing in help ready to scroll and follow
+	// links, versus help_toggle's peek that leaves the caret in place.
+	ps.RegisterCommand("help_open", func(ctx *pawscript.Context) pawscript.Result {
+		arg := ""
+		if len(ctx.Args) > 0 {
+			arg = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		return pawscript.BoolStatus(e.openHelpFocused(arg))
+	})
 }

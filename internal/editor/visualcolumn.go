@@ -1,9 +1,12 @@
 package editor
 
 import (
+	"strings"
+
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // tabSize returns the effective tab size for a viewport. Per-viewport settings
@@ -630,4 +633,18 @@ func (e *Editor) runeWidthAt(runes []rune, i, currentColumn, tabSize int) int {
 		}
 	}
 	return e.getRuneVisualWidth(r, currentColumn, tabSize)
+}
+
+// registerDirectionCommands registers rtl.
+func (e *Editor) registerDirectionCommands(ps *pawscript.PawScript) {
+	// rtl reports whether the caret currently sits inside a right-to-left
+	// segment of its line (resolved under the configured base direction).
+	ps.RegisterCommand("rtl", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+		return pawscript.BoolStatus(bidi.RTLAt([]rune(line), w.CursorPos().Rune, e.winRTL(w)))
+	})
 }

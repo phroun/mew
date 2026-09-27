@@ -1,9 +1,14 @@
 package editor
 
 import (
+	"fmt"
+
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // replacePrior stands text in place of the n characters immediately before the
@@ -343,4 +348,330 @@ func (e *Editor) insertPasteChunk(content []byte) {
 	// any delete accumulation in progress.
 	w.TrackEdit()
 	e.lastEditKill = false
+}
+
+// registerInsertCommands registers the commands that put text into a buffer.
+func (e *Editor) registerInsertCommands(ps *pawscript.PawScript) {
+	// insert and insert_newline DISPATCH on what the focused viewport is.
+	//
+	// A viewport running a terminal session gets the input sent to the child
+	// process, exactly as tinput would; anything else gets the buffer edit that
+	// used to carry these names (now buffer_insert / buffer_insert_newline).
+	//
+	// This is why the keymaps need no pty variant. tab, return, and every
+	// self-inserting key already end in `insert` or `insert_newline`, so typing
+	// into a terminal viewport reaches the shell through the bindings that were
+	// already there — and the same keys keep editing text everywhere else. One
+	// name, two meanings, chosen by what is under the caret.
+	ps.RegisterCommand("insert", func(ctx *pawscript.Context) pawscript.Result {
+		if e.focusedPTY() != nil {
+			if len(ctx.Args) > 0 {
+				if sb, ok := ctx.Args[0].(pawscript.StoredBytes); ok {
+					return pawscript.BoolStatus(e.ptySendBytes(sb.Data()))
+				}
+				return pawscript.BoolStatus(e.ptySendBytes([]byte(fmt.Sprintf("%v", ctx.Args[0]))))
+			}
+			return pawscript.BoolStatus(false)
+		}
+		return pawscript.BoolStatus(e.bufferInsertArgs(ctx.Args))
+	})
+
+	// replace_prior <n>, '<text>' stands text in place of the n characters
+	// immediately before the caret. It exists for input methods, and macOS's
+	// press-and-hold accent palette above all: that palette COMMITS the held
+	// letter the moment the key goes down, so choosing an accent has to remove
+	// a character that is already in the document.
+	//
+	// The host says how many, because only the host can know. It watched the
+	// key commit the letter and watched an input method take the key over; mew
+	// sees the finished text and nothing about what it stands for.
+	//
+	// n of 0 is an ordinary insert, which is what every composition that
+	// appends rather than replaces sends — a CJK candidate, and every host that
+	// cannot know a replacement count at all.
+	ps.RegisterCommand("replace_prior", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 2 {
+			return pawscript.BoolStatus(false)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[0])))
+		if err != nil || n < 0 {
+			return pawscript.BoolStatus(false)
+		}
+		text := fmt.Sprintf("%v", ctx.Args[1])
+		if sb, ok := ctx.Args[1].(pawscript.StoredBytes); ok {
+			text = string(sb.Data())
+		}
+		// A viewport running a child process has no document to replace in, so
+		// the replacement is made the way a person would make it: erase what it
+		// stands in for, then type the new text. The erase goes as the child's
+		// own backspace, encoded by the terminal that knows what this child
+		// negotiated (see ptyEraseBefore).
+		//
+		// It has to be sent, because nothing else will. The toolkit swallowed
+		// the platform's Backspace on the way in — it belonged to the palette,
+		// not to the user — so without this the accent lands after the letter
+		// it was chosen to replace.
+		//
+		// A child with no translator still gets the text. Losing the accent
+		// entirely would be worse than leaving the letter in front of it.
+		if e.focusedPTY() != nil {
+			e.ptyEraseBefore(n)
+			return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
+		}
+		return pawscript.BoolStatus(e.replacePrior(n, text))
+	})
+
+	// preedit '<text>', <caret>, <covers>, <clauseStart>, <clauseLen> shows what
+	// an input method is still composing: painted at the caret, not put in the
+	// document. An empty text ends it.
+	//
+	// covers is how many committed characters before the caret the composition
+	// stands OVER and hides. macOS's press-and-hold palette commits the held
+	// letter before it opens, so without this the line shows the letter and the
+	// accent chosen to replace it side by side for as long as the palette is
+	// up. Nothing is deleted to hide it — ending the composition brings it
+	// straight back, which is what dismissing a palette means.
+	//
+	// Not stored, because storing it would mean un-storing it on every update —
+	// a Japanese input method rewrites the whole composition on each keystroke —
+	// and every one of those round trips would go through the undo history.
+	// It is synthesized into the line at paint time instead, the way a control
+	// character is painted "^X" without the buffer holding two runes.
+	//
+	// caret is the input method's own cursor within the text, which is what
+	// shows progress through a long composition. It defaults to the end.
+	//
+	// clauseStart and clauseLen mark the segment being CONVERTED, when the
+	// input method distinguishes one. A Japanese composition is several
+	// clauses and a candidate list changes only the selected one — "らなに"
+	// converts to "羅なに" with the tail still in kana — so the clause is
+	// painted apart from the rest, which is what tells the untouched remainder
+	// from characters the composition failed to replace.
+	ps.RegisterCommand("preedit", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil {
+			return pawscript.BoolStatus(false)
+		}
+		// A viewport running a child process paints the child's grid, not a
+		// document: there is no line to synthesize a composition into.
+		if e.focusedPTY() != nil {
+			return pawscript.BoolStatus(false)
+		}
+		text := ""
+		if len(ctx.Args) > 0 {
+			text = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		runes := []rune(text)
+		caret := len(runes)
+		if len(ctx.Args) > 1 {
+			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[1]))); err == nil {
+				caret = n
+			}
+		}
+		covers := 0
+		if len(ctx.Args) > 2 {
+			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[2]))); err == nil && n > 0 {
+				covers = n
+			}
+		}
+		clauseStart, clauseLen := 0, 0
+		if len(ctx.Args) > 4 {
+			s, err1 := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[3])))
+			n, err2 := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[4])))
+			if err1 == nil && err2 == nil {
+				clauseStart, clauseLen = s, n
+			}
+		}
+		// Empty text goes through too, rather than clearing here: whether it
+		// ENDS the composition on its way to a commit or CANCELS it turns on
+		// the extent it still names, and SetPreedit is where that is decided.
+		w.SetPreedit(viewport.Preedit{
+			Text: runes, Caret: caret, Covers: covers,
+			ClauseStart: clauseStart, ClauseLen: clauseLen,
+		})
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
+	// preedit_commit '<text>' takes a finished composition into the document,
+	// in place of THE REGION THE COMPOSITION STOOD OVER.
+	//
+	// Anchored, not measured from the caret, which is the whole reason it is
+	// its own command rather than a replace_prior. A composition is dismissed
+	// by typing: macOS commits whatever was selected in its palette and the
+	// keystroke that dismissed it lands first, so by the time this arrives the
+	// caret has moved past a character the composition never covered.
+	// Counting back from the caret replaced that character instead — the
+	// accent ate it and the letter stayed, "oò" with the "." gone.
+	//
+	// With no composition standing it is an ordinary insert, which is what a
+	// host that never opened one sends.
+	ps.RegisterCommand("preedit_commit", func(ctx *pawscript.Context) pawscript.Result {
+		text := ""
+		if len(ctx.Args) > 0 {
+			text = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		return pawscript.BoolStatus(e.preeditCommit(text))
+	})
+
+	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
+		if e.focusedPTY() != nil {
+			// A shell wants CR for Enter, not LF: that is what a terminal
+			// sends and what line discipline turns back into a newline.
+			return pawscript.BoolStatus(e.ptySendBytes([]byte{'\r'}))
+		}
+		return pawscript.BoolStatus(e.bufferInsertNewline())
+	})
+
+	ps.RegisterCommand("buffer_insert", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.bufferInsertArgs(ctx.Args))
+	})
+
+	// buffer_insert_newline breaks the line like `buffer_insert '\n'`, then — when the
+	// autoIndent option is on for the viewport — repeats the split line's
+	// leading whitespace so the new line starts under its text. It is the tail
+	// of the default Enter binding (nav_follow false|accept|insert_newline).
+	// The plain name now DISPATCHES — see the pair registered above.
+	ps.RegisterCommand("buffer_insert_newline", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.bufferInsertNewline())
+	})
+
+	// insert_bidi_control inserts a Unicode bidi control by short name (lrm,
+	// rlm, alm, fsi, lri, rli, pdi) — otherwise behaving exactly like insert.
+	// With no argument it prompts; "?" shows the legend and re-prompts.
+	ps.RegisterCommand("insert_bidi_control", func(ctx *pawscript.Context) pawscript.Result {
+		if arg, ok := argString(ctx, 0); ok {
+			return pawscript.BoolStatus(e.insertBidiControl(arg))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		var ask func()
+		ask = func() {
+			e.PromptMgr.PromptForInput("Insert control mark [lrm/rlm/alm, fsi/lri/rli, pdi, ?]: ", "",
+				func(accepted bool, _, input string) {
+					defer e.RequestRender()
+					if expired.Load() {
+						e.ShowWarning("Prompt timed out")
+						return
+					}
+					name := strings.ToLower(strings.TrimSpace(input))
+					if !accepted || name == "" {
+						ctx.ResumeToken(token, false)
+						return
+					}
+					if name == "?" {
+						e.ShowNotification("lrm=left-to-right, rlm=right-to-left, alm=arabic letter mark")
+						e.ShowNotification("fsi=first strong isolate, lri=left-to-right isolate, rli=right-to-left-isolate, pdi=pop directional isolate")
+						ask() // re-prompt with the same prompt
+						return
+					}
+					if _, ok := bidiControlRune(name); !ok {
+						e.ShowWarning("Unknown control mark: " + name)
+						ask() // stay in the loop on an unrecognized name
+						return
+					}
+					ctx.ResumeToken(token, e.insertBidiControl(name))
+				}, "bidictl")
+		}
+		ask()
+		return pawscript.TokenResult(token)
+	})
+
+	ps.RegisterCommand("insert_rune", func(ctx *pawscript.Context) pawscript.Result {
+		if arg, ok := argString(ctx, 0); ok {
+			r, ok := parseCodePoint(arg)
+			if !ok {
+				e.ShowWarning("Not a Unicode code point: " + arg)
+				return pawscript.BoolStatus(false)
+			}
+			return pawscript.BoolStatus(e.insertRuneAt(r))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		var ask func()
+		ask = func() {
+			e.PromptMgr.PromptForInput("Insert rune by code point [U+xxxx hex, #NNN decimal, \\uXXXX]: ", "",
+				func(accepted bool, _, input string) {
+					defer e.RequestRender()
+					if expired.Load() {
+						e.ShowWarning("Prompt timed out")
+						return
+					}
+					if !accepted || strings.TrimSpace(input) == "" {
+						ctx.ResumeToken(token, false)
+						return
+					}
+					r, ok := parseCodePoint(input)
+					if !ok {
+						e.ShowWarning("Not a Unicode code point: " + input)
+						ask() // stay in the loop rather than eat the keystroke
+						return
+					}
+					ctx.ResumeToken(token, e.insertRuneAt(r))
+				}, "insrune")
+		}
+		ask()
+		return pawscript.TokenResult(token)
+	})
+
+	// insert_raw_byte inserts bytes verbatim. A PawScript {bytes ...} value goes
+	// in whole; otherwise a single byte 0..255, written whichever way the value is
+	// already in your head - see parseByteSpec for the full set: ^[ or ESC for
+	// the escape character, x1b, o33, b11011, #27. "?" in the prompt lists
+	// them.
+	ps.RegisterCommand("insert_raw_byte", func(ctx *pawscript.Context) pawscript.Result {
+		// A {bytes ...} value is the language's own way to say this, so take it
+		// first and take ALL of it: {bytes 0xDEADBEEF} inserts four bytes, not
+		// one. Every other spelling below carries a single byte because it is a
+		// way of NAMING one; this is a way of holding a sequence.
+		if len(ctx.Args) > 0 {
+			if sb, ok := ctx.Args[0].(pawscript.StoredBytes); ok {
+				return pawscript.BoolStatus(e.insertRawBytesAt(sb.Data()))
+			}
+		}
+		if arg, ok := argString(ctx, 0); ok {
+			r, ok := parseByteSpec(arg)
+			if !ok {
+				e.ShowWarning("Not a byte value: " + arg)
+				return pawscript.BoolStatus(false)
+			}
+			return pawscript.BoolStatus(e.insertRawByteAt(byte(r)))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		var ask func()
+		ask = func() {
+			e.PromptMgr.PromptForInput("Insert raw byte [x1b, o33, b11011, #27, ^[, \\e, ESC, ?]: ", "",
+				func(accepted bool, _, input string) {
+					defer e.RequestRender()
+					if expired.Load() {
+						e.ShowWarning("Prompt timed out")
+						return
+					}
+					in := strings.TrimSpace(input)
+					if !accepted || in == "" {
+						ctx.ResumeToken(token, false)
+						return
+					}
+					if in == "?" {
+						e.ShowNotification("x1b/1b=hex (default), o33=octal, b11011=binary, #27=decimal")
+						e.ShowNotification("^[=control (^@..^_, ^?=DEL), \\n \\r \\t \\e \\0 \\xNN \\NNN, or a name: BEL BS TAB LF CR ESC DEL")
+						ask() // re-prompt, same as insert_bidi_control's "?"
+						return
+					}
+					r, ok := parseByteSpec(in)
+					if !ok {
+						e.ShowWarning("Not a byte value: " + in)
+						ask()
+						return
+					}
+					ctx.ResumeToken(token, e.insertRawByteAt(byte(r)))
+				}, "insbyte")
+		}
+		ask()
+		return pawscript.TokenResult(token)
+	})
 }

@@ -2,10 +2,12 @@ package editor
 
 import (
 	"fmt"
+
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // setUserMark sets a user-defined mark at the given position. It rejects empty
@@ -452,4 +454,148 @@ func (e *Editor) replaceBlockText(text, cmdName string) bool {
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	return true
+}
+
+// registerBlockCommands registers the mark, block and kill-ring commands.
+func (e *Editor) registerBlockCommands(ps *pawscript.PawScript) {
+	// Mark commands
+	ps.RegisterCommand("set_mark", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		// With an explicit name, set it directly.
+		if len(ctx.Args) > 0 {
+			return pawscript.BoolStatus(e.setUserMark(w, fmt.Sprintf("%v", ctx.Args[0]), w.CursorPos().Line, w.CursorPos().Rune))
+		}
+		// No name given (e.g. "esc esc") - prompt for the mark identifier.
+		// The position is captured as a garland decoration, not as absolute
+		// coordinates: anything that edits the buffer while the prompt is up
+		// (a second viewport, an async script) slides the pending mark along
+		// with the text, so the mark lands where the caret's TEXT is, not
+		// where its line number used to be.
+		const pendingMark = "_pending_set_mark"
+		w.Buffer.SetMark(pendingMark, w.CursorPos().Line, w.CursorPos().Rune)
+		e.PromptForInput("Set mark (0-9): ", "", func(input string, accepted bool) {
+			line, rune_, exists := w.Buffer.GetMark(pendingMark)
+			w.Buffer.ClearMark(pendingMark)
+			if accepted && exists {
+				name := strings.TrimSpace(input)
+				w.Buffer.BeginUserCommand("set_mark")
+				e.setUserMark(w, name, line, rune_)
+				w.Buffer.EndUserCommand()
+			}
+			e.RequestRender()
+		})
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_mark", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		// With an explicit name, jump directly.
+		if len(ctx.Args) > 0 {
+			return pawscript.BoolStatus(e.gotoUserMark(w, fmt.Sprintf("%v", ctx.Args[0])))
+		}
+		// No name given (e.g. "esc esc") - prompt for the mark identifier, then
+		// jump to it (mirroring set_mark's no-argument prompt).
+		e.PromptForInput("Go to mark (0-9): ", "", func(input string, accepted bool) {
+			if accepted {
+				e.gotoUserMark(w, strings.TrimSpace(input))
+			}
+			e.RequestRender()
+		})
+		return pawscript.BoolStatus(true)
+	})
+
+	// Block-selection mark commands. These encapsulate the internal
+	// _block_begin/_block_end marks so keybindings never name them directly
+	// (keeping the "_" internal-mark namespace out of user-facing config).
+	ps.RegisterCommand("set_block_begin", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setBlockMark("_block_begin", "Block begin"))
+	})
+	ps.RegisterCommand("set_block_end", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setBlockMark("_block_end", "Block end"))
+	})
+	ps.RegisterCommand("go_block_begin", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.goBlockMark("_block_begin", "Block begin"))
+	})
+	ps.RegisterCommand("go_block_end", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.goBlockMark("_block_end", "Block end"))
+	})
+
+	// Block commands (TypeScript uses set_mark '_block_begin' / '_block_end')
+	ps.RegisterCommand("block_copy", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.copyBlock()
+		e.trackEdit()
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("block_delete", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.deleteBlock()
+		if ok {
+			e.trackEdit() // consumes the kill flag so accumulation chains work
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("block_move", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.moveBlock()
+		e.trackEdit()
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("block_write", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.writeBlock())
+	})
+
+	// Kill ring (emacs-style). Deletes accumulate into kill entries as they
+	// run (see killCapture); these commands read the ring back.
+	ps.RegisterCommand("block_copy_kill", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.blockCopyKill())
+	})
+
+	ps.RegisterCommand("kill_ring_yank", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.killRingYank()
+		if ok {
+			e.trackEdit() // an insert-style edit: cursor ring + breaks kill chain
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("kill_ring_pop", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.killRingPop()
+		if ok {
+			e.trackEdit()
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	// kill_ring_append arms the next kill to accumulate into the most recent
+	// kill entry even if it would otherwise start a new one (append-next-kill).
+	ps.RegisterCommand("kill_ring_append", func(ctx *pawscript.Context) pawscript.Result {
+		e.killAppendNext = true
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("block_indent", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.indentBlock())
+	})
+
+	ps.RegisterCommand("block_unindent", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.unindentBlock())
+	})
+
+	// block_from_file streams a prompted-for file over the marked block: it
+	// replaces the block's contents with the file's, but only when a block is
+	// marked AND the caret sits within it (or on either edge). The gate is
+	// enforced up front (promptBlockFromFile) so the filename is never even
+	// asked for on an invalid target; the replace itself (blockFromFile) is
+	// wrapped like the other block mutations — one grouped undo, block left
+	// marked around the streamed-in text.
+	ps.RegisterCommand("block_from_file", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.promptBlockFromFile())
+	})
 }

@@ -2,10 +2,12 @@ package editor
 
 import (
 	"fmt"
+
 	"strconv"
 	"strings"
 
 	"github.com/phroun/kittytk/hostterm"
+	"github.com/phroun/pawscript"
 
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/viewport"
@@ -816,4 +818,81 @@ func (e *Editor) toggleOptions() bool {
 	})
 	e.RequestRender()
 	return true
+}
+
+// registerOptionCommands registers the commands that read and change editor options.
+func (e *Editor) registerOptionCommands(ps *pawscript.PawScript) {
+	// Editor options command
+	ps.RegisterCommand("editor_options", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.toggleOptions())
+	})
+
+	// set_option <name>, <value> - change a runtime editor option on the last
+	// active editor viewport (NOTE: arguments are comma-separated).
+	ps.RegisterCommand("set_option", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: set_option <name>[, <value>]")
+			return pawscript.BoolStatus(false)
+		}
+		name := fmt.Sprintf("%v", ctx.Args[0])
+		// Target the last active main-buffer viewport, not whatever is focused
+		// (a prompt viewport would be focused and is about to close).
+		w := e.ViewportManager.GetLastMainViewport()
+		if len(ctx.Args) < 2 {
+			// No value given: prompt for one, seeding the choices from the
+			// registry (the same value list set_option_next rotates through).
+			return pawscript.BoolStatus(e.promptSetOption(w, name))
+		}
+		value := fmt.Sprintf("%v", ctx.Args[1])
+		return pawscript.BoolStatus(e.setOption(w, name, value))
+	})
+
+	// set_option_next / set_option_prior <name> - rotate an option through its
+	// canonical value sequence (from optionSpecs): read the current value via the
+	// cascade, step to the next/prior value, and set it. Fails with a warning
+	// for options that have no fixed value set (integers, counts, free text).
+	rotate := func(dir int) func(*pawscript.Context) pawscript.Result {
+		return func(ctx *pawscript.Context) pawscript.Result {
+			if len(ctx.Args) < 1 {
+				e.ShowWarning("Usage: set_option_next/prior <name>")
+				return pawscript.BoolStatus(false)
+			}
+			name := fmt.Sprintf("%v", ctx.Args[0])
+			w := e.ViewportManager.GetLastMainViewport()
+			return pawscript.BoolStatus(e.rotateOption(w, name, dir))
+		}
+	}
+	ps.RegisterCommand("set_option_next", rotate(+1))
+	ps.RegisterCommand("set_option_prior", rotate(-1))
+
+	// clear_option <name> - drop a per-viewport option's explicit override on the
+	// active viewport, reverting it to the resolved default (the configured /
+	// inherited value). Fails for global options and unknown names.
+	ps.RegisterCommand("clear_option", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: clear_option <name>")
+			return pawscript.BoolStatus(false)
+		}
+		name := fmt.Sprintf("%v", ctx.Args[0])
+		w := e.ViewportManager.GetLastMainViewport()
+		return pawscript.BoolStatus(e.clearOption(w, name))
+	})
+
+	// get_option <name> - return the current effective value of an option, as a
+	// substitutable result, e.g. insert {get_option "tabSize"}.
+	ps.RegisterCommand("get_option", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: get_option <name>")
+			return pawscript.BoolStatus(false)
+		}
+		name := fmt.Sprintf("%v", ctx.Args[0])
+		w := e.ViewportManager.GetLastMainViewport()
+		value, ok := e.getOption(w, name)
+		if !ok {
+			e.ShowWarning("Unknown option: " + name)
+			return pawscript.BoolStatus(false)
+		}
+		ctx.SetResult(value)
+		return pawscript.BoolStatus(true)
+	})
 }

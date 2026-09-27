@@ -1,10 +1,13 @@
 package editor
 
 import (
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // moveCursor moves the cursor by delta amounts.
@@ -609,4 +612,136 @@ func (e *Editor) moveToPriorWord() {
 
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
+}
+
+// registerMotionCommands registers the caret-motion (go_*) commands.
+func (e *Editor) registerMotionCommands(ps *pawscript.PawScript) {
+	// Movement commands (using TypeScript naming convention)
+	ps.RegisterCommand("go_char_prior", func(ctx *pawscript.Context) pawscript.Result {
+		e.moveCursor(-1, 0)
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_char_next", func(ctx *pawscript.Context) pawscript.Result {
+		e.moveCursor(1, 0)
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_line_prior", func(ctx *pawscript.Context) pawscript.Result {
+		e.moveCursor(0, -1)
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_line_next", func(ctx *pawscript.Context) pawscript.Result {
+		e.moveCursor(0, 1)
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_line_beg", func(ctx *pawscript.Context) pawscript.Result {
+		e.cursorToLineStart()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_line_end", func(ctx *pawscript.Context) pawscript.Result {
+		e.cursorToLineEnd()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_buffer_beg", func(ctx *pawscript.Context) pawscript.Result {
+		e.cursorToBufferStart()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_buffer_end", func(ctx *pawscript.Context) pawscript.Result {
+		e.cursorToBufferEnd()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_page_prior", func(ctx *pawscript.Context) pawscript.Result {
+		e.pageUp()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_page_next", func(ctx *pawscript.Context) pawscript.Result {
+		e.pageDown()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_word_prior", func(ctx *pawscript.Context) pawscript.Result {
+		e.moveToPriorWord()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("go_word_next", func(ctx *pawscript.Context) pawscript.Result {
+		e.moveToNextWord()
+		e.trackMove()
+		return pawscript.BoolStatus(true)
+	})
+
+	// go_pos_prior / go_pos_next walk the caret backward and forward through the
+	// cursor ring — the trail of recent edit positions. They do not themselves
+	// count as deliberate movements (they leave hasMoved untouched), so a run of
+	// them stays a single navigation session until an edit or a real move.
+	ps.RegisterCommand("go_pos_prior", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.cursorRingGo(false))
+	})
+
+	ps.RegisterCommand("go_pos_next", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.cursorRingGo(true))
+	})
+
+	// Go to line command. go_line [n] goes directly; without an argument it
+	// prompts, with history reachable by arrow but never defaulted (the
+	// prompt starts blank). An invalid entry warns "Invalid line number" and
+	// the command resolves false — the prompt suspends the calling command
+	// sequence on an async token and resumes it with the outcome, so a
+	// script can chain an alternative with the | else operator. Cancelling
+	// or accepting a blank entry also resolves false, without the warning.
+	ps.RegisterCommand("go_line", func(ctx *pawscript.Context) pawscript.Result {
+		goLine := func(input string) bool {
+			n, err := strconv.Atoi(strings.TrimSpace(input))
+			if err != nil || n < 1 {
+				e.ShowWarning("Invalid line number")
+				return false
+			}
+			e.gotoLine(n)
+			return true
+		}
+		if arg, ok := argString(ctx, 0); ok {
+			return pawscript.BoolStatus(goLine(arg))
+		}
+		// PawScript force-cleans suspension tokens after the promptTimeout
+		// option (seconds, 0 = never), dropping the suspended sequence; the
+		// cleanup callback records that. A prompt answered after its token
+		// expired defaults to FAILURE: warn and perform nothing, rather
+		// than half-succeeding (jumping) with the command's chain already
+		// dead.
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		e.PromptMgr.PromptForInput("Go to line: ", "", func(accepted bool, _, input string) {
+			defer e.RequestRender()
+			if expired.Load() {
+				e.ShowWarning("Prompt timed out")
+				return
+			}
+			if !accepted || strings.TrimSpace(input) == "" {
+				ctx.ResumeToken(token, false)
+				return
+			}
+			ctx.ResumeToken(token, goLine(input))
+		}, "goline")
+		return pawscript.TokenResult(token)
+	})
 }
