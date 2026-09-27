@@ -112,7 +112,10 @@ the tag except the three mew-side edits. `core/version.go` still reads
 `GOWORK=off` builds the root and `kittytk` modules. `app` does not, and did
 not before this sync either: on `main` it lacked a `serval` sum, and past that
 it pins the published mew v0.3.1-alpha, which predates pawscript v0.2.17's
-API. That needs a mew tag, not a toolkit change.
+API. That needed a mew tag, not a toolkit change, and got one: with the app
+and `kittytk` requires moved to mew **v0.3.2-alpha** (the tag on this sync's
+merge), all three modules build with `GOWORK=off`, `kittytk` under
+`-tags mew` included.
 
 ### The v0.1.31 sync (record)
 
