@@ -3,6 +3,7 @@ package trinkets
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/phroun/kittytk/core"
@@ -639,8 +640,8 @@ func (s *ScrollBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 func (s *ScrollBar) AccessibleInfo() core.AccessibleInfo {
 	info := s.AccessibleTrinket.AccessibleInfo()
 	info.Role = core.RoleScrollBar
-	info.ValueMin = string(rune('0' + s.minimum))
-	info.ValueMax = string(rune('0' + s.maximum))
+	info.ValueMin = strconv.Itoa(s.minimum)
+	info.ValueMax = strconv.Itoa(s.maximum)
 
 	return info
 }

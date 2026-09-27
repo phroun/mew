@@ -66,3 +66,14 @@ func TestScrollAreaNoScrollbars(t *testing.T) {
 		t.Errorf("no-overflow announcement = %q, want \"scroll area\"", got)
 	}
 }
+
+// A scrollbar reports its range as numbers. It used to add each bound to the
+// rune '0', which only works for single digits.
+func TestAScrollBarReportsItsRangeAsNumbers(t *testing.T) {
+	sb := NewScrollBar(core.Vertical)
+	sb.SetRange(0, 250)
+	info := sb.AccessibleInfo()
+	if info.ValueMin != "0" || info.ValueMax != "250" {
+		t.Errorf("accessible range %q..%q, want 0..250", info.ValueMin, info.ValueMax)
+	}
+}

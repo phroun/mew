@@ -456,7 +456,9 @@ panel.SetBorder(style.BorderSingle)
 progress := trinkets.NewProgressBar()
 progress.SetMaximum(100)
 progress.SetValue(50)
-progress.SetIndeterminate(true)  // Animated unknown progress
+progress.SetCaption("2M / 250M")   // shown as written; "" shows the percentage
+progress.SetTextVisible(false)     // no text on the bar at all
+progress.SetIndeterminate(true)    // Animated unknown progress
 ```
 
 ### Splitters
