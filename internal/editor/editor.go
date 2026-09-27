@@ -883,6 +883,17 @@ type Config struct {
 	// message to print.
 	RestoreHostTerminal func()
 
+	// SuspendHost, when set, backs the host_suspend command: the host hands
+	// its terminal back to the shell and stops until the shell continues it,
+	// then returns true. It returns false when the host cannot suspend (a
+	// graphical host, or no job control), and the command then fails so a
+	// binding can fall through to the next command in its chain. Unset, as in
+	// the standalone editor, host_suspend fails the same way.
+	//
+	// Runs on mew's main loop and blocks it for as long as the process is
+	// stopped, which from the loop's point of view is no time at all.
+	SuspendHost func() bool
+
 	// SkipUserConfig prevents loading ~/.mew/editor.conf (built-in defaults
 	// apply). For embedding hosts that must not touch the user's home dir.
 	SkipUserConfig bool
@@ -1568,6 +1579,16 @@ func (e *Editor) registerCommands() {
 			e.Config.HideDesktop()
 		}
 		return pawscript.BoolStatus(true)
+	})
+
+	// host_suspend asks the embedding host to hand the terminal back to the
+	// shell and stop until continued. Fails where no host can suspend (the
+	// standalone editor, a graphical host), so host_suspend|... falls through.
+	ps.RegisterCommand("host_suspend", func(ctx *pawscript.Context) pawscript.Result {
+		if e.Config.SuspendHost == nil {
+			return pawscript.BoolStatus(false)
+		}
+		return pawscript.BoolStatus(e.Config.SuspendHost())
 	})
 
 	// nav_cancel: turn link browse mode off on the focused viewport. Fails when
