@@ -134,6 +134,7 @@ func (a *app) wireMainWindow() {
 	a.wireDenomination(win)
 	a.wireLimits()
 	a.wireDirection()
+	a.wireClosable()
 	a.wireTerminalTab(tabs)
 }
 
@@ -183,6 +184,28 @@ func (a *app) wireDirection() {
 	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("vtc")))
 	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("tabs")))
 	ui.Checkbox("vtrtl").OnToggle(turn(ui.Object("btabs")))
+}
+
+// wireClosable puts a close button on every tab of the demo's four tab strips
+// at once -- the window's own strip across the top, the Bottom Tabs strip, and
+// the two side strips -- so the kinds can be compared. closable is not
+// inherited the way direction is, so each strip is set on its own. Written out
+// rather than looped, for the reason wireDirection gives.
+func (a *app) wireClosable() {
+	ui := a.ui
+	closable := func(target client.Handle) func(protocol.FlagState) {
+		return func(s protocol.FlagState) {
+			if s == protocol.FlagTrue {
+				_ = target.Set("closable")
+				return
+			}
+			_ = target.Set("!closable")
+		}
+	}
+	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("tabs")))
+	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("btabs")))
+	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtside")))
+	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtopp")))
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and
