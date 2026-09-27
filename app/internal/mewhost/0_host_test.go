@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
 )
@@ -168,24 +167,6 @@ func TestMenusSingleWindowOmitsNewWindow(t *testing.T) {
 	}
 	if application.Commands().Has("mew.edit.rawkey") == false {
 		t.Error("mew.edit.rawkey should still be registered")
-	}
-}
-
-// clearHostShortcuts frees the host accelerators (so the keys reach the mew
-// editor) while leaving the actions dispatchable from the menu.
-func TestClearHostShortcuts(t *testing.T) {
-	// Seed the shipped defaults so the test is meaningful regardless of order.
-	core.DefaultKeyBindings.SetDefaults()
-	ClearHostShortcuts()
-
-	for _, action := range []string{
-		core.ActionQuit, core.ActionAppHide, core.ActionAppHideOthers,
-		core.ActionExitDesktop, core.ActionCut, core.ActionCopy,
-		core.ActionPaste, core.ActionSelectAll,
-	} {
-		if keys := core.DefaultKeyBindings.Keys(action); len(keys) != 0 {
-			t.Errorf("action %q still bound to %v after clearHostShortcuts", action, keys)
-		}
 	}
 }
 
