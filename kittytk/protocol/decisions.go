@@ -382,6 +382,13 @@ func (c *BindContext) announcing(fn func()) {
 
 // onThread runs fn where the connection runs its own work, so a verdict a timer
 // decided arrives where one an application decided would have.
+//
+// **A host that gives a decision a deadline has to set Post.** Not as tidiness: the
+// deadline is run by Go's timer goroutine, so leaving Post nil does not run the
+// verdict "inline" on whoever asked -- it runs it on a thread that has nothing to do
+// with the display, touching windows and views that something else is drawing. There
+// is no thread a timer could pick that is the right one; only the host knows which
+// that is, which is what Post is for. Whenever needs nothing, having no timer.
 func (c *BindContext) onThread(fn func()) {
 	if c.Post != nil {
 		c.Post(fn)

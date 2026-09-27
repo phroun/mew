@@ -32,15 +32,36 @@ type asked struct {
 	s   *protocol.Session
 
 	events []*protocol.Event
+
+	// posted is the connection's own thread, standing in for the desktop's.
+	//
+	// **A deadline always arrives from somewhere else.** It is Go's timer goroutine
+	// that runs it, so a BindContext with no Post does not run a verdict "inline" --
+	// it runs it on a thread the view knows nothing about, touching what the code
+	// under test is touching. A real display posts it to the desktop thread (see
+	// display.go), and a harness that does not is not a smaller display, it is a
+	// different one: the race it reports is its own.
+	//
+	// Buffered, because a test may leave a verdict unrun -- a view it has finished
+	// with, whose deadline passes afterwards -- and nothing should block on that.
+	posted chan func()
 }
 
 func askedList(t *testing.T, src string) *asked {
 	t.Helper()
-	a := &asked{t: t, s: protocol.NewSession()}
+	a := &asked{t: t, s: protocol.NewSession(), posted: make(chan func(), 8)}
 	a.ctx = &protocol.BindContext{}
 	a.ctx.Emit = func(ev *protocol.Event) { a.events = append(a.events, ev) }
 	a.ctx.Adopt = func(obj protocol.Object) { a.s.Register(obj) }
 	a.ctx.Drop = func(id uint64) { a.s.Forget(id) }
+	a.ctx.Post = func(fn func()) {
+		select {
+		case a.posted <- fn:
+		default:
+			// More outstanding deadlines than any test waits on. Dropping one
+			// leaves a line undrawn, which a test asserting on it will say.
+		}
+	}
 	a.ctx.Subscribe(0, "")
 
 	f := &captureFactory{inner: protocol.NewRegistryFactory(a.ctx)}
@@ -240,11 +261,9 @@ func TestAnAnswerDecidesTheRefusalItWasAbout(t *testing.T) {
 // whether it recognises a refusal has everything it needs the moment it is asked --
 // and a reader left with an empty area and no reason is what the line exists for.
 func TestTheLineArrivesWhenTheDeadlinePasses(t *testing.T) {
-	a := askedList(t, `lv=new listview`)
 	// The deadline's verdict is caught on its way to the connection's thread, so
-	// this reads it rather than racing it.
-	posted := make(chan func(), 1)
-	a.ctx.Post = func(fn func()) { posted <- fn }
+	// this reads it rather than racing it -- see asked.posted.
+	a := askedList(t, `lv=new listview`)
 
 	a.l.SetSource(&shutSource{why: "no such source: flies"})
 	a.l.Item(0)
@@ -253,7 +272,7 @@ func TestTheLineArrivesWhenTheDeadlinePasses(t *testing.T) {
 	}
 
 	select {
-	case fn := <-posted:
+	case fn := <-a.posted:
 		fn()
 	case <-time.After(5 * time.Second):
 		t.Fatal("the deadline never passed, so a silent application hides the reason for ever")
