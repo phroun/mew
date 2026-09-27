@@ -8,6 +8,9 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Deletion: characters on either side of the caret, words, lines and parts of
+// lines, and trimming whitespace from a line's ends.
+
 // deleteWouldRemoveNewline reports whether a delete at the caret would remove a
 // line terminator (join two lines) rather than an in-line rune. forward is the
 // del_char_next direction; !forward is del_char_prior (backspace). It reads only

@@ -11,6 +11,10 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Transient messages: notifications, warnings and errors in their shared
+// bottom slot, tagged messages that stay until cleared, expiry, the verbose log,
+// and announcing which viewport has focus.
+
 // transientNotificationClasses are the viewport classes used for the transient
 // bottom-docked message viewports created by ShowNotification/ShowError/
 // ShowWarning. They share a single display slot and are auto-expired.

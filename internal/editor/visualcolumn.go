@@ -9,6 +9,10 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Converting between rune positions and screen columns: tab stops, wide and
+// zero-width runes, marked (substituted) runes, and bidi layout, including
+// where the caret is drawn on a right-to-left line.
+
 // tabSize returns the effective tab size for a viewport. Per-viewport settings
 // govern the viewport, so cursor math must use this — the viewport's own
 // ViewState.TabSize — rather than the global e.Config.TabSize default.

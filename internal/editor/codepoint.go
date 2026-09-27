@@ -7,6 +7,11 @@ import (
 	"unicode"
 )
 
+// Code point parsing for insert_rune and insert_raw_byte: U+ and hex forms, C
+// escapes, control-character names and byte specs, plus the bidi control names
+// and the hex substitute the renderer shows for a defective combining mark.
+// Everything here is a pure function of its input.
+
 // runeHexSubstitute mirrors the renderer's substitute text for a defective
 // combining mark: the codepoint's hex form, one ASCII column per character.
 func runeHexSubstitute(r rune) string {

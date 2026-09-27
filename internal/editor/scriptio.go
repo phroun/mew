@@ -6,6 +6,9 @@ import (
 	"sync"
 )
 
+// Where PawScript's output goes: statusWriter collects #err for display, and
+// insertWriter puts #out into the focused buffer at the caret.
+
 // statusWriter captures stderr output and stores it for display.
 type statusWriter struct {
 	editor *Editor

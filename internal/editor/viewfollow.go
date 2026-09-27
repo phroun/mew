@@ -10,6 +10,10 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Keeping the caret in view: vertical and horizontal following, clamping the
+// view to the caret, scrolling the view without moving the caret, and the
+// phantom column a caret past the line's end is drawn in.
+
 // ensureCursorVisible scrolls the viewport so the cursor is visible both
 // vertically and horizontally. Horizontal following "locks in" the column — it
 // is used after horizontal movement, edits, and other actions, but NOT after

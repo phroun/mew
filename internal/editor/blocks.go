@@ -10,6 +10,11 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Marks and blocks: user marks (set_mark/go_mark), the block's begin and end
+// marks, and what can be done to the text between them - copy, move, delete,
+// indent, write to a file, or replace from one. The kill ring is in
+// killring.go; block_filter is in filter.go.
+
 // setUserMark sets a user-defined mark at the given position. It rejects empty
 // names and the reserved "_" internal-mark namespace.
 func (e *Editor) setUserMark(w *viewport.Viewport, name string, line, runePos int) bool {

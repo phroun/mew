@@ -16,6 +16,12 @@ import (
 	"github.com/phroun/mew/internal/viewport"
 )
 
+// From a key to a command: dispatchKey hands keys to the sequence processor,
+// runBoundCommand runs what a key is bound to, and executeCommand runs any
+// command line, applying repeat_next. The keymap is built from configuration
+// here, and the keymap commands (map, remap, mappings_list, cmd, ...) are
+// registered here.
+
 // applyMacOptionKeys pushes the macOptionKeys option into the input decoder
 // and the key processor's reverse-insert fallback.
 func (e *Editor) applyMacOptionKeys() {

@@ -10,6 +10,10 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// The command registry's index. registerCommands registers each family of
+// commands in turn; every family's registrations live beside the code that
+// runs them. The argument and prompt helpers the families share are here too.
+
 // tokenTimeout converts a timeout option value (seconds, 0 = never) to a
 // PawScript token timeout (a non-positive duration disables the timeout).
 // promptedResult runs a command whose outcome may only be known after the user

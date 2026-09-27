@@ -8,6 +8,10 @@ import (
 	"github.com/phroun/mew/internal/viewport"
 )
 
+// The kitty force_ltr nudge: a persistent message asking for force_ltr, up while
+// mew is flipping RTL for kitty and the frame holds Hebrew points the active fold
+// leaves in place, which kitty may mis-render.
+
 // niqqudNudgeTag identifies the persistent force_ltr nudge viewport so it can be
 // found for replacement/removal and exempted from age-expiry and the prompt
 // priority scan.

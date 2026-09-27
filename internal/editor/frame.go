@@ -14,6 +14,10 @@ import (
 	"github.com/phroun/mew/internal/viewport"
 )
 
+// Drawing a frame: RequestRender and performRender, laying the tiler's boxes
+// onto viewports, stack tabs, the modebar and column ruler, and the caret's
+// shape and visibility.
+
 // renderModebar is the custom renderer for the modebar.
 func (e *Editor) renderModebar(w *viewport.Viewport, screenWidth int) string {
 	e.Modebar.SetActiveSequence(e.ActiveSequence)

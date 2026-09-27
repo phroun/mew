@@ -13,6 +13,10 @@ import (
 	"github.com/phroun/mew/internal/viewport"
 )
 
+// Editor options: reading and setting them by name (get_option/set_option), the
+// helpers that parse and resolve their values, and the editor-options display
+// (toggleOptions).
+
 // parseBoolOption parses a boolean option value (true/false/1/0/yes/no/on/off).
 func parseBoolOption(v string) (bool, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {

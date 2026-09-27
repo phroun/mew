@@ -10,6 +10,9 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Caret motion: by character, line, word, page and buffer, to a line number, and
+// around the cursor ring, with the ideal column that vertical movement keeps.
+
 // moveCursor moves the cursor by delta amounts.
 func (e *Editor) moveCursor(dx, dy int) {
 	w := e.ViewportManager.GetFocusedViewport()

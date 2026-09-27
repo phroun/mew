@@ -12,6 +12,11 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Buffers and the viewports that show them: opening, creating, duplicating,
+// cloning, saving, reverting, cycling and closing, the read-only guards every
+// mutation passes through, undo/redo and transactions, and moving focus
+// between viewports and zones.
+
 // contentLocked reports whether the focused viewport currently forbids content
 // mutations — it is read-only, or a link button is focused (the caret is inert
 // inside it, its source text protected until nav_cancel) — and warns when it

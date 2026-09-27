@@ -11,6 +11,10 @@ import (
 	"github.com/phroun/pawscript"
 )
 
+// Insertion: typed text, overwrite, newlines with auto-indent, paste chunks,
+// single runes and raw bytes, bidi controls, input-method preedit and commit,
+// and replace_prior.
+
 // replacePrior stands text in place of the n characters immediately before the
 // caret, as ONE mutation.
 //
