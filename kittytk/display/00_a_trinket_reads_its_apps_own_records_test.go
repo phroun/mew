@@ -90,9 +90,11 @@ wlv=w.lv
 	// connection afterwards, and the arrival notice is what makes the second ask
 	// find it. Polling here stands in for the frames a real display would draw.
 	lv := waitForList(t, desktop, 5*time.Second)
-	if got, want := lv.Count(), len(servedRows()); got != want {
-		t.Fatalf("the list holds %d rows, want the %d the application served", got, want)
-	}
+	onUI(desktop, func() {
+		if got, want := lv.Count(), len(servedRows()); got != want {
+			t.Fatalf("the list holds %d rows, want the %d the application served", got, want)
+		}
+	})
 
 	// What it shows is what the application said, read through the fields the
 	// statement named.
@@ -138,6 +140,7 @@ w=new window title="Two lists" width=320 height=240 children={
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		lists = nil
+		filled := false
 		onUI(desktop, func() {
 			for _, a := range desktop.Applications() {
 				for _, w := range a.Windows() {
@@ -151,8 +154,12 @@ w=new window title="Two lists" width=320 height=240 children={
 					}
 				}
 			}
+			// Counted inside the door with the finding: an answer filling these
+			// lists arrives on this same thread, so a count read from the test's
+			// own is read while the list is being written.
+			filled = len(lists) == 2 && lists[0].Count() > 0 && lists[1].Count() > 0
 		})
-		if len(lists) == 2 && lists[0].Count() > 0 && lists[1].Count() > 0 {
+		if filled {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -169,15 +176,17 @@ w=new window title="Two lists" width=320 height=240 children={
 	// application's source is wrapped in an amendment so a reader can write in it,
 	// and an amendment honours the count. The rest is asked for when something wants
 	// it, which is what a window is for.
-	if a, b := lists[0].Count(), lists[1].Count(); a != b {
-		t.Errorf("the two lists hold %d and %d rows, reading one source", a, b)
-	}
-	for i, lv := range lists {
-		if got, most := lv.Count(), len(servedRows()); got <= 0 || got > most {
-			t.Errorf("list %d holds %d rows, want between one and the %d served",
-				i, got, most)
+	onUI(desktop, func() {
+		if a, b := lists[0].Count(), lists[1].Count(); a != b {
+			t.Errorf("the two lists hold %d and %d rows, reading one source", a, b)
 		}
-	}
+		for i, lv := range lists {
+			if got, most := lv.Count(), len(servedRows()); got <= 0 || got > most {
+				t.Errorf("list %d holds %d rows, want between one and the %d served",
+					i, got, most)
+			}
+		}
+	})
 	// One source object behind both, which is what sharing means here.
 	onUI(desktop, func() {
 		if lists[0].Source() == nil || lists[0].Source() != lists[1].Source() {
@@ -277,6 +286,11 @@ func waitForList(t *testing.T, desktop *trinkets.Desktop, within time.Duration) 
 	var lv *trinkets.ListView
 	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
+		// **Everything about the list is read inside the door**, the count with
+		// the rest. A trinket is the desktop thread's, and the records an
+		// application answers with land on that thread too -- so a count read from
+		// here is read while the answer that is filling the list is writing it.
+		filled := false
 		onUI(desktop, func() {
 			for _, a := range desktop.Applications() {
 				for _, w := range a.Windows() {
@@ -286,8 +300,9 @@ func waitForList(t *testing.T, desktop *trinkets.Desktop, within time.Duration) 
 					}
 				}
 			}
+			filled = lv != nil && lv.Count() > 0
 		})
-		if lv != nil && lv.Count() > 0 {
+		if filled {
 			return lv
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -398,6 +413,9 @@ w=new window title="Papers" width=420 height=240 children={
 	var tv *trinkets.TreeView
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
+		// The rows are counted inside the door with everything else: the tree is
+		// the desktop thread's, and an answer filling it arrives on that thread.
+		grown := false
 		onUI(desktop, func() {
 			for _, a := range desktop.Applications() {
 				for _, w := range a.Windows() {
@@ -406,8 +424,9 @@ w=new window title="Papers" width=420 height=240 children={
 					}
 				}
 			}
+			grown = tv != nil && len(tv.RootItems()) == 2
 		})
-		if tv != nil && len(tv.RootItems()) == 2 {
+		if grown {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)

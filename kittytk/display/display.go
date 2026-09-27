@@ -577,6 +577,22 @@ func (s *Server) serveConn(nc net.Conn) {
 	dbg("welcome sent session=%d app=%q id=%d store=%d host=%d",
 		sessionID, appName, application.ObjectID(), c.store.ID(), c.host.ID())
 
+	// onDesktop runs one batch on the desktop thread and waits for it, which is
+	// where everything that touches a trinket happens (D21).
+	//
+	// Waiting is for the REPLY: a request is answered when it has been done, and
+	// this connection's next batch must not start before that. Ordering costs
+	// nothing here -- the desktop drains its posts in the order they arrive -- so
+	// what is waited for is the reply, and only a request has one.
+	onDesktop := func(fn func()) {
+		done := make(chan struct{})
+		s.desktop.Post(func() {
+			defer close(done)
+			fn()
+		})
+		<-done
+	}
+
 	// Batch loop: read until end, execute on the UI thread, reply.
 	for {
 		batch, err := readBatch(scanner)
@@ -596,17 +612,30 @@ func (s *Server) serveConn(nc net.Conn) {
 		// something the display put to it, or produces the records a query
 		// asked for, those statements run against nothing and are answered by
 		// nothing -- they go to whoever is listening for them.
+		//
+		// **On the desktop thread, the same as a request.** Not being a request
+		// says nothing about what it TOUCHES: the records an application answers
+		// with go to the source that asked, into the cache under it and on into
+		// the spine of the view that is showing them -- which is a trinket, being
+		// painted, by the desktop thread. This ran here, on the connection's own
+		// reader, and wrote a view's spine while the desktop drew it.
+		//
+		// It was the one inbound path that did not go through the door ten lines
+		// below, and nothing said why. Now neither does.
+		//
+		// **Posted and not waited for**, which is the one way it differs from a
+		// request: nothing is answered, so nothing here depends on it having
+		// happened, and the desktop runs what it is posted in order either way.
+		// Waiting would cost a frame apiece -- the desktop drains its posts once a
+		// pass -- and a view paging through a long sequence pays that for every
+		// page of it. A tree asked for a row six hundred down took twenty seconds
+		// to get there.
 		if said(batch) {
-			c.relay(batch)
+			s.desktop.Post(func() { c.relay(batch) })
 			continue
 		}
 		dbg("executing batch (%d statements) for app=%q", len(batch), appName)
-		done := make(chan struct{})
-		s.desktop.Post(func() {
-			defer close(done)
-			c.execute(batch)
-		})
-		<-done
+		onDesktop(func() { c.execute(batch) })
 	}
 }
 
