@@ -90,6 +90,72 @@ const (
 // namespace.
 const InitVerb = "init"
 
+// A GOODBYE is the display saying it is going, and it is the last thing a
+// connection carries.
+//
+//	welcome version=1 session=6
+//	...
+//	goodbye reason=quit
+//
+// **A closed socket cannot say why it closed.** The display quitting and the
+// connection breaking look identical from the far end, and they call for opposite
+// things: one is over, the other is worth waiting out. So the display says which,
+// and then hangs up.
+//
+// # It is advisory, and it asks nothing
+//
+// A display that is killed, or whose machine goes, says nothing at all -- so an
+// application has to be right without this, and this only lets it be better with it.
+// Nothing may depend on hearing it.
+//
+// It is not a question either. Quitting is not askable: the part an application may
+// refuse is each window's close, which has already happened by the time this goes
+// out. A display that needed permission to stop could not stop.
+//
+// # And it is not an instruction
+//
+// **An application may have business of its own after the display has hung up**, and
+// that is none of the display's concern. This says the display is gone; what the
+// application does about it -- exit, wait, go on working with no display at all -- is
+// the application's decision, and the client library takes none of it on its behalf.
+const GoodbyeVerb = "goodbye"
+
+// ReasonField says which kind of going this is. An unknown word means the display is
+// gone and would not say why, which is the same thing a silent socket means.
+const ReasonField = "reason"
+
+const (
+	// GoodbyeQuit is the display shutting down because it was asked to. Nothing is
+	// wrong and it is not coming back on its own.
+	GoodbyeQuit = "quit"
+
+	// GoodbyeCrash is the display going down because something went wrong. The
+	// distinction is worth a word because it is the one an application can act on:
+	// whatever put the display back would be worth waiting for, where a quit is
+	// not.
+	GoodbyeCrash = "crash"
+)
+
+// GoodbyeReason reads the word off a goodbye statement, and reports whether it said
+// one at all. A farewell with nothing to say is still a farewell.
+func GoodbyeReason(stmt *Statement) (string, bool) {
+	if stmt == nil {
+		return "", false
+	}
+	for _, a := range stmt.Args {
+		if a.Name != ReasonField || a.Value == nil {
+			continue
+		}
+		switch a.Value.Kind {
+		case WordValue:
+			return a.Value.Word, true
+		case StringValue:
+			return a.Value.Str, true
+		}
+	}
+	return "", false
+}
+
 // Reply reports server-assigned IDs for a request: top-level
 // correlation keys plus explicitly surfaced names (D11/D15). Extra
 // carries additional raw wire statements a verb wants delivered ahead

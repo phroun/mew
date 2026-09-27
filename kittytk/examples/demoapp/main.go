@@ -201,8 +201,12 @@ func (a *app) wait() string {
 		why = a.why
 	case <-a.conn.Closed():
 		// The display went. Its windows went with it, and there is nothing to say
-		// goodbye to.
+		// goodbye to -- though the display may have said one on its way out, and
+		// which kind it was is worth repeating.
 		why = "the display service went away"
+		if reason, said := a.conn.Goodbye(); said {
+			why = "the display said goodbye: " + reason
+		}
 	}
 	for _, d := range a.drivers {
 		d.Close()

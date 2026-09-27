@@ -335,6 +335,15 @@ func (t *remoteTransport) readLoop() {
 					t.inbound <- t.pendingIn
 					t.pendingIn = nil
 				}
+			case wire.GoodbyeVerb:
+				// The display saying it is going, which is the last thing this
+				// connection will carry. Recorded, and nothing else: what an
+				// application does about its display going is the application's
+				// to decide, and it may well have work of its own that outlives
+				// it. The socket closing right behind this is what ends the
+				// connection, the same as it always was.
+				reason, _ := wire.GoodbyeReason(stmt)
+				t.conn.said(reason)
 			case wire.InitVerb:
 				// The display handing over something: a new object, or a new
 				// object under a name already in hand. It is not only a

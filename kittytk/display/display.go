@@ -183,6 +183,13 @@ func (s *Server) addConn(c *conn) {
 	s.connMu.Lock()
 	s.conns = append(s.conns, c)
 	s.connMu.Unlock()
+	// **A connection that arrived while the display was stopping is stopped too.**
+	// The hang-up walks the connections it can see, so one added after it looked
+	// would be left holding a socket to a display that has gone -- which is the
+	// whole fault, arriving through the one door left open.
+	if s.closed.Load() {
+		c.hangUp(wire.GoodbyeQuit)
+	}
 }
 
 func (s *Server) dropConn(c *conn) {
@@ -329,17 +336,56 @@ func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
 	}
 	s.listener = ln
 	go s.acceptLoop()
+
+	// **A display that has stopped serves nobody, and its applications are told.**
+	// Until this, they were left holding a socket to a desktop that had gone, and
+	// the shipped binaries got away with it only because the process exited and the
+	// operating system closed the sockets for them. A host that embeds a display,
+	// or keeps running after it, got nothing at all.
+	//
+	// An observer rather than the shutdown handler, which belongs to the host.
+	desktop.AddOnShutdown(func() {
+		// What kind of going it was, from how the desktop stopped: nought is a
+		// desktop that was asked to stop, and anything else is one that stopped
+		// because something was wrong.
+		reason := wire.GoodbyeQuit
+		if desktop.ExitCode() != 0 {
+			reason = wire.GoodbyeCrash
+		}
+		_ = s.CloseWith(reason)
+	})
 	return s, nil
 }
 
 // Addr returns the listener address (the socket path or host:port).
 func (s *Server) Addr() string { return s.listener.Addr().String() }
 
-// Close stops accepting and closes the listener. Existing
-// connections end when their sockets close.
-func (s *Server) Close() error {
+// Close stops accepting, says goodbye to every application connected, and closes
+// their sockets. A server that is closed serves nobody, so leaving them connected to
+// it would leave each one holding a socket to a display that has stopped.
+func (s *Server) Close() error { return s.CloseWith(wire.GoodbyeQuit) }
+
+// CloseWith is Close, saying which kind of going this is.
+//
+// **A closed socket cannot say why it closed.** The display quitting and the
+// connection breaking are the same silence from the far end, and they call for
+// opposite things: one is over, the other is worth waiting out. So each application
+// is told, and then hung up on -- see wire.GoodbyeVerb.
+//
+// What an application does about it is its own business. It may have work of its own
+// that outlives its display, and nothing here is an instruction: this says the
+// display is gone, and stops.
+func (s *Server) CloseWith(reason string) error {
 	s.closed.Store(true)
-	return s.listener.Close()
+	err := s.listener.Close()
+
+	s.connMu.Lock()
+	conns := append([]*conn(nil), s.conns...)
+	s.connMu.Unlock()
+	for _, c := range conns {
+		c.hangUp(reason)
+	}
+	return err
 }
 
 func (s *Server) acceptLoop() {
@@ -422,11 +468,40 @@ type conn struct {
 	// and nobody to hear it.
 	gone     chan struct{}
 	goneOnce sync.Once
+
+	// written is closed when the writer has stopped, which is how a hang-up knows
+	// its farewell is on the wire and the socket can go.
+	written chan struct{}
 }
 
 // finish marks the connection done, which stops the writer and makes every later
 // send a no-op. Safe to call more than once.
 func (c *conn) finish() { c.goneOnce.Do(func() { close(c.gone) }) }
+
+// goodbyeWait is how long the display will wait for its farewell to reach an
+// application before hanging up anyway.
+//
+// Short, because it is a courtesy and not a handshake: an application that is not
+// reading its socket cannot hold a display open by that. It is normally over at once
+// -- one short line into a socket that has room for it -- and this is only what
+// happens when there is not.
+const goodbyeWait = 250 * time.Millisecond
+
+// hangUp says goodbye and closes the socket, in that order and no faster.
+//
+// The order is the whole of it. The farewell is queued like any other statement, and
+// the writer drains what is queued when the connection finishes -- so this waits for
+// the writer to be done before taking the socket away, or the last thing the display
+// says would be the thing it never sent.
+func (c *conn) hangUp(reason string) {
+	c.send(wire.GoodbyeVerb + " " + wire.ReasonField + "=" + reason)
+	c.finish()
+	select {
+	case <-c.written:
+	case <-time.After(goodbyeWait):
+	}
+	c.nc.Close()
+}
 
 func (s *Server) serveConn(nc net.Conn) {
 	defer nc.Close()
@@ -500,6 +575,7 @@ func (s *Server) serveConn(nc net.Conn) {
 		solo:     solo,
 		out:      make(chan string, 1024),
 		gone:     make(chan struct{}),
+		written:  make(chan struct{}),
 	}
 
 	// Per-connection BindContext: events encode onto the wire.
@@ -1124,6 +1200,7 @@ func (c *conn) send(statement string) {
 }
 
 func (c *conn) writeLoop() {
+	defer close(c.written)
 	for {
 		select {
 		case line := <-c.out:

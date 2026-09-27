@@ -85,6 +85,12 @@ type Conn struct {
 	// Close is called, so callers can block on the connection's life.
 	closed    chan struct{}
 	closeOnce sync.Once
+
+	// What the display said on its way out, if it said anything. Written once by
+	// the reader and read by whoever asks afterwards, so it is under the lock the
+	// rest of the replica is.
+	farewell     string
+	saidFarewell bool
 }
 
 type subKey struct {
@@ -130,6 +136,33 @@ func newConn(dispatch func(commandID string)) *Conn {
 // Closed returns a channel that is closed when the connection ends,
 // whether by the app calling Close or the display service disconnecting.
 func (c *Conn) Closed() <-chan struct{} { return c.closed }
+
+// said records the display's farewell. The socket closing is what ends the
+// connection; this only says what the display told us about it first.
+func (c *Conn) said(reason string) {
+	c.mu.Lock()
+	c.farewell, c.saidFarewell = reason, true
+	c.mu.Unlock()
+}
+
+// Goodbye is what the display said on its way out, and whether it said anything.
+//
+// **A closed connection does not say why it closed.** A display that quit, one that
+// went down badly, and a network that dropped are the same silence -- and they call
+// for different things, which is why the display says which before it hangs up.
+// `quit` is a display that was asked to stop and is not coming back on its own;
+// `crash` is one that went down because something was wrong, so whatever puts it back
+// is worth waiting for. An empty reason means nothing was said, which is most ways a
+// connection can end.
+//
+// **It is not an instruction.** An application may well have work of its own that
+// outlives its display, and nothing in this library decides otherwise: the connection
+// ends, this says what was said about it, and what to do next is the application's.
+func (c *Conn) Goodbye() (reason string, said bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.farewell, c.saidFarewell
+}
 
 // AppID returns the ObjectID of this connection's application, as reported by
 // the display service in the handshake. It is 0 for in-process connections

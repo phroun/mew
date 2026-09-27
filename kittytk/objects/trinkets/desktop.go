@@ -459,6 +459,12 @@ type Desktop struct {
 	onStartup  func()
 	onShutdown func()
 
+	// onShutdownAlso are the observers that accumulate, for the several things
+	// that want to know the desktop has stopped. onShutdown is one slot and
+	// belongs to whoever set it; anything the library itself hangs off the end
+	// of a run goes here, so taking that slot is never the price of it.
+	onShutdownAlso []func()
+
 	// Event filters
 	eventFilters []func(core.Event) bool
 
@@ -4384,6 +4390,31 @@ func (d *Desktop) SetOnShutdown(handler func()) {
 	d.mu.Unlock()
 }
 
+// AddOnShutdown registers an observer for the same moment, and they accumulate.
+//
+// SetOnShutdown is one slot and belongs to whoever set it -- the host. This is for
+// everything else that needs to know the desktop has stopped, a display server
+// hanging up on its applications being the first of them, so wanting to know is never
+// the same as taking the host's handler away.
+func (d *Desktop) AddOnShutdown(fn func()) {
+	if fn == nil {
+		return
+	}
+	d.mu.Lock()
+	d.onShutdownAlso = append(d.onShutdownAlso, fn)
+	d.mu.Unlock()
+}
+
+// ExitCode is what the desktop stopped with: nought where it was asked to stop, and
+// whatever was passed to QuitWithCode otherwise. It is what tells a deliberate exit
+// from one something went wrong in, which is the difference an application is told
+// about when the display hangs up.
+func (d *Desktop) ExitCode() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.exitCode
+}
+
 // FocusedTrinket returns the trinket with keyboard focus in the active
 // window, or nil. Window focus lives in each window's own focus
 // manager (the desktop's GlobalFocusManager tracks scopes, not the
@@ -4636,9 +4667,13 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 
 	d.mu.RLock()
 	onShutdown := d.onShutdown
+	also := append([]func(){}, d.onShutdownAlso...)
 	d.mu.RUnlock()
 	if onShutdown != nil {
 		onShutdown()
+	}
+	for _, fn := range also {
+		fn()
 	}
 	return code
 }
