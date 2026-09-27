@@ -7,6 +7,7 @@ import (
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/style"
 )
 
@@ -43,6 +44,14 @@ func (g *closeGrid) FillRect(rect core.UnitRect, r rune, s style.CellStyle) {
 			g.put(x, y, r, s)
 		}
 	}
+}
+
+// clickStrip presses a horizontal strip at x, in its own local units, and
+// lets go at the same place.
+func clickStrip(tt *TabTrinket, x core.Unit) {
+	tt.handleTabBarPress(x)
+	strip := tt.stripHoverBounds()
+	tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton, X: x, Y: strip.Y + strip.Height/2})
 }
 
 // row is what row y shows, and a line under it marking the cells in the focus
@@ -258,9 +267,10 @@ func TestAPressOnACloseButtonClosesItsTab(t *testing.T) {
 		tt.SetOnTabCloseRequested(func(i int) { closed = i })
 		paintCloseGrid(t, tt)
 		m := tt.EffectiveCellMetrics()
-		tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton,
-			X: core.Unit(tc.x)*m.UnitsPerCellWidth + m.UnitsPerCellWidth/2,
-			Y: core.Unit(tc.y)*m.UnitsPerCellHeight + m.UnitsPerCellHeight/2})
+		x := core.Unit(tc.x)*m.UnitsPerCellWidth + m.UnitsPerCellWidth/2
+		y := core.Unit(tc.y)*m.UnitsPerCellHeight + m.UnitsPerCellHeight/2
+		tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: x, Y: y})
+		tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton, X: x, Y: y})
 		if closed != tc.wantClose || tt.CurrentIndex() != tc.wantSel {
 			t.Errorf("pos %v cell %d,%d: closed %d and selected %d, want closed %d and selected %d",
 				tc.pos, tc.x, tc.y, closed, tt.CurrentIndex(), tc.wantClose, tc.wantSel)
@@ -369,7 +379,7 @@ func TestCloseButtonsTouchNoOtherCell(t *testing.T) {
 							}
 							closed := -1
 							tt.SetOnTabCloseRequested(func(i int) { closed = i })
-							tt.handleTabBarPress(sp.labelEnd + cw/2)
+							clickStrip(tt, sp.labelEnd+cw/2)
 							if shows != (closed == sp.owner) {
 								t.Fatalf("pos %v width %d selected %d scrolled %d focus %v: a press after tab %d's label "+
 									"closed %d, and the cell shows %q\n %q", pos, w, sel, off, focus, sp.owner, closed, g[cx], got)
@@ -512,7 +522,7 @@ func TestALastTabDrawnWholeKeepsItsButton(t *testing.T) {
 		closed := -1
 		tt.SetOnTabCloseRequested(func(i int) { closed = i })
 		button := core.Unit(len([]rune(tc.want[:strings.LastIndex(tc.want, "×")])))
-		tt.handleTabBarPress(button*m.UnitsPerCellWidth + m.UnitsPerCellWidth/2)
+		clickStrip(tt, button*m.UnitsPerCellWidth+m.UnitsPerCellWidth/2)
 		if closed != 8 {
 			t.Errorf("width %d selected %d: a press on the last button closed %d", tc.w, tc.sel, closed)
 		}
@@ -530,5 +540,204 @@ func TestNoHiddenSideButtonLights(t *testing.T) {
 	tt.HandleMouseMove(core.MouseMoveEvent{X: 12*m.UnitsPerCellWidth + 1, Y: 2*m.UnitsPerCellHeight + 1})
 	if tt.closeHover != 0 {
 		t.Errorf("the pointer below the visible tabs hovers %d", tt.closeHover)
+	}
+}
+
+// A press on a close button holds the pointer until it comes back up. The
+// button looks pressed only while the pointer is over it, and the tab closes
+// only when the press comes up over it: dragged off and let go elsewhere, the
+// press is abandoned. Dragged off and back on, it closes after all.
+func TestAClosePressIsHeldUntilItComesUp(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	for _, pos := range []TabPosition{TabsTop, TabsSide} {
+		tt := closeStrip(t, pos, core.DirLTR, true)
+		closed := -1
+		tt.SetOnTabCloseRequested(func(i int) { closed = i })
+		paintCloseGrid(t, tt)
+		m := tt.EffectiveCellMetrics()
+		// The first tab's button: "  Grid×" on a strip, " Grid       ×" down a side.
+		bx, by := 6*m.UnitsPerCellWidth+m.UnitsPerCellWidth/2, m.UnitsPerCellHeight/2
+		if pos == TabsSide {
+			bx = 12*m.UnitsPerCellWidth + m.UnitsPerCellWidth/2
+		}
+		away := bx + 20*m.UnitsPerCellWidth
+		pressed := tt.GetScheme().GetPressedTabsButton()
+		buttonStyle := func() style.CellStyle {
+			s := paintCloseGrid(t, tt).styles[[2]int{int(bx / m.UnitsPerCellWidth), 0}]
+			s.Attrs &^= style.StyleUnderline | style.StyleOverline
+			return s
+		}
+
+		tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: bx, Y: by})
+		if closed != -1 || buttonStyle() != pressed {
+			t.Errorf("pos %v: the press closed %d and drew the button %+v, want nothing closed and it pressed",
+				pos, closed, buttonStyle())
+		}
+		if !tt.HandleMouseMove(core.MouseMoveEvent{X: away, Y: by, Buttons: 1}) || buttonStyle() == pressed {
+			t.Errorf("pos %v: dragged off, the button still looks pressed, or the strip let the move go", pos)
+		}
+		tt.HandleMouseMove(core.MouseMoveEvent{X: bx, Y: by, Buttons: 1})
+		if buttonStyle() != pressed {
+			t.Errorf("pos %v: dragged back on, the button does not look pressed", pos)
+		}
+		tt.HandleMouseMove(core.MouseMoveEvent{X: away, Y: by, Buttons: 1})
+		if !tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton, X: away, Y: by}) || closed != -1 {
+			t.Errorf("pos %v: let go off the button closed %d", pos, closed)
+		}
+		if buttonStyle() == pressed {
+			t.Errorf("pos %v: the abandoned press left the button looking pressed", pos)
+		}
+		if tt.HandleMouseMove(core.MouseMoveEvent{X: away, Y: by}) {
+			t.Errorf("pos %v: after the release the strip still holds the pointer", pos)
+		}
+
+		tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: bx, Y: by})
+		tt.HandleMouseMove(core.MouseMoveEvent{X: away, Y: by, Buttons: 1})
+		tt.HandleMouseMove(core.MouseMoveEvent{X: bx, Y: by, Buttons: 1})
+		tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton, X: bx, Y: by})
+		if closed != 0 {
+			t.Errorf("pos %v: dragged off and back on, the release closed %d, want 0", pos, closed)
+		}
+	}
+}
+
+// Activating a close button raises close on the wire, naming the strip and the
+// tab, whether the button was clicked or pressed from the keyboard. The tab
+// itself stays until the application takes it away.
+func TestAClosedTabSaysSoOnTheWire(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	core.SetTextMeasurer(nil)
+	var events []*protocol.Event
+	ctx := &protocol.BindContext{Emit: func(ev *protocol.Event) { events = append(events, ev) }}
+	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
+	script, err := protocol.Parse(`t=new tabs closable children={
+		new tab caption="Grid" children={new panel}
+		new tab caption="Flex" children={new panel}
+	} selected=1`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := protocol.NewSession().Execute(script, f); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var tt *TabTrinket
+	for _, tg := range f.targets {
+		if tw, ok := tg.(*TabTrinket); ok {
+			tt = tw
+		}
+	}
+	if tt == nil {
+		t.Fatal("no tab strip was built")
+	}
+	f.Subscribe(trinketID(tt), "close")
+	m := tt.EffectiveCellMetrics()
+	tt.SetBounds(core.UnitRect{Width: 40 * m.UnitsPerCellWidth, Height: 5 * m.UnitsPerCellHeight})
+	paintCloseGrid(t, tt)
+
+	closes := func() (out []int) {
+		for _, ev := range events {
+			if ev.Type != "close" {
+				continue
+			}
+			if id, _ := ev.Uint("trinket"); id != trinketID(tt) {
+				t.Errorf("close names trinket %d, want the strip %d", id, trinketID(tt))
+			}
+			i, _ := ev.Int("index")
+			out = append(out, i)
+		}
+		return out
+	}
+	clickStrip(tt, 6*m.UnitsPerCellWidth+m.UnitsPerCellWidth/2) // "  Grid×"
+	tt.SetFocus()
+	tt.HandleKeyPress(core.KeyPressEvent{Key: "Tab"})
+	tt.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
+	if got := closes(); len(got) != 2 || got[0] != 0 || got[1] != 1 {
+		t.Errorf("close raised for %v, want [0 1]", got)
+	}
+	if tt.Count() != 2 {
+		t.Errorf("the strip took a tab away itself; %d left", tt.Count())
+	}
+}
+
+// On a pixel surface a tab whose button shows draws its label and the button
+// half a cell back, and nothing else moves: the room each takes, and so every
+// other mark and every press, stays where it was. A tab showing its focus
+// marker in that cell instead, or with no button at all, is drawn as it was.
+func TestAClosableTabsInkStandsHalfACellBack(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	build := func(closable, focus bool) (*TabTrinket, *markTape) {
+		px, err := raster.New(900, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(px)
+		tt := NewTabTrinket()
+		tt.SetClosable(closable)
+		for _, n := range []string{"Grid", "Flex", "Limit"} {
+			tt.AddTab(n, NewPanel())
+		}
+		tt.SetCurrentIndex(2)
+		tt.SetBounds(core.UnitRect{Width: 40 * cell, Height: 5 * 16})
+		if focus {
+			tt.SetFocus()
+		}
+		ink := &markTape{RenderBackend: px, graphical: true}
+		tt.Paint(core.NewPainter(ink))
+		return tt, ink
+	}
+	labelAt := func(ink *markTape, name string) string {
+		for _, m := range ink.marks {
+			if strings.Contains(m, "«"+name+"»") {
+				return strings.Fields(m)[0]
+			}
+		}
+		t.Fatalf("no label %q among %v", name, ink.marks)
+		return ""
+	}
+	_, plain := build(false, false)
+	tt, ink := build(true, false)
+	for _, name := range []string{"Grid", "Flex", "Limit"} {
+		var x0, w0, x1, w1 int
+		fmt.Sscanf(labelAt(plain, name), "%d+%d", &x0, &w0)
+		fmt.Sscanf(labelAt(ink, name), "%d+%d", &x1, &w1)
+		if x1 != x0-int(cell)/2 {
+			t.Errorf("label %q drawn at %d with its button, %d without; want half a cell back", name, x1, x0)
+		}
+	}
+	// The button's cell as the mouse finds it is where it was drawn.
+	for _, sp := range tt.stripSpans {
+		if sp.owner >= 0 && sp.closeX != sp.labelEnd-cell/2 {
+			t.Errorf("tab %d's button is found at %d, its label ends at %d", sp.owner, sp.closeX, sp.labelEnd)
+		}
+	}
+
+	_, plainFocus := build(false, true)
+	_, focus := build(true, true)
+	if a, b := labelAt(plainFocus, "Limit"), labelAt(focus, "Limit"); a != b {
+		t.Errorf("the focused tab's label moved from %s to %s, with its marker where the button would be", a, b)
+	}
+}
+
+// A pressed button on a cell surface keeps the line the strip runs through
+// its cell, so pressing it does not break the strip's edge.
+func TestAPressedButtonKeepsTheStripsLine(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	for _, tc := range []struct {
+		pos  TabPosition
+		row  int
+		line style.TextStyle
+	}{
+		{TabsTop, 0, style.StyleUnderline},
+		{TabsBottom, 4, style.StyleOverline},
+	} {
+		tt := closeStrip(t, tc.pos, core.DirLTR, true)
+		paintCloseGrid(t, tt)
+		tt.pressClose(0)
+		got := paintCloseGrid(t, tt).styles[[2]int{6, tc.row}]
+		want := tt.GetScheme().GetPressedTabsButton()
+		want.Attrs |= tc.line
+		if got != want {
+			t.Errorf("pos %v: the pressed button is drawn %+v, want %+v", tc.pos, got, want)
+		}
 	}
 }

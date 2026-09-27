@@ -56,6 +56,10 @@ func init() {
 			"change": protocol.NewEventDesc("A different tab was selected.").
 				Field("trinket", "uint", "The tab strip's object ID.").
 				Field("selected", "int", "Index of the newly selected tab."),
+			"close": protocol.NewEventDesc("A tab's close button was activated: pressed and let go over it, or pressed "+
+				"from the keyboard. The tab is still there; taking it away is the application's decision.").
+				Field("trinket", "uint", "The tab strip's object ID.").
+				Field("index", "int", "Index of the tab whose close button was activated."),
 		},
 		New: func() any { return NewTabTrinket() },
 		ID: func(t any) uint64 {
@@ -67,6 +71,10 @@ func init() {
 			tw.SetOnCurrentChanged(func(index int) {
 				ctx.EmitEvent(protocol.NewEvent("change").
 					WithUint("trinket", id).WithInt("selected", index))
+			})
+			tw.SetOnTabCloseRequested(func(index int) {
+				ctx.EmitEvent(protocol.NewEvent("close").
+					WithUint("trinket", id).WithInt("index", index))
 			})
 		},
 		Props: map[string]protocol.Property{

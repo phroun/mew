@@ -85,6 +85,11 @@ class App:
             for name in ("tabs", "btabs", "vtside", "vtopp"):
                 ui.object(name).set(flag)
         ui.checkbox("vtclose").on_toggle(closable)
+        # A close button raises close with the tab's index. The tab stays: a
+        # demo has nothing to lose by keeping it, so it only says what came in.
+        for name in ("tabs", "btabs", "vtside", "vtopp"):
+            ui.object(name).on("close", lambda ev, name=name: self.set_status(
+                "event close index=%s on %s" % (ev.int_("index"), name)))
 
         def set_bg(arg):
             def handler(ev):

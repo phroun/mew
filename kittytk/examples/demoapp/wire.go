@@ -206,6 +206,16 @@ func (a *app) wireClosable() {
 	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("btabs")))
 	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtside")))
 	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtopp")))
+
+	// A close button raises close with the tab's index. The tab stays: a demo
+	// has nothing to lose by keeping it, so it only says what came in.
+	for _, name := range []string{"tabs", "btabs", "vtside", "vtopp"} {
+		name := name
+		ui.Object(name).On("close", func(ev *protocol.Event) {
+			i, _ := ev.Int("index")
+			a.setStatus(fmt.Sprintf("event close index=%d on %s", i, name))
+		})
+	}
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and

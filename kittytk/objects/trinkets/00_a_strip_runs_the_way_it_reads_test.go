@@ -643,14 +643,14 @@ func TestAPressFindsThePartOfTheStripItLandedOn(t *testing.T) {
 			if core.ChromeMirrored(s.tt) {
 				button, last, first = lx-cell/2, first, last
 			}
-			s.tt.handleTabBarPress(button)
+			clickStrip(s.tt, button)
 			if s.closed != 0 {
 				t.Errorf("%v %v: a press on the first tab's close button closed tab %d",
 					dir, pos, s.closed)
 			}
 			for _, at := range []core.Unit{last, first} {
 				s = build(dir, pos, 0, true)
-				s.tt.handleTabBarPress(at)
+				clickStrip(s.tt, at)
 				if s.closed != -1 || s.tt.currentIndex != 0 {
 					t.Errorf("%v %v: a press on the first tab's label at %d closed %d and selected %d, "+
 						"want it selected and nothing closed", dir, pos, at, s.closed, s.tt.currentIndex)

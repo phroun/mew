@@ -503,6 +503,15 @@ func createMainWindow(desktop *trinkets.Desktop, application *app.Application) *
 			factory.byID[reply.IDs[key]].(*trinkets.TabTrinket).SetClosable(checked)
 		}
 	})
+	// A close button raises close with the tab's index. The tab stays: a demo
+	// has nothing to lose by keeping it, so it only says what came in.
+	for _, key := range []string{"tabs", "btabs", "vtside", "vtopp"} {
+		key := key
+		dispatcher.On(reply.IDs[key], "close", func(ev *protocol.Event) {
+			i, _ := ev.Int("index")
+			setStatus(fmt.Sprintf("event close index=%d on %s", i, key))
+		})
+	}
 
 	// Tab background color radios (Selection and Scroll Selection
 	// carry the same three options).
