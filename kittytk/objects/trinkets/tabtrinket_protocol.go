@@ -19,7 +19,9 @@ import (
 
 // wireTab is the virtual tab target: caption + content trinket, and its own
 // say over its close button. Once the strip has taken it, strip and tab say
-// where it went, so a later set reaches the tab it built.
+// where it went, so a later set of either reaches the tab it built, wherever
+// that tab now stands; one the strip has since dropped takes the set and
+// changes nothing on screen.
 type wireTab struct {
 	caption  string
 	content  core.Trinket
@@ -39,6 +41,9 @@ func init() {
 					return err
 				}
 				t.caption = s
+				if t.strip != nil {
+					t.strip.SetTabText(t.strip.indexOf(t.tab), s)
+				}
 				return nil
 			})).Tip("Tab label text."),
 			"closable": protocol.NewProperty("flag", wprop("closable", func(_ *protocol.BindContext, t *wireTab, v *protocol.Value, f protocol.FlagState) error {
@@ -66,7 +71,7 @@ func init() {
 				}
 				t.closable = c
 				if t.strip != nil {
-					t.strip.setClosableOf(t.tab, c)
+					t.strip.SetTabClosable(t.strip.indexOf(t.tab), c)
 				}
 				return nil
 			})).Tip("This tab's own say over its close button: closable gives it one and !closable " +

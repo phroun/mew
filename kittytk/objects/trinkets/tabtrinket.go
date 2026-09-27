@@ -620,15 +620,16 @@ func (t *TabTrinket) SetTabClosable(index int, c Closability) {
 	t.Update()
 }
 
-// setClosableOf is SetTabClosable for a tab named by itself rather than by
-// where it stands, which moves as tabs come and go.
-func (t *TabTrinket) setClosableOf(tab *Tab, c Closability) {
+// indexOf is where a tab stands on the strip now, which moves as tabs come and
+// go, or -1 once it has gone. It is how a tab named by itself, rather than by
+// its place, is found again.
+func (t *TabTrinket) indexOf(tab *Tab) int {
 	for i, have := range t.tabs {
 		if have == tab {
-			t.SetTabClosable(i, c)
-			return
+			return i
 		}
 	}
+	return -1
 }
 
 // closeFocusShown says the keyboard is on the current tab's close button.

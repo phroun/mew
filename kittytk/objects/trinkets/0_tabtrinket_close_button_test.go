@@ -1052,6 +1052,25 @@ func TestATabSaysItsOwnClosableOnTheWire(t *testing.T) {
 	run(`set s.b closable=true`)
 	run(`set s.a closable`)
 	want("set on", ClosableOn, ClosableOn, ClosableDefault)
+
+	// A caption set after the build reaches the strip too, and still finds
+	// its tab once the tabs ahead of it have gone.
+	run(`set s.b caption="Notes"`)
+	if got := tt.TabText(1); got != "Notes" {
+		t.Errorf("set caption left the strip reading %q", got)
+	}
+	tt.RemoveTab(0)
+	run(`set s.c caption="Trace"`)
+	run(`set s.c !closable`)
+	if got := tt.TabText(1); got != "Trace" || tt.TabClosable(1) != ClosableOff {
+		t.Errorf("after the first tab went, the last reads %q and says %v", got, tt.TabClosable(1))
+	}
+	run(`set s.a caption="Gone"`)
+	for i := 0; i < tt.Count(); i++ {
+		if tt.TabText(i) == "Gone" {
+			t.Errorf("a set on a removed tab changed tab %d", i)
+		}
+	}
 	script, err := protocol.Parse(`set s.b closable=maybe`)
 	if err != nil {
 		t.Fatal(err)
