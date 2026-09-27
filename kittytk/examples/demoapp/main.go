@@ -40,7 +40,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "start a desktop first: go run ./cmd/kittytk-tui (or -tags sdl ./cmd/kittytk-sdl)")
 		os.Exit(1)
 	}
-	a.wait() // blocks until the main window closes or the desktop exits
+	// It ends when it has no windows left, and says so: a demo that exits quietly
+	// and one that has hung look identical from a terminal.
+	fmt.Println("demoapp: exiting —", a.wait())
 }
 
 // secondaryCount names the applications opened via Window > New Window.
@@ -73,6 +75,15 @@ type app struct {
 	// What the desktop has kept for this app, as its answers arrive.
 	shelf storeReport
 
+	// The top-level windows this app has open, by object id, and why it stopped.
+	// An application with none left has nothing to be -- see watchWindow.
+	//
+	// Under a lock because they are counted on the connection's event goroutine
+	// and read from whoever asks: an example that races is an example of racing.
+	windowsMu   sync.Mutex
+	openWindows map[uint64]string
+	why         string
+
 	quit     chan struct{}
 	quitOnce sync.Once
 }
@@ -81,7 +92,8 @@ type app struct {
 // The primary app dials solo when -solo is set, so its main window
 // becomes the whole display.
 func newApp(path, name string, primary bool) (*app, error) {
-	a := &app{path: path, primary: primary, quit: make(chan struct{})}
+	a := &app{path: path, primary: primary, quit: make(chan struct{}),
+		openWindows: map[uint64]string{}}
 	// Command dispatch is observed via conn.OnCommand handlers, so the
 	// Dial sink is unused here.
 	// The demo opens secondary windows, so it declares multi-window: the
@@ -123,24 +135,80 @@ func newPrimary(path string) (*app, error) {
 	a.stockTheStore()
 	a.openProtocolWindow()
 
-	// The demo ends when its main window closes (or the desktop exits).
-	ui.Window("w").OnClosed(func() { a.signalQuit() })
+	// The demo ends when it has no windows left -- see watchWindow.
+	a.watchWindow(ui.ID("w"), "the main window")
 	return a, nil
 }
 
-// signalQuit ends the app's wait exactly once.
-func (a *app) signalQuit() { a.quitOnce.Do(func() { close(a.quit) }) }
+// watchWindow follows one window this application opened, so the demo can tell when
+// it has none left.
+//
+// **An application with no windows has nothing to be.** Nothing tells it to go: the
+// display closes its windows, for a desktop quitting or a person pressing [x], and
+// then says nothing more -- an application may perfectly well live on with no windows
+// and open one later. So noticing is the application's own job, and a demo that did
+// not notice sat in a terminal, connected to a display it had nothing on, until
+// somebody pressed ctrl-C.
+//
+// Only TOP-LEVEL windows count. An MDI document lives inside the main window and
+// closing the last of them leaves an application with an empty pane, not with
+// nothing; a dialog is a question, not somewhere to be.
+func (a *app) watchWindow(id uint64, what string) {
+	if id == 0 {
+		return
+	}
+	a.windowsMu.Lock()
+	a.openWindows[id] = what
+	a.windowsMu.Unlock()
 
-// wait blocks until the app quits or the display service disconnects.
-func (a *app) wait() {
+	a.conn.Object(id).On("window_closed", func(*protocol.Event) {
+		a.windowsMu.Lock()
+		delete(a.openWindows, id)
+		left := len(a.openWindows)
+		a.windowsMu.Unlock()
+		if left == 0 {
+			a.signalQuit(what + " was the last window it had open")
+		}
+	})
+}
+
+// windowsOpen is what it still has, by id and by what each one is.
+func (a *app) windowsOpen() map[uint64]string {
+	a.windowsMu.Lock()
+	defer a.windowsMu.Unlock()
+	out := make(map[uint64]string, len(a.openWindows))
+	for id, what := range a.openWindows {
+		out[id] = what
+	}
+	return out
+}
+
+// signalQuit ends the app's wait exactly once, saying why.
+func (a *app) signalQuit(why string) {
+	a.quitOnce.Do(func() {
+		a.why = why
+		close(a.quit)
+	})
+}
+
+// wait blocks until the app has nothing left to do, and says what that was: the
+// message the terminal gets is the proof it ended of its own accord rather than
+// being killed.
+func (a *app) wait() string {
+	why := ""
 	select {
 	case <-a.quit:
+		why = a.why
 	case <-a.conn.Closed():
+		// The display went. Its windows went with it, and there is nothing to say
+		// goodbye to.
+		why = "the display service went away"
 	}
 	for _, d := range a.drivers {
 		d.Close()
 	}
 	a.conn.Close()
+	return why
 }
 
 // setStatus narrates to the desktop status bar via the status app verb

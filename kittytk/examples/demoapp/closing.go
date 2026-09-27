@@ -91,6 +91,8 @@ func (a *app) openSulkingWindow() {
 	// between forcing it and destroying it is visible in what came before, not here.
 	win.OnClosed(func() { a.setStatus("Sulking window: closed.") })
 
+	a.watchWindow(win.ID(), "the sulking window")
+
 	ui.Button("swcloser").OnClick(func() {
 		a.setStatus("Sulking window: destroy sent — no question asked.")
 		_ = win.Close()
@@ -129,10 +131,10 @@ func (a *app) confirmClose(win client.Window, what string, unsaved func() bool) 
 		// so the keep-alive starts before anything slow happens.
 		a.askBeforeClosing(decision, a.conn.Asking(ev), what, unsaved())
 	})
-	// No `window_closed` handler to go with it: the MDI pane owns the
-	// close-complete hook of the windows it hosts, so a child's own
-	// `window_closed` is superseded by the pane's `remove` -- which wireMDI is
-	// already listening to. Subscribing here would be a handler that never fires.
+	// No `window_closed` handler to go with it, though there could be one: what
+	// the demo does when a document goes is drop its dock entry, and wireMDI
+	// already does that from the pane's `remove`. Two handlers for one closing
+	// would be two of everything.
 }
 
 // askBeforeClosing puts the question on the screen and answers the decision with

@@ -214,7 +214,24 @@ func init() {
 		Bind: func(ctx *protocol.BindContext, target any) {
 			w := target.(*Window)
 			id := uint64(w.ObjectID())
-			w.SetOnCloseComplete(func() {
+			// **An OBSERVER, not the close-complete slot.** That slot holds one
+			// handler and belongs to whatever is holding the window: the window
+			// manager removes it from its list there, the MDI pane and the
+			// tear-off host do the same for theirs. All three are assigned when
+			// the window is ADOPTED, which is after it is built -- so a binding
+			// that took the slot had it taken back a moment later, and the
+			// application was never told its window closed. Every window an
+			// application creates is adopted by one of those three.
+			//
+			// Nothing noticed because nothing in the display needs this event:
+			// it is the only way an APPLICATION learns its own window went, and
+			// what it costs is an application that waits for a window that has
+			// already gone. The demo did exactly that -- its main window closed
+			// by the desktop's own quit, and it sat there.
+			//
+			// Observers accumulate and always run. The owning Application drops
+			// the window from its list through one for this same reason.
+			w.AddOnClosed(func() {
 				ctx.EmitEvent(protocol.NewEvent("window_closed").
 					WithUint("window", id))
 			})

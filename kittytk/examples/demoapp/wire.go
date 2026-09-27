@@ -522,6 +522,7 @@ func (a *app) openBoundedWindow() {
 	}
 	win := ui.Window("bwin")
 	ui.Button("bwcloser").OnClick(func() { _ = win.Close() })
+	a.watchWindow(win.ID(), "the bounded window")
 }
 
 // openProtocolWindow builds the companion window whose content is all
@@ -531,6 +532,7 @@ func (a *app) openProtocolWindow() {
 	if err != nil {
 		return
 	}
+	a.watchWindow(ui.ID("pw"), "the protocol window")
 	status := ui.Label("pstatus")
 	ui.Checkbox("pcb").OnToggle(func(s protocol.FlagState) {
 		state := "off"
@@ -567,6 +569,7 @@ func (a *app) openTerminalWindow() {
 	}
 	win := ui.Window("dwin")
 	ui.Button("dcloser").OnClick(func() { _ = win.Close() })
+	a.watchWindow(win.ID(), "the demo window")
 	a.wireTerminal(ui.Object("dterm"))
 }
 

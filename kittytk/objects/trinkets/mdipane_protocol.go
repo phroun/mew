@@ -18,9 +18,12 @@ import (
 //	set pane restore=1042    # id-directed actions
 //
 // Events (all carry window= and, where useful, title=): minimize,
-// restore, remove, active (window=0 means none). Note: an MDI child's
-// window_closed emission is superseded by the pane's remove event
-// (the pane owns the close-complete hook of hosted windows).
+// restore, remove, active (window=0 means none). A closing child raises
+// both `remove` here and its own `window_closed`: one says the pane lost
+// a child, the other says the window went, and an application may be
+// listening for either. (The pane owns the close-complete SLOT, which is
+// how it drops the child from its list; the window's own announcement is
+// an observer and does not compete for it.)
 // Do performs one of the pane's actions (protocol.doer). Arranging windows and
 // moving between them are things done, not values the pane then holds, so they
 // arrive as `do <mdi> tile` rather than as properties that read like state.
