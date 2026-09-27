@@ -103,8 +103,10 @@ shape: a `…:/` front-end over `box:///…` storage.
 - **`internal/editor/wikiref.go`** — the help wiki `Root` is `box:///help`;
   `box` and `mew` are both registered link schemes; `box`/`file` are the
   followable document schemes. The `help:` front-end logic is untouched.
-- **`internal/editor/editor.go`** — Quick Help's identity is `mew:/quickhelp`;
-  the screen-capture dump path is `box:///<timestamp>.ans`.
+- **`internal/editor/help.go`** and **`frame.go`** — Quick Help's identity is
+  `mew:/quickhelp` (`quickHelpDocURL`); the screen-capture dump path is
+  `box:///<timestamp>.ans` (armed by `debug_screen` in `registerScreenCommands`,
+  written by `performRender`).
 
 The on-disk location is unchanged: `box:///` still maps to `~/.mew` — only the
 URL scheme moved. Renaming the actual directory is a separate, user-visible

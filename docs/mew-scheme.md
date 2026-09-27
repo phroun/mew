@@ -45,28 +45,28 @@ Nine subsystems genuinely address `box:` (plus the generated `mew:` scheme).
 
 | # | Subsystem | Role | Key anchors |
 |---|---|---|---|
-| 1 | Scheme spec / VFS resolver — `internal/editor/mewfs.go` | Authoritative prose spec; the `mewVFS` overlay (user → system → embedded); `isBoxPath`, `confine()`, `makeConfigFileIO` | `mewfs.go:12-46`, `93-104`, `49-218`, `365-391` |
-| 2 | Config manager — `internal/config/config.go` | `box:///editor.conf` root; the `FileIO` scheme contract; default `box:///` → `~/.mew`; include confinement | `config.go:630-722`, `660-667`, `748-768` |
-| 3 | Canonical doc identity — `internal/editor/canon.go` | Normalizes every spelling to one `box:///` identity; folds `box:///help/x` ↔ real `~/.mew/help/x` in OS mode | `canon.go:14-70`, `209-258` |
-| 4 | Wiki / link navigation — `internal/editor/wikiref.go` (+ `links.go`, `internal/viewport/manager.go`) | `"box"` is a followable link scheme; help root `box:///help`; `WikiRoot` may be `box:///docs` | `wikiref.go:50-56`, `130-153`, `390-425`; `manager.go:357-361` |
-| 5 | Syntax grammars — `internal/editor/syntaxhl.go` | `box:///syntax/<name>.jsf` resolved through the layered tree | `syntaxhl.go:170`, `476-482` |
-| 6 | Embedded / system resources — `internal/editor/resources.go` | `//go:embed resources` (syntax, help, default confs) as the lowest read layers | `resources.go:14-73` |
-| 7 | Editor core & commands — `internal/editor/editor.go` | profile/deadcat wiring; `mew:/quickhelp`; screen-dump `box:///<ts>.ans` | `editor.go:934-939`, `8729`, `2928` + `7751` |
-| 8 | Save / exists safety — `internal/editor/sourcesafety.go` | `box:`-target saves route through `e.mew.WriteFile`; dir-create prompts skipped | `sourcesafety.go:341-350`, `163-166` |
-| 9 | Public embedding API — `mew.go` (+ CLI launch `internal/editor/cli.go`) | `WithMewFileSystem` / `WithHomeDir` / `WithDeadcat` govern the backing | `mew.go:108-119`, `487-491`; `cli.go:322,333` |
+| 1 | Scheme spec / VFS resolver — `internal/editor/mewfs.go` | Authoritative prose spec; the `mewVFS` overlay (user → system → embedded); `isBoxPath`, `confine()`, `makeConfigFileIO` | the file's opening comment (the prose spec); `isBoxPath` and `confine`; the `mewVFS` type and its methods; `makeConfigFileIO` — all in `mewfs.go` |
+| 2 | Config manager — `internal/config/config.go` | `box:///editor.conf` root; the `FileIO` scheme contract; default `box:///` → `~/.mew`; include confinement | the `FileIO` type, and `Manager.configPath` as `NewManager` sets it; `boxToLocal`; `joinInclude` / `includeDir` |
+| 3 | Canonical doc identity — `internal/editor/canon.go` | Normalizes every spelling to one `box:///` identity; folds `box:///help/x` ↔ real `~/.mew/help/x` in OS mode | `canonicalDocURL` (its `osBackedFS` branch does the fold) and `canonicalOSFileURL` |
+| 4 | Wiki / link navigation — `internal/editor/wikiref.go` (+ `links.go`, `internal/viewport/manager.go`) | `"box"` is a followable link scheme; help root `box:///help`; `WikiRoot` may be `box:///docs` | `linkSchemes`, `wikiRegistry`, and the URL path helpers (`urlSplit`, `urlDir`, `urlJoin`, `urlWithin`) in `wikiref.go`; the `WikiRoot` field of `Viewport` in `manager.go` |
+| 5 | Syntax grammars — `internal/editor/syntaxhl.go` | `box:///syntax/<name>.jsf` resolved through the layered tree | `resolveSyntaxFile`, and the registered-wiki branch of `bufferGrammar` |
+| 6 | Embedded / system resources — `internal/editor/resources.go` | `//go:embed resources` (syntax, help, default confs) as the lowest read layers | `embeddedResources` (the `//go:embed resources` tree) and its `readEmbeddedResource` / `statEmbeddedResource` / `listEmbeddedResource` accessors |
+| 7 | Editor core & commands — `internal/editor/editor.go`, `help.go`, `frame.go` | profile/deadcat wiring; `mew:/quickhelp`; screen-dump `box:///<ts>.ans` | `New` builds the resolver (`newMewVFS`) and wires config, profile and DEADCAT (`resolveDeadcat`) through it; `quickHelpDocURL` in `help.go`; `debug_screen` (in `registerScreenCommands`) arms `pendingScreenCapture`, which `performRender` writes — both in `frame.go` |
+| 8 | Save / exists safety — `internal/editor/sourcesafety.go` | `box:`-target saves route through `e.mew.WriteFile`; dir-create prompts skipped | `performSave` (a `box:` target writes through `e.mew`) and `missingSaveDir` (no directory prompt for `box:`) |
+| 9 | Public embedding API — `mew.go` (+ CLI launch `internal/editor/cli.go`) | `WithMewFileSystem` / `WithHomeDir` / `WithDeadcat` govern the backing | `WithMewFileSystem`, `WithHomeDir` and `WithDeadcat` in `mew.go`; `openLaunchFile` in `cli.go` |
 
 ## Content that lives under the scheme
 
 | Resource | Canonical URL | Anchor |
 |---|---|---|
-| Editor config + includes | `box:///editor.conf` | `config.go:664`, `984`, `999` |
-| Startup profile script | `box:///profile.mew` | `config.go:1798-1824`; `editor.go:8340-8356` |
-| Syntax grammars | `box:///syntax/<name>.jsf` | `syntaxhl.go:170` |
-| Help manual (wiki) — see [`help-scheme.md`](help-scheme.md) | `box:///help/…` | `wikiref.go:130-153` |
-| Quick Help (synthetic) | `mew:/quickhelp` | `editor.go:8729` |
-| Screen-capture debug dumps | `box:///<timestamp>.ans` | `editor.go:2928`, `7751` |
-| Embedded / system resources | (lowest read layers) | `resources.go:14-73` |
-| Crash dumps (DEADCAT) | conceptually in-tree — see note below | `mew.go:109`; `editor.go:646-648`, `2922` |
+| Editor config + includes | `box:///editor.conf` | `NewManager` sets `configPath`; `Manager.Load` and `expandIncludes` read it and its includes |
+| Startup profile script | `box:///profile.mew` | `Manager.ProfilePath` in `config.go`; `runProfileScript` in `editor.go` |
+| Syntax grammars | `box:///syntax/<name>.jsf` | `resolveSyntaxFile` in `syntaxhl.go` |
+| Help manual (wiki) — see [`help-scheme.md`](help-scheme.md) | `box:///help/…` | `wikiRegistry` in `wikiref.go` |
+| Quick Help (synthetic) | `mew:/quickhelp` | `quickHelpDocURL` in `help.go` |
+| Screen-capture debug dumps | `box:///<timestamp>.ans` | `debug_screen` in `registerScreenCommands`, written by `performRender` (`frame.go`) |
+| Embedded / system resources | (lowest read layers) | `embeddedResources` in `resources.go` |
+| Crash dumps (DEADCAT) | conceptually in-tree — see note below | `WithMewFileSystem` in `mew.go`; the `DeadcatName` field of `Config` in `editor.go`; `registerDeadcatCommands` in `deadcat.go` |
 
 ## Resolution layers (local mode)
 
@@ -74,17 +74,17 @@ A `box:` read consults three layers in order; the first hit wins:
 
 1. **User layer** — `<home>/.mew/<rel>` (the only layer writes touch).
 2. **System resource dirs** — from `[storage] resources=`
-   (`config.go:568-586`), resolved by `systemResourceDirs` in `resources.go`.
+   (the `Resources` field of `StorageConfig` in `config.go`), resolved by `systemResourceDirs` in `resources.go`.
 3. **Embedded resources** — the `//go:embed resources` tree
-   (`resources.go:14-73`), injected via `config.SetEmbeddedResources`.
+   (`embeddedResources` in `resources.go`), injected via `config.SetEmbeddedResources`.
 
-`mewVFS` (`mewfs.go:49-218`) implements `ReadFile` / `WriteFile` / `Stat` /
+`mewVFS` (in `mewfs.go`) implements `ReadFile` / `WriteFile` / `Stat` /
 `IsDir` / `Glob` over these layers, and `LocalPath` / `relForLocal` /
 `fallbackForLocal` bridge a real `~/.mew/...` path back to the fallback layers.
 
 ## Config includes under the scheme
 
-`@include` resolution stays inside the scheme (`config.go:731-855`):
+`@include` resolution stays inside the scheme (`readInclude` and `expandIncludes` in `config.go`):
 
 - **Quoted** `@include "..."` resolves relative to the *including* file
   (`joinInclude` / `includeDir`), clamped so a leading `../` can never rise
@@ -93,14 +93,14 @@ A `box:` read consults three layers in order; the first hit wins:
 
 ## Document identity and navigation
 
-- `canon.go` `canonicalDocURL` (`:42-70`) maps `box:x` / `box:/x` / `box://x` /
+- `canon.go` `canonicalDocURL` maps `box:x` / `box:/x` / `box://x` /
   `box:///x` to one identity; in OS-backed mode a `box:` name resolves to the
   **real** `~/.mew` `file://` identity, so `box:///help/start.txt` and
   `~/.mew/help/start.txt` are the same buffer.
 - `wikiref.go` treats `box` (paired with `file`) as a followable document
-  scheme; `docStat` / `docList` (`:429-502`) dispatch `box://` reads and globs
+  scheme; `docStat` / `docList` dispatch `box://` reads and globs
   through `e.mew`.
-- `cli.go:322,333` handle `mew help:/start` on the launch walk and guard
+- `openLaunchFile` in `cli.go` handles `mew help:/start` on the launch walk and guards
   `SetFilename` normalization with `isBoxPath`.
 
 ## Looks like a usage, but isn't
@@ -108,10 +108,11 @@ A `box:` read consults three layers in order; the first hit wins:
 - **`internal/editor/deadcat.go`** writes crash dumps to **real** OS paths
   (`filepath.Join(e.home, ".mew", …)`), not literal `box:` strings — even
   though the tree is *documented* as part of the scheme. `[storage] deadcat=`
-  can override the location (`config.go:568-572`, `1342`).
-- **`app/internal/mewhost/hostconf.go:17`** mentions the `box:/` sandbox only to
+  can override the location (the `Deadcat` field of `StorageConfig`, read from `[storage]` in
+  `Manager.applyLayer`).
+- **`app/internal/mewhost/hostconf.go`**'s opening comment mentions the `box:/` sandbox only to
   say it deliberately **bypasses** it: the launcher reads host settings straight
-  from OS `~/.mew/editor.conf` (`:67`).
+  from OS `~/.mew/editor.conf` (`LoadHostConfig`, via `editorConfName`).
 
 ## Not the scheme (excluded)
 
