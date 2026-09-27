@@ -232,6 +232,21 @@ func (fm *FocusManager) canFocus(trinket Trinket) bool {
 	return policy == StrongFocus || policy == TabFocus || policy == ClickFocus
 }
 
+// BackwardFocusTaker is a trinket with a stop of its own AFTER the one it is
+// focused at, such as a tab strip's close button. Walking the chain backwards
+// reaches that stop first, so the trinket is told before the focus arrives and
+// takes it at its last stop rather than its first.
+type BackwardFocusTaker interface {
+	FocusArrivingBackward()
+}
+
+// arriveBackward tells a trinket the focus is coming to it from behind.
+func arriveBackward(t Trinket) {
+	if b, ok := t.(BackwardFocusTaker); ok {
+		b.FocusArrivingBackward()
+	}
+}
+
 // FocusNext moves focus to the next trinket in the focus chain.
 func (fm *FocusManager) FocusNext() bool {
 	fm.mu.RLock()
@@ -307,6 +322,7 @@ func (fm *FocusManager) FocusPrior() bool {
 		}
 
 		if fm.canFocus(chain[priorIdx]) {
+			arriveBackward(chain[priorIdx])
 			return fm.SetFocusedTrinket(chain[priorIdx])
 		}
 	}
@@ -377,6 +393,7 @@ func (fm *FocusManager) FocusLast() bool {
 	chain := fm.buildFocusChain(root)
 	for i := len(chain) - 1; i >= 0; i-- {
 		if fm.canFocus(chain[i]) {
+			arriveBackward(chain[i])
 			return fm.SetFocusedTrinket(chain[i])
 		}
 	}

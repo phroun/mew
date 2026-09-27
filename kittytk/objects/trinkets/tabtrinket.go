@@ -50,6 +50,13 @@ type TabTrinket struct {
 	vertSbGrabOff    float64
 	vertSbThumbPos   float64
 
+	// The close buttons. closeFocus says the keyboard is on the current tab's
+	// button, the stop just after the strip in the tab order; closeHover is
+	// the tab whose button the pointer is over, counted from 1 so that the
+	// zero value is none.
+	closeFocus bool
+	closeHover int
+
 	// Where the parts of the horizontal strip landed the last time it was
 	// painted, in the strip's RUN coordinates (see the display list below).
 	// The mouse reads it, so a press finds a tab where the painter put it.
@@ -209,6 +216,10 @@ func NewTabTrinket() *TabTrinket {
 		core.CmdTrinketItemPrior, core.CmdTrinketItemNext,
 		core.CmdTrinketBeg, core.CmdTrinketEnd,
 		core.CmdWindowMDINext, core.CmdWindowMDIPrior,
+		// Tab and Shift+Tab step on to the current tab's close button and back
+		// again, and Space or Enter presses it. Only the close button answers
+		// them; from the strip itself they fall through as they always did.
+		core.CmdFocusNext, core.CmdFocusPrior, core.CmdTrinketActivate,
 	)
 	t.Init(t)
 	// TabTrinket can receive focus for tab bar keyboard navigation
@@ -547,6 +558,29 @@ func (t *TabTrinket) SetMovable(movable bool) {
 // IsClosable returns whether tabs have close buttons.
 func (t *TabTrinket) IsClosable() bool {
 	return t.closable
+}
+
+// closableTab says whether tab i carries a close button.
+func (t *TabTrinket) closableTab(i int) bool {
+	return i >= 0 && i < len(t.tabs) && (t.closable || t.tabs[i].Closable)
+}
+
+// closeFocusShown says the keyboard is on the current tab's close button.
+func (t *TabTrinket) closeFocusShown() bool {
+	return t.closeFocus && t.HasFocus() && t.closableTab(t.currentIndex)
+}
+
+// closeStyle is how tab i's close button is drawn, given the style of the tab
+// it sits on: in the focus colours when the keyboard is on it, and in the
+// hover colours on a pixel surface when the pointer is over it.
+func (t *TabTrinket) closeStyle(p *core.Painter, i int, tab, focused style.CellStyle) style.CellStyle {
+	switch {
+	case i == t.currentIndex && t.closeFocusShown():
+		return focused
+	case p.Graphical() && t.closeHover == i+1:
+		return t.GetScheme().GetHoveredTabsButton()
+	}
+	return tab
 }
 
 // SetClosable sets whether tabs have close buttons.
@@ -1429,6 +1463,8 @@ type stripMark struct {
 	text  string
 	style style.CellStyle
 	font  *core.Font
+	// close says this cell is its tab's close button.
+	close bool
 }
 
 // The parts of a strip that are not a tab. A tab owns its marks by its own
@@ -1504,6 +1540,9 @@ func (tp *stripTape) spans() []stripSpan {
 		if m.kind == markText && out[cur].labelEnd == out[cur].x {
 			out[cur].labelEnd = m.rect.X + m.rect.Width
 		}
+		if m.close {
+			out[cur].closeX, out[cur].closeW = m.rect.X, m.rect.Width
+		}
 	}
 	return out
 }
@@ -1517,6 +1556,9 @@ type stripSpan struct {
 	labelEnd core.Unit
 	// clipped says the run was cut short at this tab (see cutShortAt).
 	clipped bool
+	// closeX and closeW are where this tab's close button was drawn; closeW
+	// is 0 when it drew none.
+	closeX, closeW core.Unit
 }
 
 // at is where the next mark will go, for a caller meaning to tie from here.
@@ -1540,6 +1582,12 @@ func (tp *stripTape) cell(x, y core.Unit, ch rune, s style.CellStyle) {
 		owner: tp.owner,
 		ch:    ch, style: s,
 	})
+}
+
+// closeButton records a tab's close button, a cell the mouse can find again.
+func (tp *stripTape) closeButton(x, y core.Unit, s style.CellStyle) {
+	tp.cell(x, y, '×', s)
+	tp.marks[len(tp.marks)-1].close = true
 }
 
 func (tp *stripTape) text(x, y core.Unit, text string, s style.CellStyle, f *core.Font) {
@@ -1645,7 +1693,9 @@ func (t *TabTrinket) newStripTape() *stripTape {
 func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabHeight := t.tabBarHeight()
 	tape := t.newStripTape()
-	hasFocus := t.HasFocus()
+	// While the keyboard is on the close button the tab looks as it does
+	// unfocused, and only the button wears the focus colours.
+	hasFocus := t.HasFocus() && !t.closeFocusShown()
 	font := t.EffectiveFont()
 
 	// Tab bar style from scheme
@@ -1676,6 +1726,21 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	}
 	// Disabled style
 	disabledStyle := tabBarUnderlined.WithFg(scheme.GetDisabledTextFG())
+	// closeOr puts tab i's close button in the cell just after its label, or
+	// what the strip would put there when the tab has none. On the selected
+	// tab that is the cell the focus marker uses, and while the strip itself
+	// has the keyboard the marker is drawn there instead, never reaching here.
+	//
+	// The strip's ellipsis can later be drawn over a button, when the run is
+	// cut short at the tab after it. A press there needs no care: the dots
+	// belong to the tab the run was cut short at, which is found first.
+	closeOr := func(x core.Unit, i int, ch rune, st, tabSt style.CellStyle) {
+		if t.closableTab(i) {
+			tape.closeButton(x, 0, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
+			return
+		}
+		tape.cell(x, 0, ch, st)
+	}
 
 	// Draw tab bar background
 	tape.fill(core.UnitRect{Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
@@ -1919,7 +1984,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 						if hasFocus {
 							tape.cell(x, 0, '>', focusedSelectedStyle)
 						} else {
-							tape.cell(x, 0, ' ', s)
+							closeOr(x, tabIndex, ' ', s, s)
 						}
 						x += metrics.UnitsPerCellWidth
 					}
@@ -1938,7 +2003,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				} else {
 					// "  " - both are non-essential filler
 					if x < availableWidth {
-						tape.cell(x, 0, ' ', tabBarUnderlined)
+						closeOr(x, tabIndex, ' ', tabBarUnderlined, s)
 						x += metrics.UnitsPerCellWidth
 					}
 					if x < availableWidth {
@@ -2153,10 +2218,8 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 
 		// Draw tab text using font-aware rendering. What goes down is the
-		// caption prepared for this target, so the foundation under it, the pen
-		// after it and the close button on its last cell all measure the run
-		// that is drawn.
-		textStartX := x
+		// caption prepared for this target, so the foundation under it and the
+		// pen after it both measure the run that is drawn.
 		labelRun := t.CellRun(tab.Text)
 		textWidth := t.MeasureText(labelRun)
 		// Solid tab-color foundation under the label and its trailing cell, so
@@ -2173,17 +2236,6 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		label(x, 0, labelRun, textStyle)
 		x += textWidth
 
-		// Draw close button if closable (at end of text, before separator)
-		if t.closable || tab.Closable {
-			// Position close button at end of text
-			closeX := textStartX + textWidth - metrics.UnitsPerCellWidth
-			if closeX < textStartX {
-				closeX = textStartX
-			}
-			tape.cell(closeX, 0, '×', s)
-		}
-		_ = textStartX // May use later for close button positioning
-
 		// Track text end position and style for ellipsis handling
 		lastTextEndX = x
 		lastSlashX = -1    // Reset slash tracking
@@ -2197,7 +2249,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			if hasFocus {
 				tape.cell(x, 0, '>', focusedSelectedStyle)
 			} else {
-				tape.cell(x, 0, ' ', s)
+				closeOr(x, tabIndex, ' ', s, s)
 			}
 			tape.cell(x+metrics.UnitsPerCellWidth, 0, backslashCh, tabBarStyle) // backslash not underlined (like slash)
 			lastSlashX = x + metrics.UnitsPerCellWidth                          // Track backslash position
@@ -2207,7 +2259,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		} else if nextIsSelected {
 			// "_/<" (3 chars) when focused, "_/ " when not focused
 			// Underlined except slash and space/bracket adjacent to selected label
-			tape.cell(x, 0, underscoreCh, tabBarUnderlined)
+			closeOr(x, tabIndex, underscoreCh, tabBarUnderlined, s)
 			tape.cell(x+metrics.UnitsPerCellWidth, 0, slashCh, tabBarStyle) // slash not underlined
 			lastSlashX = x + metrics.UnitsPerCellWidth                      // Track slash position
 			selLeadX = x + metrics.UnitsPerCellWidth
@@ -2224,7 +2276,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			x += metrics.UnitsPerCellWidth * 3
 		} else {
 			// "  " (2 chars) regular separator - underlined
-			tape.cell(x, 0, ' ', tabBarUnderlined)
+			closeOr(x, tabIndex, ' ', tabBarUnderlined, s)
 			tape.cell(x+metrics.UnitsPerCellWidth, 0, ' ', tabBarUnderlined)
 			x += metrics.UnitsPerCellWidth * 2
 		}
@@ -2442,7 +2494,9 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	tabHeight := t.tabBarHeight()
 	tabY := bounds.Height - tabHeight
 	tape := t.newStripTape()
-	hasFocus := t.HasFocus()
+	// While the keyboard is on the close button the tab looks as it does
+	// unfocused, and only the button wears the focus colours.
+	hasFocus := t.HasFocus() && !t.closeFocusShown()
 	font := t.EffectiveFont()
 
 	// Tab bar style from scheme
@@ -2473,6 +2527,15 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 	}
 	// Disabled style
 	disabledStyle := tabBarOverlined.WithFg(scheme.GetDisabledTextFG())
+	// closeOr puts tab i's close button in the cell just after its label, as
+	// on a top strip (see paintTopTabs).
+	closeOr := func(x core.Unit, i int, ch rune, st, tabSt style.CellStyle) {
+		if t.closableTab(i) {
+			tape.closeButton(x, tabY, t.closeStyle(p, i, tabSt, focusedSelectedStyle))
+			return
+		}
+		tape.cell(x, tabY, ch, st)
+	}
 
 	// Draw tab bar background with overline (will be overwritten by active tab area without overline)
 	tape.fill(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarOverlined)
@@ -2853,7 +2916,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			if hasFocus {
 				tape.cell(x, tabY, '>', focusedSelectedStyle)
 			} else {
-				tape.cell(x, tabY, underscoreCh, s)
+				closeOr(x, tabIndex, underscoreCh, s, s)
 			}
 			tape.cell(x+metrics.UnitsPerCellWidth, tabY, slashCh, tabBarStyle)
 			lastSlashX = x + metrics.UnitsPerCellWidth // Track slash position - marks end of active tab's inside
@@ -2864,7 +2927,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		} else if nextIsSelected {
 			// " \_" (3 chars) before selected tab
 			// Space before \ gets overline (outside active tab)
-			tape.cell(x, tabY, ' ', tabBarOverlined)
+			closeOr(x, tabIndex, ' ', tabBarOverlined, s)
 			tape.cell(x+metrics.UnitsPerCellWidth, tabY, backslashCh, tabBarStyle)
 			lastSlashX = x + metrics.UnitsPerCellWidth // Track backslash position - marks start of next tab's inside
 			selLeadX = x + metrics.UnitsPerCellWidth
@@ -2882,7 +2945,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			x += metrics.UnitsPerCellWidth * 3
 		} else {
 			// "  " (2 chars) regular separator - both get overline
-			tape.cell(x, tabY, ' ', tabBarOverlined)
+			closeOr(x, tabIndex, ' ', tabBarOverlined, s)
 			tape.cell(x+metrics.UnitsPerCellWidth, tabY, ' ', tabBarOverlined)
 			x += metrics.UnitsPerCellWidth * 2
 		}
@@ -3108,9 +3171,9 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 // label is doing is READING.
 //
 // slotX/slotW are the tab's own box; a column of padding is kept on each side.
-func (t *TabTrinket) sideTabTextX(slotX, slotW core.Unit, label string) core.Unit {
-	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
-	x0, room := slotX+cw, slotW-cw*2
+// A closable tab gives up the cell its close button stands in (sideCloseX).
+func (t *TabTrinket) sideTabTextX(slotX, slotW core.Unit, label string, closable bool) core.Unit {
+	x0, room := t.sideTabRoom(slotX, slotW, closable)
 	side := core.ResolveHAlign(core.AlignTextNatural,
 		text.FirstStrongDirection(label), core.FindEffectiveDirection(t))
 	if side == core.SideRight {
@@ -3121,9 +3184,37 @@ func (t *TabTrinket) sideTabTextX(slotX, slotW core.Unit, label string) core.Uni
 	return x0
 }
 
+// sideTabRoom is the stretch of a side slot a label may use: the slot less a
+// column of padding on each side, and less the close button's cell when the
+// tab has one.
+func (t *TabTrinket) sideTabRoom(slotX, slotW core.Unit, closable bool) (x0, room core.Unit) {
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+	x0, room = slotX+cw, slotW-cw*2
+	if closable {
+		room -= cw
+		if core.ChromeMirrored(t) {
+			x0 += cw
+		}
+	}
+	return x0, room
+}
+
+// sideCloseX is where a side tab's close button goes: the last cell inside the
+// padding at the end the strip reads towards, so the buttons stand in one
+// column. The padding itself is left alone, since a scrollbar can lie over it.
+func (t *TabTrinket) sideCloseX(slotX, slotW core.Unit) core.Unit {
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+	if core.ChromeMirrored(t) {
+		return slotX + cw
+	}
+	return slotX + slotW - cw*2
+}
+
 func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabWidth := t.calculateTabBarWidth()
-	hasFocus := t.HasFocus()
+	// While the keyboard is on the close button the tab looks as it does
+	// unfocused, and only the button wears the focus colours.
+	hasFocus := t.HasFocus() && !t.closeFocusShown()
 	needsScrolling := t.vertTabsNeedScrolling()
 	visibleCount := t.vertVisibleCount()
 	font := t.EffectiveFont()
@@ -3168,7 +3259,8 @@ func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme
 		p.FillRect(core.UnitRect{X: contentX, Y: y, Width: tabWidth, Height: metrics.UnitsPerCellHeight}, ' ', s)
 
 		// Draw tab text using font-aware rendering
-		maxTextWidth := tabWidth - metrics.UnitsPerCellWidth*2 // Leave padding on both sides
+		closable := t.closableTab(i)
+		_, maxTextWidth := t.sideTabRoom(contentX, tabWidth, closable) // Leave padding on both sides
 
 		// Truncate text if it doesn't fit
 		displayText := tab.Text
@@ -3188,7 +3280,10 @@ func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme
 		// Cut to fit first, prepared after: the run that is drawn is the run
 		// the slot places.
 		displayRun := t.CellRun(displayText)
-		p.DrawText(t.sideTabTextX(contentX, tabWidth, displayRun), y, displayRun, s, font)
+		p.DrawText(t.sideTabTextX(contentX, tabWidth, displayRun, closable), y, displayRun, s, font)
+		if closable {
+			p.DrawCell(t.sideCloseX(contentX, tabWidth), y, '×', t.closeStyle(p, i, s, focusedSelectedStyle))
+		}
 
 		y += metrics.UnitsPerCellHeight
 	}
@@ -3209,7 +3304,9 @@ func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme
 
 func (t *TabTrinket) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabWidth := t.calculateTabBarWidth()
-	hasFocus := t.HasFocus()
+	// While the keyboard is on the close button the tab looks as it does
+	// unfocused, and only the button wears the focus colours.
+	hasFocus := t.HasFocus() && !t.closeFocusShown()
 	needsScrolling := t.vertTabsNeedScrolling()
 	visibleCount := t.vertVisibleCount()
 	font := t.EffectiveFont()
@@ -3255,7 +3352,8 @@ func (t *TabTrinket) paintRightTabs(p *core.Painter, bounds core.UnitRect, schem
 		p.FillRect(core.UnitRect{X: tabX, Y: y, Width: tabWidth, Height: metrics.UnitsPerCellHeight}, ' ', s)
 
 		// Draw tab text using font-aware rendering
-		maxTextWidth := tabWidth - metrics.UnitsPerCellWidth*2 // Leave padding on both sides
+		closable := t.closableTab(i)
+		_, maxTextWidth := t.sideTabRoom(tabX, tabWidth, closable) // Leave padding on both sides
 
 		// Truncate text if it doesn't fit
 		displayText := tab.Text
@@ -3273,7 +3371,10 @@ func (t *TabTrinket) paintRightTabs(p *core.Painter, bounds core.UnitRect, schem
 			}
 		}
 		displayRun := t.CellRun(displayText)
-		p.DrawText(t.sideTabTextX(tabX, tabWidth, displayRun), y, displayRun, s, font)
+		p.DrawText(t.sideTabTextX(tabX, tabWidth, displayRun, closable), y, displayRun, s, font)
+		if closable {
+			p.DrawCell(t.sideCloseX(tabX, tabWidth), y, '×', t.closeStyle(p, i, s, focusedSelectedStyle))
+		}
 
 		y += metrics.UnitsPerCellHeight
 	}
@@ -3351,6 +3452,30 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 	// strip actually runs along answers; the other one falls through, so a
 	// vertical strip never swallows a horizontal arrow.
 	if t.HasFocus() {
+		// The current tab's close button is a stop of its own, just after the
+		// strip: Tab reaches it from the strip, Shift+Tab goes back, and a Tab
+		// from the button goes on to whatever follows the strip.
+		if t.closeFocusShown() {
+			switch cmd {
+			case core.CmdFocusPrior:
+				t.setCloseFocus(false)
+				return true
+			case core.CmdFocusNext:
+				// On past the strip, the way a Tab from the strip itself goes.
+				t.setCloseFocus(false)
+			case core.CmdTrinketActivate:
+				if t.onTabCloseRequested != nil {
+					t.onTabCloseRequested(t.currentIndex)
+				}
+				return true
+			}
+			// Walking the tabs takes the keyboard back to them.
+			t.setCloseFocus(false)
+		} else if cmd == core.CmdFocusNext && t.closableTab(t.currentIndex) {
+			t.setCloseFocus(true)
+			return true
+		}
+
 		// Which axis the strip runs along, once the direction has settled
 		// which edge it stands on.
 		isVertical := t.onSide()
@@ -3565,6 +3690,12 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 		if event.X < tabWidth {
 			row := int(event.Y / metrics.UnitsPerCellHeight)
 			idx := t.vertScrollOffset + row
+			if t.onSideClose(idx, 0, tabWidth, event.X) {
+				if t.onTabCloseRequested != nil {
+					t.onTabCloseRequested(idx)
+				}
+				return true
+			}
 			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				t.SetCurrentIndex(idx)
 				t.vertEnsureVisible(idx)
@@ -3588,6 +3719,12 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 		if event.X >= tabX {
 			row := int(event.Y / metrics.UnitsPerCellHeight)
 			idx := t.vertScrollOffset + row
+			if t.onSideClose(idx, tabX, tabWidth, event.X) {
+				if t.onTabCloseRequested != nil {
+					t.onTabCloseRequested(idx)
+				}
+				return true
+			}
 			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				t.SetCurrentIndex(idx)
 				t.vertEnsureVisible(idx)
@@ -3686,6 +3823,60 @@ func (t *TabTrinket) stripHoverBounds() core.UnitRect {
 	return core.UnitRect{}
 }
 
+// onStripClose says whether x, in the strip's RUN coordinates, is on the close
+// button of the tab owning sp, where the painter last drew it. A part of the
+// strip that drew no button has an empty one.
+func (t *TabTrinket) onStripClose(sp stripSpan, x core.Unit) bool {
+	return x >= sp.closeX && x < sp.closeX+sp.closeW
+}
+
+// onSideClose says whether x is on side tab idx's close button, the tab's slot
+// starting at slotX.
+func (t *TabTrinket) onSideClose(idx int, slotX, slotW, x core.Unit) bool {
+	if !t.closableTab(idx) {
+		return false
+	}
+	closeX := t.sideCloseX(slotX, slotW)
+	return x >= closeX && x < closeX+t.EffectiveCellMetrics().UnitsPerCellWidth
+}
+
+// closeHoverAt is the tab whose close button a local point is over, counted
+// from 1, or 0 for none.
+func (t *TabTrinket) closeHoverAt(x, y core.Unit) int {
+	bounds := t.Bounds()
+	metrics := t.EffectiveCellMetrics()
+	switch t.tabEdge() {
+	case TabEdgeTop, TabEdgeBottom:
+		strip := t.stripHoverBounds()
+		if !strip.Contains(core.UnitPoint{X: x, Y: y}) {
+			return 0
+		}
+		if core.ChromeMirrored(t) {
+			x = bounds.Width - x - 1
+		}
+		if sp, ok := t.stripPartAt(x); ok && t.onStripClose(sp, x) {
+			return sp.owner + 1
+		}
+	case TabEdgeLeft, TabEdgeRight:
+		tabWidth := t.calculateTabBarWidth()
+		slotX := core.Unit(0)
+		if t.tabEdge() == TabEdgeRight {
+			slotX = bounds.Width - tabWidth
+		}
+		if y < 0 {
+			return 0
+		}
+		row := int(y / metrics.UnitsPerCellHeight)
+		if row >= t.vertVisibleCount() {
+			return 0
+		}
+		if idx := t.vertScrollOffset + row; idx < len(t.tabs) && t.onSideClose(idx, slotX, tabWidth, x) {
+			return idx + 1
+		}
+	}
+	return 0
+}
+
 func (t *TabTrinket) handleTabBarPress(x core.Unit) {
 	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	bounds := t.Bounds()
@@ -3734,6 +3925,16 @@ func (t *TabTrinket) handleTabBarPress(x core.Unit) {
 	i := sp.owner
 	tab := t.tabs[i]
 
+	// The close button sits in the cell just after the label. It goes first,
+	// because a tab the run was cut short at can still be drawn whole with
+	// its button, when all that is missing is the room after it.
+	if t.onStripClose(sp, x) {
+		if t.onTabCloseRequested != nil {
+			t.onTabCloseRequested(i)
+		}
+		return
+	}
+
 	// A tab the run was cut short at is only part drawn, and everything from
 	// where it starts to where the strip gives out is its own: a press
 	// anywhere in that means bring this tab into view.
@@ -3741,14 +3942,6 @@ func (t *TabTrinket) handleTabBarPress(x core.Unit) {
 		if tab.Enabled {
 			t.SetCurrentIndex(i)
 			t.ensureTabFullyVisible(i)
-		}
-		return
-	}
-
-	// The close button sits on the last cell of the label.
-	if (t.closable || tab.Closable) && x >= sp.labelEnd-cw && x < sp.labelEnd {
-		if t.onTabCloseRequested != nil {
-			t.onTabCloseRequested(i)
 		}
 		return
 	}
@@ -3909,8 +4102,24 @@ func (t *TabTrinket) HandleFocusIn() {
 	t.Update()
 }
 
+// FocusArrivingBackward is core.BackwardFocusTaker: Shift+Tab from what
+// follows the strip reaches the current tab's close button before the tab.
+func (t *TabTrinket) FocusArrivingBackward() {
+	t.setCloseFocus(t.closableTab(t.currentIndex))
+}
+
+// setCloseFocus puts the keyboard on the current tab's close button, or takes
+// it back to the tab.
+func (t *TabTrinket) setCloseFocus(on bool) {
+	if t.closeFocus != on {
+		t.closeFocus = on
+		t.Update()
+	}
+}
+
 // HandleFocusOut is called when focus is lost.
 func (t *TabTrinket) HandleFocusOut() {
+	t.closeFocus = false
 	t.vertTabDragging = false
 	t.scrollbarDragging = false
 	t.Update()
@@ -3953,6 +4162,15 @@ func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// thumb - unless this tab strip owns the scrollbar drag.
 	if over := t.scrollbarDragging || (event.Buttons == 0 && t.overVertScrollbarThumb(event.X, event.Y)); over != t.scrollbarThumbHovered {
 		t.scrollbarThumbHovered = over
+		t.Update()
+	}
+	// The close button under the pointer, a no-button affordance the same way.
+	over := 0
+	if event.Buttons == 0 {
+		over = t.closeHoverAt(event.X, event.Y)
+	}
+	if over != t.closeHover {
+		t.closeHover = over
 		t.Update()
 	}
 

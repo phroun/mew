@@ -629,29 +629,32 @@ func TestAPressFindsThePartOfTheStripItLandedOn(t *testing.T) {
 					dir, pos, cut)
 			}
 
-			// The close button is the label's last cell -- the cell the label
-			// ENDS at, which is the one the eye reaches last, whichever way the
-			// strip runs. The other end of the label selects, as any tab does.
+			// The close button is the cell just past the label -- past the end
+			// the label ENDS at, which is the one the eye reaches last,
+			// whichever way the strip runs. Both ends of the label select, as
+			// any tab does.
 			s = build(dir, pos, 0, true)
 			lx, ok := s.ink.textAt("0000")
 			if !ok {
 				t.Fatalf("%v %v: the strip drew no first tab", dir, pos)
 			}
 			lw := s.tt.MeasureText("0000")
-			last, first := lx+lw-cell/2, lx+cell/2
+			button, last, first := lx+lw+cell/2, lx+lw-cell/2, lx+cell/2
 			if core.ChromeMirrored(s.tt) {
-				last, first = first, last
+				button, last, first = lx-cell/2, first, last
 			}
-			s.tt.handleTabBarPress(last)
+			s.tt.handleTabBarPress(button)
 			if s.closed != 0 {
 				t.Errorf("%v %v: a press on the first tab's close button closed tab %d",
 					dir, pos, s.closed)
 			}
-			s = build(dir, pos, 0, true)
-			s.tt.handleTabBarPress(first)
-			if s.closed != -1 || s.tt.currentIndex != 0 {
-				t.Errorf("%v %v: a press on the far side of the first tab's label closed %d and selected %d, "+
-					"want it selected and nothing closed", dir, pos, s.closed, s.tt.currentIndex)
+			for _, at := range []core.Unit{last, first} {
+				s = build(dir, pos, 0, true)
+				s.tt.handleTabBarPress(at)
+				if s.closed != -1 || s.tt.currentIndex != 0 {
+					t.Errorf("%v %v: a press on the first tab's label at %d closed %d and selected %d, "+
+						"want it selected and nothing closed", dir, pos, at, s.closed, s.tt.currentIndex)
+				}
 			}
 		}
 	}
