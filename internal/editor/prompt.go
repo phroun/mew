@@ -415,3 +415,9 @@ func calculateAnsiAwareLength(s string) int {
 	}
 	return length
 }
+
+// PromptForInput creates an input prompt.
+func (e *Editor) PromptForInput(prompt, defaultValue string, callback func(string, bool)) {
+	e.ViewportManager.CreatePromptViewport(prompt, defaultValue, callback)
+	e.RequestRender()
+}
