@@ -614,6 +614,7 @@ var stateCommands = map[UIState][]string{
 		CmdWindowMDINext, CmdWindowMDIPrior,
 		CmdAppMinimize, CmdAppQuit,
 		CmdAppHide, CmdAppHideOthers, CmdAppShowAll, CmdDesktopExit,
+		CmdHostSuspend,
 		// The standard Edit menu's commands are deliberately NOT here. They
 		// act on whatever has the keyboard, so they belong to the focused
 		// trinket's context, not to the frame's -- and a frame that claimed

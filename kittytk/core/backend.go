@@ -133,6 +133,16 @@ type AsyncClipboardReader interface {
 	SetClipboardReadHandler(func(text string))
 }
 
+// HostSuspender is an optional RenderBackend capability for a backend that
+// holds a terminal under a job-control shell: SuspendHost hands the terminal
+// back, stops the process, and returns once the shell has continued it and the
+// terminal is taken back. It reports false, having done nothing, when there is
+// no job control to suspend into. The host_suspend command calls it; a backend
+// without it (a graphical one) leaves the command as a no-op.
+type HostSuspender interface {
+	SuspendHost() bool
+}
+
 // SmoothPositioner is an optional RenderBackend capability: true
 // when the surface can place window chrome at arbitrary unit
 // positions (pixel surfaces). Cell-only surfaces (terminals) omit it
