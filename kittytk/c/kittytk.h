@@ -71,6 +71,21 @@ void kt_close(kt_conn *c);
 int  kt_is_closed(kt_conn *c);       /* 1 once disconnected */
 void kt_wait_closed(kt_conn *c);     /* block until the connection ends */
 
+/* What the display said on its way out: 1 if it said anything, 0 otherwise,
+ * with the reason word copied into buf.
+ *
+ * A closed connection does not say why it closed. A display that quit, one that
+ * went down badly, and a network that dropped are the same silence -- and they
+ * call for different things, which is why the display says which before it hangs
+ * up. "quit" is a display that was asked to stop and is not coming back on its
+ * own; "crash" is one that went down because something was wrong, so whatever
+ * puts it back is worth waiting for. 0 means nothing was said, which is most
+ * ways a connection can end.
+ *
+ * It is not an instruction. An application may well have work of its own that
+ * outlives its display, and nothing in this library decides otherwise. */
+int kt_goodbye(kt_conn *c, char *buf, size_t n);
+
 /* This connection's Application ObjectID, from the handshake (0 if none).
  * Use it to address application-wide properties. */
 uint64_t kt_app_id(kt_conn *c);

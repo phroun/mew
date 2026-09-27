@@ -685,6 +685,54 @@ def parse(src: str) -> Script:
 
 # --- Reply ---------------------------------------------------------------
 
+# --- Goodbye -------------------------------------------------------------
+
+# A GOODBYE is the display saying it is going, and it is the last thing a
+# connection carries:
+#
+#     welcome version=1 session=6
+#     ...
+#     goodbye reason=quit
+#
+# A closed socket cannot say why it closed. The display quitting and the
+# connection breaking look identical from this end, and they call for opposite
+# things: one is over, the other is worth waiting out.
+#
+# It is advisory -- a display that is killed says nothing at all -- and it asks
+# nothing: quitting is not askable, the part an application may refuse being each
+# window's close, which has already happened by the time this goes out.
+#
+# And it is not an instruction. An application may have business of its own that
+# outlives its display, and nothing here decides otherwise.
+GOODBYE_VERB = "goodbye"
+REASON_FIELD = "reason"
+
+# The display shutting down because it was asked to. Nothing is wrong and it is
+# not coming back on its own.
+GOODBYE_QUIT = "quit"
+
+# The display going down because something went wrong -- so whatever puts it back
+# is worth waiting for, where a quit is not.
+GOODBYE_CRASH = "crash"
+
+
+def goodbye_reason(stmt: "Statement"):
+    """The word off a goodbye statement, or None where it said nothing.
+
+    A farewell with nothing to say is still a farewell.
+    """
+    if stmt is None:
+        return None
+    for a in stmt.args:
+        if a.name != REASON_FIELD or a.value is None:
+            continue
+        if a.value.kind == ValueKind.WORD:
+            return a.value.word
+        if a.value.kind == ValueKind.STRING:
+            return a.value.str
+    return None
+
+
 TROUBLE_VERB = "trouble"
 
 

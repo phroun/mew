@@ -1755,6 +1755,13 @@ struct kt_conn {
     char **subtypes;
 
     int closed;
+
+    /* What the display said on its way out, if it said anything. Written by the
+     * reader thread and read by whoever asks afterwards, so it is under rmu with
+     * `closed`. See kt_goodbye. */
+    char farewell[32];
+    int said_farewell;
+
     kt_thread rthread, ethread, ithread;
 };
 
@@ -2860,6 +2867,24 @@ static void *read_loop(void *arg) {
             c->reply_ready = 1;
             kt_cond_signal(&c->rcv);
             kt_mutex_unlock(&c->rmu);
+        } else if (strcmp(st->verb, "goodbye") == 0) {
+            /* The display saying it is going, which is the last thing this
+             * connection will carry. Recorded, and nothing else: what an
+             * application does about its display going is the application's to
+             * decide, and it may well have work of its own that outlives it.
+             * The socket closing right behind this ends the connection, the
+             * same as it always was. */
+            const char *why = "";
+            for (int i = 0; i < st->n; i++)
+                if (strcmp(st->args[i].name, "reason") == 0
+                    && st->args[i].has_value
+                    && (st->args[i].kind == 2 || st->args[i].kind == 3)
+                    && st->args[i].sval)
+                    why = st->args[i].sval;  /* a word and a string both land here */
+            kt_mutex_lock(&c->rmu);
+            snprintf(c->farewell, sizeof c->farewell, "%s", why);
+            c->said_farewell = 1;
+            kt_mutex_unlock(&c->rmu);
         } else if (strcmp(st->verb, "init") == 0) {
             /* The display handing over something: a new object, or a new
              * object under a name already in hand. Not only a handshake step
@@ -3893,6 +3918,14 @@ int kt_is_closed(kt_conn *c) {
 }
 void kt_wait_closed(kt_conn *c) {
     kt_thread_join(c->rthread);
+}
+/* What the display said on its way out. See kittytk.h. */
+int kt_goodbye(kt_conn *c, char *buf, size_t n) {
+    kt_mutex_lock(&c->rmu);
+    int said = c->said_farewell;
+    if (buf && n) snprintf(buf, n, "%s", said ? c->farewell : "");
+    kt_mutex_unlock(&c->rmu);
+    return said;
 }
 void kt_close(kt_conn *c) {
     if (!c) return;

@@ -42,6 +42,12 @@ const (
 	// The desktop's exit uses it to give the applications inside it windows of
 	// their own instead of closing them, and names it per case ("Pop It Out",
 	// "Pop Them Out") with SetButtonText.
+	//
+	// **Display-only, by decision, and deliberately not on the wire**: it is
+	// absent from dialog_protocol.go's button flags and result words, and that is
+	// not an oversight to fix by adding it. An application wanting an offer of its
+	// own builds a window and puts the offer in it, which is the same work either
+	// way and does not spend a word of the shared vocabulary on one host's menu.
 	ButtonPopOut
 )
 

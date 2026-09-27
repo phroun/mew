@@ -115,6 +115,9 @@ class Conn:
         self._answers: "queue.Queue" = queue.Queue()
 
         self._closed_flag = False
+        # What the display said on its way out, if it said anything.
+        self._farewell = None
+        self._said_farewell = False
         self.closed = threading.Event()  # set when the connection ends
 
         # Every object the display has handed this connection, by the name it
@@ -203,6 +206,17 @@ class Conn:
                         if self._pending_in:
                             self._inbound.put(self._pending_in)
                             self._pending_in = []
+                    elif stmt.verb == protocol.GOODBYE_VERB:
+                        # The display saying it is going, which is the last
+                        # thing this connection will carry. Recorded, and
+                        # nothing else: what an application does about its
+                        # display going is the application's to decide, and it
+                        # may well have work of its own that outlives it. The
+                        # socket closing right behind this is what ends the
+                        # connection, the same as it always was.
+                        with self._lock:
+                            self._farewell = protocol.goodbye_reason(stmt)
+                            self._said_farewell = True
                     elif stmt.verb == "init":
                         # The display handing over something: a new object, or
                         # a new object under a name already in hand. Not only a
@@ -275,6 +289,26 @@ class Conn:
             if batch is None:
                 return
             self.inbound_batch(batch)
+
+    def goodbye(self):
+        """What the display said on its way out: (reason, said).
+
+        A closed connection does not say why it closed. A display that quit, one
+        that went down badly, and a network that dropped are the same silence --
+        and they call for different things, which is why the display says which
+        before it hangs up. ``quit`` is a display that was asked to stop and is
+        not coming back on its own; ``crash`` is one that went down because
+        something was wrong, so whatever puts it back is worth waiting for.
+        ``(None, False)`` means nothing was said, which is most ways a connection
+        can end.
+
+        It is not an instruction. An application may well have work of its own
+        that outlives its display, and nothing in this library decides otherwise:
+        the connection ends, this says what was said about it, and what to do
+        next is the application's.
+        """
+        with self._lock:
+            return self._farewell, self._said_farewell
 
     def _mark_closed(self):
         with self._lock:

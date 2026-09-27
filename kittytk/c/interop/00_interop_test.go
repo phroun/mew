@@ -23,6 +23,7 @@ import (
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/wire"
 )
 
 type nullBackend struct{ mu sync.Mutex }
@@ -327,4 +328,70 @@ func TestCCounterExample(t *testing.T) {
 		}
 	}
 	t.Logf("counter reached %q after 3 clicks", got)
+}
+
+// **What a C application hears when its display goes.**
+//
+// The display says `goodbye reason=quit` and hangs up, because a closed socket
+// cannot say why it closed: a display that quit and a connection that broke are the
+// same silence from the far end, and they call for opposite things. A client that
+// cannot read that word is one whose applications have to guess.
+//
+// So this is the farewell crossing the wire into C: a real display, a real socket,
+// and the reason read back off the client's own connection.
+func TestCClientHearsTheFarewell(t *testing.T) {
+	bin := buildC(t, "goodbye_smoke.c")
+	desktop, sock, stop := startService(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, sock)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	await := func(prefix string, dur time.Duration) string {
+		deadline := time.After(dur)
+		for {
+			select {
+			case ln, ok := <-lines:
+				if !ok {
+					t.Fatalf("the client exited before %q (stderr: %s)", prefix, stderr.String())
+				}
+				t.Logf("c > %s", ln)
+				if strings.HasPrefix(ln, prefix) {
+					return ln
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for %q (stderr: %s)", prefix, stderr.String())
+			}
+		}
+	}
+
+	await("READY", 15*time.Second)
+	desktop.Quit()
+
+	said := await("GOODBYE", 15*time.Second)
+	if got := strings.TrimSpace(strings.TrimPrefix(said, "GOODBYE")); got != wire.GoodbyeQuit {
+		t.Errorf("the C client heard %q, want %q", got, wire.GoodbyeQuit)
+	}
+	await("DONE", 10*time.Second)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("exited non-zero: %v (stderr: %s)", err, stderr.String())
+	}
 }
