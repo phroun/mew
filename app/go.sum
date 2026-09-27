@@ -42,6 +42,8 @@ github.com/phroun/key-sequence-processor v0.1.11 h1:M1vI3FlxcF9sxfeitRlJSFyLzYcv
 github.com/phroun/key-sequence-processor v0.1.11/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/khatool v0.1.1 h1:+0K212+2IauDvrFuqMKo6DVejEs4aMsun0k+qJ6Jmb0=
 github.com/phroun/khatool v0.1.1/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
+github.com/phroun/khatool v0.1.2 h1:yM9V6H6PJVMwU3dzDK0yYinQ3fVRM+vhMxp0DFB0GZA=
+github.com/phroun/khatool v0.1.2/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
 github.com/phroun/kittytk v0.1.31-alpha h1:UvxGmMO1Ke8lumEAjGr1tPveverfrXEsn7dsd2wViB0=
 github.com/phroun/kittytk v0.1.31-alpha/go.mod h1:wfgdSTnrg0OJL/6e+tNi+31F4UPGQG8PUiw+HAeE2uQ=
 github.com/phroun/mew v0.3.1-alpha h1:nZoCYsuBnrW73Ll7QuRYNhzOfCUng/breKzyR62Fk4E=
