@@ -216,17 +216,36 @@ func TestADeniedCloseStaysOpenAndAsksAgain(t *testing.T) {
 	}
 }
 
-// **Permission is for the close that asked for it, and is not kept.** A window
-// shown again after an allowed close asks again, because the answer was about the
-// unsaved work of a moment ago and there may be different unsaved work now.
+// **Permission is for the close that asked for it, and is not kept.** The answer was
+// about the unsaved work of a moment ago, and there may be different unsaved work now.
+//
+// The window this is asked of is one that was ALLOWED to close and then did not: a
+// child of it refused, so the permission was spent on a close that never happened and
+// everything is still on the screen. Closing it again must ask again, rather than
+// sail through on an answer given to a question that came to nothing.
+//
+// It has to be that window, because a window that actually closed never closes twice
+// -- see TestClosingAClosedWindowAsksNobody. This is the only way a second close of
+// the same window is reachable, which makes it the only place the permission could
+// be kept.
 func TestPermissionIsNotKeptForTheNextClose(t *testing.T) {
 	c := newClosing(t, true)
+
+	child := NewWindow("Unsaved changes")
+	child.SetParentWindow(c.w)
+	refusing := true
+	child.SetOnClose(func() bool { return !refusing })
+
 	c.w.Close()
 	if err := c.say("do " + itoa(c.decision()) + " " + protocol.DecisionAllow); err != nil {
 		t.Fatalf("allowing the close: %v", err)
 	}
+	if c.w.IsClosed() {
+		t.Fatal("the parent closed over a child that refused")
+	}
 
-	c.w.Show()
+	// The child relents, and the window is closed again -- which has to ask.
+	refusing = false
 	c.sent = nil
 	if c.w.Close() {
 		t.Error("the second close went through on the first one's permission")
@@ -234,7 +253,7 @@ func TestPermissionIsNotKeptForTheNextClose(t *testing.T) {
 	if !c.saw("window_closing") {
 		t.Errorf("the second close did not ask: %v", c.sent)
 	}
-	if !c.w.IsVisible() {
+	if c.w.IsClosed() {
 		t.Error("the window closed again without being allowed to")
 	}
 }
@@ -361,4 +380,130 @@ func itoa(v uint64) string {
 		v /= 10
 	}
 	return string(b[i:])
+}
+
+// **A window that has closed is closed, and closing it again is not a question.**
+//
+// Nothing prevents a second close. A sweep takes a snapshot of the windows and closes
+// each in turn, and closing a parent takes its children with it -- so it reaches a
+// child it has already closed, still in the list it took. An application tidying up
+// after a window the person closed does the same thing with `destroy`.
+//
+// This used to run the whole close again, handler included: a fresh `window_closing`
+// with a fresh deadline, about a window that was gone. It came back false, every
+// sweep reads false as a refusal, and a quit parked itself waiting for an answer
+// about something nobody could see -- or had a person asked whether to force closed a
+// window that was not there.
+func TestClosingAClosedWindowAsksNobody(t *testing.T) {
+	c := newClosing(t, true)
+	c.w.Close()
+	if err := c.say("do " + itoa(c.decision()) + " " + protocol.DecisionAllow); err != nil {
+		t.Fatalf("allowing the close: %v", err)
+	}
+	if !c.w.IsClosed() {
+		t.Fatal("the window does not consider itself closed after closing")
+	}
+
+	c.sent = nil
+	if !c.w.Close() {
+		t.Error("closing a closed window said it did not close, which every sweep reads as a refusal")
+	}
+	if c.saw("window_closing") {
+		t.Errorf("it asked the application about a window that is already gone: %v", c.sent)
+	}
+	if c.saw("window_closed") {
+		t.Errorf("it announced the same close twice: %v", c.sent)
+	}
+	if c.w.Deciding() {
+		t.Error("the window is waiting for an answer about closing something that has closed")
+	}
+}
+
+// The sweep, as a sweep does it: a snapshot, then each window in turn. The child is
+// closed by its parent and then reached in the list -- and the sweep must come out
+// the far end, not stop at it.
+func TestASweepThatMeetsAWindowItAlreadyClosedCarriesOn(t *testing.T) {
+	c := newClosing(t, true)
+	child := NewWindow("Unsaved changes")
+	child.SetParentWindow(c.w)
+	closes := 0
+	child.AddOnClosed(func() { closes++ })
+
+	snapshot := []*Window{c.w, child} // taken before anything closes
+	c.w.Close()
+	if err := c.say("do " + itoa(c.decision()) + " " + protocol.DecisionAllow); err != nil {
+		t.Fatalf("allowing the close: %v", err)
+	}
+
+	for i, w := range snapshot {
+		if !w.Close() {
+			t.Fatalf("the sweep stopped at window %d, which had already closed: a quit would park here", i)
+		}
+	}
+	if closes != 1 {
+		t.Errorf("the child was closed %d times, want once", closes)
+	}
+}
+
+// An application tidying up after a window the person already closed. It is accepted
+// -- destroying something that is gone is not an error -- and says nothing.
+func TestDestroyingAClosedWindowSaysNothing(t *testing.T) {
+	c := newClosing(t, false)
+	c.w.Close()
+	if !c.saw("window_closed") {
+		t.Fatalf("the first close was not announced: %v", c.sent)
+	}
+
+	c.sent = nil
+	if err := c.say("destroy " + itoa(uint64(c.w.ObjectID()))); err != nil {
+		t.Fatalf("destroying a closed window: %v", err)
+	}
+	if c.saw("window_closed") {
+		t.Errorf("the application was told a second time about one close: %v", c.sent)
+	}
+}
+
+// Hiding is not closing. A hidden window is somewhere to come back to, so it still
+// closes -- and still asks -- when the time comes.
+func TestAHiddenWindowStillCloses(t *testing.T) {
+	c := newClosing(t, true)
+	c.w.Hide()
+	if c.w.IsClosed() {
+		t.Fatal("hiding a window closed it")
+	}
+
+	if c.w.Close() {
+		t.Error("the close went through without being decided")
+	}
+	if !c.saw("window_closing") {
+		t.Errorf("a hidden window closed without asking: %v", c.sent)
+	}
+}
+
+// **Closed before anything is told about it**, so a close that reaches back in here
+// finds it done. An observer that closes the window -- a manager tidying up, an
+// application reacting to its own window going -- would otherwise start the whole
+// close over from inside itself.
+func TestACloseFromInsideACloseIsANoOp(t *testing.T) {
+	c := newClosing(t, false)
+
+	ran := 0
+	again := false
+	c.w.AddOnClosed(func() {
+		ran++
+		if again {
+			return // once is enough to prove it; more would just be deeper
+		}
+		again = true
+		if !c.w.Close() {
+			t.Error("closing from inside the close said it did not close")
+		}
+	})
+
+	if !c.w.Close() {
+		t.Fatal("the window did not close")
+	}
+	if ran != 1 {
+		t.Errorf("the close observers ran %d times for one close, want once", ran)
+	}
 }

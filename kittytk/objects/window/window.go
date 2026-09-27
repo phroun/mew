@@ -245,6 +245,7 @@ type Window struct {
 	onBoundsRequest       func(core.UnitRect) bool // Takes title-focus keyboard geometry whole (torn-off hosts)
 	onCloseComplete       func()                   // Called when window is closed, to remove from manager
 	onClosedObservers     []func()                 // Additional close observers (survive onCloseComplete reassignment)
+	closed                bool                     // Terminal: this window has been through its close. See attemptClose.
 	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
 	getDisplayBounds      func() core.UnitRect     // Returns where the container DRAWS this window (the corral)
 	popupController       core.PopupController     // Popup controller for ComboBox etc.
@@ -1050,11 +1051,37 @@ func (w *Window) Close() bool {
 // reports the innermost window that declined.
 func (w *Window) attemptClose() (bool, *Window) {
 	w.mu.RLock()
+	already := w.closed
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
 	observers := append([]func(){}, w.onClosedObservers...)
 	title := w.title
 	w.mu.RUnlock()
+
+	// **A window that has closed is closed**, and saying so is the answer to what
+	// the caller is actually asking: is this window out of the way? It is -- it
+	// went earlier.
+	//
+	// Nothing prevents a second close. A sweep takes a snapshot and then closes
+	// each window in turn, and closing a parent takes its children with it -- so it
+	// reaches a child it has already closed, still in the list. An application
+	// tidying up after a window the person closed does the same thing with
+	// `destroy`.
+	//
+	// And this ran the whole path again, handler included, which for a window
+	// whose application is consulted about closing meant a fresh `window_closing`
+	// with a fresh deadline -- about a window that is gone. It came back false, the
+	// sweep read that as a refusal, and a quit parked itself waiting for an answer
+	// about something nobody could see. An application that says nothing would have
+	// had a person asked whether to force closed a window that was not there.
+	//
+	// Being visible is not the test: Hide is somewhere to come back from, and this
+	// is the other thing. It is terminal -- a closed window has been dropped by its
+	// manager and by the application that owned it, and there is nothing left for
+	// showing it again to mean.
+	if already {
+		return true, nil
+	}
 
 	if handler != nil && !handler() {
 		return false, w
@@ -1081,6 +1108,13 @@ func (w *Window) attemptClose() (bool, *Window) {
 	if parent := w.ParentWindow(); parent != nil {
 		parent.removeChildWindow(w)
 	}
+
+	// **Closed before anything is told**, so that a close reaching back in here --
+	// an observer, or a manager's removal, closing this window again -- finds it
+	// done rather than starting over.
+	w.mu.Lock()
+	w.closed = true
+	w.mu.Unlock()
 
 	w.Hide()
 
@@ -1625,6 +1659,15 @@ func (w *Window) requestTear() {
 	if handler != nil {
 		handler()
 	}
+}
+
+// IsClosed reports whether this window has been through its close. Terminal, and not
+// the inverse of IsVisible: a hidden window is somewhere to come back to, and this is
+// the other thing.
+func (w *Window) IsClosed() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.closed
 }
 
 // SetOnCloseComplete sets the callback for when the window is fully closed.
