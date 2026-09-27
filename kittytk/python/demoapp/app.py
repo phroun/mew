@@ -77,6 +77,15 @@ class App:
             win.set("denomination=32" if state == FlagState.TRUE else "denomination=0")
         ui.checkbox("grid").on_toggle(grid)
 
+        # Vertical Tabs: one switch puts a close button on every tab of all
+        # four strips - the window's own, the Bottom Tabs one and the two side
+        # ones. closable is not inherited, so each strip is set on its own.
+        def closable(state):
+            flag = "closable" if state == FlagState.TRUE else "!closable"
+            for name in ("tabs", "btabs", "vtside", "vtopp"):
+                ui.object(name).set(flag)
+        ui.checkbox("vtclose").on_toggle(closable)
+
         def set_bg(arg):
             def handler(ev):
                 if ev.flag("checked") == FlagState.TRUE:

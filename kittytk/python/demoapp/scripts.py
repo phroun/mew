@@ -236,8 +236,8 @@ new tab caption="Progress" children={
     }
 }
 
-new tab caption="Bottom Tabs" children={
-    new tabs position=bottom children={
+bt=new tab caption="Bottom Tabs" children={
+    btabs=new tabs position=bottom children={
         new tab caption="First" children={
             new panel layout=vbox children={
                 new label caption="This TabTrinket has tabs at the bottom."
@@ -261,9 +261,11 @@ new tab caption="Bottom Tabs" children={
     }
 }
 
-new tab caption="Vertical Tabs" children={
-    new splitter orientation=horizontal position=0.5 children={
-        new tabs position=side children={
+vt=new tab caption="Vertical Tabs" children={
+    vtv=new panel layout=vbox spacing=8 children={
+    vtclose=new checkbox caption="closable -- a close button on every tab of the window's own strip, the Bottom Tabs strip and these two side strips" halign=textnatural fill=none
+    vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
+        vtside=new tabs position=side children={
             new tab caption="First" children={
                 new panel layout=vbox children={
                     new label caption="position=side: the strip stands\non the edge the form reads from."
@@ -290,7 +292,7 @@ new tab caption="Vertical Tabs" children={
                  '\t\t\t\t}' % (quote(name), name))
     b.append(r'''
         }
-        new tabs position=sideopposite children={
+        vtopp=new tabs position=sideopposite children={
             new tab caption="Alpha" children={
                 new panel layout=vbox children={
                     new label caption="position=sideopposite: the far side\nfrom the one the form reads from."
@@ -317,6 +319,7 @@ new tab caption="Vertical Tabs" children={
                  '\t\t\t\t}' % (quote(name), name))
     b.append(r'''
         }
+    }
     }
 }
 
@@ -353,6 +356,10 @@ mtab=new tab caption="MDI Demo" children={
 # Surface what the app-side handlers address, then open the event flows
 # they listen to (command flows regardless; toggles/changes need a sub).
 tabs=w.t
+vtclose=w.t.vt.vtv.vtclose
+vtside=w.t.vt.vtv.vtc.vtside
+vtopp=w.t.vt.vtv.vtc.vtopp
+btabs=w.t.bt.btabs
 binput=w.t.b.bw.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont

@@ -292,8 +292,8 @@ new tab caption="Progress" children={
 	}
 }
 
-new tab caption="Bottom Tabs" children={
-	new tabs position=bottom children={
+bt=new tab caption="Bottom Tabs" children={
+	btabs=new tabs position=bottom children={
 		new tab caption="First" children={
 			new panel layout=vbox children={
 				new label caption="This TabTrinket has tabs at the bottom."
@@ -317,63 +317,66 @@ new tab caption="Bottom Tabs" children={
 	}
 }
 
-new tab caption="Vertical Tabs" children={
-	new splitter orientation=horizontal position=0.5 children={
-		new tabs position=side children={
-			new tab caption="First" children={
-				new panel layout=vbox children={
-					new label caption="position=side: the strip stands\non the edge the form reads from."
-					new label caption="A form reading right to left\nwould stand it on the right."
+vt=new tab caption="Vertical Tabs" children={
+	vtv=new panel layout=vbox spacing=8 children={
+		vtclose=new checkbox caption="closable -- a close button on every tab of the window's own strip, the Bottom Tabs strip and these two side strips" halign=textnatural fill=none
+		vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
+			vtside=new tabs position=side children={
+				new tab caption="First" children={
+					new panel layout=vbox children={
+						new label caption="position=side: the strip stands\non the edge the form reads from."
+						new label caption="A form reading right to left\nwould stand it on the right."
+					}
 				}
-			}
-			new tab caption="Second" children={
-				new panel layout=vbox children={
-					new label caption="Second tab content"
-					new button caption="A Button"
+				new tab caption="Second" children={
+					new panel layout=vbox children={
+						new label caption="Second tab content"
+						new button caption="A Button"
+					}
 				}
-			}
-			new tab caption="Third" children={
-				new panel layout=vbox children={
-					new textinput placeholder="Type here..."
-				}
-			}`)
+				new tab caption="Third" children={
+					new panel layout=vbox children={
+						new textinput placeholder="Type here..."
+					}
+				}`)
 	for _, name := range []string{"Fourth", "Fifth", "שישי", "שביעי", "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"} {
 		fmt.Fprintf(&b, `
-			new tab caption=%q children={
-				new panel layout=vbox children={
-					new label caption="%s tab content\nin a side strip."
-				}
-			}`, name, name)
+				new tab caption=%q children={
+					new panel layout=vbox children={
+						new label caption="%s tab content\nin a side strip."
+					}
+				}`, name, name)
 	}
 	b.WriteString(`
-		}
-		new tabs position=sideopposite children={
-			new tab caption="Alpha" children={
-				new panel layout=vbox children={
-					new label caption="position=sideopposite: the far side\nfrom the one the form reads from."
-					new label caption="Unusual, and valid -- it stands\nwhere the content does not begin."
-				}
 			}
-			new tab caption="Beta" children={
-				new panel layout=vbox children={
-					new label caption="Beta tab content"
-					new checkbox caption="Enable option"
+			vtopp=new tabs position=sideopposite children={
+				new tab caption="Alpha" children={
+					new panel layout=vbox children={
+						new label caption="position=sideopposite: the far side\nfrom the one the form reads from."
+						new label caption="Unusual, and valid -- it stands\nwhere the content does not begin."
+					}
 				}
-			}
-			new tab caption="Gamma" children={
-				new panel layout=vbox children={
-					new label caption="Gamma tab content"
+				new tab caption="Beta" children={
+					new panel layout=vbox children={
+						new label caption="Beta tab content"
+						new checkbox caption="Enable option"
+					}
 				}
-			}`)
+				new tab caption="Gamma" children={
+					new panel layout=vbox children={
+						new label caption="Gamma tab content"
+					}
+				}`)
 	for _, name := range []string{"Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "קאפא", "למדא", "Mu", "Nu"} {
 		fmt.Fprintf(&b, `
-			new tab caption=%q children={
-				new panel layout=vbox children={
-					new label caption="%s tab content\nin a sideopposite strip."
-				}
-			}`, name, name)
+				new tab caption=%q children={
+					new panel layout=vbox children={
+						new label caption="%s tab content\nin a sideopposite strip."
+					}
+				}`, name, name)
 	}
 	b.WriteString(`
+			}
 		}
 	}
 }
@@ -384,6 +387,10 @@ new tab caption="Vertical Tabs" children={
 # Surface what the app-side handlers address, then open the event
 # flows they listen to (D20 default-closed; command flows regardless).
 tabs=w.t
+vtclose=w.t.vt.vtv.vtclose
+vtside=w.t.vt.vtv.vtc.vtside
+vtopp=w.t.vt.vtv.vtc.vtopp
+btabs=w.t.bt.btabs
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont
@@ -484,6 +491,16 @@ func createMainWindow(desktop *trinkets.Desktop, application *app.Application) *
 			mainWindow.SetCellMetrics(&core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32})
 		} else {
 			mainWindow.SetCellMetrics(nil) // Inherit from desktop
+		}
+	})
+
+	// Vertical Tabs: one switch puts a close button on every tab of all four
+	// strips - the window's own, the Bottom Tabs one and the two side ones -
+	// so they can be compared. closable is not inherited, so each strip is set
+	// on its own.
+	onToggle("vtclose", func(checked bool) {
+		for _, key := range []string{"tabs", "btabs", "vtside", "vtopp"} {
+			factory.byID[reply.IDs[key]].(*trinkets.TabTrinket).SetClosable(checked)
 		}
 	})
 
