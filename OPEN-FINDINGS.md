@@ -105,38 +105,6 @@ Anchor: `objects/trinkets/dock_protocol.go:53` is where the `window` property is
 bound; `objects/trinkets/desktop.go:831` and `dock_protocol.go:89` construct the
 `DockEntry`. *Anchors verified; the capture-at-append claim is not re-verified.*
 
-### A bundle load's complaints — **SETTLED 2026-09-26, one case left**
-
-They used to go nowhere: `display/bundleload.go` built them, returned them as
-`Loaded.Trouble`, and nothing outside that file read the field. They now go two
-ways, and what is left is one case rather than a design.
-
-**To the application, on the reply to the batch that caused the load.** The
-`trouble` statement -- `trouble about="bundle:papers" text="..."` -- travels
-display to app immediately before that batch's reply. It is not an event, for the
-reason answers are not events: a complaint is solicited, and an event would pass
-the subscription filter and reach an app that had not asked. The three clients
-gather them onto the reply (`Reply.Trouble`, `last_trouble`,
-`kt_trouble_count`/`kt_trouble_at`), and `testdata/trouble.wire` is the corpus all
-three answer.
-
-**And to the display's own log**, which the Event Viewer shows as an `Error` row
-keyed by the name that was being loaded (`Desktop.LogError`). Held whether or not
-that window is open, because the interesting ones happen while nobody is watching.
-
-The trinket's own refusal line was NOT the answer, and the reasoning is worth
-keeping: `findSource` is reached only from the `source=` property of a ListView or
-TreeView, so every bundle load currently happens under a trinket -- an accident of
-what has been built, not a property of bundles. A bundle is loaded FOR somebody and
-a trinket is only one possible somebody.
-
-**What is left.** A load with no statement behind it -- a preload, a tool, anything
-that is not a connection's batch -- has nobody to tell, so it reaches the log and
-stops there. That is by design rather than an omission: the second channel a
-proposal named (a connection-level notice tied to no object, nearest to
-`error text=`) has no caller yet, and building it before there is one would be
-guessing at what it should carry.
-
 ---
 
 ## KittyTK — behaviour
@@ -219,8 +187,28 @@ cadences to run and three `go.mod` files for the subtree split to carry.
 Worth doing when there is an external client asking for it. Until then it is
 release overhead buying nothing measurable, and it stays one file away.
 
-### Wiki: add the trinkets missing from the Home index
-Documentation gap. **Title only** — the list of which trinkets is not recorded.
+### Wiki: one page is absent from the Home index
+*Answered 2026-09-27; the fix is not made.*
+
+No trinket is missing. Every registered type carries a generated block on some
+page -- `kittytk-wikidoc -list` says 36 of 36 -- and the types with no page of
+their own are sub-elements documented inside a parent's (`dockentry` on Dock,
+`menuitem` on Menu, `item`, `span`, `section`, `column`) rather than gaps.
+
+What is missing is one CONCEPT page: `Direction-and-Alignment.md` is in the
+sidebar and not on Home. Everything else that is a page is linked from both.
+
+The check, which is not one the tool does:
+
+```sh
+comm -23 <(ls *.md | sed 's/\.md$//' | tr 'A-Z' 'a-z' | tr -d ' -' | sort) \
+         <(grep -oE '\[\[[^]|]+' Home.md | sed 's/\[\[//' | tr 'A-Z' 'a-z' | tr -d ' -' | sort -u)
+```
+
+Better than fixing it by hand: `kittytk-wikidoc` already renders a **type index**
+(`<!-- ktkdoc:types -->`, `typeIndex` in `cmd/kittytk-wikidoc/main.go:296`),
+listing real and virtual types separately. No page uses it. A page that did could
+not drift, and the hand-maintained half of this question would stop existing.
 
 ### Fix the stale `SizeHint` comment on TextInput
 A comment that no longer describes the code. Small. **Title only.**
