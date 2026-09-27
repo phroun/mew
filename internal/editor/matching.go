@@ -6,6 +6,7 @@ import (
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/jsf"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // gotoMatchingBracket (go_match) jumps the caret to the counterpart of the
@@ -800,4 +801,13 @@ func (s *matchScanner) tagStep(line, lt int, name string, fromClosing bool, dept
 		*depth++
 	}
 	return 0, false
+}
+
+// registerMatchingCommands registers go_match.
+func (e *Editor) registerMatchingCommands(ps *pawscript.PawScript) {
+	ps.RegisterCommand("go_match", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.gotoMatchingBracket()
+		e.trackMove()
+		return pawscript.BoolStatus(ok)
+	})
 }

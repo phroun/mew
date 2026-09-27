@@ -8,6 +8,7 @@ import (
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // PromptCallback is the callback signature for prompt completion.
@@ -414,4 +415,84 @@ func calculateAnsiAwareLength(s string) int {
 		length += textwidth.Rune(r)
 	}
 	return length
+}
+
+// PromptForInput creates an input prompt.
+func (e *Editor) PromptForInput(prompt, defaultValue string, callback func(string, bool)) {
+	e.ViewportManager.CreatePromptViewport(prompt, defaultValue, callback)
+	e.RequestRender()
+}
+
+// registerPromptCommands registers cancel and accept.
+func (e *Editor) registerPromptCommands(ps *pawscript.PawScript) {
+	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
+		focusedViewport := e.ViewportManager.GetFocusedViewport()
+		if focusedViewport != nil && focusedViewport.Type == viewport.PromptViewport {
+			// Capture callbacks before removing viewport
+			legacyCallback := focusedViewport.Callback
+			promptCallback := focusedViewport.PromptCallback
+
+			// Remove prompt viewport FIRST so focus returns to main buffer
+			delete(e.confirmKey, focusedViewport.ID)
+			e.ViewportManager.RemoveViewport(focusedViewport.ID)
+
+			// Call the appropriate callback
+			if promptCallback != nil {
+				promptCallback(false, "", "")
+			} else if legacyCallback != nil {
+				legacyCallback("", false)
+			}
+			return pawscript.BoolStatus(true)
+		}
+		// No prompt to dismiss. A find is not something to cancel: it has no
+		// prompt once its first search has begun and ^L just goes to the next
+		// match, so ^C falls through to whatever else it is bound to. The
+		// single exception is the search slow enough to
+		// have put a message on screen naming this very key; that message is a
+		// promise, and cancelFind is where it is kept.
+		if e.cancelFind() {
+			return pawscript.BoolStatus(true)
+		}
+		return pawscript.BoolStatus(false)
+	})
+
+	ps.RegisterCommand("accept", func(ctx *pawscript.Context) pawscript.Result {
+		focusedViewport := e.ViewportManager.GetFocusedViewport()
+		if focusedViewport != nil && focusedViewport.Type == viewport.PromptViewport {
+			// Capture callbacks before removing viewport
+			legacyCallback := focusedViewport.Callback
+			promptCallback := focusedViewport.PromptCallback
+
+			// Get buffer content from line 0 (for backward compatibility)
+			bufferContent := ""
+			if focusedViewport.Buffer != nil && focusedViewport.Buffer.GetLineCount() > 0 {
+				bufferContent = strings.TrimRight(focusedViewport.Buffer.GetLine(0), "\n\r")
+			}
+
+			// Get the text from the line where the cursor is positioned
+			// This is the key difference from TypeScript - we read cursor line, not line 0
+			cursorLineText := ""
+			if focusedViewport.Buffer != nil {
+				cursorLine := focusedViewport.CursorPos().Line
+				if cursorLine < focusedViewport.Buffer.GetLineCount() {
+					cursorLineText = strings.TrimRight(focusedViewport.Buffer.GetLine(cursorLine), "\n\r")
+				}
+			}
+
+			// Remove prompt viewport FIRST so focus returns to main buffer
+			// This ensures any output from the callback goes to the right viewport
+			delete(e.confirmKey, focusedViewport.ID)
+			e.ViewportManager.RemoveViewport(focusedViewport.ID)
+
+			// Call the appropriate callback
+			if promptCallback != nil {
+				promptCallback(true, bufferContent, cursorLineText)
+			} else if legacyCallback != nil {
+				// Legacy callback uses cursorLineText as input (for single-line prompts)
+				legacyCallback(cursorLineText, true)
+			}
+			return pawscript.BoolStatus(true)
+		}
+		return pawscript.BoolStatus(false)
+	})
 }

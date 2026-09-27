@@ -339,6 +339,15 @@ func WithRestoreHostTerminal(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.RestoreHostTerminal = fn }
 }
 
+// WithSuspendHost wires the host_suspend command to the host: fn hands the
+// terminal back to the shell, stops until the shell continues the process,
+// and reports true; or reports false when the host cannot suspend. Unset,
+// host_suspend fails, so a binding such as host_suspend|buffer_redo falls
+// through to its next command.
+func WithSuspendHost(fn func() bool) Option {
+	return func(cfg *editor.Config) { cfg.SuspendHost = fn }
+}
+
 // WithEditState wires the focused viewport's read-only state to the host: fn
 // is told whenever the focused buffer's read-only state changes (and once at
 // the first render), so the host can grey out mutating affordances — its

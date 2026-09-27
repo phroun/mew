@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // completeFilename is the completion handler attached to filename prompts. It
@@ -274,4 +275,19 @@ func completionList(names []string) string {
 		return strings.Join(names[:max], "  ") + "  … (" + strconv.Itoa(len(names)-max) + " more)"
 	}
 	return strings.Join(names, "  ")
+}
+
+// registerCompletionCommands registers completion.
+func (e *Editor) registerCompletionCommands(ps *pawscript.PawScript) {
+	// completion invokes the focused viewport's completion handler, if it has
+	// one (filename prompts do). It returns that handler's result; with no
+	// handler, or when the handler declines, it fails — so a binding like
+	// completion|insert '\t' falls through to inserting a tab.
+	ps.RegisterCommand("completion", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil || w.CompletionCallback == nil {
+			return pawscript.BoolStatus(false)
+		}
+		return pawscript.BoolStatus(w.CompletionCallback())
+	})
 }

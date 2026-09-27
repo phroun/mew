@@ -6,12 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/phroun/ifitfits"
 	"github.com/phroun/key-sequence-processor/keyseq"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // Hyperlink browse mode (rendering pass — no navigation yet).
@@ -1401,4 +1403,116 @@ func (e *Editor) originFor(raw string) config.MappingOrigin {
 		return o
 	}
 	return config.MappingOrigin{Author: config.AuthorSystem}
+}
+
+// registerNavCommands registers the link-browse (nav_*) commands.
+func (e *Editor) registerNavCommands(ps *pawscript.PawScript) {
+	// nav_cancel: turn link browse mode off on the focused viewport. Fails when
+	// browse mode is not active, so nav_cancel|cancel|... chains fall through.
+	ps.RegisterCommand("nav_cancel", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navCancel())
+	})
+
+	// nav_follow [always]: follow the link at the caret. With no argument (or
+	// "true") it ALWAYS follows when the caret is within/at the edge of a
+	// link's source, even in ordinary edit mode — so `^B F =nav_follow` jumps
+	// without entering navigation mode first. With "false" it follows only in
+	// navigation mode (a focused button); otherwise it fails, so a
+	// `nav_follow false|accept|insert_newline` chain falls through to plain Enter.
+	ps.RegisterCommand("nav_follow", func(ctx *pawscript.Context) pawscript.Result {
+		always := true
+		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "false") {
+			always = false
+		}
+		return pawscript.BoolStatus(e.navFollow(always))
+	})
+
+	// nav_next / nav_prior: move to the next/prior link (cycling).
+	//
+	// Bare, they ALWAYS act: from the caret's own link, or into the first link
+	// from the caret when it is in none. With the argument "false" they are
+	// GATED on a focused button instead, capturing only in browse mode so a
+	// chain like tab = nav_next false|completion|insert '\t' yields to editing
+	// when the caret is not inside a link. Same shape as nav_follow, and for
+	// the same reason: a key bound alone wants the action, a key in a chain
+	// wants to fall through.
+	navArg := func(ctx *pawscript.Context) bool {
+		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "false") {
+			return false
+		}
+		return true
+	}
+	ps.RegisterCommand("nav_next", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navLink(+1, navArg(ctx)))
+	})
+	ps.RegisterCommand("nav_prior", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navLink(-1, navArg(ctx)))
+	})
+
+	// nav_start: enter nav (browse) mode, focusing the first link at/after the
+	// caret. nav_up/nav_down move to the nearest link on the next/prior link
+	// line (paging when none remains on screen); nav_left/nav_right move to the
+	// optically adjacent link on the same line (bidi-aware). All four act only
+	// in active nav mode.
+	ps.RegisterCommand("nav_start", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navStart())
+	})
+	// When a tiling operator is armed as a one-shot (viewport_<op> pending), the
+	// four nav_* keys resolve that pending action in their direction instead of
+	// moving between links (a persistent mode does NOT hijack them — only pending).
+	ps.RegisterCommand("nav_down", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Down); handled {
+			return pawscript.BoolStatus(ok)
+		}
+		return pawscript.BoolStatus(e.navVert(+1))
+	})
+	ps.RegisterCommand("nav_up", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Up); handled {
+			return pawscript.BoolStatus(ok)
+		}
+		return pawscript.BoolStatus(e.navVert(-1))
+	})
+	ps.RegisterCommand("nav_right", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Right); handled {
+			return pawscript.BoolStatus(ok)
+		}
+		return pawscript.BoolStatus(e.navHoriz(+1))
+	})
+	ps.RegisterCommand("nav_left", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Left); handled {
+			return pawscript.BoolStatus(ok)
+		}
+		return pawscript.BoolStatus(e.navHoriz(-1))
+	})
+
+	// nav_history_prior / nav_history_next: walk the focused viewport's
+	// buffer-swap history (following a link swaps the buffer in place,
+	// stacking the departed binding — see Viewport.SwapBuffer). Prior returns
+	// to where you were; next re-advances. Both fail when there is no history
+	// in that direction, so chains fall through.
+	//
+	// nav_history_prior takes the same [always] first argument as nav_follow.
+	// Bare (or "true") it always acts. With "false" it is GATED like
+	// nav_follow false — only the actively focused link button of the focused
+	// viewport lets it act — EXCEPT that a read-only document already in
+	// navigation mode passes even off a link (nothing there is editable, so the
+	// key is free to mean "go back"). See navHistoryGatePasses.
+	ps.RegisterCommand("nav_history_prior", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHistory(-1, navArg(ctx)))
+	})
+	ps.RegisterCommand("nav_history_next", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHistory(+1, true))
+	})
+
+	// nav_clear forgets every visited link (editor-wide repaint to the
+	// unvisited style). nav_history_clear empties the focused viewport's whole
+	// back/forward history, releasing stacked bindings except any that hold
+	// the LAST reference to a buffer — those move to the viewport's graveyard,
+	// held for the eventual save decision.
+	ps.RegisterCommand("nav_clear", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navClearVisited())
+	})
+	ps.RegisterCommand("nav_history_clear", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHistoryClear())
+	})
 }

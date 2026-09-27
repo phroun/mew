@@ -443,6 +443,8 @@ func (e *Editor) run() {
 		// renderer cleanup restores nothing the user can see. Without this the
 		// user keeps their unsaved work and loses their shell.
 		mew.WithRestoreHostTerminal(e.restoreHostTerminal),
+		// host_suspend: hand the terminal to the shell and stop until fg.
+		mew.WithSuspendHost(e.hostSuspend),
 		// Terminal sessions. This trinket's host decides what a request means;
 		// see ptyProvider. A host that wants to sandbox or redirect a hosted
 		// mew simply supplies a different one - mew cannot tell.
@@ -1125,6 +1127,28 @@ func (e *Editor) restoreHostTerminal() {
 	if r, ok := d.Backend().(terminalRestorer); ok {
 		r.RestoreTerminal()
 	}
+}
+
+// hostSuspend backs mew's host_suspend command: the backend driving this
+// editor's desktop hands the terminal back to the shell, stops the process, and
+// returns once the shell has continued it. It reports false, having done
+// nothing, where there is no desktop yet or the backend cannot suspend - a
+// graphical one is not a core.HostSuspender - so the command fails and a
+// host_suspend|... binding falls through. The same type assertion keeps the
+// trinket out of the backend's business as restoreHostTerminal's does.
+//
+// Called on mew's main loop, not the desktop's. The backend's suspend is safe
+// from any goroutine: it holds its own lock across the stop, so no frame the
+// desktop finishes meanwhile can reach the shell's screen.
+func (e *Editor) hostSuspend() bool {
+	d := e.findDesktop()
+	if d == nil {
+		return false
+	}
+	if s, ok := d.Backend().(core.HostSuspender); ok {
+		return s.SuspendHost()
+	}
+	return false
 }
 
 // ptyProvider answers mew's exec: it grants a REAL shell in a real directory.

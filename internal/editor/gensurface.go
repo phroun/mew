@@ -8,6 +8,7 @@ import (
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // Generated surfaces: mew's "mew:" scheme documents that are produced on demand
@@ -462,4 +463,18 @@ func viewportDockName(d viewport.DockPosition) string {
 	default:
 		return "?"
 	}
+}
+
+// registerSurfaceCommands registers buffer_list and viewport_list.
+func (e *Editor) registerSurfaceCommands(ps *pawscript.PawScript) {
+	ps.RegisterCommand("buffer_list", func(ctx *pawscript.Context) pawscript.Result {
+		// Navigate the focused document to the generated mew:/buffers surface:
+		// a dynamic, read-only dokuwiki list of open buffers, in navigation mode.
+		return pawscript.BoolStatus(e.openGeneratedSurface("buffers"))
+	})
+
+	ps.RegisterCommand("viewport_list", func(ctx *pawscript.Context) pawscript.Result {
+		// The mew:/viewports companion to buffer_list.
+		return pawscript.BoolStatus(e.openGeneratedSurface("viewports"))
+	})
 }

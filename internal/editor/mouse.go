@@ -1802,3 +1802,33 @@ func (e *Editor) mouseScroll(x, y int, delta int) {
 	// it is (detaching from caret-follow until a cursor/edit command re-engages).
 	e.scrollViewByLines(w, delta)
 }
+
+// PointerArrowSpan is one on-screen cell span, on a single row, that must show
+// the ARROW rather than the text I-beam even though it lies inside the I-beam
+// rectangle — a browse-mode link button. Row and Col are 1-based terminal
+// cells; the span covers columns [Col, Col+Width).
+type PointerArrowSpan struct {
+	Row, Col, Width int
+}
+
+// ScrollbarRegion is one visible editor scrollbar, published to a graphical
+// host that draws the bars itself (see Config.ScrollbarRegions).
+//
+// Col/Row are 1-based terminal cells: the reserved column, and the track's
+// first row. TrackH is the track's length in cells — usually Page, but one
+// short when the bar gave its bottom cell up to the screen's unwritable
+// corner. Everything needed to size and place a thumb is here, so the host
+// computes it in pixels without asking again:
+//
+//	thumb length  = TrackH * Page / (LineCount)   (clamped to a minimum)
+//	thumb travel  = Top / (LineCount - Page)
+//
+// ViewportID names the window the host scrolls with scroll_viewport.
+type ScrollbarRegion struct {
+	ViewportID string
+	Col, Row   int
+	TrackH     int
+	// Top is the first visible document line (0-based), Page the number of
+	// lines the window shows, LineCount the document's length.
+	Top, Page, LineCount int
+}

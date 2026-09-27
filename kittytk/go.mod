@@ -13,7 +13,7 @@ require (
 	github.com/phroun/direct-key-handler v0.3.39
 	github.com/phroun/key-sequence-processor v0.1.11
 	github.com/phroun/khatool v0.1.2
-	github.com/phroun/mew v0.3.1-alpha
+	github.com/phroun/mew v0.3.2-alpha.0.20260927074402-34b15f324b88
 	github.com/phroun/pawscript v0.2.17-alpha
 	github.com/phroun/purfecterm v0.2.55
 	github.com/phroun/serval v0.1.2-alpha
@@ -32,6 +32,7 @@ require (
 	github.com/gogpu/naga v0.17.16 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
+	github.com/phroun/ifitfits v0.1.1 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/net v0.57.0 // indirect

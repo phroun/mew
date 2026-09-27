@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // osClipboardText returns the marked block's text from the focused viewport,
@@ -219,4 +220,28 @@ func (e *Editor) osSelectAll() bool {
 	e.ShowNotification("Selected all")
 	e.RequestRender()
 	return true
+}
+
+// registerClipboardCommands registers the os_* clipboard commands.
+func (e *Editor) registerClipboardCommands(ps *pawscript.PawScript) {
+	// OS-clipboard commands: the host system-clipboard bridge (see
+	// osclipboard.go). A channel deliberately separate from the kill ring.
+	ps.RegisterCommand("os_copy", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osCopy())
+	})
+	ps.RegisterCommand("os_cut", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osCut())
+	})
+	ps.RegisterCommand("os_paste", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osPaste())
+	})
+	ps.RegisterCommand("os_select_all", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osSelectAll())
+	})
+	// os_exchange swaps the block with the clipboard in one gesture. It is not
+	// os_copy + os_paste: after the copy the clipboard holds the block, so the
+	// outgoing text must be captured before the incoming text lands.
+	ps.RegisterCommand("os_exchange", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osExchange())
+	})
 }

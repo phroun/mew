@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/phroun/pawscript"
 )
 
 // DEADCAT is mew's DEADJOE: when the editor dies unexpectedly (a terminal
@@ -267,4 +269,30 @@ func samePath(a, b string) bool {
 		return a == b
 	}
 	return filepath.Clean(ca) == filepath.Clean(cb)
+}
+
+// registerDeadcatCommands registers deadcat.
+func (e *Editor) registerDeadcatCommands(ps *pawscript.PawScript) {
+	// deadcat forces a crash-style dump of every modified buffer to the
+	// resolved DEADCAT location — mew's DEADJOE, on demand (also the path the
+	// signal/panic handlers and a host's shutdown take).
+	ps.RegisterCommand("deadcat", func(ctx *pawscript.Context) pawscript.Result {
+		reason := "deadcat command"
+		if len(ctx.Args) > 0 {
+			if s, ok := argString(ctx, 0); ok && s != "" {
+				reason = s
+			}
+		}
+		path, err := e.DumpDeadcat(reason)
+		if err != nil {
+			e.ShowError("DEADCAT: " + err.Error())
+			return pawscript.BoolStatus(false)
+		}
+		if path == "" {
+			e.ShowNotification("DEADCAT: no modified buffers to dump")
+			return pawscript.BoolStatus(false)
+		}
+		e.ShowNotification("DEADCAT written: " + path)
+		return pawscript.BoolStatus(true)
+	})
 }

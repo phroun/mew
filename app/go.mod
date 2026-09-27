@@ -9,7 +9,7 @@ go 1.25.0
 
 require (
 	github.com/phroun/kittytk v0.1.33-alpha
-	github.com/phroun/mew v0.3.1-alpha
+	github.com/phroun/mew v0.3.2-alpha
 	golang.org/x/sys v0.47.0
 )
 
@@ -30,6 +30,7 @@ require (
 	github.com/phroun/argwild v0.0.2 // indirect
 	github.com/phroun/direct-key-handler v0.3.39 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
+	github.com/phroun/ifitfits v0.1.1 // indirect
 	github.com/phroun/key-sequence-processor v0.1.11 // indirect
 	github.com/phroun/khatool v0.1.2 // indirect
 	github.com/phroun/pawscript v0.2.17-alpha // indirect
