@@ -187,28 +187,26 @@ cadences to run and three `go.mod` files for the subtree split to carry.
 Worth doing when there is an external client asking for it. Until then it is
 release overhead buying nothing measurable, and it stays one file away.
 
-### Wiki: one page is absent from the Home index
-*Answered 2026-09-27; the fix is not made.*
+### wikidoc generates less than it could, and the hand-written half is what goes stale
+*The Home-index question this replaces was answered and fixed 2026-09-27: no
+trinket was missing, one concept page was, and it is linked now.*
 
-No trinket is missing. Every registered type carries a generated block on some
-page -- `kittytk-wikidoc -list` says 36 of 36 -- and the types with no page of
-their own are sub-elements documented inside a parent's (`dockentry` on Dock,
-`menuitem` on Menu, `item`, `span`, `section`, `column`) rather than gaps.
+Two blocks the tool could render and nothing asks it to:
 
-What is missing is one CONCEPT page: `Direction-and-Alignment.md` is in the
-sidebar and not on Home. Everything else that is a page is linked from both.
+- **A type index.** `<!-- ktkdoc:types -->` is implemented (`typeIndex`,
+  `cmd/kittytk-wikidoc/main.go:296`) and lists real and virtual types
+  separately. No page uses it, so Home's index is maintained by hand and the
+  question "is anything missing from it" has to be asked with a shell one-liner
+  rather than by the tool.
+- **A `does` table.** There is no `ktkdoc:does <type>` at all, so every `do`
+  vocabulary on the wiki is prose. That is not hypothetical: MDIPane's actions
+  moved from properties to `do` statements and the page taught the old spelling
+  through a whole release, which only `-examples` caught, and only because one
+  fence happened to be executable.
 
-The check, which is not one the tool does:
-
-```sh
-comm -23 <(ls *.md | sed 's/\.md$//' | tr 'A-Z' 'a-z' | tr -d ' -' | sort) \
-         <(grep -oE '\[\[[^]|]+' Home.md | sed 's/\[\[//' | tr 'A-Z' 'a-z' | tr -d ' -' | sort -u)
-```
-
-Better than fixing it by hand: `kittytk-wikidoc` already renders a **type index**
-(`<!-- ktkdoc:types -->`, `typeIndex` in `cmd/kittytk-wikidoc/main.go:296`),
-listing real and virtual types separately. No page uses it. A page that did could
-not drift, and the hand-maintained half of this question would stop existing.
+Both are the same shape -- what the tool generates cannot drift, and what it
+does not is what drifted. A `does` renderer would also cover the new `decision`
+type's three words, which are prose today.
 
 ### Fix the stale `SizeHint` comment on TextInput
 A comment that no longer describes the code. Small. **Title only.**
