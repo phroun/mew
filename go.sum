@@ -14,8 +14,8 @@ github.com/phroun/key-sequence-processor v0.1.11 h1:M1vI3FlxcF9sxfeitRlJSFyLzYcv
 github.com/phroun/key-sequence-processor v0.1.11/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/khatool v0.1.2 h1:yM9V6H6PJVMwU3dzDK0yYinQ3fVRM+vhMxp0DFB0GZA=
 github.com/phroun/khatool v0.1.2/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
-github.com/phroun/kittytk v0.1.32-alpha h1:ztgRC4VSjUM+LERSG2DpsYi5/HGeLzkUSXvrjbEuRo8=
-github.com/phroun/kittytk v0.1.32-alpha/go.mod h1:TRdQHvbbWlWNideRQlm5+EFuulBw77tUEg5uuoh3VBg=
+github.com/phroun/kittytk v0.1.33-alpha h1:DdGIST6ZQQ24p+djVa3rJIQ/m7vBhy2V5XKwJAhEBlc=
+github.com/phroun/kittytk v0.1.33-alpha/go.mod h1:Ukt43xeWhruhqUjIYM0cTkg2hBFn9lmFbyGaL8KFXsw=
 github.com/phroun/pawscript v0.2.17-alpha h1:QF7viEKfLl6V61Y/ZNkPrWByqEKqoYSt8RZGCx13JxI=
 github.com/phroun/pawscript v0.2.17-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
