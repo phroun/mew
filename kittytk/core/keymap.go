@@ -258,6 +258,37 @@ func (r *KeyRegistry) Binds(key string) bool {
 	return len(r.bindings[key]) > 0
 }
 
+// Outranks reports whether keyA, bound to commandA, is advertised over keyB,
+// bound to commandB -- the same ranking KeysFor uses within one command
+// (environment preference first, then the newer binding), asked across two.
+// It is for an item that may show either of two commands' keys, like the
+// system Undo item and simple undo. A pair that is not bound ranks below one
+// that is.
+func (r *KeyRegistry) Outranks(keyA, commandA, keyB, commandB string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	find := func(key, command string) (boundCommand, bool) {
+		for _, b := range r.bindings[key] {
+			if b.command == command {
+				return b, true
+			}
+		}
+		return boundCommand{}, false
+	}
+	a, okA := find(keyA, commandA)
+	b, okB := find(keyB, commandB)
+	switch {
+	case !okA:
+		return false
+	case !okB:
+		return true
+	}
+	return a.outranks(b)
+}
+
 // KeyForCommand returns the ONE key to show for a command: the newest binding
 // of it, or "" when nothing is bound. It is KeysFor's first entry, named for
 // what it is used for — a menu item advertising the key that runs it.

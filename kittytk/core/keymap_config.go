@@ -44,6 +44,15 @@ M-^X = desktop_exit
 ^C = trinket_copy
 ^V = trinket_paste
 
+; Undo. ^_ is the plain undo, and is what ^/ sends from a terminal. ^Z is simple
+; undo: it redoes when there is something to redo and undoes once otherwise, and
+; is written after ^_ so that the Edit menu shows it against Undo. The (mac)
+; hints put the Command keys first on a Mac, for the full undo and redo.
+^_ = trinket_undo
+^Z = trinket_simple_undo
+(mac) s-z = trinket_undo
+(mac) s-Z = trinket_redo
+
 ; Select All also answers to M-a below. The (mac) hint binds s-a everywhere but
 ; only advertises it on a Mac.
 (mac) s-a = trinket_select_all

@@ -203,7 +203,7 @@ func init() {
 				}
 				m.SetWellKnownID(s)
 				return nil
-			})).Tip("System item role: cut/copy/paste/selectall - this item BECOMES the standard one"),
+			})).Tip("System item role: undo/redo/cut/copy/paste/selectall - this item BECOMES the standard one"),
 			"children": protocol.NewCollection(func(parent, child any) error {
 				it := parent.(*MenuItem)
 				c, ok := child.(*MenuItem)

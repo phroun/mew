@@ -126,6 +126,15 @@ const (
 	CmdTrinketCut   = "trinket_cut"
 	CmdTrinketCopy  = "trinket_copy"
 	CmdTrinketPaste = "trinket_paste"
+	// Undo and redo, one step each way through the focused trinket's own
+	// history, and the Edit menu's Undo and Redo items.
+	CmdTrinketUndo = "trinket_undo"
+	CmdTrinketRedo = "trinket_redo"
+	// Simple undo is the one-key form: it redoes where there is something to
+	// redo and undoes once otherwise, so pressing it again puts back what it
+	// just took away. The full undo and redo are separate commands, for a
+	// keymap that wants to bind them.
+	CmdTrinketSimpleUndo = "trinket_simple_undo"
 
 	// Scrolling WITHOUT moving the selection, which is why it is not an item
 	// movement.

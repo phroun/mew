@@ -59,6 +59,8 @@ const (
 	DoTile      = "tile"
 	DoCascade   = "cascade"
 	DoRawKey    = "rawkey"
+	DoUndo      = "undo"
+	DoRedo      = "redo"
 	DoCut       = "cut"
 	DoCopy      = "copy"
 	DoPaste     = "paste"
@@ -163,7 +165,7 @@ func (h *hostObject) Do(action string, args []*protocol.Arg) error {
 	case DoRawKey:
 		d.ActivatePassNextKeyToTrinket()
 		return nil
-	case DoCut, DoCopy, DoPaste, DoSelectAll:
+	case DoUndo, DoRedo, DoCut, DoCopy, DoPaste, DoSelectAll:
 		editAction(d.FocusedTrinket(), action)
 		return nil
 	case DoRelay:
@@ -289,6 +291,8 @@ func init() {
 			DoTile:      protocol.NewDoDesc("Arrange the desktop's windows side by side."),
 			DoCascade:   protocol.NewDoDesc("Arrange the desktop's windows in a stack."),
 			DoRawKey:    protocol.NewDoDesc("Pass the next key straight to the focused trinket."),
+			DoUndo:      protocol.NewDoDesc("Undo, on whatever has the focus."),
+			DoRedo:      protocol.NewDoDesc("Redo, on whatever has the focus."),
 			DoCut:       protocol.NewDoDesc("Cut, on whatever has the focus."),
 			DoCopy:      protocol.NewDoDesc("Copy, on whatever has the focus."),
 			DoPaste:     protocol.NewDoDesc("Paste, on whatever has the focus."),

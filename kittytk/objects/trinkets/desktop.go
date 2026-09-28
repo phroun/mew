@@ -3676,17 +3676,30 @@ func (d *Desktop) appendAppBody(add func(*Menu), app ApplicationProvider, b menu
 }
 
 // editActor is the capability a focused trinket advertises to take part in
-// the standard Edit menu. A focused trinket that implements all four methods
-// is an active edit target: Copy, Paste, and Select All operate on it and
-// show enabled. Cut is additionally gated by cutEnabler. A focused trinket
-// that does not implement editActor leaves every standard Edit item disabled.
-// New editable trinkets opt in simply by implementing this interface.
+// the standard Edit menu. A focused trinket that implements it is an active
+// edit target: Copy, Paste, and Select All operate on it and show enabled, Cut
+// is additionally gated by cutEnabler, and Undo and Redo are enabled by what
+// the trinket says of its own history. A focused trinket that does not
+// implement editActor leaves every standard Edit item disabled. New editable
+// trinkets opt in simply by implementing this interface.
 type editActor interface {
+	Undo()
+	Redo()
+	UndoEnabled() bool
+	RedoEnabled() bool
 	Cut()
 	Copy()
 	Paste()
 	SelectAll()
 }
+
+// Every edit target the toolkit ships, checked when it is compiled: the
+// focused trinket is asked for editActor at run time, so one that stopped
+// implementing it would drop out of the Edit menu without a word.
+var (
+	_ editActor = (*TextInput)(nil)
+	_ editActor = (*PurfecTerm)(nil)
+)
 
 // cutEnabler lets an edit target report that Cut does not apply to it even
 // though the other actions do - a terminal's scrollback can be copied but not
@@ -3750,12 +3763,13 @@ func (d *Desktop) focusedEditActor() (editActor, bool) {
 	return nil, false
 }
 
-// appendStandardEditItems adds the system Edit items - Cut, Copy, Paste,
-// separator, Select All - each wired to whatever trinket holds focus when it
-// fires. It returns a closure that recomputes their enabled state from the
-// currently focused trinket: Copy/Paste/Select All (and Cut) enable only when
-// the focused trinket is an editActor, and Cut additionally disables when the
-// target reports CutEnabled()==false. Callers wire the closure to the menu's
+// appendStandardEditItems adds the system Edit items - Undo, Redo, separator,
+// Cut, Copy, Paste, separator, Select All - each wired to whatever trinket
+// holds focus when it fires. It returns a closure that recomputes their enabled
+// state from the currently focused trinket: every item enables only when the
+// focused trinket is an editActor, Cut additionally disables when the target
+// reports CutEnabled()==false, and Undo and Redo follow UndoEnabled and
+// RedoEnabled. Callers wire the closure to the menu's
 // OnAboutToShow so the state tracks focus (which rests on the previous active
 // window while the menu is open).
 //
@@ -3784,6 +3798,27 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 		synthesized = append(synthesized, it)
 		return it
 	}
+
+	undo := claim(ItemIDUndo, "&Undo")
+	shortcut(undo, core.CmdTrinketUndo)
+	undo.alsoAdvertises = core.CmdTrinketSimpleUndo
+	undo.SetOnTriggered(func() {
+		if ea, ok := d.focusedEditActor(); ok {
+			ea.Undo()
+		}
+	})
+
+	redo := claim(ItemIDRedo, "&Redo")
+	shortcut(redo, core.CmdTrinketRedo)
+	redo.SetOnTriggered(func() {
+		if ea, ok := d.focusedEditActor(); ok {
+			ea.Redo()
+		}
+	})
+
+	// Separators fall between the groups the synthesized block still holds
+	// items in on both sides: the history, the clipboard trio, Select All.
+	history := len(synthesized)
 
 	cut := claim(ItemIDCut, "Cu&t")
 	shortcut(cut, core.CmdTrinketCut)
@@ -3821,9 +3856,6 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 		}
 	})
 
-	// The separator sits between the clipboard trio and Select All, so it
-	// belongs to the synthesized block only - and only when that block still
-	// holds items on both sides of it.
 	trio := len(synthesized)
 
 	selectAll := claim(ItemIDSelectAll, "Select &All")
@@ -3835,7 +3867,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	})
 
 	for i, it := range synthesized {
-		if i == trio && trio > 0 {
+		if i > 0 && (i == history || i == trio) {
 			menu.AddSeparator()
 		}
 		menu.AddItem(it)
@@ -3843,6 +3875,8 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 
 	update := func() {
 		ea, editable := d.focusedEditActor()
+		undo.SetEnabled(editable && ea.UndoEnabled())
+		redo.SetEnabled(editable && ea.RedoEnabled())
 		copyIt.SetEnabled(editable)
 		pasteIt.SetEnabled(editable)
 		selectAll.SetEnabled(editable)

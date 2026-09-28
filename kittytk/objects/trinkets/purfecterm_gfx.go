@@ -3272,6 +3272,20 @@ func (t *PurfecTerm) Paste() { t.PasteClipboard() }
 // CutEnabled reports whether Cut applies here - never, for a terminal.
 func (t *PurfecTerm) CutEnabled() bool { return false }
 
+// Undo and Redo are no-ops: what a terminal shows is the program's output, and
+// it keeps no history of its own to step through. UndoEnabled and RedoEnabled
+// report false, so the Edit menu greys both.
+func (t *PurfecTerm) Undo() {}
+
+// Redo is a no-op, as Undo is.
+func (t *PurfecTerm) Redo() {}
+
+// UndoEnabled reports false: a terminal has nothing to undo.
+func (t *PurfecTerm) UndoEnabled() bool { return false }
+
+// RedoEnabled reports false: a terminal has nothing to redo.
+func (t *PurfecTerm) RedoEnabled() bool { return false }
+
 type termMenuItem struct {
 	label     string
 	separator bool

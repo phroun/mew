@@ -1085,6 +1085,8 @@ func namedDesktopFont(name string) *core.Font {
 // trinket is a no-op.
 func editAction(w core.Trinket, verb string) {
 	ea, ok := w.(interface {
+		Undo()
+		Redo()
 		Cut()
 		Copy()
 		Paste()
@@ -1094,6 +1096,10 @@ func editAction(w core.Trinket, verb string) {
 		return
 	}
 	switch verb {
+	case "undo":
+		ea.Undo()
+	case "redo":
+		ea.Redo()
 	case "cut":
 		ea.Cut()
 	case "copy":
