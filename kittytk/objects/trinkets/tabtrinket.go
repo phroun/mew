@@ -67,6 +67,15 @@ type TabTrinket struct {
 	closePressed     int
 	closePressedOver bool
 
+	// dragTab is the tab a press on a horizontal strip picked up, carried
+	// along the strip as the pointer moves until the press comes up. It is
+	// held by itself rather than by its place, which is what the drag
+	// changes. dragAwaitPaint says it has just moved and the strip has not
+	// been painted since, so the parts the mouse reads are where it WAS:
+	// nothing is judged against them until they are fresh.
+	dragTab        *Tab
+	dragAwaitPaint bool
+
 	// Where the parts of the horizontal strip landed the last time it was
 	// painted, in the strip's RUN coordinates (see the display list below).
 	// The mouse reads it, so a press finds a tab where the painter put it.
@@ -75,6 +84,7 @@ type TabTrinket struct {
 	// Callbacks
 	onCurrentChanged    func(index int)
 	onTabCloseRequested func(index int)
+	onTabMoved          func(from, to int)
 }
 
 // Tab represents a single tab in a TabTrinket.
@@ -247,6 +257,13 @@ func NewTabTrinket() *TabTrinket {
 		// again, and Space or Enter presses it. Only the close button answers
 		// them; from the strip itself they fall through as they always did.
 		core.CmdFocusNext, core.CmdFocusPrior, core.CmdTrinketActivate,
+		// Shift and an arrow along the strip carry the current tab with it on
+		// a movable strip: the selection-extending pair, since what moves is
+		// the thing selected. On a strip that is not movable the shifted
+		// horizontal arrows walk the tabs, as they did when they fell through
+		// to the plain arrows' commands.
+		core.CmdTrinketSelLeft, core.CmdTrinketSelRight,
+		core.CmdTrinketSelUp, core.CmdTrinketSelDown,
 	)
 	t.Init(t)
 	// TabTrinket can receive focus for tab bar keyboard navigation
@@ -575,6 +592,52 @@ func (t *TabTrinket) SetTabPosition(position TabPosition) {
 // IsMovable returns whether tabs can be reordered.
 func (t *TabTrinket) IsMovable() bool {
 	return t.movable
+}
+
+// MoveTab moves the tab at from to stand at to, the tabs between closing up
+// behind it, and reports whether anything moved. The current tab stays the
+// current tab wherever that leaves it: its place changes, so no change of
+// selection is announced, only the move.
+func (t *TabTrinket) MoveTab(from, to int) bool {
+	n := len(t.tabs)
+	if from < 0 || from >= n || to < 0 || to >= n || from == to {
+		return false
+	}
+	tab := t.tabs[from]
+	t.tabs = append(t.tabs[:from], t.tabs[from+1:]...)
+	t.tabs = append(t.tabs[:to], append([]*Tab{tab}, t.tabs[to:]...)...)
+	switch cur := t.currentIndex; {
+	case cur == from:
+		t.currentIndex = to
+	case from < cur && cur <= to:
+		t.currentIndex--
+	case to <= cur && cur < from:
+		t.currentIndex++
+	}
+	t.Update()
+	if t.onTabMoved != nil {
+		t.onTabMoved(from, to)
+	}
+	return true
+}
+
+// SetOnTabMoved sets what is told when a tab moves, by the pointer, by the
+// keyboard or by MoveTab.
+func (t *TabTrinket) SetOnTabMoved(handler func(from, to int)) {
+	t.onTabMoved = handler
+}
+
+// moveCurrentTab carries the current tab one place along the strip, towards
+// its start for a negative step, and keeps it in view.
+func (t *TabTrinket) moveCurrentTab(step int) {
+	if !t.MoveTab(t.currentIndex, t.currentIndex+step) {
+		return
+	}
+	if t.onSide() {
+		t.vertEnsureVisible(t.currentIndex)
+	} else {
+		t.ensureTabFullyVisible(t.currentIndex)
+	}
 }
 
 // SetMovable sets whether tabs can be reordered.
@@ -2605,6 +2668,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 	// What the run made is also what the mouse will read.
 	t.stripSpans = tape.spans()
+	t.dragAwaitPaint = false
 
 	// Everything above worked out WHERE, in the strip's own run. Here it
 	// becomes places on the screen -- before the silhouette, which paints
@@ -3295,6 +3359,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 
 	// What the run made is also what the mouse will read.
 	t.stripSpans = tape.spans()
+	t.dragAwaitPaint = false
 
 	// Everything above worked out WHERE, in the strip's own run. Here it
 	// becomes places on the screen -- before the silhouette, which paints
@@ -3642,6 +3707,31 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 		isVertical := t.onSide()
 
 		switch cmd {
+		case core.CmdTrinketSelLeft, core.CmdTrinketSelRight:
+			if !isVertical {
+				step := 1
+				if cmd == core.CmdTrinketSelLeft {
+					step = -1
+				}
+				switch {
+				case t.movable:
+					t.moveCurrentTab(step)
+				case step < 0:
+					t.priorTabAndEnsureVisible()
+				default:
+					t.nextTabAndEnsureVisible()
+				}
+				return true
+			}
+		case core.CmdTrinketSelUp, core.CmdTrinketSelDown:
+			if isVertical && t.movable {
+				step := 1
+				if cmd == core.CmdTrinketSelUp {
+					step = -1
+				}
+				t.moveCurrentTab(step)
+				return true
+			}
 		case core.CmdTrinketItemLeft:
 			if !isVertical {
 				t.priorTabAndEnsureVisible()
@@ -3829,12 +3919,14 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 	case TabEdgeTop:
 		if event.Y < tabHeight {
 			t.handleTabBarPress(event.X)
+			t.pickUpTab(event.X)
 			return true
 		}
 	case TabEdgeBottom:
 		bounds := t.Bounds()
 		if event.Y >= bounds.Height-tabHeight {
 			t.handleTabBarPress(event.X)
+			t.pickUpTab(event.X)
 			return true
 		}
 	case TabEdgeLeft:
@@ -4047,6 +4139,67 @@ func (t *TabTrinket) pressClose(i int) {
 func (t *TabTrinket) requestClose(i int) {
 	if t.onTabCloseRequested != nil {
 		t.onTabCloseRequested(i)
+	}
+}
+
+// pickUpTab takes up the tab a press at local x landed on, on a movable
+// horizontal strip, for the pointer to carry. Only a tab the press made
+// current is taken: not a button being pressed, not the scroll buttons or the
+// overflow mark, not a tab the run was cut short at.
+func (t *TabTrinket) pickUpTab(x core.Unit) {
+	if !t.movable || t.closePressed != 0 || t.scrollButtonPressed != 0 {
+		return
+	}
+	sp, ok := t.stripPartAt(t.runX(x))
+	if !ok || sp.owner < 0 || sp.clipped || sp.owner >= len(t.tabs) || sp.owner != t.currentIndex {
+		return
+	}
+	t.dragTab, t.dragAwaitPaint = t.tabs[sp.owner], false
+}
+
+// runX turns a local x on a horizontal strip into the strip's RUN
+// coordinates, the unit the press is on (see handleTabBarPress).
+func (t *TabTrinket) runX(x core.Unit) core.Unit {
+	if core.ChromeMirrored(t) {
+		return t.Bounds().Width - x - 1
+	}
+	return x
+}
+
+// carryTab moves the tab being dragged to where the pointer at local x now
+// is. It moves into a neighbour only once the pointer is far enough over it
+// that, after the two change places, the pointer is over the dragged tab:
+// a narrow tab dragged onto a wide one would otherwise change places and
+// straight back again on the next move.
+func (t *TabTrinket) carryTab(x core.Unit) {
+	if t.dragAwaitPaint {
+		return
+	}
+	from := t.indexOf(t.dragTab)
+	if from < 0 {
+		t.dragTab = nil
+		return
+	}
+	x = t.runX(x)
+	over, ok := t.stripPartAt(x)
+	if !ok || over.owner < 0 || over.owner >= len(t.tabs) || over.owner == from {
+		return
+	}
+	var own stripSpan
+	for _, sp := range t.stripSpans {
+		if sp.owner == from {
+			own = sp
+		}
+	}
+	if own.w == 0 {
+		return
+	}
+	to := over.owner
+	if to > from && x < over.x+over.w-own.w || to < from && x >= over.x+own.w {
+		return
+	}
+	if t.MoveTab(from, to) {
+		t.dragAwaitPaint = true
 	}
 }
 
@@ -4344,6 +4497,12 @@ func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
 		t.closeHover = over
 		t.Update()
 	}
+	// A tab picked up by a press is carried along the strip until the press
+	// comes up.
+	if t.dragTab != nil {
+		t.carryTab(event.X)
+		return true
+	}
 	// A press on a close button holds the pointer: the button looks pressed
 	// only while the pointer is back over it.
 	if t.closePressed != 0 {
@@ -4434,7 +4593,13 @@ func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if inTabArea {
 			row := int(event.Y / metrics.UnitsPerCellHeight)
 			idx := t.vertScrollOffset + row
-			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
+			// On a movable strip the sweep carries the tab it began on, a row
+			// at a time; the rows are all one height, so where the pointer is
+			// is where it goes. The pointer only reaches rows in view, so the
+			// tab stays in view without being scrolled to.
+			if t.movable && idx >= 0 && idx < len(t.tabs) && idx != t.currentIndex {
+				t.MoveTab(t.currentIndex, idx)
+			} else if !t.movable && idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				if idx != t.currentIndex {
 					t.SetCurrentIndex(idx)
 					t.vertEnsureVisible(idx)
@@ -4576,6 +4741,11 @@ func (t *TabTrinket) HandleMouseWheel(event core.MouseWheelEvent) bool {
 
 // HandleMouseRelease handles mouse button release.
 func (t *TabTrinket) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// A tab being carried is put down where it now stands.
+	if t.dragTab != nil {
+		t.dragTab, t.dragAwaitPaint = nil, false
+		return true
+	}
 	// A close button closes its tab when the press comes up over it, and a
 	// press dragged off it first is abandoned.
 	if t.closePressed != 0 {

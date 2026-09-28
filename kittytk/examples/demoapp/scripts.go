@@ -500,6 +500,7 @@ vt=new tab caption="Vertical Tabs" children={
 		vtrtl=new checkbox direction=ltr caption="direction=rtl -- turns these two side strips, the window's own tab strip, and the Bottom Tabs screen: a side strip moves to the other edge, a top or bottom one runs the other way" halign=textnatural fill=none
 		vtclose=new checkbox direction=ltr caption="closable -- a close button on every tab of the same four strips" halign=textnatural fill=none
 		vttrail=new checkbox direction=ltr caption="trailing -- the close buttons after the labels instead of before them" halign=textnatural fill=none
+		vtmove=new checkbox direction=ltr caption="movable -- drag the tabs of the same four strips, or carry the current one with Shift and the arrows" halign=textnatural fill=none
 		vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		vtside=new tabs position=side children={
 			new tab caption="First" !closable children={
@@ -756,6 +757,7 @@ drtl=w.t.det.dbox.drow.drtl
 vtrtl=w.t.vt.vtv.vtrtl
 vtclose=w.t.vt.vtv.vtclose
 vttrail=w.t.vt.vtv.vttrail
+vtmove=w.t.vt.vtv.vtmove
 vtc=w.t.vt.vtv.vtc
 vtside=w.t.vt.vtv.vtc.vtside
 vtopp=w.t.vt.vtv.vtc.vtopp

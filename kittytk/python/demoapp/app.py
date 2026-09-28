@@ -91,6 +91,12 @@ class App:
             for name in ("tabs", "btabs", "vtside", "vtopp"):
                 ui.object(name).set("close_side=" + side)
         ui.checkbox("vttrail").on_toggle(trailing)
+
+        def movable(state):
+            flag = "movable" if state == FlagState.TRUE else "!movable"
+            for name in ("tabs", "btabs", "vtside", "vtopp"):
+                ui.object(name).set(flag)
+        ui.checkbox("vtmove").on_toggle(movable)
         # A close button raises close with the tab's index. The tab stays: a
         # demo has nothing to lose by keeping it, so it only says what came in.
         for name in ("tabs", "btabs", "vtside", "vtopp"):

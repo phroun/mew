@@ -191,23 +191,23 @@ func (a *app) wireDirection() {
 // the two side strips -- so the kinds can be compared. closable is not
 // inherited the way direction is, so each strip is set on its own. Written out
 // rather than looped, for the reason wireDirection gives.
+// flagSwitch sets or clears a flag on target as a checkbox is toggled.
+func flagSwitch(target client.Handle, flag string) func(protocol.FlagState) {
+	return func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = target.Set(flag)
+			return
+		}
+		_ = target.Set("!" + flag)
+	}
+}
+
 func (a *app) wireClosable() {
 	ui := a.ui
-	closable := func(target client.Handle) func(protocol.FlagState) {
-		return func(s protocol.FlagState) {
-			if s == protocol.FlagTrue {
-				_ = target.Set("closable")
-				return
-			}
-			_ = target.Set("!closable")
-		}
-	}
-	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("tabs")))
-	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("btabs")))
-	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtside")))
-	ui.Checkbox("vtclose").OnToggle(closable(ui.Object("vtopp")))
 	for _, name := range []string{"tabs", "btabs", "vtside", "vtopp"} {
 		target := ui.Object(name)
+		ui.Checkbox("vtclose").OnToggle(flagSwitch(target, "closable"))
+		ui.Checkbox("vtmove").OnToggle(flagSwitch(target, "movable"))
 		ui.Checkbox("vttrail").OnToggle(func(s protocol.FlagState) {
 			side := "leading"
 			if s == protocol.FlagTrue {
@@ -276,9 +276,25 @@ func (a *app) wireLimits() {
 }
 
 // terminalTabIndex is the Terminal tab's position in the main window's
-// strip. The change event reports an index, so the tab has to be named by
-// one; a test checks the caption at this index is still "Terminal".
+// strip as built. The change event reports an index, so the tab has to be
+// named by one; a test checks the caption at this index is still "Terminal".
+// The strip can be made movable, so wireTerminalTab follows the tab from
+// there as it moves.
 const terminalTabIndex = 15
+
+// followMove is where a tab that stood at i stands after the tab at from was
+// moved to to, the tabs between closing up behind it.
+func followMove(i, from, to int) int {
+	switch {
+	case i == from:
+		return to
+	case from < i && i <= to:
+		return i - 1
+	case to <= i && i < from:
+		return i + 1
+	}
+	return i
+}
 
 // wireTerminalTab drives the Terminal tab's surface. The PTY starts the
 // first time the tab is selected rather than at build: a shell is a child
@@ -294,8 +310,16 @@ func (a *app) wireTerminalTab(tabs client.Handle) {
 		_ = term.Set(`feed="\e[2J\e[H"`)
 	})
 
+	at := terminalTabIndex
+	tabs.On("move", func(ev *protocol.Event) {
+		from, ok1 := ev.Int("from")
+		to, ok2 := ev.Int("to")
+		if ok1 && ok2 {
+			at = followMove(at, from, to)
+		}
+	})
 	tabs.On("change", func(ev *protocol.Event) {
-		if i, ok := ev.Int("selected"); !ok || i != terminalTabIndex {
+		if i, ok := ev.Int("selected"); !ok || i != at {
 			return
 		}
 		if a.terminalStarted {

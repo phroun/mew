@@ -97,6 +97,12 @@ func init() {
 			"change": protocol.NewEventDesc("A different tab was selected.").
 				Field("trinket", "uint", "The tab strip's object ID.").
 				Field("selected", "int", "Index of the newly selected tab."),
+			"move": protocol.NewEventDesc("A tab was moved to another place on the strip: dragged, or "+
+				"carried with Shift and an arrow. The current tab is still the current tab, at its new place, "+
+				"and no change is raised for it.").
+				Field("trinket", "uint", "The tab strip's object ID.").
+				Field("from", "int", "Where the tab stood.").
+				Field("to", "int", "Where it stands now; the tabs between have closed up behind it."),
 			"close": protocol.NewEventDesc("A tab's close button was activated: pressed and let go over it, or pressed "+
 				"from the keyboard. The tab is still there; taking it away is the application's decision.").
 				Field("trinket", "uint", "The tab strip's object ID.").
@@ -113,6 +119,10 @@ func init() {
 				ctx.EmitEvent(protocol.NewEvent("change").
 					WithUint("trinket", id).WithInt("selected", index))
 			})
+			tw.SetOnTabMoved(func(from, to int) {
+				ctx.EmitEvent(protocol.NewEvent("move").
+					WithUint("trinket", id).WithInt("from", from).WithInt("to", to))
+			})
 			tw.SetOnTabCloseRequested(func(index int) {
 				ctx.EmitEvent(protocol.NewEvent("close").
 					WithUint("trinket", id).WithInt("index", index))
@@ -120,7 +130,7 @@ func init() {
 		},
 		Props: map[string]protocol.Property{
 			"selected": intProp("selected", (*TabTrinket).SetCurrentIndex).Tip("Active tab index.").Def("0"),
-			"movable":  boolProp("movable", (*TabTrinket).SetMovable).Tip("Allow reordering tabs by drag.").Def("false"),
+			"movable":  boolProp("movable", (*TabTrinket).SetMovable).Tip("Let the tabs be put in another order: dragged along the strip, or carried with Shift and the arrows that walk it.").Def("false"),
 			"closable": boolProp("closable", (*TabTrinket).SetClosable).Tip("Show per-tab close buttons.").Def("false"),
 			"close_side": protocol.NewProperty("enum", wprop("close_side", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("close_side", v, f)
