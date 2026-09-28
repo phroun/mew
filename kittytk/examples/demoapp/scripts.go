@@ -291,6 +291,9 @@ tf=new tab caption="Text Fields" children={
 				new label caption="echo=password mask=\"*\" - masked with a star:"
 				new textinput min_width=160 text="hunter2" echo=password mask="*"
 
+				new label caption="echo=password_on_edit - the key just typed shows for a moment:"
+				new textinput min_width=160 echo=password_on_edit
+
 				new label caption="echo=none - accepts typing, shows nothing:"
 				new textinput min_width=160 text="invisible" echo=none
 
