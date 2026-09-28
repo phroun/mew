@@ -38,7 +38,6 @@ func init() {
 		},
 		Props: map[string]protocol.Property{
 			"selected":    intProp("selected", (*ComboBox).SetCurrentIndex).Tip("Selected index (-1 = none).").Def("-1"),
-			"editable":    boolProp("editable", (*ComboBox).SetEditable).Tip("Allow typing a custom value.").Def("false"),
 			"placeholder": stringProp("placeholder", (*ComboBox).SetPlaceholder).Tip("Empty-field hint text."),
 			"max_visible": intProp("max_visible", (*ComboBox).SetMaxVisibleItems).Tip("Max dropdown rows shown."),
 			"items": protocol.NewCollection(func(parent, child any) error {

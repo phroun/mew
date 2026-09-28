@@ -386,7 +386,6 @@ combo := trinkets.NewComboBox()
 combo.AddItem("First")
 combo.AddItem("Second")
 combo.SetCurrentIndex(0)
-combo.SetEditable(true)
 combo.SetOnCurrentChanged(func(index int) { })
 ```
 

@@ -17,8 +17,6 @@ type ComboBox struct {
 
 	items        []string
 	currentIndex int
-	editable     bool
-	editText     string
 	placeholer   string
 
 	// Drop-down state
@@ -414,7 +412,6 @@ func (c *ComboBox) RemoveItem(index int) {
 func (c *ComboBox) Clear() {
 	c.items = nil
 	c.currentIndex = -1
-	c.editText = ""
 	c.Update()
 	c.InvalidateLayout()
 }
@@ -457,8 +454,6 @@ func (c *ComboBox) SetCurrentIndex(index int) {
 
 	c.currentIndex = index
 	if index >= 0 {
-		c.editText = c.items[index]
-
 		// Announce selection change for accessibility
 		if am := core.FindAccessibilityManager(c); am != nil {
 			am.AnnouncePolite(fmt.Sprintf("%s, %d of %d", c.items[index], index+1, len(c.items)))
@@ -468,47 +463,23 @@ func (c *ComboBox) SetCurrentIndex(index int) {
 	c.notifyIndexChanged()
 }
 
-// CurrentText returns the current text.
+// CurrentText returns the current item's text.
 func (c *ComboBox) CurrentText() string {
-	if c.editable {
-		return c.editText
-	}
 	if c.currentIndex >= 0 && c.currentIndex < len(c.items) {
 		return c.items[c.currentIndex]
 	}
 	return ""
 }
 
-// SetCurrentText sets the current text (for editable combo boxes).
+// SetCurrentText selects the first item reading text, and does nothing if
+// none does.
 func (c *ComboBox) SetCurrentText(text string) {
-	if !c.editable {
-		// Find matching item
-		for i, item := range c.items {
-			if item == text {
-				c.SetCurrentIndex(i)
-				return
-			}
+	for i, item := range c.items {
+		if item == text {
+			c.SetCurrentIndex(i)
+			return
 		}
-		return
 	}
-
-	c.editText = text
-	c.Update()
-
-	if c.onCurrentTextChanged != nil {
-		c.onCurrentTextChanged(text)
-	}
-}
-
-// IsEditable returns whether the combo box is editable.
-func (c *ComboBox) IsEditable() bool {
-	return c.editable
-}
-
-// SetEditable sets whether the combo box is editable.
-func (c *ComboBox) SetEditable(editable bool) {
-	c.editable = editable
-	c.Update()
 }
 
 // Placeholder returns the placeholder text.
