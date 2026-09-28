@@ -207,8 +207,8 @@ func (l *GridLayout) SetColumnMaximumWidth(column int, width core.Unit) {
 // shown is the items a grid arranges: those whose trinket is visible. A hidden
 // child gives its cell up -- it raises no track, closes up no boundary with its
 // bearings and makes no claim across a span -- as though it had not been added.
-// The tracks themselves stay: a band the grid was given keeps its own minimum,
-// and a row or column only a hidden child used is empty rather than removed.
+// A row or column only hidden children used is then empty, and goes the way
+// every empty track does (see liveTracks).
 func (l *GridLayout) shown() []*GridItem {
 	items := make([]*GridItem, 0, len(l.items))
 	for _, item := range l.items {
@@ -365,6 +365,11 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 // any row that puts an inline child on a side settles that side, as the largest
 // stretch asked of a column settles its stretch. A child that SPANS the
 // boundary straddles it and brings no bearing to it.
+//
+// A column nothing stands in has no boundary of its own (see liveTracks): the
+// one kept is the one before the next column that does hold something, and it
+// is settled between that column and the last one before it that held
+// anything -- the two that end up side by side.
 func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics, q core.Unit) []core.Unit {
 	if cols < 2 {
 		return nil
@@ -384,15 +389,24 @@ func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics, q core.Unit)
 	}
 
 	gaps := make([]core.Unit, cols-1)
-	for c := 0; c < cols-1; c++ {
-		left, right := endsInline[c], startsInline[c+1]
+	prior := -1
+	for c, live := range liveTracks(cols, l.columns, l.columnsStoodIn()) {
+		if !live {
+			continue
+		}
+		if prior < 0 {
+			prior = c
+			continue
+		}
+		left, right := endsInline[prior], startsInline[c]
+		prior = c
 		switch {
 		case left && right:
-			gaps[c] = -metrics.UnitsPerCellWidth
+			gaps[c-1] = -metrics.UnitsPerCellWidth
 		case left || right:
-			gaps[c] = 0
+			gaps[c-1] = 0
 		default:
-			gaps[c] = l.cellSpacing(q)
+			gaps[c-1] = l.cellSpacing(q)
 		}
 	}
 	return gaps
