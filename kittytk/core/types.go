@@ -142,30 +142,6 @@ const (
 	WheelFocus                     // Like StrongFocus, plus mouse wheel
 )
 
-// WindowFlags control window behavior and appearance.
-type WindowFlags int
-
-const (
-	WindowDefault   WindowFlags = 0
-	WindowFrameless WindowFlags = 1 << iota // No window frame
-	WindowNoTitle                           // No title bar
-	WindowNoResize                          // Cannot be resized
-	WindowNoMove                            // Cannot be moved
-	WindowNoClose                           // No close button
-	WindowModal                             // Blocks input to other windows
-	WindowMaximized                         // Start maximized
-	WindowMinimized                         // Start minimized
-)
-
-// WindowState represents the current state of a window.
-type WindowState int
-
-const (
-	WindowNormal WindowState = iota
-	WindowStateMaximized
-	WindowStateMinimized
-)
-
 // MouseButton represents a mouse button.
 type MouseButton int
 
