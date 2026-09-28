@@ -80,6 +80,10 @@ type TabTrinket struct {
 	// passes on the way, so it is told once, from here to where it is put
 	// down.
 	dragFrom int
+	// dragPast is the end of the strip a drag last carried its tab past -- -1
+	// the leading end, +1 the trailing one, 0 neither -- which it does not do
+	// again until the pointer has come back over a tab (see carryTab).
+	dragPast int
 
 	// Where the parts of the horizontal strip landed the last time it was
 	// painted, in the strip's RUN coordinates (see the display list below).
@@ -648,7 +652,16 @@ func (t *TabTrinket) SetOnTabMoved(handler func(from, to int)) {
 // with a press that said where the tab stood, so from is always a place.
 func (t *TabTrinket) putDownTab(at int) {
 	from := t.dragFrom
-	t.dragTab, t.dragAwaitPaint, t.dragFrom = nil, false, -1
+	t.dragTab, t.dragAwaitPaint, t.dragFrom, t.dragPast = nil, false, -1, 0
+	// A tab carried past the end of the run is out of view when it is put
+	// down, and it is the current tab: the strip comes to it.
+	if at >= 0 && at == t.currentIndex {
+		if t.onSide() {
+			t.vertEnsureVisible(at)
+		} else {
+			t.ensureTabFullyVisible(at)
+		}
+	}
 	if at >= 0 && at != from && t.onTabMoved != nil {
 		t.onTabMoved(from, at)
 	}
@@ -3945,15 +3958,17 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 	switch t.tabEdge() {
 	case TabEdgeTop:
 		if event.Y < tabHeight {
+			scrolled := t.tabScrollOffset
 			t.handleTabBarPress(event.X)
-			t.pickUpTab(event.X)
+			t.pickUpTab(event.X, t.tabScrollOffset != scrolled)
 			return true
 		}
 	case TabEdgeBottom:
 		bounds := t.Bounds()
 		if event.Y >= bounds.Height-tabHeight {
+			scrolled := t.tabScrollOffset
 			t.handleTabBarPress(event.X)
-			t.pickUpTab(event.X)
+			t.pickUpTab(event.X, t.tabScrollOffset != scrolled)
 			return true
 		}
 	case TabEdgeLeft:
@@ -4174,16 +4189,46 @@ func (t *TabTrinket) requestClose(i int) {
 // pickUpTab takes up the tab a press at local x landed on, on a movable
 // horizontal strip, for the pointer to carry. Only a tab the press made
 // current is taken: not a button being pressed, not the scroll buttons or the
-// overflow mark, not a tab the run was cut short at.
-func (t *TabTrinket) pickUpTab(x core.Unit) {
+// overflow mark.
+//
+// A tab the run was cut short at is taken only where the press could not bring
+// it any further into view -- scrolled says it did -- which is a strip too
+// narrow to show it whole. Otherwise a strip showing one tab, and that one in
+// part, would have no tab that could be dragged.
+func (t *TabTrinket) pickUpTab(x core.Unit, scrolled bool) {
 	if !t.movable || t.closePressed != 0 || t.scrollButtonPressed != 0 {
 		return
 	}
 	sp, ok := t.stripPartAt(t.runX(x))
-	if !ok || sp.owner < 0 || sp.clipped || sp.owner >= len(t.tabs) || sp.owner != t.currentIndex {
+	if !ok || sp.owner < 0 || sp.clipped && scrolled || sp.owner >= len(t.tabs) || sp.owner != t.currentIndex {
 		return
 	}
 	t.dragTab, t.dragAwaitPaint, t.dragFrom = t.tabs[sp.owner], false, sp.owner
+}
+
+// tabsInView is the run of tabs the strip last drew, by index, and where in
+// RUN coordinates that run starts and ends. A tab the run was cut short at is
+// in view. ok is false where no tab was drawn at all.
+func (t *TabTrinket) tabsInView() (first, last int, lo, hi core.Unit, ok bool) {
+	for _, sp := range t.stripSpans {
+		if sp.owner < 0 {
+			continue
+		}
+		if !ok || sp.owner < first {
+			first = sp.owner
+		}
+		if !ok || sp.owner > last {
+			last = sp.owner
+		}
+		if !ok || sp.x < lo {
+			lo = sp.x
+		}
+		if !ok || sp.x+sp.w > hi {
+			hi = sp.x + sp.w
+		}
+		ok = true
+	}
+	return first, last, lo, hi, ok
 }
 
 // runX turns a local x on a horizontal strip into the strip's RUN
@@ -4211,7 +4256,12 @@ func (t *TabTrinket) carryTab(x core.Unit) {
 	}
 	x = t.runX(x)
 	over, ok := t.stripPartAt(x)
-	if !ok || over.owner < 0 || over.owner >= len(t.tabs) || over.owner == from {
+	if !ok || over.owner < 0 || over.owner >= len(t.tabs) {
+		t.carryTabPast(from, x)
+		return
+	}
+	t.dragPast = 0
+	if over.owner == from {
 		return
 	}
 	var own stripSpan
@@ -4227,6 +4277,45 @@ func (t *TabTrinket) carryTab(x core.Unit) {
 	if to > from && x < over.x+over.w-own.w || to < from && x >= over.x+own.w {
 		return
 	}
+	if t.shiftTab(from, to) {
+		t.dragAwaitPaint = true
+	}
+}
+
+// carryTabPast moves the tab being dragged when the pointer, at x in RUN
+// coordinates, has gone past either end of the tabs in view -- over the
+// overflow mark, the scroll buttons, or off the strip altogether. The tab goes
+// to the place just past the run in view on that side, and no further: a drag
+// is not a way to scroll, and past that the strip's own scrolling is. It is
+// what lets a strip showing a single tab, or part of one, still be reordered.
+//
+// Once only for each time the pointer goes out: the tab it moved may itself be
+// drawn in part at the end of the run, and moving again past that would walk it
+// to the end of the strip.
+func (t *TabTrinket) carryTabPast(from int, x core.Unit) {
+	first, last, lo, hi, ok := t.tabsInView()
+	if !ok {
+		return
+	}
+	// The strip scrolls by place, so the place just past the run is one it
+	// does not show: the tab lands there, out of view, and the tabs it left
+	// close up in view behind it.
+	var to, side int
+	switch {
+	case x < lo:
+		to, side = first-1, -1
+	case x >= hi:
+		to, side = last+1, 1
+	default:
+		return // between two parts of the run, over neither tab
+	}
+	if side == t.dragPast {
+		return
+	}
+	if to < 0 || to >= len(t.tabs) || to == from {
+		return
+	}
+	t.dragPast = side
 	if t.shiftTab(from, to) {
 		t.dragAwaitPaint = true
 	}
@@ -4621,11 +4710,21 @@ func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		if inTabArea {
 			row := int(event.Y / metrics.UnitsPerCellHeight)
+			if t.movable {
+				// On a movable strip the sweep carries the tab it began on, a
+				// row at a time; the rows are all one height, so where the
+				// pointer is is where it goes. Above the strip or below the
+				// rows in view it goes to the row just past them, and no
+				// further: past that the strip's own scrolling is how to
+				// reach, so a strip one row tall can still reorder.
+				switch count := t.vertVisibleCount(); {
+				case event.Y < 0:
+					row = -1
+				case row > count:
+					row = count
+				}
+			}
 			idx := t.vertScrollOffset + row
-			// On a movable strip the sweep carries the tab it began on, a row
-			// at a time; the rows are all one height, so where the pointer is
-			// is where it goes. The pointer only reaches rows in view, so the
-			// tab stays in view without being scrolled to.
 			if t.movable && idx >= 0 && idx < len(t.tabs) && idx != t.currentIndex {
 				t.shiftTab(t.currentIndex, idx)
 			} else if !t.movable && idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
