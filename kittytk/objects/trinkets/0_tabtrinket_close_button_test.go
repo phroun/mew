@@ -629,68 +629,6 @@ func TestAClosePressIsHeldUntilItComesUp(t *testing.T) {
 	}
 }
 
-// Activating a close button raises close on the wire, naming the strip and the
-// tab, whether the button was clicked or pressed from the keyboard. The tab
-// itself stays until the application takes it away.
-func TestAClosedTabSaysSoOnTheWire(t *testing.T) {
-	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	core.SetTextMeasurer(nil)
-	var events []*protocol.Event
-	ctx := &protocol.BindContext{Emit: func(ev *protocol.Event) { events = append(events, ev) }}
-	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
-	script, err := protocol.Parse(`t=new tabs closable children={
-		new tab caption="Grid" children={new panel}
-		new tab caption="Flex" children={new panel}
-	} selected=1`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if _, err := protocol.NewSession().Execute(script, f); err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	var tt *TabTrinket
-	for _, tg := range f.targets {
-		if tw, ok := tg.(*TabTrinket); ok {
-			tt = tw
-		}
-	}
-	if tt == nil {
-		t.Fatal("no tab strip was built")
-	}
-	f.Subscribe(trinketID(tt), "close")
-	m := tt.EffectiveCellMetrics()
-	tt.SetBounds(core.UnitRect{Width: 40 * m.UnitsPerCellWidth, Height: 5 * m.UnitsPerCellHeight})
-	paintCloseGrid(t, tt)
-
-	closes := func() (out []int) {
-		for _, ev := range events {
-			if ev.Type != "close" {
-				continue
-			}
-			if id, _ := ev.Uint("trinket"); id != trinketID(tt) {
-				t.Errorf("close names trinket %d, want the strip %d", id, trinketID(tt))
-			}
-			i, _ := ev.Int("index")
-			out = append(out, i)
-		}
-		return out
-	}
-	for _, sp := range tt.stripSpans {
-		if sp.owner == 0 {
-			clickStrip(tt, sp.closeX+sp.closeW/2)
-		}
-	}
-	tt.SetFocus()
-	tt.HandleKeyPress(core.KeyPressEvent{Key: "Tab"})
-	tt.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
-	if got := closes(); len(got) != 2 || got[0] != 0 || got[1] != 1 {
-		t.Errorf("close raised for %v, want [0 1]", got)
-	}
-	if tt.Count() != 2 {
-		t.Errorf("the strip took a tab away itself; %d left", tt.Count())
-	}
-}
-
 // On a pixel surface a tab whose button shows draws its label half a cell back
 // and the button a quarter of one, leaving a little air between them, and
 // nothing else moves: the room each takes, and so every

@@ -217,15 +217,23 @@ func (a *app) wireClosable() {
 		})
 	}
 
-	// A close button raises close with the tab's index. The tab stays: a demo
-	// has nothing to lose by keeping it, so it only says what came in.
+	// A tab closed through its button says so. Nothing listens for closing
+	// on three of the strips, so their tabs close at once; the Bottom Tabs
+	// strip is asked, and refuses, to show a close the application decides.
 	for _, name := range []string{"tabs", "btabs", "vtside", "vtopp"} {
 		name := name
-		ui.Object(name).On("close", func(ev *protocol.Event) {
+		ui.Object(name).On("closed", func(ev *protocol.Event) {
 			i, _ := ev.Int("index")
-			a.setStatus(fmt.Sprintf("event close index=%d on %s", i, name))
+			a.setStatus(fmt.Sprintf("event closed index=%d on %s", i, name))
 		})
 	}
+	ui.Object("btabs").On("closing", func(ev *protocol.Event) {
+		i, _ := ev.Int("index")
+		if d, ok := ev.Uint(protocol.DecisionField); ok {
+			_ = a.conn.Decide(d, false)
+		}
+		a.setStatus(fmt.Sprintf("event closing index=%d on btabs: denied, to show a close the application refuses", i))
+	})
 }
 
 // wireLimits drives the Limits tab: the two bounds a trinket may carry, and
@@ -278,9 +286,21 @@ func (a *app) wireLimits() {
 // terminalTabIndex is the Terminal tab's position in the main window's
 // strip as built. The change event reports an index, so the tab has to be
 // named by one; a test checks the caption at this index is still "Terminal".
-// The strip can be made movable, so wireTerminalTab follows the tab from
-// there as it moves.
+// The strip can be made movable and closable, so wireTerminalTab follows the
+// tab from there as tabs move and close.
 const terminalTabIndex = 15
+
+// followClose is where a tab that stood at i stands after the tab at closed
+// went, or -1 if it was that tab.
+func followClose(i, closed int) int {
+	switch {
+	case i == closed:
+		return -1
+	case closed < i:
+		return i - 1
+	}
+	return i
+}
 
 // followMove is where a tab that stood at i stands after the tab at from was
 // moved to to, the tabs between closing up behind it.
@@ -316,6 +336,11 @@ func (a *app) wireTerminalTab(tabs client.Handle) {
 		to, ok2 := ev.Int("to")
 		if ok1 && ok2 {
 			at = followMove(at, from, to)
+		}
+	})
+	tabs.On("closed", func(ev *protocol.Event) {
+		if i, ok := ev.Int("index"); ok {
+			at = followClose(at, i)
 		}
 	})
 	tabs.On("change", func(ev *protocol.Event) {

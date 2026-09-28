@@ -75,6 +75,11 @@ type TabTrinket struct {
 	// nothing is judged against them until they are fresh.
 	dragTab        *Tab
 	dragAwaitPaint bool
+	// dragFrom is where the tab a drag carries stood when it was picked up,
+	// on either kind of strip. A drag is one move however many places it
+	// passes on the way, so it is told once, from here to where it is put
+	// down.
+	dragFrom int
 
 	// Where the parts of the horizontal strip landed the last time it was
 	// painted, in the strip's RUN coordinates (see the display list below).
@@ -240,6 +245,7 @@ func NewTabTrinket() *TabTrinket {
 	t := &TabTrinket{
 		currentIndex: -1,
 		tabPosition:  TabsTop,
+		dragFrom:     -1,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
 	// A tab strip walks along one axis, so it answers to the arrows that
@@ -599,6 +605,18 @@ func (t *TabTrinket) IsMovable() bool {
 // current tab wherever that leaves it: its place changes, so no change of
 // selection is announced, only the move.
 func (t *TabTrinket) MoveTab(from, to int) bool {
+	if !t.shiftTab(from, to) {
+		return false
+	}
+	if t.onTabMoved != nil {
+		t.onTabMoved(from, to)
+	}
+	return true
+}
+
+// shiftTab is MoveTab without the telling, for a drag, which tells its move
+// once when the tab is put down.
+func (t *TabTrinket) shiftTab(from, to int) bool {
 	n := len(t.tabs)
 	if from < 0 || from >= n || to < 0 || to >= n || from == to {
 		return false
@@ -615,16 +633,25 @@ func (t *TabTrinket) MoveTab(from, to int) bool {
 		t.currentIndex++
 	}
 	t.Update()
-	if t.onTabMoved != nil {
-		t.onTabMoved(from, to)
-	}
 	return true
 }
 
-// SetOnTabMoved sets what is told when a tab moves, by the pointer, by the
-// keyboard or by MoveTab.
+// SetOnTabMoved sets what is told when a tab has moved: once per move by the
+// keyboard or MoveTab, and once per drag, from where the tab was picked up to
+// where it was put down -- not at every place it passed. A drag that puts it
+// back where it was tells nothing.
 func (t *TabTrinket) SetOnTabMoved(handler func(from, to int)) {
 	t.onTabMoved = handler
+}
+
+// putDownTab ends a drag, telling the move it made as one. Every drag began
+// with a press that said where the tab stood, so from is always a place.
+func (t *TabTrinket) putDownTab(at int) {
+	from := t.dragFrom
+	t.dragTab, t.dragAwaitPaint, t.dragFrom = nil, false, -1
+	if at >= 0 && at != from && t.onTabMoved != nil {
+		t.onTabMoved(from, at)
+	}
 }
 
 // moveCurrentTab carries the current tab one place along the strip, towards
@@ -3951,6 +3978,7 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 				t.SetCurrentIndex(idx)
 				t.vertEnsureVisible(idx)
 				t.vertTabDragging = true // Start sweep drag
+				t.dragFrom = idx
 			}
 			return true
 		}
@@ -3978,6 +4006,7 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 				t.SetCurrentIndex(idx)
 				t.vertEnsureVisible(idx)
 				t.vertTabDragging = true // Start sweep drag
+				t.dragFrom = idx
 			}
 			return true
 		}
@@ -4154,7 +4183,7 @@ func (t *TabTrinket) pickUpTab(x core.Unit) {
 	if !ok || sp.owner < 0 || sp.clipped || sp.owner >= len(t.tabs) || sp.owner != t.currentIndex {
 		return
 	}
-	t.dragTab, t.dragAwaitPaint = t.tabs[sp.owner], false
+	t.dragTab, t.dragAwaitPaint, t.dragFrom = t.tabs[sp.owner], false, sp.owner
 }
 
 // runX turns a local x on a horizontal strip into the strip's RUN
@@ -4198,7 +4227,7 @@ func (t *TabTrinket) carryTab(x core.Unit) {
 	if to > from && x < over.x+over.w-own.w || to < from && x >= over.x+own.w {
 		return
 	}
-	if t.MoveTab(from, to) {
+	if t.shiftTab(from, to) {
 		t.dragAwaitPaint = true
 	}
 }
@@ -4598,7 +4627,7 @@ func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
 			// is where it goes. The pointer only reaches rows in view, so the
 			// tab stays in view without being scrolled to.
 			if t.movable && idx >= 0 && idx < len(t.tabs) && idx != t.currentIndex {
-				t.MoveTab(t.currentIndex, idx)
+				t.shiftTab(t.currentIndex, idx)
 			} else if !t.movable && idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				if idx != t.currentIndex {
 					t.SetCurrentIndex(idx)
@@ -4743,7 +4772,7 @@ func (t *TabTrinket) HandleMouseWheel(event core.MouseWheelEvent) bool {
 func (t *TabTrinket) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// A tab being carried is put down where it now stands.
 	if t.dragTab != nil {
-		t.dragTab, t.dragAwaitPaint = nil, false
+		t.putDownTab(t.indexOf(t.dragTab))
 		return true
 	}
 	// A close button closes its tab when the press comes up over it, and a
@@ -4766,9 +4795,14 @@ func (t *TabTrinket) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		return true
 	}
 
-	// Clear vertical tab sweep drag state
+	// Clear vertical tab sweep drag state. On a movable strip the sweep
+	// carried the tab, and the move it made is told now, as one.
 	if t.vertTabDragging {
 		t.vertTabDragging = false
+		if t.movable {
+			t.putDownTab(t.currentIndex)
+		}
+		t.dragFrom = -1
 		return true
 	}
 

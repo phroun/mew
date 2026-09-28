@@ -517,13 +517,13 @@ func createMainWindow(desktop *trinkets.Desktop, application *app.Application) *
 			factory.byID[reply.IDs[key]].(*trinkets.TabTrinket).SetCloseLeading(!checked)
 		}
 	})
-	// A close button raises close with the tab's index. The tab stays: a demo
-	// has nothing to lose by keeping it, so it only says what came in.
+	// A tab closed through its button says so. Nothing listens for closing,
+	// so the tabs close at once.
 	for _, key := range []string{"tabs", "btabs", "vtside", "vtopp"} {
 		key := key
-		dispatcher.On(reply.IDs[key], "close", func(ev *protocol.Event) {
+		dispatcher.On(reply.IDs[key], "closed", func(ev *protocol.Event) {
 			i, _ := ev.Int("index")
-			setStatus(fmt.Sprintf("event close index=%d on %s", i, key))
+			setStatus(fmt.Sprintf("event closed index=%d on %s", i, key))
 		})
 	}
 

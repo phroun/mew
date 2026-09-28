@@ -105,3 +105,15 @@ func TestFollowMoveFindsATabAfterAMove(t *testing.T) {
 		}
 	}
 }
+
+// A tab stands where a close leaves it: the ones after the closed tab move up
+// one, and the closed tab itself stands nowhere.
+func TestFollowCloseFindsATabAfterAClose(t *testing.T) {
+	for _, tc := range []struct{ i, closed, want int }{
+		{15, 15, -1}, {15, 3, 14}, {15, 16, 15},
+	} {
+		if got := followClose(tc.i, tc.closed); got != tc.want {
+			t.Errorf("followClose(%d, %d) = %d, want %d", tc.i, tc.closed, got, tc.want)
+		}
+	}
+}

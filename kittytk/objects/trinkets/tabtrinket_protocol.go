@@ -2,6 +2,7 @@ package trinkets
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
@@ -16,6 +17,12 @@ import (
 //	} selected=0
 //
 // Note: selected must follow the tabs that make it valid.
+
+// tabCloseDecision is how long a strip waits for the application to answer
+// whether a tab may close, and how long each `waiting` buys. Past it the tab
+// stays: asking the person, as a window does, would be heavy for one tab,
+// and pressing its button again asks again.
+var tabCloseDecision = 5 * time.Second
 
 // wireTab is the virtual tab target: caption + content trinket, and its own
 // say over its close button. Once the strip has taken it, strip and tab say
@@ -90,6 +97,18 @@ func init() {
 				return nil
 			}).Tip("The one trinket this tab shows."),
 		},
+		// Destroying a tab takes it off its strip, which is how an application
+		// closes one itself. A tab not yet on a strip, or already off it, has
+		// nothing to leave.
+		Destroy: func(target any) error {
+			t := target.(*wireTab)
+			if t.strip != nil {
+				if i := t.strip.indexOf(t.tab); i >= 0 {
+					t.strip.RemoveTab(i)
+				}
+			}
+			return nil
+		},
 	})
 
 	protocol.RegisterType("tabs", &protocol.TypeSpec{
@@ -97,16 +116,29 @@ func init() {
 			"change": protocol.NewEventDesc("A different tab was selected.").
 				Field("trinket", "uint", "The tab strip's object ID.").
 				Field("selected", "int", "Index of the newly selected tab."),
-			"move": protocol.NewEventDesc("A tab was moved to another place on the strip: dragged, or "+
-				"carried with Shift and an arrow. The current tab is still the current tab, at its new place, "+
-				"and no change is raised for it.").
+			"move": protocol.NewEventDesc("A tab was moved to another place on the strip, and the move is "+
+				"finished: raised once per Shift and arrow, and once per drag, from where the tab was picked up "+
+				"to where it was put down, not at every place it passed. A drag that puts it back where it was "+
+				"raises nothing. The current tab is still the current tab, at its new place, and no change is "+
+				"raised for it.").
 				Field("trinket", "uint", "The tab strip's object ID.").
 				Field("from", "int", "Where the tab stood.").
 				Field("to", "int", "Where it stands now; the tabs between have closed up behind it."),
-			"close": protocol.NewEventDesc("A tab's close button was activated: pressed and let go over it, or pressed "+
-				"from the keyboard. The tab is still there; taking it away is the application's decision.").
+			"closing": protocol.NewEventDesc("A tab's close button was activated -- pressed and let go over it, or "+
+				"pressed from the keyboard -- and the tab has NOT closed: the application decides whether it may. "+
+				"Subscribing is what makes a tab's close askable at all; a strip nobody is listening about closes "+
+				"the tab at once.").
 				Field("trinket", "uint", "The tab strip's object ID.").
-				Field("index", "int", "Index of the tab whose close button was activated."),
+				Field("index", "int", "Where the tab stands.").
+				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and the tab closes, "+
+					"`do <id> deny` and it stays. Say `do <id> waiting` while a person reads a question of yours. "+
+					"Left unanswered past `within`, the tab stays; pressing its button again asks again.").
+				Field(protocol.DecisionWithinField, "uint", "How many milliseconds the display will wait for the answer; "+
+					"each `do <id> waiting` buys as many again."),
+			"closed": protocol.NewEventDesc("A tab closed through its close button: the application allowed it, or "+
+				"nothing was listening for closing. A tab the application destroys itself raises nothing.").
+				Field("trinket", "uint", "The tab strip's object ID.").
+				Field("index", "int", "Where the tab stood; the tabs after it have closed up."),
 		},
 		New: func() any { return NewTabTrinket() },
 		ID: func(t any) uint64 {
@@ -123,9 +155,39 @@ func init() {
 				ctx.EmitEvent(protocol.NewEvent("move").
 					WithUint("trinket", id).WithInt("from", from).WithInt("to", to))
 			})
+			// A close is a question the application answers, as a window's is.
+			// The tab is named by itself while the question is open, since the
+			// tabs may move or go in the meantime, and a tab already being
+			// asked about is not asked about twice.
+			asking := map[*Tab]bool{}
+			closeTab := func(tab *Tab) {
+				if i := tw.indexOf(tab); i >= 0 {
+					tw.RemoveTab(i)
+					ctx.EmitEvent(protocol.NewEvent("closed").
+						WithUint("trinket", id).WithInt("index", i))
+				}
+			}
 			tw.SetOnTabCloseRequested(func(index int) {
-				ctx.EmitEvent(protocol.NewEvent("close").
-					WithUint("trinket", id).WithInt("index", index))
+				tab := tw.Tab(index)
+				if tab == nil || asking[tab] {
+					return
+				}
+				d := ctx.Deciding(
+					protocol.NewEvent("closing").WithUint("trinket", id).WithInt("index", index),
+					tabCloseDecision,
+					func(v protocol.Verdict) {
+						delete(asking, tab)
+						// Denied, or not answered at all: the tab stays.
+						if v.Allowed {
+							closeTab(tab)
+						}
+					})
+				if d == nil {
+					// Nobody listening, so nobody deciding: it closes at once.
+					closeTab(tab)
+					return
+				}
+				asking[tab] = true
 			})
 		},
 		Props: map[string]protocol.Property{

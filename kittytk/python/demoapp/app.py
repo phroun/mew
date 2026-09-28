@@ -97,11 +97,19 @@ class App:
             for name in ("tabs", "btabs", "vtside", "vtopp"):
                 ui.object(name).set(flag)
         ui.checkbox("vtmove").on_toggle(movable)
-        # A close button raises close with the tab's index. The tab stays: a
-        # demo has nothing to lose by keeping it, so it only says what came in.
+        # A tab closed through its button says so. Nothing listens for
+        # closing on three of the strips, so their tabs close at once; the
+        # Bottom Tabs strip is asked, and refuses, to show a close the
+        # application decides.
         for name in ("tabs", "btabs", "vtside", "vtopp"):
-            ui.object(name).on("close", lambda ev, name=name: self.set_status(
-                "event close index=%s on %s" % (ev.int_("index"), name)))
+            ui.object(name).on("closed", lambda ev, name=name: self.set_status(
+                "event closed index=%s on %s" % (ev.int_("index"), name)))
+
+        def refuse(ev):
+            self.conn.do(ev.uint("decision"), "deny")
+            self.set_status("event closing index=%s on btabs: denied, to show a close "
+                            "the application refuses" % ev.int_("index"))
+        ui.object("btabs").on("closing", refuse)
 
         def set_bg(arg):
             def handler(ev):

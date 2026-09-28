@@ -207,20 +207,16 @@ func TestDraggingATabMovesItLive(t *testing.T) {
 		if got := tabOrder(tt); got != "A Bravo Delta E C" {
 			t.Errorf("pos %v %v: dragged to the end: %q", tc.pos, tc.dir, got)
 		}
-		// Each move went one way: two to the start, four back to the end.
-		want := [][2]int{{2, 1}, {1, 0}, {0, 1}, {1, 2}, {2, 3}, {3, 4}}
-		if len(moves) != len(want) {
-			t.Errorf("pos %v %v: moves %v, want %v", tc.pos, tc.dir, moves, want)
-		} else {
-			for i := range want {
-				if moves[i] != want[i] {
-					t.Errorf("pos %v %v: moves %v, want %v", tc.pos, tc.dir, moves, want)
-					break
-				}
-			}
+		// The drag passed six places, and none of them is told while it goes.
+		if len(moves) != 0 {
+			t.Errorf("pos %v %v: moves told during the drag: %v", tc.pos, tc.dir, moves)
 		}
 		if !tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton, X: screen(5 * cw), Y: y}) || tt.dragTab != nil {
 			t.Errorf("pos %v %v: the release did not put the tab down", tc.pos, tc.dir)
+		}
+		// Put down, it is told once: from where it was picked up to where it is.
+		if len(moves) != 1 || moves[0] != [2]int{2, 4} {
+			t.Errorf("pos %v %v: moves told for the drag %v, want [[2 4]]", tc.pos, tc.dir, moves)
 		}
 		tt.HandleMouseMove(core.MouseMoveEvent{X: screen(0), Y: y})
 		if got := tabOrder(tt); got != "A Bravo Delta E C" {
@@ -299,7 +295,12 @@ func TestDraggingASideTabMovesItRowByRow(t *testing.T) {
 	if got := tabOrder(tt); got != "A Bravo Delta C E" {
 		t.Errorf("dragged down to the fourth row: %q", got)
 	}
+	var moves [][2]int
+	tt.SetOnTabMoved(func(from, to int) { moves = append(moves, [2]int{from, to}) })
 	tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+	if len(moves) != 1 || moves[0] != [2]int{2, 3} {
+		t.Errorf("the side drag told %v, want one move from 2 to 3", moves)
+	}
 
 	still := moveStrip(t, TabsSide, core.DirLTR, false)
 	still.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: 2 * m.UnitsPerCellWidth, Y: row(2)})
@@ -412,5 +413,45 @@ func TestACutShortTabIsNotPickedUp(t *testing.T) {
 	tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: cut.x + 1, Y: 1})
 	if tt.dragTab != nil {
 		t.Error("a tab cut short was picked up")
+	}
+}
+
+// A drag that puts the tab back where it was picked up moved nothing, and
+// tells nothing.
+func TestADragBackWhereItStartedTellsNothing(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	for _, pos := range []TabPosition{TabsTop, TabsSide} {
+		tt := moveStrip(t, pos, core.DirLTR, true)
+		var moves [][2]int
+		tt.SetOnTabMoved(func(from, to int) { moves = append(moves, [2]int{from, to}) })
+		paintCloseGrid(t, tt)
+		m := tt.EffectiveCellMetrics()
+		if pos == TabsSide {
+			row := func(r int) core.Unit { return core.Unit(r)*m.UnitsPerCellHeight + m.UnitsPerCellHeight/2 }
+			x := 2 * m.UnitsPerCellWidth
+			tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: x, Y: row(2)})
+			tt.HandleMouseMove(core.MouseMoveEvent{X: x, Y: row(0), Buttons: 1})
+			tt.HandleMouseMove(core.MouseMoveEvent{X: x, Y: row(2), Buttons: 1})
+		} else {
+			spans := map[int]stripSpan{}
+			for _, sp := range tt.stripSpans {
+				spans[sp.owner] = sp
+			}
+			tt.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: spans[2].x + 1, Y: 1})
+			tt.HandleMouseMove(core.MouseMoveEvent{X: spans[0].x + 1, Y: 1, Buttons: 1})
+			paintCloseGrid(t, tt)
+			for _, sp := range tt.stripSpans {
+				spans[sp.owner] = sp
+			}
+			tt.HandleMouseMove(core.MouseMoveEvent{X: spans[2].x + spans[2].w - 1, Y: 1, Buttons: 1})
+			paintCloseGrid(t, tt)
+		}
+		tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+		if got := tabOrder(tt); got != "A Bravo C Delta E" {
+			t.Fatalf("pos %v: the drag there and back left %q", pos, got)
+		}
+		if len(moves) != 0 {
+			t.Errorf("pos %v: a drag back where it started told %v", pos, moves)
+		}
 	}
 }
