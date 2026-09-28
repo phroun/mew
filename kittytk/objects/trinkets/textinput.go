@@ -24,8 +24,15 @@ type TextInput struct {
 	placeholder string
 	maxLength   int
 	echoMode    EchoMode
-	maskChar    rune // what EchoPassword paints; zero means the default bullet
+	maskChar    rune // what a masked field paints; zero means the default bullet
 	readOnly    bool
+
+	// revealed says the rune at revealAt is painted as itself in a field
+	// masked EchoPasswordOnEdit: the one just typed, for revealFor or until
+	// anything else happens to the field (see reveal).
+	revealed    bool
+	revealAt    int
+	revealTimer *DesktopTimer
 
 	// Cursor and selection
 	cursorPos int
@@ -154,6 +161,27 @@ const (
 	EchoNoEcho                         // Show nothing
 )
 
+// masked reports whether the mode paints a mask in place of the content, which
+// is also what makes a field a password field to a screen reader.
+func (m EchoMode) masked() bool {
+	return m == EchoPassword || m == EchoPasswordOnEdit
+}
+
+// Conceals reports whether the field keeps its content off the screen --
+// masked, or not echoed at all. Such a field keeps it from everywhere else it
+// could be read off too: nothing is copied or cut from it to the clipboard, and
+// a screen reader is told what the screen shows rather than what the field
+// holds. The content itself is the program's, and Text still returns it.
+func (t *TextInput) Conceals() bool {
+	return t.echoMode.masked() || t.echoMode == EchoNoEcho
+}
+
+// revealFor is how long EchoPasswordOnEdit shows the character just typed
+// before it goes under the mask with the rest: long enough to check a key on a
+// small or unfamiliar keyboard, short enough that it is gone before anyone
+// reading over a shoulder has much of the word.
+const revealFor = time.Second
+
 // NewTextInput creates a new text input.
 func NewTextInput() *TextInput {
 	t := &TextInput{
@@ -226,6 +254,7 @@ func (t *TextInput) Text() string {
 
 // SetText sets the text content.
 func (t *TextInput) SetText(text string) {
+	t.hideReveal()
 	t.text = []rune(text)
 	t.cursorPos = len(t.text)
 	t.selStart = 0
@@ -287,8 +316,9 @@ func (t *TextInput) EchoMode() EchoMode {
 
 // SetEchoMode sets the echo mode.
 func (t *TextInput) SetEchoMode(mode EchoMode) {
+	t.hideReveal()
 	t.echoMode = mode
-	if mode == EchoPassword {
+	if mode.masked() {
 		t.SetAccessibleRole(core.RolePasswordInput)
 	} else {
 		t.SetAccessibleRole(core.RoleTextInput)
@@ -475,13 +505,15 @@ func (t *TextInput) SetOnComplete(handler func()) {
 	t.onComplete = handler
 }
 
-// insert inserts text at the cursor position.
-func (t *TextInput) insert(text string) {
+// insert inserts text at the cursor position, and says how many runes went
+// in -- fewer than text holds where max_length stopped it, none where the
+// field accepts nothing.
+func (t *TextInput) insert(text string) int {
 	// The innermost guard, where the content is actually changed. Enabled as
 	// well as writable: every typing path leads here, and a disabled field
 	// must not be editable down any of them.
 	if !t.AcceptsTextInput() {
-		return
+		return 0
 	}
 
 	// Committed characters end whatever was being PAINTED - this IS the
@@ -507,7 +539,7 @@ func (t *TextInput) insert(text string) {
 	if t.maxLength >= 0 && len(t.text)+len(runes) > t.maxLength {
 		remaining := t.maxLength - len(t.text)
 		if remaining <= 0 {
-			return
+			return 0
 		}
 		runes = runes[:remaining]
 	}
@@ -523,6 +555,57 @@ func (t *TextInput) insert(text string) {
 	t.selEnd = t.cursorPos
 
 	t.textChanged()
+	return len(runes)
+}
+
+// typed inserts what the person at the keyboard typed. It is insert, and the
+// one place a masked field may show a character: EchoPasswordOnEdit reveals
+// a single rune typed here, and nothing that arrives another way -- a paste,
+// an input method committing a whole word -- is shown at all.
+func (t *TextInput) typed(text string) {
+	if t.insert(text) == 1 {
+		t.reveal(t.cursorPos - 1)
+	}
+}
+
+// reveal shows the rune at index as itself in an EchoPasswordOnEdit field,
+// until revealFor has passed or the field is changed, re-masked, or left.
+//
+// Only with a timer to take it away again. A field that cannot reach one (a
+// detached trinket, a test with no desktop) never reveals: a character shown
+// with nothing to hide it would stay shown for as long as nobody typed.
+func (t *TextInput) reveal(index int) {
+	t.hideReveal()
+	if t.echoMode != EchoPasswordOnEdit || index < 0 || index >= len(t.text) {
+		return
+	}
+	d := findDesktopFor(t)
+	if d == nil {
+		return
+	}
+	t.revealed, t.revealAt = true, index
+	t.revealTimer = d.StartTimer(revealFor, func() {
+		t.revealTimer = nil
+		t.hideReveal()
+	})
+	t.ensureCursorVisible()
+	t.Update()
+}
+
+// hideReveal puts a revealed character back under the mask.
+func (t *TextInput) hideReveal() {
+	if t.revealTimer != nil {
+		t.revealTimer.Stop()
+		t.revealTimer = nil
+	}
+	if !t.revealed {
+		return
+	}
+	t.revealed = false
+	// The mask and the character need not be the same width, so the run can
+	// change length under the caret.
+	t.ensureCursorVisible()
+	t.Update()
 }
 
 // deleteSelection deletes the selected text.
@@ -592,6 +675,9 @@ func (t *TextInput) delete() {
 
 // textChanged triggers the text changed callback.
 func (t *TextInput) textChanged() {
+	// Whatever changed, the character that was showing is no longer the one
+	// just typed: typed reveals the new one after this returns.
+	t.hideReveal()
 	t.ensureCursorVisible()
 	t.Update()
 	if t.onTextChanged != nil {
@@ -1639,7 +1725,12 @@ func (t *TextInput) resetCaretBlink() {
 
 // getDisplayText returns the text with echo mode applied.
 func (t *TextInput) getDisplayText() []rune {
-	return t.echo(t.text)
+	display := t.echo(t.text)
+	if t.revealed && t.echoMode == EchoPasswordOnEdit &&
+		t.revealAt < len(t.text) && len(display) == len(t.text) {
+		display[t.revealAt] = t.text[t.revealAt]
+	}
+	return display
 }
 
 // echo applies the echo mode to a run. Shared by the committed text and
@@ -1648,7 +1739,9 @@ func (t *TextInput) getDisplayText() []rune {
 // as it took to compose.
 func (t *TextInput) echo(src []rune) []rune {
 	switch t.echoMode {
-	case EchoPassword:
+	case EchoPassword, EchoPasswordOnEdit:
+		// A composition is masked whole in either: only a committed character
+		// that was typed is ever revealed (see typed).
 		mask := t.MaskChar()
 		result := make([]rune, len(src))
 		for i := range result {
@@ -1909,7 +2002,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		// a character to insert. Spell it here and hand it to the same insert
 		// as every other typed character, so selection replacement, the
 		// preedit reset and the change notification are the ordinary ones.
-		t.insert(" ")
+		t.typed(" ")
 		return true
 
 	case core.CmdTrinketActivate:
@@ -1952,7 +2045,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 	// here either way.
 	if text, observed := core.KeyChordTextFor(t, event.Key); observed {
 		if utf8.RuneCountInString(text) == 1 {
-			t.insert(text)
+			t.typed(text)
 		}
 		return true
 	}
@@ -1962,7 +2055,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 	// a keystroke arrives already named and there is no second event to
 	// observe.
 	if utf8.RuneCountInString(event.Key) == 1 {
-		t.insert(event.Key)
+		t.typed(event.Key)
 		return true
 	}
 
@@ -2235,6 +2328,7 @@ func (t *TextInput) HandleFocusIn() {
 // HandleFocusOut is called when focus is lost.
 func (t *TextInput) HandleFocusOut() {
 	t.stopCaretTimer()
+	t.hideReveal()
 	t.stopAutoScroll()
 	t.stopArrowRepeat()
 	t.selecting = false
@@ -2346,7 +2440,7 @@ func (t *TextInput) HandleTextCommit(event core.TextCommitEvent) bool {
 		}
 	}
 
-	t.insert(event.Text)
+	t.typed(event.Text)
 	if trailing > 0 {
 		// Back to where the person typing left it, on the far side of what they
 		// typed while the palette was up.
@@ -2406,12 +2500,23 @@ func (t *TextInput) HandleTextErase(event core.TextEraseEvent) bool {
 // AccessibleInfo returns accessibility information.
 func (t *TextInput) AccessibleInfo() core.AccessibleInfo {
 	info := t.AccessibleTrinket.AccessibleInfo()
-	if t.echoMode == EchoPassword {
+	if t.echoMode.masked() {
 		info.Role = core.RolePasswordInput
 	} else {
 		info.Role = core.RoleTextInput
 	}
-	info.Value = string(t.text)
+	// What the screen shows: the mask for a masked field (its length is on
+	// screen already), nothing for one that echoes nothing. A character just
+	// typed into an EchoPasswordOnEdit field is shown on screen for a moment
+	// but is not read out; a screen reader has its own echo of the key.
+	switch {
+	case t.echoMode.masked():
+		info.Value = string(t.echo(t.text))
+	case t.echoMode == EchoNoEcho:
+		info.Value = ""
+	default:
+		info.Value = string(t.text)
+	}
 	if t.readOnly {
 		info.State |= core.StateReadOnly
 	}
@@ -2464,8 +2569,11 @@ func (t *TextInput) clipboardAccess() (get func() string, set func(string)) {
 	return nil, nil
 }
 
-// Copy puts the selected text on the clipboard.
+// Copy puts the selected text on the clipboard, unless the field conceals it.
 func (t *TextInput) Copy() {
+	if t.Conceals() {
+		return
+	}
 	sel := t.SelectedText()
 	if sel == "" {
 		return
@@ -2479,7 +2587,10 @@ func (t *TextInput) Copy() {
 func (t *TextInput) Cut() {
 	// Enabled as well as writable: this is public API and the context menu is
 	// not the only way in. Copy is deliberately not guarded -- it only reads.
-	if !t.AcceptsTextInput() || !t.HasSelection() {
+	//
+	// A concealing field does not cut at all: the text would leave the field
+	// without reaching the clipboard, which is a delete nobody asked for.
+	if !t.AcceptsTextInput() || !t.HasSelection() || t.Conceals() {
 		return
 	}
 	t.Copy()
@@ -2547,10 +2658,13 @@ func (t *TextInput) contextMenuItems() []termMenuItem {
 	//
 	// Copy and Select All only read, and reading a disabled field is the same
 	// as selecting its text with the mouse, which one can.
+	//
+	// A field that conceals its content offers neither Cut nor Copy.
 	edits := t.AcceptsTextInput()
+	conceals := t.Conceals()
 	return []termMenuItem{
-		{label: "Cut", action: t.Cut, disabled: !edits},
-		{label: "Copy", action: t.Copy},
+		{label: "Cut", action: t.Cut, disabled: !edits || conceals},
+		{label: "Copy", action: t.Copy, disabled: conceals},
 		{label: "Paste", action: t.Paste, disabled: !edits},
 		{separator: true},
 		{label: "Select All", action: t.SelectAll},

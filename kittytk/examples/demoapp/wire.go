@@ -101,10 +101,11 @@ func (a *app) wireMainWindow() {
 		_ = tfecho.Set("caption=" + protocol.Quote("COMPLETE: "+s))
 	})
 
-	// ...and the mask character, which is a property of the field rather
-	// than of the echo mode: switching to "show" turns masking off without
-	// disturbing which character it would have used. Written the way the
-	// other radio groups here are -- the raw toggle event, checking the
+	// ...and the echo mode and the mask character, one group each: the mask
+	// is a property of the field rather than of the echo mode, so switching
+	// to normal turns masking off without disturbing which character it would
+	// have used, and either masked mode picks it up again. Written the way
+	// the other radio groups here are -- the raw toggle event, checking the
 	// flag, because a radio group reports every button that changed.
 	tfmask := ui.Object("tfmask")
 	setMask := func(arg string) func(*protocol.Event) {
@@ -114,10 +115,12 @@ func (a *app) wireMainWindow() {
 			}
 		}
 	}
-	ui.Object("tfmb").On("toggle", setMask(`echo=password mask="•"`))
-	ui.Object("tfms").On("toggle", setMask(`echo=password mask="*"`))
-	ui.Object("tfmh").On("toggle", setMask(`echo=password mask="#"`))
-	ui.Object("tfmn").On("toggle", setMask(`echo=normal`))
+	ui.Object("tfmep").On("toggle", setMask(`echo=password`))
+	ui.Object("tfmee").On("toggle", setMask(`echo=password_on_edit`))
+	ui.Object("tfmen").On("toggle", setMask(`echo=normal`))
+	ui.Object("tfmb").On("toggle", setMask(`mask="•"`))
+	ui.Object("tfms").On("toggle", setMask(`mask="*"`))
+	ui.Object("tfmh").On("toggle", setMask(`mask="#"`))
 
 	// The direction marks, on the field beside the switch. They are an editing
 	// aid, so they appear while that field is focused and the plain text comes

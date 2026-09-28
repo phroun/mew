@@ -30,17 +30,18 @@ func init() {
 					return err
 				}
 				mode, ok := map[string]EchoMode{
-					"normal":   EchoNormal,
-					"password": EchoPassword,
-					"none":     EchoNoEcho,
+					"normal":           EchoNormal,
+					"password":         EchoPassword,
+					"password_on_edit": EchoPasswordOnEdit,
+					"none":             EchoNoEcho,
 				}[word]
 				if !ok {
-					return fmt.Errorf("echo: unknown value %q (normal, password, none)", word)
+					return fmt.Errorf("echo: unknown value %q (normal, password, password_on_edit, none)", word)
 				}
 				w.(*TextInput).SetEchoMode(mode)
 				return nil
-			})).OneOf("normal", "password", "none").Def("normal").
-				Tip("How the content is painted: normally, masked (see mask), or not at all. A masked field also reports itself as a password field to a screen reader."),
+			})).OneOf("normal", "password", "password_on_edit", "none").Def("normal").
+				Tip("How the content is painted: normally, masked (see mask), masked with the character just typed shown for a moment, or not at all. A masked field also reports itself as a password field to a screen reader."),
 			"mask": stringProp("mask", func(t *TextInput, s string) {
 				r := []rune(s)
 				if len(r) == 0 {
@@ -48,7 +49,7 @@ func init() {
 					return
 				}
 				t.SetMaskChar(r[0])
-			}).Tip("The single character echo=password paints for each rune. Blank restores the default bullet; only the first character is used.").Def("•"),
+			}).Tip("The single character a masked field (echo=password or password_on_edit) paints for each rune. Blank restores the default bullet; only the first character is used.").Def("•"),
 			"show_bidi_controls": boolProp("show_bidi_controls", (*TextInput).SetShowBidiControls).
 				Tip("Mark where the line's reading turns and which way each piece of it goes, while the field is focused. An editing aid: an unfocused field shows the plain text. On unless it is turned off.").Def("true"),
 			"show_ahead": intProp("show_ahead", (*TextInput).SetShowAhead).
