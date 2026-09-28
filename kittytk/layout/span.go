@@ -104,7 +104,7 @@ func spreadShortfall(sizes []core.Unit, bands []Band, start, count int, short co
 // or the laid-out size -- so all three raise the same tracks by the same rule.
 func (l *GridLayout) columnSpans(size func(core.Trinket) core.Unit) []span {
 	var out []span
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		if item.ColumnSpan > 1 {
 			out = append(out, span{item.Column, item.ColumnSpan, size(item.Trinket)})
 		}
@@ -115,7 +115,7 @@ func (l *GridLayout) columnSpans(size func(core.Trinket) core.Unit) []span {
 // rowSpans is columnSpans down the other axis.
 func (l *GridLayout) rowSpans(size func(core.Trinket) core.Unit) []span {
 	var out []span
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		if item.RowSpan > 1 {
 			out = append(out, span{item.Row, item.RowSpan, size(item.Trinket)})
 		}

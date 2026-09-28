@@ -151,24 +151,41 @@ func (l *BoxLayout) ItemAt(index int) *LayoutItem {
 	return l.items[index]
 }
 
+// shown is the items a box arranges: those whose trinket is visible. A hidden
+// child is absent from the run rather than a hole in it -- it takes no room,
+// the spacing that would have stood on either side of it goes too, and it adds
+// nothing to what the box asks for -- so hiding the middle of three buttons
+// closes the row up to two. Its bounds are left as they were: nothing draws
+// it or hit-tests it while it is hidden, and showing it arranges it again.
+func (l *BoxLayout) shown() []*LayoutItem {
+	items := make([]*LayoutItem, 0, len(l.items))
+	for _, item := range l.items {
+		if isShown(item.Trinket) {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
 // spacingTotal is ALL the room Layout puts between and around the items along
 // the main axis, which is what SizeHint and MinimumSize have to promise: a box
 // handed less than Layout then consumes lays its children out past its own
 // edge, and a row of buttons put its last shadow through whatever was drawn to
 // the right of it.
 func (l *BoxLayout) spacingTotal(container core.Container) core.Unit {
-	if len(l.items) < 1 {
+	items := l.shown()
+	if len(items) < 1 {
 		return 0
 	}
 	metrics := l.effectiveMetrics(container)
 	if l.orientation == core.Vertical {
 		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
-		return spacing * core.Unit(len(l.items)-1)
+		return spacing * core.Unit(len(items)-1)
 	}
 	base := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
-	total := l.inlineSpacingForItems(metrics)
-	for i := 0; i < len(l.items)-1; i++ {
-		if !isInlineTrinket(l.items[i].Trinket) && !isInlineTrinket(l.items[i+1].Trinket) {
+	total := inlineSpacingForItems(items, metrics)
+	for i := 0; i < len(items)-1; i++ {
+		if !isInlineTrinket(items[i].Trinket) && !isInlineTrinket(items[i+1].Trinket) {
 			total += base
 		}
 	}
@@ -204,7 +221,8 @@ func itemSize(w core.Trinket) core.UnitSize {
 
 // Layout arranges children within the given bounds.
 func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
-	if len(l.items) == 0 {
+	items := l.shown()
+	if len(items) == 0 {
 		return
 	}
 
@@ -237,18 +255,18 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
 	}
 
-	inlineSpacingTotal := l.inlineSpacingForItems(metrics)
+	inlineSpacingTotal := inlineSpacingForItems(items, metrics)
 
 	// Calculate sizes along the primary axis
 	var sizes []core.Unit
 	if l.orientation == core.Horizontal {
-		sizes = l.horizontalItemWidths(rect.Width, metrics, spacing, inlineSpacingTotal,
+		sizes = l.horizontalItemWidths(items, rect.Width, metrics, spacing, inlineSpacingTotal,
 			cellQuantum(container, metrics.UnitsPerCellWidth))
 	} else {
-		totalSpacing := spacing * core.Unit(len(l.items)-1)
-		stretchItems := make([]stretchItem, len(l.items))
+		totalSpacing := spacing * core.Unit(len(items)-1)
+		stretchItems := make([]stretchItem, len(items))
 
-		for i, item := range l.items {
+		for i, item := range items {
 			hint := itemSize(item.Trinket)
 			policy := item.Trinket.SizePolicy()
 
@@ -290,14 +308,14 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	if l.orientation == core.Horizontal {
 		pos = rect.X
 		// Add margin before first inline trinket
-		if len(l.items) > 0 && isInlineTrinket(l.items[0].Trinket) {
+		if isInlineTrinket(items[0].Trinket) {
 			pos += metrics.UnitsPerCellWidth
 		}
 	} else {
 		pos = rect.Y
 	}
 
-	for i, item := range l.items {
+	for i, item := range items {
 		var itemBounds core.UnitRect
 
 		if l.orientation == core.Horizontal {
@@ -311,8 +329,8 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 			// Add spacing after this item (before the next one)
 			// For inline trinkets, use inline spacing; for containers, use base spacing
-			if i < len(l.items)-1 {
-				if isInlineTrinket(item.Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
+			if i < len(items)-1 {
+				if isInlineTrinket(item.Trinket) || isInlineTrinket(items[i+1].Trinket) {
 					pos += metrics.UnitsPerCellWidth // Inline spacing
 				} else {
 					pos += spacing // Container-to-container spacing
@@ -367,7 +385,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 // A leading inset would come off the other end and is not implemented.
 func (l *BoxLayout) styleAllowance() core.UnitMargins {
 	var outerW, outerH, contentW, contentH core.Unit
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		hint := itemSize(item.Trinket)
 		ins := core.FindStyleInsets(item.Trinket)
 		if hint.Width > outerW {
@@ -573,17 +591,17 @@ func hasHeightForWidth(w core.Trinket) bool {
 // horizontalItemWidths computes item widths for the horizontal
 // orientation given the content width (margins already removed),
 // mirroring Layout's spacing rules.
-func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.CellMetrics, baseSpacing, inlineSpacingTotal, q core.Unit) []core.Unit {
+func (l *BoxLayout) horizontalItemWidths(items []*LayoutItem, contentWidth core.Unit, metrics core.CellMetrics, baseSpacing, inlineSpacingTotal, q core.Unit) []core.Unit {
 	// For inline gaps, use inline spacing; for container gaps, use base spacing
 	totalSpacing := inlineSpacingTotal
-	for i := 0; i < len(l.items)-1; i++ {
-		if !isInlineTrinket(l.items[i].Trinket) && !isInlineTrinket(l.items[i+1].Trinket) {
+	for i := 0; i < len(items)-1; i++ {
+		if !isInlineTrinket(items[i].Trinket) && !isInlineTrinket(items[i+1].Trinket) {
 			totalSpacing += baseSpacing
 		}
 	}
 
-	stretchItems := make([]stretchItem, len(l.items))
-	for i, item := range l.items {
+	stretchItems := make([]stretchItem, len(items))
+	for i, item := range items {
 		hint := itemSize(item.Trinket)
 		policy := item.Trinket.SizePolicy()
 
@@ -703,20 +721,20 @@ func itemHeightForWidth(w core.Trinket, width core.Unit) core.Unit {
 // It is not the configured spacing and does not replace it; between two items
 // that are both blocks the configured spacing applies instead. Layout consumes
 // it, so spacingTotal has to promise it.
-func (l *BoxLayout) inlineSpacingForItems(metrics core.CellMetrics) core.Unit {
+func inlineSpacingForItems(items []*LayoutItem, metrics core.CellMetrics) core.Unit {
 	var total core.Unit
-	if len(l.items) == 0 {
+	if len(items) == 0 {
 		return 0
 	}
-	if isInlineTrinket(l.items[0].Trinket) {
+	if isInlineTrinket(items[0].Trinket) {
 		total += metrics.UnitsPerCellWidth
 	}
-	for i := 0; i < len(l.items)-1; i++ {
-		if isInlineTrinket(l.items[i].Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
+	for i := 0; i < len(items)-1; i++ {
+		if isInlineTrinket(items[i].Trinket) || isInlineTrinket(items[i+1].Trinket) {
 			total += metrics.UnitsPerCellWidth
 		}
 	}
-	if isInlineTrinket(l.items[len(l.items)-1].Trinket) {
+	if isInlineTrinket(items[len(items)-1].Trinket) {
 		total += metrics.UnitsPerCellWidth
 	}
 	return total
@@ -726,7 +744,7 @@ func (l *BoxLayout) inlineSpacingForItems(metrics core.CellMetrics) core.Unit {
 // width-dependent height. Together with HeightForWidth this lets
 // containers (Panel) propagate core.HeightForWidther upward.
 func (l *BoxLayout) HasHeightForWidth() bool {
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		if hfw, ok := item.Trinket.(core.HeightForWidther); ok && hfw.HasHeightForWidth() {
 			return true
 		}
@@ -737,7 +755,8 @@ func (l *BoxLayout) HasHeightForWidth() bool {
 // HeightForWidth returns the height this layout requires at the given
 // container width.
 func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
-	if len(l.items) == 0 {
+	items := l.shown()
+	if len(items) == 0 {
 		return 0
 	}
 
@@ -750,9 +769,9 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 	var height core.Unit
 	if l.orientation == core.Vertical {
 		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
-		for i, item := range l.items {
+		for i, item := range items {
 			height += itemHeightForWidth(item.Trinket, l.verticalItemWidth(contentWidth, item, metrics))
-			if i < len(l.items)-1 {
+			if i < len(items)-1 {
 				height += spacing
 			}
 		}
@@ -762,9 +781,9 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 		// whole cells: a child asked how tall it is at a width it will never
 		// have answers for a line it will never wrap at.
 		container, _ := l.metricsSource.(core.Container)
-		widths := l.horizontalItemWidths(contentWidth, metrics, spacing, l.inlineSpacingForItems(metrics),
+		widths := l.horizontalItemWidths(items, contentWidth, metrics, spacing, inlineSpacingForItems(items, metrics),
 			cellQuantum(container, metrics.UnitsPerCellWidth))
-		for i, item := range l.items {
+		for i, item := range items {
 			if h := itemHeightForWidth(item.Trinket, widths[i]); h > height {
 				height = h
 			}
@@ -808,7 +827,7 @@ func (l *BoxLayout) SizeHint(container core.Container) core.UnitSize {
 	var width, height core.Unit
 	metrics := l.effectiveMetrics(container)
 
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		hint := itemSize(item.Trinket)
 
 		if l.orientation == core.Horizontal {
@@ -842,7 +861,7 @@ func (l *BoxLayout) MinimumSize(container core.Container) core.UnitSize {
 	var width, height core.Unit
 	metrics := l.effectiveMetrics(container)
 
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		minSize := item.Trinket.MinimumSize()
 
 		if l.orientation == core.Horizontal {

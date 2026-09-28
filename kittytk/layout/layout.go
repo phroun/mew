@@ -50,6 +50,8 @@ func NewSpacer(width, height core.Unit) *Spacer {
 	s := &Spacer{
 		fixedSize: core.UnitSize{Width: width, Height: height},
 	}
+	s.TrinketBase = *core.NewTrinketBase()
+	s.Init(s)
 	s.SetSizePolicy(core.NewSizePolicy(core.SizeFixed, core.SizeFixed))
 	return s
 }
@@ -57,6 +59,8 @@ func NewSpacer(width, height core.Unit) *Spacer {
 // NewStretchSpacer creates a stretching spacer.
 func NewStretchSpacer() *Spacer {
 	s := &Spacer{stretch: 1}
+	s.TrinketBase = *core.NewTrinketBase()
+	s.Init(s)
 	s.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeExpanding))
 	return s
 }
@@ -64,6 +68,12 @@ func NewStretchSpacer() *Spacer {
 // SizeHint returns the preferred size.
 func (s *Spacer) SizeHint() core.UnitSize {
 	return s.fixedSize
+}
+
+// isShown reports whether a layout arranges this child: a hidden trinket is
+// left out of the arrangement altogether, as though it had not been added.
+func isShown(w core.Trinket) bool {
+	return w.IsVisible()
 }
 
 // BaseLayout provides common layout functionality.

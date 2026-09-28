@@ -231,6 +231,19 @@ func (l *FlexLayout) RemoveTrinket(trinket core.Trinket) {
 	}
 }
 
+// shown is the items a flex arranges: those whose trinket is visible. A hidden
+// child is left out of its line altogether -- no room, no gap beside it, no
+// part in where the lines break -- the way a box leaves one out of its run.
+func (l *FlexLayout) shown() []*FlexItem {
+	items := make([]*FlexItem, 0, len(l.items))
+	for _, item := range l.items {
+		if isShown(item.Trinket) {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
 // isMainHorizontal returns true if the main axis is horizontal.
 func (l *FlexLayout) isMainHorizontal() bool {
 	return l.direction == FlexRow || l.direction == FlexRowReverse
@@ -282,9 +295,9 @@ func (l *FlexLayout) minMain(item *FlexItem) core.Unit {
 // breakIntoLines fills lines up to mainSize, starting a new one when the next
 // item will not fit. Every line holds at least one item, however small the box:
 // an item that fits nowhere still has to go somewhere.
-func (l *FlexLayout) breakIntoLines(base []core.Unit, mainSize core.Unit, metrics core.CellMetrics) []flexLine {
+func (l *FlexLayout) breakIntoLines(items []*FlexItem, base []core.Unit, mainSize core.Unit, metrics core.CellMetrics) []flexLine {
 	if l.wrap == FlexNoWrap {
-		return []flexLine{{first: 0, last: len(l.items)}}
+		return []flexLine{{first: 0, last: len(items)}}
 	}
 
 	var lines []flexLine
@@ -294,13 +307,13 @@ func (l *FlexLayout) breakIntoLines(base []core.Unit, mainSize core.Unit, metric
 	if l.isMainHorizontal() {
 		cell = metrics.UnitsPerCellWidth
 	}
-	for i := range l.items {
+	for i := range items {
 		next := base[i]
-		if isInlineTrinket(l.items[i].Trinket) {
+		if isInlineTrinket(items[i].Trinket) {
 			// Its trailing bearing, and its leading one where the neighbour
 			// before it did not already open one.
 			next += cell
-			if i == first || !isInlineTrinket(l.items[i-1].Trinket) {
+			if i == first || !isInlineTrinket(items[i-1].Trinket) {
 				next += cell
 			}
 		}
@@ -314,7 +327,7 @@ func (l *FlexLayout) breakIntoLines(base []core.Unit, mainSize core.Unit, metric
 		}
 		used += next
 	}
-	return append(lines, flexLine{first: first, last: len(l.items)})
+	return append(lines, flexLine{first: first, last: len(items)})
 }
 
 // lineBearings is the room a line's items keep for their side-bearings, along
@@ -324,21 +337,21 @@ func (l *FlexLayout) breakIntoLines(base []core.Unit, mainSize core.Unit, metric
 //
 // Only where the main axis is horizontal. A column-direction run's bearings sit
 // across it and are taken out of each item's own width instead.
-func (l *FlexLayout) lineBearings(line flexLine, metrics core.CellMetrics) core.Unit {
+func (l *FlexLayout) lineBearings(items []*FlexItem, line flexLine, metrics core.CellMetrics) core.Unit {
 	if !l.isMainHorizontal() || line.last <= line.first {
 		return 0
 	}
 	cell := metrics.UnitsPerCellWidth
 	total := core.Unit(0)
-	if isInlineTrinket(l.items[line.first].Trinket) {
+	if isInlineTrinket(items[line.first].Trinket) {
 		total += cell
 	}
 	for i := line.first; i < line.last-1; i++ {
-		if isInlineTrinket(l.items[i].Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
+		if isInlineTrinket(items[i].Trinket) || isInlineTrinket(items[i+1].Trinket) {
 			total += cell
 		}
 	}
-	if isInlineTrinket(l.items[line.last-1].Trinket) {
+	if isInlineTrinket(items[line.last-1].Trinket) {
 		total += cell
 	}
 	return total
@@ -347,7 +360,7 @@ func (l *FlexLayout) lineBearings(line flexLine, metrics core.CellMetrics) core.
 // resolveMain divides the line's main axis: grow shares out what is left over,
 // shrink shares out what is missing, and neither takes an item below its own
 // minimum.
-func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core.Unit, metrics core.CellMetrics, q core.Unit) {
+func (l *FlexLayout) resolveMain(items []*FlexItem, line *flexLine, base []core.Unit, mainSize core.Unit, metrics core.CellMetrics, q core.Unit) {
 	n := line.last - line.first
 	line.sizes = make([]core.Unit, n)
 	copy(line.sizes, base[line.first:line.last])
@@ -356,22 +369,22 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 	var totalGrow, totalShrink float64
 	for i := line.first; i < line.last; i++ {
 		total += base[i]
-		totalGrow += l.items[i].Grow
-		totalShrink += l.items[i].Shrink
+		totalGrow += items[i].Grow
+		totalShrink += items[i].Shrink
 	}
 	if n > 1 {
 		total += l.gap * core.Unit(n-1)
 	}
-	total += l.lineBearings(*line, metrics)
+	total += l.lineBearings(items, *line, metrics)
 
 	free := mainSize - total
 	switch {
 	case free > 0 && totalGrow > 0:
-		l.growLine(line, free)
+		l.growLine(items, line, free)
 	case free < 0 && totalShrink > 0:
 		deficit := -free
 		for i := line.first; i < line.last; i++ {
-			item := l.items[i]
+			item := items[i]
 			if item.Shrink <= 0 {
 				continue
 			}
@@ -391,7 +404,7 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 	// of a cell puts every item after the first between cells (see
 	// quantizeSizes). The room the sizes have to fit is the line's, less what
 	// the boundaries and the bearings take.
-	room := mainSize - l.lineBearings(*line, metrics)
+	room := mainSize - l.lineBearings(items, *line, metrics)
 	if n > 1 {
 		room -= l.gap * core.Unit(n-1)
 	}
@@ -403,12 +416,12 @@ func (l *FlexLayout) resolveMain(line *flexLine, base []core.Unit, mainSize core
 // what it turned down, which takes going round again: each item's share
 // depends on who is still growing, and that is only known once the ones that
 // stopped have stopped.
-func (l *FlexLayout) growLine(line *flexLine, free core.Unit) {
+func (l *FlexLayout) growLine(items []*FlexItem, line *flexLine, free core.Unit) {
 	stopped := make([]bool, line.last-line.first)
 	for free > 0 {
 		total := 0.0
 		for i := line.first; i < line.last; i++ {
-			if g := l.items[i].Grow; g > 0 && !stopped[i-line.first] {
+			if g := items[i].Grow; g > 0 && !stopped[i-line.first] {
 				total += g
 			}
 		}
@@ -420,12 +433,12 @@ func (l *FlexLayout) growLine(line *flexLine, free core.Unit) {
 		anyStopped := false
 		for i := line.first; i < line.last; i++ {
 			k := i - line.first
-			g := l.items[i].Grow
+			g := items[i].Grow
 			if g <= 0 || stopped[k] {
 				continue
 			}
 			portion := core.Unit(float64(free) * g / total)
-			if max := l.maxMain(l.items[i]); max >= 0 {
+			if max := l.maxMain(items[i]); max >= 0 {
 				room := max - line.sizes[k]
 				if room < 0 {
 					room = 0
@@ -471,10 +484,10 @@ func (l *FlexLayout) minCross(item *FlexItem) core.Unit {
 // lineCross is how deep a line is: the deepest thing in it, taken out to the
 // whole cell it needs where the surface places on cells, so the line below it
 // starts on one.
-func (l *FlexLayout) lineCross(line flexLine) core.Unit {
+func (l *FlexLayout) lineCross(items []*FlexItem, line flexLine) core.Unit {
 	deepest := core.Unit(0)
 	for i := line.first; i < line.last; i++ {
-		hint := itemSize(l.items[i].Trinket)
+		hint := itemSize(items[i].Trinket)
 		_, cross := l.mainCross(hint.Width, hint.Height)
 		if cross > deepest {
 			deepest = cross
@@ -485,7 +498,8 @@ func (l *FlexLayout) lineCross(line flexLine) core.Unit {
 
 // Layout arranges children within the given bounds.
 func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
-	if len(l.items) == 0 {
+	items := l.shown()
+	if len(items) == 0 {
 		return
 	}
 	l.refreshHints()
@@ -512,15 +526,15 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// within it read left to right.
 	mirrored := layoutDir == core.DirRTL
 
-	base := make([]core.Unit, len(l.items))
-	for i, item := range l.items {
+	base := make([]core.Unit, len(items))
+	for i, item := range items {
 		base[i] = l.baseSize(item)
 	}
 
-	lines := l.breakIntoLines(base, mainSize, metrics)
+	lines := l.breakIntoLines(items, base, mainSize, metrics)
 	for i := range lines {
-		l.resolveMain(&lines[i], base, mainSize, metrics, l.mainQ)
-		lines[i].cross = l.lineCross(lines[i])
+		l.resolveMain(items, &lines[i], base, mainSize, metrics, l.mainQ)
+		lines[i].cross = l.lineCross(items, lines[i])
 	}
 
 	// One line takes the whole depth, so a stretched item fills the box. Two or
@@ -550,14 +564,14 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 		if n > 1 {
 			spacing = l.gap * core.Unit(n-1)
 		}
-		spacing += l.lineBearings(line, metrics)
+		spacing += l.lineBearings(items, line, metrics)
 		positions := l.calculatePositions(mainSize, line.sizes, spacing)
 
 		// Bearings are added as the line is walked, so each item carries the
 		// ones opened before it. The first item's own leading bearing comes
 		// first, if it wants one.
 		bearingBefore := core.Unit(0)
-		if l.isMainHorizontal() && isInlineTrinket(l.items[line.first].Trinket) {
+		if l.isMainHorizontal() && isInlineTrinket(items[line.first].Trinket) {
 			bearingBefore = metrics.UnitsPerCellWidth
 		}
 		for k := 0; k < n; k++ {
@@ -567,7 +581,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 			if l.isReversed() {
 				at = n - 1 - k
 			}
-			item := l.items[line.first+at]
+			item := items[line.first+at]
 			size := line.sizes[k]
 
 			var itemBounds core.UnitRect
@@ -580,7 +594,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 				// bearing where they do not collapse into it.
 				if isInlineTrinket(item.Trinket) {
 					bearingBefore += metrics.UnitsPerCellWidth
-				} else if k+1 < n && isInlineTrinket(l.items[line.first+k+1].Trinket) {
+				} else if k+1 < n && isInlineTrinket(items[line.first+k+1].Trinket) {
 					bearingBefore += metrics.UnitsPerCellWidth
 				}
 			} else {
@@ -774,7 +788,7 @@ func (l *FlexLayout) crossSide(a core.Alignment, w core.Trinket, layoutDir core.
 // Only along a horizontal main axis. A column that wraps would need width for
 // height, and nothing in the toolkit asks a question that way round.
 func (l *FlexLayout) HasHeightForWidth() bool {
-	return l.wrap != FlexNoWrap && l.isMainHorizontal() && len(l.items) > 0
+	return l.wrap != FlexNoWrap && l.isMainHorizontal() && len(l.shown()) > 0
 }
 
 // HeightForWidth is the height the wrapped run needs at the given width: the
@@ -786,15 +800,16 @@ func (l *FlexLayout) HeightForWidth(width core.Unit) core.Unit {
 		return l.SizeHint(nil).Height
 	}
 	mainSize := width - l.margins.Horizontal()
-	base := make([]core.Unit, len(l.items))
-	for i, item := range l.items {
+	items := l.shown()
+	base := make([]core.Unit, len(items))
+	for i, item := range items {
 		base[i] = l.baseSize(item)
 	}
 
-	lines := l.breakIntoLines(base, mainSize, l.effectiveMetrics(nil))
+	lines := l.breakIntoLines(items, base, mainSize, l.effectiveMetrics(nil))
 	total := l.crossGap * core.Unit(len(lines)-1)
 	for _, line := range lines {
-		total += l.lineCross(line)
+		total += l.lineCross(items, line)
 	}
 	return total + l.margins.Vertical()
 }
@@ -804,8 +819,9 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 	l.refreshHints()
 	l.resolveGap(container, l.effectiveMetrics(container))
 	var mainTotal, crossMax core.Unit
+	items := l.shown()
 
-	for _, item := range l.items {
+	for _, item := range items {
 		hint := itemSize(item.Trinket)
 		main, cross := l.mainCross(hint.Width, hint.Height)
 
@@ -820,8 +836,8 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 	}
 
 	// Add spacing
-	if len(l.items) > 1 {
-		mainTotal += l.gap * core.Unit(len(l.items)-1)
+	if len(items) > 1 {
+		mainTotal += l.gap * core.Unit(len(items)-1)
 	}
 
 	// Add margins
@@ -845,8 +861,9 @@ func (l *FlexLayout) MinimumSize(container core.Container) core.UnitSize {
 	l.refreshHints()
 	l.resolveGap(container, l.effectiveMetrics(container))
 	var mainTotal, crossMax core.Unit
+	items := l.shown()
 
-	for _, item := range l.items {
+	for _, item := range items {
 		minSize := item.Trinket.MinimumSize()
 		main, cross := l.mainCross(minSize.Width, minSize.Height)
 
@@ -863,8 +880,8 @@ func (l *FlexLayout) MinimumSize(container core.Container) core.UnitSize {
 	}
 
 	// Add spacing
-	if len(l.items) > 1 {
-		mainTotal += l.gap * core.Unit(len(l.items)-1)
+	if len(items) > 1 {
+		mainTotal += l.gap * core.Unit(len(items)-1)
 	}
 
 	// Add margins
