@@ -167,6 +167,15 @@ func (m EchoMode) masked() bool {
 	return m == EchoPassword || m == EchoPasswordOnEdit
 }
 
+// Conceals reports whether the field keeps its content off the screen --
+// masked, or not echoed at all. Such a field keeps it from everywhere else it
+// could be read off too: nothing is copied or cut from it to the clipboard, and
+// a screen reader is told what the screen shows rather than what the field
+// holds. The content itself is the program's, and Text still returns it.
+func (t *TextInput) Conceals() bool {
+	return t.echoMode.masked() || t.echoMode == EchoNoEcho
+}
+
 // revealFor is how long EchoPasswordOnEdit shows the character just typed
 // before it goes under the mask with the rest: long enough to check a key on a
 // small or unfamiliar keyboard, short enough that it is gone before anyone
@@ -2496,7 +2505,18 @@ func (t *TextInput) AccessibleInfo() core.AccessibleInfo {
 	} else {
 		info.Role = core.RoleTextInput
 	}
-	info.Value = string(t.text)
+	// What the screen shows: the mask for a masked field (its length is on
+	// screen already), nothing for one that echoes nothing. A character just
+	// typed into an EchoPasswordOnEdit field is shown on screen for a moment
+	// but is not read out; a screen reader has its own echo of the key.
+	switch {
+	case t.echoMode.masked():
+		info.Value = string(t.echo(t.text))
+	case t.echoMode == EchoNoEcho:
+		info.Value = ""
+	default:
+		info.Value = string(t.text)
+	}
 	if t.readOnly {
 		info.State |= core.StateReadOnly
 	}
@@ -2549,8 +2569,11 @@ func (t *TextInput) clipboardAccess() (get func() string, set func(string)) {
 	return nil, nil
 }
 
-// Copy puts the selected text on the clipboard.
+// Copy puts the selected text on the clipboard, unless the field conceals it.
 func (t *TextInput) Copy() {
+	if t.Conceals() {
+		return
+	}
 	sel := t.SelectedText()
 	if sel == "" {
 		return
@@ -2564,7 +2587,10 @@ func (t *TextInput) Copy() {
 func (t *TextInput) Cut() {
 	// Enabled as well as writable: this is public API and the context menu is
 	// not the only way in. Copy is deliberately not guarded -- it only reads.
-	if !t.AcceptsTextInput() || !t.HasSelection() {
+	//
+	// A concealing field does not cut at all: the text would leave the field
+	// without reaching the clipboard, which is a delete nobody asked for.
+	if !t.AcceptsTextInput() || !t.HasSelection() || t.Conceals() {
 		return
 	}
 	t.Copy()
@@ -2632,10 +2658,13 @@ func (t *TextInput) contextMenuItems() []termMenuItem {
 	//
 	// Copy and Select All only read, and reading a disabled field is the same
 	// as selecting its text with the mouse, which one can.
+	//
+	// A field that conceals its content offers neither Cut nor Copy.
 	edits := t.AcceptsTextInput()
+	conceals := t.Conceals()
 	return []termMenuItem{
-		{label: "Cut", action: t.Cut, disabled: !edits},
-		{label: "Copy", action: t.Copy},
+		{label: "Cut", action: t.Cut, disabled: !edits || conceals},
+		{label: "Copy", action: t.Copy, disabled: conceals},
 		{label: "Paste", action: t.Paste, disabled: !edits},
 		{separator: true},
 		{label: "Select All", action: t.SelectAll},

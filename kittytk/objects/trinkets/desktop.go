@@ -3705,6 +3705,17 @@ type selectionReporter interface {
 
 // hasSelection reports whether ea currently has a selection, defaulting to
 // true for targets that do not advertise their selection state.
+// concealed reports whether the edit actor keeps its content off the screen,
+// and so off the clipboard: a password field. Cut and Copy do nothing there,
+// and the Edit menu says why rather than appearing to have worked.
+func concealed(ea editActor) bool {
+	c, ok := ea.(interface{ Conceals() bool })
+	return ok && c.Conceals()
+}
+
+// concealedNotice is what the Edit menu says instead of cutting or copying.
+const concealedNotice = "This field keeps its text off the clipboard."
+
 func hasSelection(ea editActor) bool {
 	if sr, ok := ea.(selectionReporter); ok {
 		return sr.HasSelection()
@@ -3778,7 +3789,9 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	shortcut(cut, core.CmdTrinketCut)
 	cut.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
-			if hasSelection(ea) {
+			if concealed(ea) {
+				d.NotifyPassive(concealedNotice)
+			} else if hasSelection(ea) {
 				ea.Cut()
 			} else {
 				d.NotifyPassive("Nothing was selected to cut.")
@@ -3790,7 +3803,9 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	shortcut(copyIt, core.CmdTrinketCopy)
 	copyIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
-			if hasSelection(ea) {
+			if concealed(ea) {
+				d.NotifyPassive(concealedNotice)
+			} else if hasSelection(ea) {
 				ea.Copy()
 			} else {
 				d.NotifyPassive("Nothing was selected to copy.")
