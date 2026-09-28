@@ -67,7 +67,7 @@ func TestCloseWithNoLiveSessionGoesThrough(t *testing.T) {
 // run here) the handler lets the close through rather than stranding it.
 func TestEditorWindowsCarryTheCloseHandler(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 
 	w := newEditorWindow(desktop, application, nil)
 	if !w.Close() {

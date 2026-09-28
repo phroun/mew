@@ -16,7 +16,7 @@ import (
 
 func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 
 	w := newEditorWindow(desktop, application, []string{"--syntax=go", "notes.txt"})
 	if w == nil {
@@ -35,7 +35,7 @@ func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 // with no surface to reshape, so this holds headless.
 func TestRootWindowEntersSoloMode(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 
 	root := startRootWindow(desktop, application, []string{"notes.txt"})
 	if root == nil {
@@ -51,7 +51,7 @@ func TestRootWindowEntersSoloMode(t *testing.T) {
 
 func TestScratchEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 
 	w := newEditorWindow(desktop, application, nil)
 	if w == nil || w.Content() == nil {
@@ -89,7 +89,7 @@ func TestStatusScriptExecutes(t *testing.T) {
 
 func TestMenusBuildAndRegisterActions(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 
 	menus := buildMenus(desktop, application, true)
 	if len(menus) == 0 {
@@ -109,7 +109,7 @@ func TestMenusBuildAndRegisterActions(t *testing.T) {
 // action registers.
 func TestHelpMenuItems(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 
 	menus := buildMenus(desktop, application, true)
 	for _, action := range []string{"mew.help.usingmew", "mew.help.quickhelp", "mew.help.about"} {
@@ -156,7 +156,7 @@ func TestHelpMenuItems(t *testing.T) {
 // handler, and one fewer menu than the multi-window build (no Window menu).
 func TestMenusSingleWindowOmitsNewWindow(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 
 	menus := buildMenus(desktop, application, false)
 	if len(menus) == 0 {
@@ -201,7 +201,7 @@ func TestRawKeyInputAdvertisesItsKey(t *testing.T) {
 
 	// And the item exists to carry it.
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 	found := false
 	for _, m := range buildMenus(desktop, application, true) {
 		for _, it := range m.Items() {
@@ -224,7 +224,7 @@ func TestRawKeyInputAdvertisesItsKey(t *testing.T) {
 // any other app on the desktop besides.
 func TestSessionEndClosesOnlyItsOwnWindow(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 	desktop.AddApplication(application)
 
 	root := newEditorWindow(desktop, application, []string{"notes.txt"})
@@ -252,7 +252,7 @@ func TestSessionEndClosesOnlyItsOwnWindow(t *testing.T) {
 // ...and when the last one goes, the host does end.
 func TestHostEndsWhenTheLastWindowGoes(t *testing.T) {
 	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
+	application := app.New()
 	desktop.AddApplication(application)
 
 	only := newEditorWindow(desktop, application, []string{"notes.txt"})

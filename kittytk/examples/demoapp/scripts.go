@@ -498,11 +498,14 @@ bt=new tab caption="Bottom Tabs" children={
 vt=new tab caption="Vertical Tabs" children={
 	vtv=new panel layout=vbox spacing=8 children={
 		vtrtl=new checkbox direction=ltr caption="direction=rtl -- turns these two side strips, the window's own tab strip, and the Bottom Tabs screen: a side strip moves to the other edge, a top or bottom one runs the other way" halign=textnatural fill=none
+		vtclose=new checkbox direction=ltr caption="closable -- a close button on every tab of the same four strips" halign=textnatural fill=none
+		vttrail=new checkbox direction=ltr caption="trailing -- the close buttons after the labels instead of before them" halign=textnatural fill=none
+		vtmove=new checkbox direction=ltr caption="movable -- drag the tabs of the same four strips, or carry the current one with Shift and the arrows" halign=textnatural fill=none
 		vtc=new splitter orientation=horizontal position=0.5 stretch=1 children={
-		new tabs position=side children={
-			new tab caption="First" children={
+		vtside=new tabs position=side children={
+			new tab caption="First" !closable children={
 				new panel layout=vbox children={
-					new label caption="position=side: the strip stands\non the edge the form reads from."
+					new label caption="position=side: the strip stands\non the edge the form reads from.\n\nThis tab says !closable: it keeps\nno close button when the others get one."
 					new label caption="A form reading right to left\nwould stand it on the right."
 				}
 			}
@@ -527,7 +530,7 @@ vt=new tab caption="Vertical Tabs" children={
 	}
 	b.WriteString(`
 		}
-		new tabs position=sideopposite children={
+		vtopp=new tabs position=sideopposite children={
 			new tab caption="Alpha" children={
 				new panel layout=vbox children={
 					new label caption="position=sideopposite: the far side\nfrom the one the form reads from."
@@ -752,7 +755,12 @@ dledger=w.t.det.dbox.drow.dledger
 dlines=w.t.det.dbox.drow.dlines
 drtl=w.t.det.dbox.drow.drtl
 vtrtl=w.t.vt.vtv.vtrtl
+vtclose=w.t.vt.vtv.vtclose
+vttrail=w.t.vt.vtv.vttrail
+vtmove=w.t.vt.vtv.vtmove
 vtc=w.t.vt.vtv.vtc
+vtside=w.t.vt.vtv.vtc.vtside
+vtopp=w.t.vt.vtv.vtc.vtopp
 btabs=w.t.bt.btabs
 tfwatch=w.t.tf.tfp.tfrow.tfr.tfwatch
 tfecho=w.t.tf.tfp.tfrow.tfr.tfecho

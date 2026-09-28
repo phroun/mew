@@ -19,7 +19,7 @@ func (noFactory) New(string) (protocol.Object, error) {
 // accepts application-wide property sets with the same `set` syntax used for
 // windows and trinkets - the wire path a client drives via Conn.SetApp.
 func TestApplicationSetViaProtocol(t *testing.T) {
-	a := New(nil)
+	a := New()
 	if a.MultiWindow() || a.ContextOnly() {
 		t.Fatalf("preconditions: app should start single-window, not context-only")
 	}
@@ -57,7 +57,7 @@ func TestApplicationSetViaProtocol(t *testing.T) {
 // The name property is gated: rejected over the wire until the connection is
 // authorized to rename, and the app's name stays put on a rejected attempt.
 func TestApplicationNameChangeGated(t *testing.T) {
-	a := New(nil)
+	a := New()
 	a.SetName("Original")
 
 	s := protocol.NewSession()
@@ -92,9 +92,9 @@ func TestApplicationNameChangeGated(t *testing.T) {
 // creation - the same ObjectID space windows and trinkets draw from - so a
 // running app can be referred to (and, in time, set) over the protocol.
 func TestApplicationObjectID(t *testing.T) {
-	a := New(nil)
-	b := New(nil)
-	s := NewSecondary()
+	a := New()
+	b := New()
+	s := New()
 
 	if a.ObjectID() == 0 || b.ObjectID() == 0 || s.ObjectID() == 0 {
 		t.Fatalf("object IDs must be non-zero: %d %d %d", a.ObjectID(), b.ObjectID(), s.ObjectID())

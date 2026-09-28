@@ -77,6 +77,40 @@ class App:
             win.set("denomination=32" if state == FlagState.TRUE else "denomination=0")
         ui.checkbox("grid").on_toggle(grid)
 
+        # Vertical Tabs: one switch puts a close button on every tab of all
+        # four strips - the window's own, the Bottom Tabs one and the two side
+        # ones. closable is not inherited, so each strip is set on its own.
+        def closable(state):
+            flag = "closable" if state == FlagState.TRUE else "!closable"
+            for name in ("tabs", "btabs", "vtside", "vtopp"):
+                ui.object(name).set(flag)
+        ui.checkbox("vtclose").on_toggle(closable)
+
+        def trailing(state):
+            side = "trailing" if state == FlagState.TRUE else "leading"
+            for name in ("tabs", "btabs", "vtside", "vtopp"):
+                ui.object(name).set("close_side=" + side)
+        ui.checkbox("vttrail").on_toggle(trailing)
+
+        def movable(state):
+            flag = "movable" if state == FlagState.TRUE else "!movable"
+            for name in ("tabs", "btabs", "vtside", "vtopp"):
+                ui.object(name).set(flag)
+        ui.checkbox("vtmove").on_toggle(movable)
+        # A tab closed through its button says so. Nothing listens for
+        # closing on three of the strips, so their tabs close at once; the
+        # Bottom Tabs strip is asked, and refuses, to show a close the
+        # application decides.
+        for name in ("tabs", "btabs", "vtside", "vtopp"):
+            ui.object(name).on("closed", lambda ev, name=name: self.set_status(
+                "event closed index=%s on %s" % (ev.int_("index"), name)))
+
+        def refuse(ev):
+            self.conn.do(ev.uint("decision"), "deny")
+            self.set_status("event closing index=%s on btabs: denied, to show a close "
+                            "the application refuses" % ev.int_("index"))
+        ui.object("btabs").on("closing", refuse)
+
         def set_bg(arg):
             def handler(ev):
                 if ev.flag("checked") == FlagState.TRUE:

@@ -174,7 +174,7 @@ func createProtocolWindow(application *app.Application, desktop *trinkets.Deskto
 // D23/O3): see main_tui.go and main_sdl.go.
 func buildDemo(desktop *trinkets.Desktop) {
 	// Create the application - owns windows, provides menu/status content
-	application := app.New(nil) // nil backend - Desktop owns it now
+	application := app.New()
 	application.SetName("TUI Demo")
 
 	// Set up application's menu bar content
@@ -345,8 +345,8 @@ func createSecondaryApplication(desktop *trinkets.Desktop) *app.Application {
 	secondaryAppCount++
 	appNum := secondaryAppCount
 
-	// Create new application (nil backend - Desktop owns it)
-	newApp := app.New(nil)
+	// Create new application
+	newApp := app.New()
 	newApp.SetName(fmt.Sprintf("App %d", appNum))
 
 	// Create simple menu bar for this application

@@ -2,6 +2,7 @@
 package trinkets
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -18,7 +19,7 @@ type ProgressBar struct {
 	maximum     int
 	orientation core.Orientation
 	textVisible bool
-	format      string // e.g., "%p%" for percentage
+	caption     string // text shown on the bar; "" shows the percentage
 
 	// Indeterminate mode (unknown progress)
 	indeterminate bool
@@ -32,7 +33,6 @@ func NewProgressBar() *ProgressBar {
 		maximum:     100,
 		orientation: core.Horizontal,
 		textVisible: true,
-		format:      "%p%",
 	}
 	p.TrinketBase = *core.NewTrinketBase()
 	p.Init(p)
@@ -138,17 +138,17 @@ func (p *ProgressBar) SetTextVisible(visible bool) {
 	p.Update()
 }
 
-// Format returns the text format.
-func (p *ProgressBar) Format() string {
-	return p.format
+// Caption returns the text shown on the bar, "" when it shows the percentage.
+func (p *ProgressBar) Caption() string {
+	return p.caption
 }
 
-// SetFormat sets the text format.
-// %p = percentage (0-100)
-// %v = value
-// %m = maximum
-func (p *ProgressBar) SetFormat(format string) {
-	p.format = format
+// SetCaption sets the text shown on the bar in place of the percentage. It is
+// shown as written: nothing in it is expanded, so an application that wants
+// "2M / 250M" sends that string with each update, in the same statement as the
+// value that changed. An empty caption shows the percentage.
+func (p *ProgressBar) SetCaption(caption string) {
+	p.caption = caption
 	p.Update()
 }
 
@@ -267,37 +267,51 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 
 	// Draw text in center
 	if p.textVisible && !p.indeterminate {
-		text := p.formatText()
-		textLen := len(text)
-		startX := (totalCells - textLen) / 2
-		if startX < 0 {
-			startX = 0
-		}
+		p.paintBarText(painter, bounds, totalCells, scheme, metrics)
+	}
+}
 
-		// Get text styles from scheme
-		activeTextStyle := scheme.GetProgressFullText()
-		inactiveTextStyle := scheme.GetProgressEmptyText()
+// paintBarText centres the bar's text - its caption, or the percentage when it
+// has none - over the bar, in the filled part's text colour where it lies over
+// the fill and the empty part's colour elsewhere.
+//
+// The text is drawn WHOLE, twice: once in each colour, each copy clipped to its
+// side of the fill's edge. Drawing it as one run leaves shaping, bidi, marks
+// that ride a letter, wide characters and proportional glyphs to the text
+// engine, which already gets them right; the clip is what splits the colours,
+// so on a pixel surface a letter the edge runs through changes colour partway
+// across. Text too long for the bar is elided rather than drawn past its end.
+func (p *ProgressBar) paintBarText(painter *core.Painter, bounds core.UnitRect, totalCells int, scheme *style.Scheme, metrics core.CellMetrics) {
+	cellW := metrics.UnitsPerCellWidth
+	span := core.Unit(totalCells) * cellW
+	shown, _ := p.ElideText(p.barText(), span)
+	run := p.CellRun(shown)
+	if run == "" {
+		return
+	}
+	// Centred, and on a whole cell, so a cell target draws it on the cells it
+	// measured it by.
+	x := (span - p.MeasureText(run)) / 2 / cellW * cellW
+	if x < 0 {
+		x = 0
+	}
 
-		// The caption reads the same either way and is centred, so it is drawn
-		// where it always was. Which cell of the BAR each character stands on
-		// is what turns over, and that is what says whether it is on the filled
-		// part.
-		filledCells := totalCells * p.Percentage() / 100
-		mirrored := core.ChromeMirrored(p)
-		for i, ch := range text {
-			at := startX + i
-			if mirrored {
-				at = startX + textLen - 1 - i
-			}
-			// Use appropriate style based on position
-			var s style.CellStyle
-			if at < filledCells {
-				s = activeTextStyle
-			} else {
-				s = inactiveTextStyle
-			}
-			painter.DrawCell(core.Unit(startX+i)*metrics.UnitsPerCellWidth, 0, ch, s)
-		}
+	// The fill covers whole cells from the leading edge; the empty part is the
+	// rest of the bar.
+	filled := core.Unit(totalCells*p.Percentage()/100) * cellW
+	fillX := core.LeadingX(p, span, 0, filled)
+	fillBox := core.UnitRect{X: fillX, Width: filled, Height: bounds.Height}
+	emptyBox := core.UnitRect{X: filled, Width: span - filled, Height: bounds.Height}
+	if fillX != 0 {
+		emptyBox.X = 0
+	}
+
+	font := p.EffectiveFont()
+	if filled > 0 {
+		painter.WithClip(fillBox).DrawText(x, 0, run, scheme.GetProgressFullText(), font)
+	}
+	if filled < span {
+		painter.WithClip(emptyBox).DrawText(x, 0, run, scheme.GetProgressEmptyText(), font)
 	}
 }
 
@@ -332,7 +346,17 @@ func (p *ProgressBar) paintVertical(painter *core.Painter, bounds core.UnitRect,
 	}
 }
 
-func (p *ProgressBar) formatText() string {
+// barText is what the bar shows: its caption, or the percentage when it has
+// none.
+func (p *ProgressBar) barText() string {
+	if p.caption != "" {
+		return p.caption
+	}
+	return p.percentText()
+}
+
+// percentText is the bar's percentage as text, "0%" to "100%".
+func (p *ProgressBar) percentText() string {
 	// Format percentage properly (handles 0-100)
 	pct := p.Percentage()
 	if pct >= 100 {
@@ -398,9 +422,9 @@ func indeterminateSweepPos(totalCells, blockSize int) int {
 func (p *ProgressBar) AccessibleInfo() core.AccessibleInfo {
 	info := p.AccessibleTrinket.AccessibleInfo()
 	info.Role = core.RoleProgressBar
-	info.Value = p.formatText()
-	info.ValueMin = string(rune('0' + p.minimum))
-	info.ValueMax = string(rune('0' + p.maximum))
+	info.Value = p.percentText()
+	info.ValueMin = strconv.Itoa(p.minimum)
+	info.ValueMax = strconv.Itoa(p.maximum)
 
 	if p.indeterminate {
 		info.State |= core.StateBusy

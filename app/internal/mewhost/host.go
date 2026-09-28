@@ -89,7 +89,7 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	if graphical {
 		hostterm.Override(hostterm.TerminalSDL)
 	}
-	application := app.New(nil)
+	application := app.New()
 	application.SetName("mew")
 	application.SetMultiWindow(false) // alone to start; the hook below tracks peers
 	// mew's own menus are held back while the first-run welcome has the window

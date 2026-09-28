@@ -30,7 +30,6 @@ const (
 	WindowFlagNoClose                                      // No close button
 	WindowFlagNoMinimize                                   // No minimize button
 	WindowFlagNoMaximize                                   // No maximize button
-	WindowFlagStaysOnTop                                   // Always on top
 	WindowFlagTearable                                     // Shows the %/# tear-off handle; window may detach
 	WindowFlagNoTitleWhenMaximized                         // No title bar (and no frame) WHILE maximized; normal chrome when restored
 )

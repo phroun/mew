@@ -43,15 +43,14 @@ func init() {
 		flag WindowFlags
 		doc  string
 	}{
-		"frameless":    {WindowFlagFrameless, "Draw no frame around the window."},
-		"no_title":     {WindowFlagNoTitle, "Draw no title bar."},
-		"no_resize":    {WindowFlagNoResize, "The user cannot resize the window."},
-		"no_move":      {WindowFlagNoMove, "The user cannot move the window."},
-		"no_close":     {WindowFlagNoClose, "The user cannot close the window."},
-		"no_minimize":  {WindowFlagNoMinimize, "The user cannot minimize the window."},
-		"no_maximize":  {WindowFlagNoMaximize, "The user cannot maximize the window."},
-		"stays_on_top": {WindowFlagStaysOnTop, "Keep the window above its peers."},
-		"tearable":     {WindowFlagTearable, "The window may be torn off to its own OS surface."},
+		"frameless":   {WindowFlagFrameless, "Draw no frame around the window."},
+		"no_title":    {WindowFlagNoTitle, "Draw no title bar."},
+		"no_resize":   {WindowFlagNoResize, "The user cannot resize the window."},
+		"no_move":     {WindowFlagNoMove, "The user cannot move the window."},
+		"no_close":    {WindowFlagNoClose, "The user cannot close the window."},
+		"no_minimize": {WindowFlagNoMinimize, "The user cannot minimize the window."},
+		"no_maximize": {WindowFlagNoMaximize, "The user cannot maximize the window."},
+		"tearable":    {WindowFlagTearable, "The window may be torn off to its own OS surface."},
 	}
 
 	props := map[string]protocol.Property{
@@ -203,7 +202,7 @@ func init() {
 			"window_closing": protocol.NewEventDesc("The window is closing and has NOT closed: the application decides whether it may, because it is the only one that knows there is unsaved work. Subscribing is what makes a close askable at all — a window nobody is listening about closes at once.").
 				Field("window", "uint", "The window asking.").
 				Field(protocol.DecisionField, "uint", "The decision to answer: `do <id> allow` and it closes, `do <id> deny` and it stays. Answer inside `within`, or say `do <id> waiting` while a person reads a dialog — not because deciding must be quick, but because the display cannot tell an application that is still thinking from one that is never going to answer. Past that it asks the person whether to force the window closed, and says which application did not respond. Answering, even to say `deny`, is what keeps your name out of that dialog.").
-					Field(protocol.DecisionWithinField, "uint", "How many milliseconds the display will wait for the answer. Putting your own question in front of somebody takes longer than this: send `do <id> waiting` every half of it while your dialog is up, and the display goes on waiting instead of asking whether to force the window closed."),
+				Field(protocol.DecisionWithinField, "uint", "How many milliseconds the display will wait for the answer. Putting your own question in front of somebody takes longer than this: send `do <id> waiting` every half of it while your dialog is up, and the display goes on waiting instead of asking whether to force the window closed."),
 			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
 				Field("window", "uint", "The closed window's object ID."),
 		},
