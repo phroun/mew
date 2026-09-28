@@ -292,7 +292,7 @@ tf=new tab caption="Text Fields" children={
 				new textinput min_width=160 text="hunter2" echo=password mask="*"
 
 				new label caption="echo=password_on_edit - the key just typed shows for a moment:"
-				new textinput min_width=160 echo=password_on_edit
+				new textinput min_width=160 placeholder="Type a password..." echo=password_on_edit
 
 				new label caption="echo=none - accepts typing, shows nothing:"
 				new textinput min_width=160 text="invisible" echo=none
@@ -301,13 +301,17 @@ tf=new tab caption="Text Fields" children={
 				tfwatch=new textinput min_width=160 placeholder="Type, then press Return..."
 				tfecho=new label caption="(nothing yet)"
 
-				new label caption="Masked, and you choose the mask:"
+				new label caption="Masked, and you choose the echo and the mask:"
 				tfmask=new textinput min_width=160 text="secret" echo=password
+				tfmerow=new panel layout=hbox spacing=8 children={
+					tfmep=new radiobutton caption="password" group=tfechog checked
+					tfmee=new radiobutton caption="password_on_edit" group=tfechog
+					tfmen=new radiobutton caption="normal" group=tfechog
+				}
 				tfmrow=new panel layout=hbox spacing=8 children={
 					tfmb=new radiobutton caption="bullet" group=tfmaskg checked
 					tfms=new radiobutton caption="star" group=tfmaskg
 					tfmh=new radiobutton caption="hash" group=tfmaskg
-					tfmn=new radiobutton caption="show" group=tfmaskg
 				}
 
 				new label caption="Mixed directions. Walk the caret through it:"
@@ -771,7 +775,9 @@ tfmask=w.t.tf.tfp.tfrow.tfr.tfmask
 tfmb=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmb
 tfms=w.t.tf.tfp.tfrow.tfr.tfmrow.tfms
 tfmh=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmh
-tfmn=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmn
+tfmep=w.t.tf.tfp.tfrow.tfr.tfmerow.tfmep
+tfmee=w.t.tf.tfp.tfrow.tfr.tfmerow.tfmee
+tfmen=w.t.tf.tfp.tfrow.tfr.tfmerow.tfmen
 tfbidi=w.t.tf.tfp.tfrow.tfr.tfbidi
 tfbidic=w.t.tf.tfp.tfrow.tfr.tfbidic
 dnx=w.t.dn.dnp.dnrow.dnx
