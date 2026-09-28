@@ -13,7 +13,7 @@ require (
 	github.com/phroun/direct-key-handler v0.3.39
 	github.com/phroun/key-sequence-processor v0.1.11
 	github.com/phroun/khatool v0.1.2
-	github.com/phroun/mew v0.3.2-alpha.0.20260927074402-34b15f324b88
+	github.com/phroun/mew v0.3.3-alpha
 	github.com/phroun/pawscript v0.2.17-alpha
 	github.com/phroun/purfecterm v0.2.55
 	github.com/phroun/serval v0.1.2-alpha

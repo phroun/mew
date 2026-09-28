@@ -8,8 +8,8 @@ module github.com/phroun/mew-app
 go 1.25.0
 
 require (
-	github.com/phroun/kittytk v0.1.33-alpha
-	github.com/phroun/mew v0.3.2-alpha
+	github.com/phroun/kittytk v0.1.34-alpha
+	github.com/phroun/mew v0.3.3-alpha
 	golang.org/x/sys v0.47.0
 )
 

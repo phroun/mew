@@ -90,6 +90,30 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### The v0.1.34 sync (record)
+
+This one went up rather than down. The work was made here, in the subtree, as
+[mew#10](https://github.com/phroun/mew/pull/10) and tagged mew
+**v0.3.3-alpha**; upstream took its first three commits as
+[#53](https://github.com/phroun/kittytk/pull/53) and the remaining thirteen as
+[#54](https://github.com/phroun/kittytk/pull/54), made with
+`git format-patch --relative=kittytk` and applied with `git am -3`. No
+fork-boundary file was touched. The two host `main.go` files took the
+`app.New()` change beside their standing `hostcfg.Serve` difference, which
+stays mew's.
+
+Upstream tagged the result **v0.1.34-alpha**. Every shared file is
+byte-identical to the tag except the same three mew-side edits as before;
+`core/version.go` still reads `Build = 32` in the tag.
+
+`app.New` lost its backend parameter in this release, so mew v0.3.3-alpha's
+`app` built only inside the workspace until the pins moved: the root and app
+kittytk pins went v0.1.33-alpha -> v0.1.34-alpha, and the app and `kittytk`
+mew pins moved to **v0.3.3-alpha** (the `kittytk` one from the pseudo-version
+it had carried). `go.sum` per module via `GOWORK=off go mod tidy`; all three
+modules build with `GOWORK=off`, `kittytk` under `-tags mew` included, and
+`app`'s tests pass there.
+
 ### The v0.1.33 sync (record)
 
 Brought down from upstream `main` at
