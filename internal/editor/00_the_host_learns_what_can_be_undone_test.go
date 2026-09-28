@@ -27,9 +27,14 @@ func TestTheHostLearnsWhatCanBeUndone(t *testing.T) {
 		t.Fatalf("an unchanged answer should push nothing, got %v", seen)
 	}
 
+	// A second edit, then one undo: undo is still there and redo appears, so
+	// only the redo half changed -- and that is still a change to push.
+	w.Buffer.InsertText(0, 0, "Y")
+	w.Buffer.BakeUndo()
+	e.notifyUndoState()
 	w.Buffer.Undo()
 	e.notifyUndoState()
-	if len(seen) != 3 || seen[2] != (pair{false, true}) {
-		t.Fatalf("after undoing it should push (false, true), got %v", seen)
+	if len(seen) != 3 || seen[2] != (pair{true, true}) {
+		t.Fatalf("undoing one of two edits should push (true, true), got %v", seen)
 	}
 }

@@ -29,6 +29,21 @@ func TestABufferSaysWhetherItCanUndo(t *testing.T) {
 	}
 }
 
+// History pruned away is not there to undo into.
+func TestPrunedHistoryCannotBeUndone(t *testing.T) {
+	b := NewFromString("abc")
+	defer b.Close()
+	b.InsertText(0, 0, "X")
+	b.BakeUndo()
+	b.PruneUndo()
+	if b.CanUndo() {
+		t.Error("CanUndo says yes with the history before it pruned")
+	}
+	if b.Undo() {
+		t.Error("Undo stepped into pruned history")
+	}
+}
+
 // A buffer with no history behind it answers no to both.
 func TestABufferWithoutHistoryCannotUndo(t *testing.T) {
 	var b Buffer
