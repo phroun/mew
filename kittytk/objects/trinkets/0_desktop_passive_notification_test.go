@@ -10,6 +10,10 @@ func (s *selNoop) Cut()               { s.cut = true }
 func (s *selNoop) Copy()              { s.copied = true }
 func (s *selNoop) Paste()             {}
 func (s *selNoop) SelectAll()         {}
+func (s *selNoop) Undo()              {}
+func (s *selNoop) Redo()              {}
+func (s *selNoop) UndoEnabled() bool  { return false }
+func (s *selNoop) RedoEnabled() bool  { return false }
 func (s *selNoop) HasSelection() bool { return false }
 
 func TestHasSelectionDefaultsTrue(t *testing.T) {
@@ -26,10 +30,14 @@ func TestHasSelectionDefaultsTrue(t *testing.T) {
 // bareActor implements editActor but not selectionReporter.
 type bareActor struct{}
 
-func (bareActor) Cut()       {}
-func (bareActor) Copy()      {}
-func (bareActor) Paste()     {}
-func (bareActor) SelectAll() {}
+func (bareActor) Cut()              {}
+func (bareActor) Copy()             {}
+func (bareActor) Paste()            {}
+func (bareActor) SelectAll()        {}
+func (bareActor) Undo()             {}
+func (bareActor) Redo()             {}
+func (bareActor) UndoEnabled() bool { return false }
+func (bareActor) RedoEnabled() bool { return false }
 
 // A passive notification overlays the status bar and reverts to the prior
 // content once its generation's timer clears it.

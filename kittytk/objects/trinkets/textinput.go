@@ -34,6 +34,15 @@ type TextInput struct {
 	revealAt    int
 	revealTimer *DesktopTimer
 
+	// undos and redos are the field's history (see edit): each entry is the
+	// field as it stood before one step, newest last.
+	undos, redos []undoState
+	// openKind is the kind of the step still open to more of the same, and
+	// openCaret where the caret stood when it last grew; zero when no step is
+	// open.
+	openKind  editKind
+	openCaret int
+
 	// Cursor and selection
 	cursorPos int
 	selStart  int
@@ -148,6 +157,28 @@ type TextInput struct {
 	embedOrigin func() core.UnitPoint
 }
 
+// undoDepth is how many steps back a field's history reaches.
+const undoDepth = 100
+
+// editKind is what an edit does, which decides whether it joins the step
+// before it: typing joins typing and deleting joins deleting, while a paste, a
+// cut, an input method committing several characters at once, or clearing the
+// line is always a step of its own.
+type editKind int
+
+const (
+	editInsert editKind = iota + 1
+	editDelete
+	editWhole
+)
+
+// undoState is the field as it stood before a step: its text, and where the
+// caret and the selection were, so undoing puts all three back.
+type undoState struct {
+	text                     []rune
+	cursor, selStart, selEnd int
+}
+
 // defaultMaskChar is what a masked field paints when nothing says otherwise.
 const defaultMaskChar = '\u2022' // BULLET
 
@@ -201,6 +232,9 @@ func NewTextInput() *TextInput {
 		// Editing.
 		core.CmdTrinketDelPrior, core.CmdTrinketDelNext, core.CmdTrinketDelLine,
 		core.CmdTrinketSelectAll,
+		// The clipboard and the history, on the keys that mean them here.
+		core.CmdTrinketCut, core.CmdTrinketCopy, core.CmdTrinketPaste,
+		core.CmdTrinketUndo, core.CmdTrinketRedo, core.CmdTrinketSimpleUndo,
 		// Enter submits. A text field offers no edit command -- it IS the
 		// editor -- so Enter falls through to activate here.
 		core.CmdTrinketActivate,
@@ -255,6 +289,10 @@ func (t *TextInput) Text() string {
 // SetText sets the text content.
 func (t *TextInput) SetText(text string) {
 	t.hideReveal()
+	// Text set from outside is where the history starts: undo does not reach
+	// past a value the program replaced -- a login form cleared after a failed
+	// attempt does not hand the attempt back to the next person at it.
+	t.undos, t.redos, t.openKind = nil, nil, 0
 	t.text = []rune(text)
 	t.cursorPos = len(t.text)
 	t.selStart = 0
@@ -562,10 +600,117 @@ func (t *TextInput) insert(text string) int {
 // one place a masked field may show a character: EchoPasswordOnEdit reveals
 // a single rune typed here, and nothing that arrives another way -- a paste,
 // an input method committing a whole word -- is shown at all.
+//
+// Every caller hands it one character; an input method's commit, which can
+// carry several, has a path of its own (see HandleTextCommit).
 func (t *TextInput) typed(text string) {
-	if t.insert(text) == 1 {
+	n := 0
+	t.edit(editInsert, func() { n = t.insert(text) })
+	if n == 1 {
 		t.reveal(t.cursorPos - 1)
 	}
+}
+
+// edit makes one change to the text as a step in the field's history, or as
+// more of the step still open.
+//
+// It joins the open step when it is the same kind, the caret is where that
+// step left it, and nothing is selected: typing a word is one step, and so is
+// backspacing over one. A caret move ends the step (see endStep), and so does
+// a selection, which is why typing over one starts a step that holds what was
+// replaced and the first character typed, with the rest of the run joining it.
+// A change that turns out to change nothing leaves the history alone.
+func (t *TextInput) edit(kind editKind, change func()) {
+	before := t.snapshot()
+	// A whole step never leaves one open (see below), so it never joins.
+	joins := kind == t.openKind && t.cursorPos == t.openCaret && t.selStart == t.selEnd
+	change()
+	if string(before.text) == string(t.text) {
+		return
+	}
+	if !joins {
+		t.undos = append(t.undos, before)
+		if len(t.undos) > undoDepth {
+			t.undos = t.undos[len(t.undos)-undoDepth:]
+		}
+	}
+	t.redos = nil
+	t.openKind, t.openCaret = kind, t.cursorPos
+	if kind == editWhole {
+		t.openKind = 0
+	}
+}
+
+// endStep closes the open step, so the next edit starts one of its own. A caret
+// movement does this: what is typed somewhere else is a different change.
+func (t *TextInput) endStep() { t.openKind = 0 }
+
+// snapshot is the field as it stands, for the history.
+func (t *TextInput) snapshot() undoState {
+	return undoState{
+		text:   append([]rune(nil), t.text...),
+		cursor: t.cursorPos, selStart: t.selStart, selEnd: t.selEnd,
+	}
+}
+
+// restore puts the field back as a snapshot had it, and tells of the change
+// as any edit does. Nothing restored is revealed, in a field masked
+// EchoPasswordOnEdit: only a key just typed ever is.
+func (t *TextInput) restore(s undoState) {
+	t.preedit = core.Preedit{}
+	t.preeditStanding = false
+	t.text = append([]rune(nil), s.text...)
+	clamp := func(v int) int {
+		if v < 0 {
+			return 0
+		}
+		if v > len(t.text) {
+			return len(t.text)
+		}
+		return v
+	}
+	t.cursorPos, t.selStart, t.selEnd = clamp(s.cursor), clamp(s.selStart), clamp(s.selEnd)
+	t.openKind = 0
+	t.textChanged()
+	t.resetCaretBlink()
+}
+
+// UndoEnabled reports whether there is a step to undo.
+func (t *TextInput) UndoEnabled() bool { return t.AcceptsTextInput() && len(t.undos) > 0 }
+
+// RedoEnabled reports whether there is an undone step to put back.
+func (t *TextInput) RedoEnabled() bool { return t.AcceptsTextInput() && len(t.redos) > 0 }
+
+// Undo takes back the last step.
+func (t *TextInput) Undo() {
+	if !t.UndoEnabled() {
+		return
+	}
+	t.redos = append(t.redos, t.snapshot())
+	s := t.undos[len(t.undos)-1]
+	t.undos = t.undos[:len(t.undos)-1]
+	t.restore(s)
+}
+
+// Redo puts back the last step undone.
+func (t *TextInput) Redo() {
+	if !t.RedoEnabled() {
+		return
+	}
+	t.undos = append(t.undos, t.snapshot())
+	s := t.redos[len(t.redos)-1]
+	t.redos = t.redos[:len(t.redos)-1]
+	t.restore(s)
+}
+
+// SimpleUndo redoes where there is something to redo and undoes once
+// otherwise, so a second press puts back what the first took away.
+func (t *TextInput) SimpleUndo() {
+	if t.RedoEnabled() {
+		t.Redo()
+		return
+	}
+	t.Undo()
 }
 
 // reveal shows the rune at index as itself in an EchoPasswordOnEdit field,
@@ -633,6 +778,11 @@ func (t *TextInput) backspace() {
 	if t.readOnly {
 		return
 	}
+	t.edit(editDelete, t.deletePrior)
+}
+
+// deletePrior is backspace's change to the text.
+func (t *TextInput) deletePrior() {
 
 	if t.HasSelection() {
 		t.deleteSelection()
@@ -657,6 +807,11 @@ func (t *TextInput) delete() {
 	if t.readOnly {
 		return
 	}
+	t.edit(editDelete, t.deleteNext)
+}
+
+// deleteNext is delete's change to the text.
+func (t *TextInput) deleteNext() {
 
 	if t.HasSelection() {
 		t.deleteSelection()
@@ -1900,6 +2055,16 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		core.CmdTrinketSelBeg, core.CmdTrinketSelEnd:
 		extend = true
 	}
+	// A caret movement ends the step being typed or deleted: what comes after
+	// it is a change somewhere else.
+	switch cmd {
+	case core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketSelLeft, core.CmdTrinketSelRight,
+		core.CmdTrinketSelUp, core.CmdTrinketSelDown,
+		core.CmdTrinketBeg, core.CmdTrinketEnd, core.CmdTrinketBegOrSelectAll,
+		core.CmdTrinketSelBeg, core.CmdTrinketSelEnd, core.CmdTrinketSelectAll:
+		t.endStep()
+	}
 
 	switch cmd {
 	case core.CmdTrinketItemLeft, core.CmdTrinketSelLeft:
@@ -2020,13 +2185,34 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketDelLine:
-		// Clear line
-		t.text = nil
-		t.cursorPos = 0
-		t.selStart = 0
-		t.selEnd = 0
-		t.scroll = 0
-		t.textChanged()
+		// Clear line, as a step of its own.
+		t.edit(editWhole, func() {
+			t.text = nil
+			t.cursorPos = 0
+			t.selStart = 0
+			t.selEnd = 0
+			t.scroll = 0
+			t.textChanged()
+		})
+		return true
+
+	case core.CmdTrinketUndo:
+		t.Undo()
+		return true
+	case core.CmdTrinketRedo:
+		t.Redo()
+		return true
+	case core.CmdTrinketSimpleUndo:
+		t.SimpleUndo()
+		return true
+	case core.CmdTrinketCut:
+		t.Cut()
+		return true
+	case core.CmdTrinketCopy:
+		t.Copy()
+		return true
+	case core.CmdTrinketPaste:
+		t.Paste()
 		return true
 
 	case core.CmdTrinketSelectAll:
@@ -2064,6 +2250,9 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleMousePress handles mouse clicks.
 func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
+	// A press places the caret, or starts a selection: either way the step
+	// being typed ends here.
+	t.endStep()
 	if event.Button == core.LeftButton {
 		// The end-of-run arrows are chrome, not text: a press on one walks the
 		// caret toward that end rather than placing it where the pointer is.
@@ -2416,31 +2605,41 @@ func (t *TextInput) HandleTextCommit(event core.TextCommitEvent) bool {
 	t.preedit = core.Preedit{}
 	t.preeditStanding = false
 
-	trailing := 0
-	if standing && covers > 0 && t.selStart == t.selEnd {
-		// Only what is actually there. A selection is left to insert, which
-		// deletes it — taking these runes as well would erase text beside the
-		// composition that it was never standing over.
-		if from < 0 {
-			from = 0
-		}
-		to := from + covers
-		if to > len(t.text) {
-			to = len(t.text)
-		}
-		if to > from {
-			// How much was typed BESIDE the composition, so the caret can be put
-			// back after it once the region's length changes.
-			if trailing = t.cursorPos - to; trailing < 0 {
-				trailing = 0
-			}
-			t.text = append(t.text[:from], t.text[to:]...)
-			t.cursorPos = from
-			t.selStart, t.selEnd = t.cursorPos, t.cursorPos
-		}
+	// What the commit replaces and what it types are one step: one character
+	// joins the typing around it, several are a step of their own.
+	kind := editInsert
+	if utf8.RuneCountInString(event.Text) > 1 {
+		kind = editWhole
 	}
-
-	t.typed(event.Text)
+	trailing, n := 0, 0
+	t.edit(kind, func() {
+		if standing && covers > 0 && t.selStart == t.selEnd {
+			// Only what is actually there. A selection is left to insert, which
+			// deletes it — taking these runes as well would erase text beside the
+			// composition that it was never standing over.
+			if from < 0 {
+				from = 0
+			}
+			to := from + covers
+			if to > len(t.text) {
+				to = len(t.text)
+			}
+			if to > from {
+				// How much was typed BESIDE the composition, so the caret can be put
+				// back after it once the region's length changes.
+				if trailing = t.cursorPos - to; trailing < 0 {
+					trailing = 0
+				}
+				t.text = append(t.text[:from], t.text[to:]...)
+				t.cursorPos = from
+				t.selStart, t.selEnd = t.cursorPos, t.cursorPos
+			}
+		}
+		n = t.insert(event.Text)
+	})
+	if n == 1 {
+		t.reveal(t.cursorPos - 1)
+	}
 	if trailing > 0 {
 		// Back to where the person typing left it, on the far side of what they
 		// typed while the palette was up.
@@ -2471,7 +2670,7 @@ func (t *TextInput) HandleTextErase(event core.TextEraseEvent) bool {
 		return false
 	}
 	if t.selStart != t.selEnd {
-		t.deleteSelection()
+		t.edit(editDelete, t.deleteSelection)
 		t.resetCaretBlink()
 		t.ensureCursorVisible()
 		t.Update()
@@ -2487,10 +2686,12 @@ func (t *TextInput) HandleTextErase(event core.TextEraseEvent) bool {
 	if n == 0 {
 		return true
 	}
-	t.text = append(t.text[:t.cursorPos-n], t.text[t.cursorPos:]...)
-	t.cursorPos -= n
-	t.selStart, t.selEnd = t.cursorPos, t.cursorPos
-	t.textChanged()
+	t.edit(editDelete, func() {
+		t.text = append(t.text[:t.cursorPos-n], t.text[t.cursorPos:]...)
+		t.cursorPos -= n
+		t.selStart, t.selEnd = t.cursorPos, t.cursorPos
+		t.textChanged()
+	})
 	t.resetCaretBlink()
 	t.ensureCursorVisible()
 	t.Update()
@@ -2594,8 +2795,10 @@ func (t *TextInput) Cut() {
 		return
 	}
 	t.Copy()
-	t.deleteSelection()
-	t.textChanged()
+	t.edit(editWhole, func() {
+		t.deleteSelection()
+		t.textChanged()
+	})
 }
 
 // Paste inserts the clipboard at the caret, replacing any selection.
@@ -2642,7 +2845,7 @@ func (t *TextInput) pasteText(s string) {
 		}
 		flat = append(flat, r)
 	}
-	t.insert(string(flat))
+	t.edit(editWhole, func() { t.insert(string(flat)) })
 }
 
 // contextMenuID names this input's popup uniquely.

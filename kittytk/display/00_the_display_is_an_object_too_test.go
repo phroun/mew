@@ -63,7 +63,7 @@ func TestWhatTheDisplayDoesIsDoneNotSet(t *testing.T) {
 	conn := dialDesktop(t, "Doing App")
 
 	for _, action := range []string{
-		"tile", "cascade", "rawkey", "cut", "copy", "paste", "selectall",
+		"tile", "cascade", "rawkey", "undo", "redo", "cut", "copy", "paste", "selectall",
 	} {
 		if err := conn.Host().Do(action); err != nil {
 			t.Errorf("do host %s: %v", action, err)
@@ -243,7 +243,7 @@ func TestDescribeReportsWhatEachTypeDoes(t *testing.T) {
 		t.Fatalf("describe: %v", err)
 	}
 	want := map[string][]string{
-		"host":    {"cascade", "copy", "cut", "paste", "rawkey", "relay", "selectall", "tile"},
+		"host":    {"cascade", "copy", "cut", "paste", "rawkey", "redo", "relay", "selectall", "tile", "undo"},
 		"mdipane": {"cascade", "minimize", "next", "prior", "remove", "restore", "tile"},
 		"blob":    {"append"},
 	}

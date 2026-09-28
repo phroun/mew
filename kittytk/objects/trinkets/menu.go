@@ -78,6 +78,12 @@ type MenuItem struct {
 	// detached window's asks its own). Nil in a menu nobody composed, which
 	// falls back to the registry.
 	keyResolver func(command string) string
+	// alsoAdvertises is a second command whose key this item may show: the
+	// system Undo item names trinket_undo and also shows the key for
+	// trinket_simple_undo, which is the one-key undo most keyboards know.
+	// Which of the two keys is shown is the keymap's ranking, so a Mac shows
+	// its Command key and everything else the Control one.
+	alsoAdvertises string
 	// ShortcutText is literal text for the item's shortcut column, printed
 	// exactly where a bound Shortcut would print. It exists for keys the
 	// TOOLKIT does not handle — a hosted application's own bindings, say —
@@ -210,10 +216,25 @@ func (m *MenuItem) ShortcutDisplay() string {
 // composer's resolver where there is one, else the registry, which is the best
 // a menu nobody composed can do.
 func (m *MenuItem) resolveCommandKey() string {
-	if m.keyResolver != nil {
-		return m.keyResolver(m.Command)
+	key := m.keyFor(m.Command)
+	if m.alsoAdvertises == "" {
+		return key
 	}
-	return core.DefaultKeyRegistry().KeyForCommand(m.Command)
+	// A second command that means the same item here: whichever of the two
+	// keys the keymap ranks higher is the one shown (see alsoAdvertises).
+	if alt := m.keyFor(m.alsoAdvertises); alt != "" &&
+		(key == "" || core.DefaultKeyRegistry().Outranks(alt, m.alsoAdvertises, key, m.Command)) {
+		return alt
+	}
+	return key
+}
+
+// keyFor asks what key means one command here.
+func (m *MenuItem) keyFor(command string) string {
+	if m.keyResolver != nil {
+		return m.keyResolver(command)
+	}
+	return core.DefaultKeyRegistry().KeyForCommand(command)
 }
 
 // SetCommand names what this item MEANS, so its key column is resolved rather
@@ -369,6 +390,8 @@ const (
 // A role the app does not claim is synthesized as before, so claiming some
 // and not others is fine.
 const (
+	ItemIDUndo      = "undo"      // Undo the focused trinket's last change
+	ItemIDRedo      = "redo"      // Redo the focused trinket's last undone change
 	ItemIDCut       = "cut"       // Cut to the system clipboard
 	ItemIDCopy      = "copy"      // Copy to the system clipboard
 	ItemIDPaste     = "paste"     // Paste from the system clipboard
@@ -379,7 +402,7 @@ const (
 // system supplies behaviour for.
 func standardEditItemRole(id string) bool {
 	switch id {
-	case ItemIDCut, ItemIDCopy, ItemIDPaste, ItemIDSelectAll:
+	case ItemIDUndo, ItemIDRedo, ItemIDCut, ItemIDCopy, ItemIDPaste, ItemIDSelectAll:
 		return true
 	}
 	return false

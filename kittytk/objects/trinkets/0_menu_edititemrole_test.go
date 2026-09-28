@@ -55,7 +55,7 @@ func TestUntaggedClipboardItemsDuplicate(t *testing.T) {
 		NewMenuItem("Select All"),
 	))
 	got := captions(menu)
-	want := []string{"Cut", "Copy", "Paste", "---", "Select All", "---", "Cut to OS Clipboard", "Select All"}
+	want := []string{"Undo", "Redo", "---", "Cut", "Copy", "Paste", "---", "Select All", "---", "Cut to OS Clipboard", "Select All"}
 	if len(got) != len(want) {
 		t.Fatalf("menu = %v, want %v", got, want)
 	}
@@ -70,18 +70,20 @@ func TestUntaggedClipboardItemsDuplicate(t *testing.T) {
 // position among its own items, and nothing prepended. The system supplies the
 // behaviour - handler, host shortcut, enable/disable.
 func TestTaggedItemsAdoptStandardBehaviour(t *testing.T) {
+	undo := roleItem("Undo Last Change", ItemIDUndo)
+	redo := roleItem("Redo Last Change", ItemIDRedo)
 	cut := roleItem("Cut to OS Clipboard", ItemIDCut)
 	copyIt := roleItem("Copy to OS Clipboard", ItemIDCopy)
 	paste := roleItem("Paste from OS Clipboard", ItemIDPaste)
 	all := roleItem("Select All", ItemIDSelectAll)
 
 	menu := editMenuAfterMerge(t, mkEditMenu(
-		NewMenuItem("Mark Block Beginning"), cut, copyIt, paste, all,
+		undo, redo, NewMenuItem("Mark Block Beginning"), cut, copyIt, paste, all,
 	))
 
 	got := captions(menu)
-	want := []string{"Mark Block Beginning", "Cut to OS Clipboard", "Copy to OS Clipboard",
-		"Paste from OS Clipboard", "Select All"}
+	want := []string{"Undo Last Change", "Redo Last Change", "Mark Block Beginning",
+		"Cut to OS Clipboard", "Copy to OS Clipboard", "Paste from OS Clipboard", "Select All"}
 	if len(got) != len(want) {
 		t.Fatalf("menu = %v, want %v (no synthesized block, no leading separator)", got, want)
 	}
@@ -94,7 +96,7 @@ func TestTaggedItemsAdoptStandardBehaviour(t *testing.T) {
 	// Behaviour came across: each adopted item is wired, and names the command
 	// the synthesized one would have named -- which is how it gets a key at
 	// all, resolved where the focus is rather than stamped on here.
-	for _, it := range []*MenuItem{cut, copyIt, paste, all} {
+	for _, it := range []*MenuItem{undo, redo, cut, copyIt, paste, all} {
 		if it.OnTriggered == nil {
 			t.Errorf("%q adopted its role but has no handler", it.Text)
 		}
@@ -113,7 +115,7 @@ func TestPartialAdoptionSynthesizesTheRest(t *testing.T) {
 		roleItem("Select All", ItemIDSelectAll),
 	))
 	got := captions(menu)
-	want := []string{"Cut", "Copy", "---", "Paste from OS Clipboard", "Select All"}
+	want := []string{"Undo", "Redo", "---", "Cut", "Copy", "---", "Paste from OS Clipboard", "Select All"}
 	if len(got) != len(want) {
 		t.Fatalf("menu = %v, want %v", got, want)
 	}
@@ -179,5 +181,46 @@ func TestSystemAndAppAboutToShowBothRun(t *testing.T) {
 	// changed the item at all proves the system hook ran alongside the app's.
 	if cut.Enabled {
 		t.Error("system hook did not run: Cut should be disabled with no focused editor")
+	}
+}
+
+// An app that claims the clipboard roles and not the history ones gets the
+// system's Undo and Redo above its own items, with a separator between.
+func TestUnclaimedHistoryIsSynthesizedAbove(t *testing.T) {
+	menu := editMenuAfterMerge(t, mkEditMenu(
+		roleItem("Cut to OS Clipboard", ItemIDCut),
+		roleItem("Copy to OS Clipboard", ItemIDCopy),
+		roleItem("Paste from OS Clipboard", ItemIDPaste),
+		roleItem("Select All", ItemIDSelectAll),
+	))
+	got := captions(menu)
+	want := []string{"Undo", "Redo", "---", "Cut to OS Clipboard", "Copy to OS Clipboard",
+		"Paste from OS Clipboard", "Select All"}
+	if len(got) != len(want) {
+		t.Fatalf("menu = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("menu = %v, want %v", got, want)
+		}
+	}
+}
+
+// An app that claims Undo and Redo and nothing else: the synthesized block is
+// the clipboard and Select All, and it does not open with a separator.
+func TestClaimedHistoryLeavesNoLeadingSeparator(t *testing.T) {
+	menu := editMenuAfterMerge(t, mkEditMenu(
+		roleItem("Undo Typing", ItemIDUndo),
+		roleItem("Redo Typing", ItemIDRedo),
+	))
+	got := captions(menu)
+	want := []string{"Cut", "Copy", "Paste", "---", "Select All", "---", "Undo Typing", "Redo Typing"}
+	if len(got) != len(want) {
+		t.Fatalf("menu = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("menu = %v, want %v", got, want)
+		}
 	}
 }

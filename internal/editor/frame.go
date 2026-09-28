@@ -83,6 +83,9 @@ func (e *Editor) performRender() {
 	// Push the focused viewport's read-only state to the host on transitions
 	// (a host greys out its Edit-menu Cut for a read-only buffer).
 	e.notifyEditState()
+	// Push whether the focused buffer can undo and redo (a host enables its
+	// Edit-menu Undo and Redo to match).
+	e.notifyUndoState()
 	// Push whether the built-in help viewport is open (a host syncs a "Quick
 	// Help" menu checkmark to it).
 	e.notifyHelpState()

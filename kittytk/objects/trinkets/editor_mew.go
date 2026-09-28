@@ -88,6 +88,11 @@ type Editor struct {
 	// read-only buffer holds focus.
 	readOnlyFocused atomic.Bool
 
+	// canUndo and canRedo mirror whether mew's focused buffer has a change to
+	// undo and one to redo (WithUndoState), so the Edit menu's Undo and Redo
+	// enable to match what buffer_undo and buffer_redo would find.
+	canUndo, canRedo atomic.Bool
+
 	// preeditCovers is how many committed characters the standing composition
 	// was opened over. The commit that ends it replaces exactly those, and does
 	// not carry the number itself — see HandleTextEditing.
@@ -511,6 +516,12 @@ func (e *Editor) run() {
 		mew.WithEditState(func(readOnly bool) {
 			e.readOnlyFocused.Store(readOnly)
 		}),
+		// Focused-buffer undo and redo availability, mirrored so the Edit
+		// menu's Undo and Redo enable to match.
+		mew.WithUndoState(func(canUndo, canRedo bool) {
+			e.canUndo.Store(canUndo)
+			e.canRedo.Store(canRedo)
+		}),
 		// Built-in help-window open state, mirrored so a host can keep a
 		// "Quick Help" menu checkmark in sync (QuickHelpOpen).
 		mew.WithHelpState(func(open bool) {
@@ -918,6 +929,25 @@ func (e *Editor) Paste() { e.execMew("os_paste") }
 
 // SelectAll marks the whole mew buffer as the block.
 func (e *Editor) SelectAll() { e.execMew("os_select_all") }
+
+// Undo runs mew's own buffer_undo on the focused buffer: the Edit menu taps
+// mew's history, it does not keep one of its own.
+func (e *Editor) Undo() { e.execMew("buffer_undo") }
+
+// Redo runs mew's own buffer_redo on the focused buffer.
+func (e *Editor) Redo() { e.execMew("buffer_redo") }
+
+// UndoEnabled reports whether mew's focused buffer has a change to undo and is
+// writable (mirrored from mew via WithUndoState and WithEditState).
+func (e *Editor) UndoEnabled() bool { return e.canUndo.Load() && !e.readOnlyFocused.Load() }
+
+// RedoEnabled reports whether mew's focused buffer has an undone change to put
+// back and is writable.
+func (e *Editor) RedoEnabled() bool { return e.canRedo.Load() && !e.readOnlyFocused.Load() }
+
+// The Edit menu asks the focused trinket for editActor at run time; this keeps
+// the editor from dropping out of it unnoticed.
+var _ editActor = (*Editor)(nil)
 
 // HandleTextEditing implements core.TextEditingHandler: it shows what an input
 // method is still composing, painted at mew's caret and not put in the
