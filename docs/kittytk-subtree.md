@@ -103,8 +103,12 @@ fork-boundary file was touched. The two host `main.go` files took the
 stays mew's.
 
 Upstream tagged the result **v0.1.34-alpha**. Every shared file is
-byte-identical to the tag except the same three mew-side edits as before;
-`core/version.go` still reads `Build = 32` in the tag.
+byte-identical to the tag except the same three mew-side edits as before.
+`core/version.go` reads `Build = 32` in both v0.1.33-alpha and v0.1.34-alpha:
+neither release set the counter, as every release through v0.1.32 had. A
+published tag is not moved, so both trees now carry `Build = 35` ahead of
+v0.1.35-alpha, and **the release PR sets the counter to the number its tag
+will carry.**
 
 `app.New` lost its backend parameter in this release, so mew v0.3.3-alpha's
 `app` built only inside the workspace until the pins moved: the root and app
