@@ -10,7 +10,7 @@ require (
 	github.com/phroun/ifitfits v0.1.1
 	github.com/phroun/key-sequence-processor v0.1.11
 	github.com/phroun/khatool v0.1.2
-	github.com/phroun/kittytk v0.1.34-alpha
+	github.com/phroun/kittytk v0.1.35-alpha
 	github.com/phroun/pawscript v0.2.17-alpha
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.41.0
