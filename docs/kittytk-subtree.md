@@ -90,6 +90,27 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### The v0.1.36 sync (record)
+
+Up again, the same way as v0.1.34. The work was made here as
+[mew#13](https://github.com/phroun/mew/pull/13) (a hidden trinket gives up its
+layout space; an empty grid track gives up its boundary) and
+[mew#14](https://github.com/phroun/mew/pull/14) (`echo=password_on_edit`,
+concealing fields kept off the clipboard, a tab dragged one place past the
+strip's end). Its seven commits went up as
+[#56](https://github.com/phroun/kittytk/pull/56), made with
+`git format-patch --relative=kittytk` and applied with `git am -3` onto
+v0.1.35-alpha, all cleanly. No fork-boundary file was touched, and there were no
+dependency bumps.
+
+The release PR carried its own counter this time: `Build = 36` was its last
+commit, and upstream tagged **v0.1.36-alpha** there. Here the vendored `Build`
+went 35 -> 36 and the root and app kittytk pins v0.1.35-alpha ->
+v0.1.36-alpha, `go.sum` per module via `GOWORK=off go mod tidy`. Every shared
+file is byte-identical to the tag except the three standing mew-side edits.
+All three modules build with `GOWORK=off`, `kittytk` under `-tags mew`
+included, and `app`'s tests pass there.
+
 ### The v0.1.34 sync (record)
 
 This one went up rather than down. The work was made here, in the subtree, as
