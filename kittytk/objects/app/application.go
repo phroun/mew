@@ -32,18 +32,6 @@ type Application struct {
 	// unaffected. See SetWireNameChangeAllowed.
 	wireNameAllowed bool
 
-	// Backend for rendering
-	backend core.RenderBackend
-
-	// Window manager
-	windowManager *window.WindowManager
-
-	// Global focus manager
-	focusManager *core.GlobalFocusManager
-
-	// Accessibility manager
-	accessibilityManager *core.AccessibilityManager
-
 	// Theme
 	theme *style.Theme
 
@@ -99,36 +87,11 @@ type Application struct {
 	savedStatusBarContent []trinkets.StatusSection
 }
 
-// New creates a new application instance.
-// Applications are containers for windows, menus, and status bar content.
-// Multiple applications can coexist on a single Desktop.
-// The backend parameter is optional - pass nil if the Desktop owns the backend.
-func New(backend core.RenderBackend) *Application {
-	app := &Application{
-		objectID:             core.NextObjectID(),
-		theme:                style.DefaultTheme(),
-		accessibilityManager: core.NewAccessibilityManager(),
-		commands:             core.NewCommandRegistry(),
-	}
-
-	if backend != nil {
-		app.backend = backend
-		app.windowManager = window.NewWindowManager()
-		app.focusManager = core.NewGlobalFocusManager()
-
-		// Connect accessibility to focus manager
-		app.focusManager.SetAccessibilityManager(app.accessibilityManager)
-	}
-
-	return app
-}
-
-// NewSecondary creates a new independent application instance.
-// Unlike New(), this creates a fresh Application that is NOT the singleton.
-// Secondary applications are used for multi-app desktops where each app
-// has its own windows, menus, and status bar content.
-// Secondary apps share the desktop's WindowManager and don't have their own event loop.
-func NewSecondary() *Application {
+// New creates a new application instance: a container for windows, menus
+// and status bar content. Multiple applications can coexist on a single
+// Desktop, which owns the backend, the window manager and the focus for all
+// of them.
+func New() *Application {
 	return &Application{
 		objectID: core.NextObjectID(),
 		theme:    style.DefaultTheme(),
@@ -179,34 +142,6 @@ func (app *Application) MenuName() string {
 	return app.menuName
 }
 
-// Backend returns the render backend.
-func (app *Application) Backend() core.RenderBackend {
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	return app.backend
-}
-
-// WindowManager returns the window manager.
-func (app *Application) WindowManager() *window.WindowManager {
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	return app.windowManager
-}
-
-// FocusManager returns the global focus manager.
-func (app *Application) FocusManager() *core.GlobalFocusManager {
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	return app.focusManager
-}
-
-// AccessibilityManager returns the accessibility manager.
-func (app *Application) AccessibilityManager() *core.AccessibilityManager {
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	return app.accessibilityManager
-}
-
 // Theme returns the current theme.
 func (app *Application) Theme() *style.Theme {
 	app.mu.RLock()
@@ -218,46 +153,7 @@ func (app *Application) Theme() *style.Theme {
 func (app *Application) SetDesktop(desktop core.Trinket) {
 	app.mu.Lock()
 	app.desktop = desktop
-	wm := app.windowManager
 	app.mu.Unlock()
-
-	if wm != nil {
-		wm.SetDesktop(desktop)
-
-		// Wire up dock row integration if desktop is a *trinkets.Desktop
-		if d, ok := desktop.(*trinkets.Desktop); ok {
-			dockRow := d.DockRow()
-			if dockRow != nil {
-				// When a window is minimized, add it to the dock row
-				wm.SetOnWindowMinimized(func(win *window.Window) {
-					entry := &trinkets.DockEntry{
-						Title:    win.Title(),
-						WindowID: win.ObjectID(),
-						OnClick: func() {
-							wm.RestoreWindow(win)
-						},
-					}
-					dockRow.AddEntry(entry)
-				})
-
-				// When a window is restored, remove it from the dock row
-				wm.SetOnWindowRestored(func(win *window.Window) {
-					dockRow.RemoveEntryByID(win.ObjectID())
-				})
-			}
-
-			// Wire up menu bar to deactivate windows when a menu opens
-			if menuBar := d.MenuBar(); menuBar != nil {
-				menuBar.SetOnMenuOpen(func() {
-					wm.DeactivateActiveWindow()
-				})
-				// Wire up menu bar dismiss to restore previous window
-				menuBar.SetOnMenuDismiss(func() {
-					wm.RestorePreviousActiveWindow()
-				})
-			}
-		}
-	}
 }
 
 // Desktop returns the desktop trinket.
@@ -265,65 +161,6 @@ func (app *Application) Desktop() core.Trinket {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.desktop
-}
-
-// Alert shows a simple message to the user.
-// This is a convenience method for simple notifications.
-func (app *Application) Alert(title, message string) {
-	app.mu.RLock()
-	am := app.accessibilityManager
-	app.mu.RUnlock()
-
-	if am != nil {
-		am.AnnounceAlert(message)
-	}
-	// TODO: Show alert dialog when dialogs are implemented
-}
-
-// Beep produces an audible alert.
-func (app *Application) Beep() {
-	app.mu.RLock()
-	backend := app.backend
-	app.mu.RUnlock()
-
-	if backend != nil {
-		backend.Beep()
-	}
-}
-
-// Clipboard returns the clipboard contents.
-func (app *Application) Clipboard() string {
-	app.mu.RLock()
-	backend := app.backend
-	app.mu.RUnlock()
-
-	if backend != nil {
-		return backend.GetClipboard()
-	}
-	return ""
-}
-
-// SetClipboard sets the clipboard contents.
-func (app *Application) SetClipboard(text string) {
-	app.mu.RLock()
-	backend := app.backend
-	app.mu.RUnlock()
-
-	if backend != nil {
-		backend.SetClipboard(text)
-	}
-}
-
-// ScreenSize returns the current screen size in units.
-func (app *Application) ScreenSize() core.UnitSize {
-	app.mu.RLock()
-	backend := app.backend
-	app.mu.RUnlock()
-
-	if backend != nil {
-		return backend.Size()
-	}
-	return core.UnitSize{}
 }
 
 // Compile-time check that Application implements trinkets.ApplicationProvider

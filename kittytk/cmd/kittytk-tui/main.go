@@ -57,7 +57,7 @@ func main() {
 
 	// The desktop's own (windowless) application owns the base menu bar
 	// until a client dials in.
-	application := app.New(nil)
+	application := app.New()
 	application.SetName("KittyTK (TUI)")
 	desktop.AddApplication(application)
 

@@ -31,7 +31,7 @@ func main() {
     desktop := trinkets.NewDesktop()
     desktop.SetBackend(backend.NewTUIBackend(backend.DefaultTUIOptions()))
 
-    application := app.New(nil)
+    application := app.New()
     application.SetName("My App")
     desktop.AddApplication(application)
 
@@ -724,7 +724,7 @@ dock.AddEntry(&trinkets.DockEntry{
 ### app.Application
 
 ```go
-application := app.New(nil)  // nil backend when Desktop owns it
+application := app.New()
 application.SetName("My App")
 
 // Windows
@@ -745,7 +745,7 @@ application.SetOnDeactivate(func() { /* app lost focus */ })
 For multi-application desktops:
 
 ```go
-secondary := app.New(nil)
+secondary := app.New()
 secondary.SetName("Secondary App")
 // Set up menus, status, windows...
 desktop.AddApplication(secondary)

@@ -606,7 +606,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	// The connection is a full Application (D22). It is a protocol object in
 	// its own right: register it in the session so the client can address it
 	// by ID (set app-wide properties), and hand that ID over in the handshake.
-	application := app.New(nil)
+	application := app.New()
 	application.SetName(appName)
 	application.SetMultiWindow(multiWindow)
 	// The name the app connected with is its authorized name (the trust

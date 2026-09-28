@@ -53,7 +53,7 @@ func TestMenuBarWellKnownOrder(t *testing.T) {
 			{"Help", "help", ""},
 		}},
 	} {
-		menus := buildMenus(trinkets.NewDesktop(), app.New(nil), c.multiWindow)
+		menus := buildMenus(trinkets.NewDesktop(), app.New(), c.multiWindow)
 		if len(menus) != len(c.want) {
 			t.Fatalf("multiWindow=%v: %d menus, want %d", c.multiWindow, len(menus), len(c.want))
 		}
@@ -70,7 +70,7 @@ func TestMenuBarWellKnownOrder(t *testing.T) {
 // exercised end to end rather than being inert scenery, and every one of them
 // is listed for live shortcut-text resolution.
 func TestPlaceholderItemsAreWired(t *testing.T) {
-	application := app.New(nil)
+	application := app.New()
 	menus := buildMenus(trinkets.NewDesktop(), application, true)
 	commands := application.Commands()
 
@@ -127,7 +127,7 @@ func TestPlaceholderItemsAreWired(t *testing.T) {
 // This asserts the table's shape and the caption substitution; the live read
 // itself needs a running mew session (Editor.Option is empty before one).
 func TestOptionItemsAreDeclaredForEveryReflectingItem(t *testing.T) {
-	application := app.New(nil)
+	application := app.New()
 	menus := buildMenus(trinkets.NewDesktop(), application, true)
 
 	seen := map[string]bool{}
@@ -174,7 +174,7 @@ func TestOptionItemsAreDeclaredForEveryReflectingItem(t *testing.T) {
 func TestAppMenuTitleHasNoAccelerator(t *testing.T) {
 	for _, multi := range []bool{false, true} {
 		var appMenu *trinkets.Menu
-		for _, m := range buildMenus(trinkets.NewDesktop(), app.New(nil), multi) {
+		for _, m := range buildMenus(trinkets.NewDesktop(), app.New(), multi) {
 			if m.WellKnownID() == "app" {
 				appMenu = m
 			}

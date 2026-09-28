@@ -88,7 +88,7 @@ func TestNoWelcomeLeavesTheWindowAlone(t *testing.T) {
 	px, _ := raster.New(800, 600)
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(px)
-	application := app.New(nil)
+	application := app.New()
 
 	w := newEditorWindow(desktop, application, nil)
 	content := w.Content()
@@ -113,7 +113,7 @@ func TestWelcomeTakesTheWindowAndGivesItBack(t *testing.T) {
 	px, _ := raster.New(800, 600)
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(px)
-	application := app.New(nil)
+	application := app.New()
 
 	w := newEditorWindow(desktop, application, nil)
 	editor := w.Content()
@@ -150,7 +150,7 @@ func TestWelcomeCarriesNoDeclaredMenus(t *testing.T) {
 	px, _ := raster.New(800, 600)
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(px)
-	application := app.New(nil)
+	application := app.New()
 
 	w := newEditorWindow(desktop, application, nil)
 	showWelcomeIn(desktop, application, w, nil, func() {
