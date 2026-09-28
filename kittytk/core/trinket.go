@@ -721,13 +721,20 @@ func (w *TrinketBase) IsVisible() bool {
 }
 
 // SetVisible sets visibility.
+//
+// A hidden trinket gives up its place in its parent's layout, so a change
+// either way arranges the parent again (see relayoutParent).
 func (w *TrinketBase) SetVisible(visible bool) {
 	w.mu.Lock()
+	changed := w.visible != visible
 	w.visible = visible
 	w.needsRepaint = true
 	w.mu.Unlock()
 
 	w.notifyAncestorsOfRepaint()
+	if changed {
+		w.relayoutParent()
+	}
 }
 
 // Show makes the trinket visible.

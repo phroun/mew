@@ -104,7 +104,7 @@ func spreadShortfall(sizes []core.Unit, bands []Band, start, count int, short co
 // or the laid-out size -- so all three raise the same tracks by the same rule.
 func (l *GridLayout) columnSpans(size func(core.Trinket) core.Unit) []span {
 	var out []span
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		if item.ColumnSpan > 1 {
 			out = append(out, span{item.Column, item.ColumnSpan, size(item.Trinket)})
 		}
@@ -115,7 +115,7 @@ func (l *GridLayout) columnSpans(size func(core.Trinket) core.Unit) []span {
 // rowSpans is columnSpans down the other axis.
 func (l *GridLayout) rowSpans(size func(core.Trinket) core.Unit) []span {
 	var out []span
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		if item.RowSpan > 1 {
 			out = append(out, span{item.Row, item.RowSpan, size(item.Trinket)})
 		}
@@ -125,14 +125,69 @@ func (l *GridLayout) rowSpans(size func(core.Trinket) core.Unit) []span {
 
 // rowGaps is what each boundary between rows costs. Side-bearings are
 // horizontal, so nothing collapses down the page and every boundary is the
-// configured spacing -- which is what Layout puts between rows.
+// configured spacing -- which is what Layout puts between rows -- except the
+// one an empty row would have had, which it gives up (see liveTracks).
 func (l *GridLayout) rowGaps(rows int, q core.Unit) []core.Unit {
 	if rows < 2 {
 		return nil
 	}
 	gaps := make([]core.Unit, rows-1)
-	for i := range gaps {
-		gaps[i] = l.cellSpacing(q)
+	seen := false
+	for r, live := range liveTracks(rows, l.rows, l.rowsStoodIn()) {
+		if !live {
+			continue
+		}
+		if seen {
+			gaps[r-1] = l.cellSpacing(q)
+		}
+		seen = true
 	}
 	return gaps
+}
+
+// columnsStoodIn and rowsStoodIn are where every shown child stands on one
+// axis, one cell or many -- the tracks liveTracks keeps for what is in them.
+func (l *GridLayout) columnsStoodIn() []span {
+	var out []span
+	for _, item := range l.shown() {
+		out = append(out, span{start: item.Column, count: item.ColumnSpan})
+	}
+	return out
+}
+
+// rowsStoodIn is columnsStoodIn down the other axis.
+func (l *GridLayout) rowsStoodIn() []span {
+	var out []span
+	for _, item := range l.shown() {
+		out = append(out, span{start: item.Row, count: item.RowSpan})
+	}
+	return out
+}
+
+// liveTracks says which of n tracks on one axis take part in the arrangement.
+//
+// A track nothing shown stands in -- a row whose only child is hidden, or one
+// no child was ever put in -- is taken out altogether: it is no size already,
+// having nothing to measure, and it gives up the boundary beside it too, so
+// hiding a row of a form closes the form up rather than leaving a doubled gap
+// where the row was. A child spanning across a track stands in it.
+//
+// A band that declares a Minimum or a Stretch keeps its track whatever is in
+// it. Those are statements about the track itself rather than about what it
+// holds, and they are how a grid asks for an empty row on purpose; the other
+// way is to put a spacer in it.
+func liveTracks(n int, bands []Band, claims []span) []bool {
+	live := make([]bool, n)
+	for t := range live {
+		b := bandAt(bands, t)
+		live[t] = b.Minimum > 0 || b.Stretch > 0
+	}
+	for _, c := range claims {
+		for t := c.start; t < c.start+c.count && t < n; t++ {
+			if t >= 0 {
+				live[t] = true
+			}
+		}
+	}
+	return live
 }

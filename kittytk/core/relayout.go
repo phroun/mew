@@ -67,3 +67,29 @@ func (w *TrinketBase) InvalidateLayout() {
 		outermost.Layout()
 	}
 }
+
+// relayoutParent arranges again what this trinket sits in, which is what
+// showing or hiding it changes: a layout leaves a hidden child out, so the
+// siblings close up over its place or open up to give it back. The trinket's
+// own arrangement is not touched -- nothing in it changed size.
+//
+// A layout root is skipped. A window is placed by whoever manages windows and
+// not by a layout, so showing one has no siblings to move.
+//
+// MUST be called with the trinket's own lock released.
+func (w *TrinketBase) relayoutParent() {
+	self := w.Self()
+	if self == nil {
+		return
+	}
+	if root, ok := self.(LayoutRoot); ok && root.IsLayoutRoot() {
+		return
+	}
+	parent := self.Parent()
+	if parent == nil {
+		return
+	}
+	if p, ok := parent.(interface{ InvalidateLayout() }); ok {
+		p.InvalidateLayout()
+	}
+}

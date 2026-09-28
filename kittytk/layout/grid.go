@@ -204,11 +204,26 @@ func (l *GridLayout) SetColumnMaximumWidth(column int, width core.Unit) {
 	l.columns[column] = l.columns[column].Capped(width)
 }
 
+// shown is the items a grid arranges: those whose trinket is visible. A hidden
+// child gives its cell up -- it raises no track, closes up no boundary with its
+// bearings and makes no claim across a span -- as though it had not been added.
+// A row or column only hidden children used is then empty, and goes the way
+// every empty track does (see liveTracks).
+func (l *GridLayout) shown() []*GridItem {
+	items := make([]*GridItem, 0, len(l.items))
+	for _, item := range l.items {
+		if isShown(item.Trinket) {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
 // RowCount returns the number of rows.
 func (l *GridLayout) RowCount() int {
 	l.resolveBands()
 	maxRow := 0
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		endRow := item.Row + item.RowSpan
 		if endRow > maxRow {
 			maxRow = endRow
@@ -221,7 +236,7 @@ func (l *GridLayout) RowCount() int {
 func (l *GridLayout) ColumnCount() int {
 	l.resolveBands()
 	maxCol := 0
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		endCol := item.Column + item.ColumnSpan
 		if endCol > maxCol {
 			maxCol = endCol
@@ -232,7 +247,7 @@ func (l *GridLayout) ColumnCount() int {
 
 // Layout arranges children within the given bounds.
 func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
-	if len(l.items) == 0 {
+	if len(l.shown()) == 0 {
 		return
 	}
 
@@ -289,7 +304,7 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 	}
 
 	// Position each item
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		x := colX[item.Column]
 		y := rowY[item.Row]
 
@@ -350,13 +365,18 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 // any row that puts an inline child on a side settles that side, as the largest
 // stretch asked of a column settles its stretch. A child that SPANS the
 // boundary straddles it and brings no bearing to it.
+//
+// A column nothing stands in has no boundary of its own (see liveTracks): the
+// one kept is the one before the next column that does hold something, and it
+// is settled between that column and the last one before it that held
+// anything -- the two that end up side by side.
 func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics, q core.Unit) []core.Unit {
 	if cols < 2 {
 		return nil
 	}
 	endsInline := make([]bool, cols)
 	startsInline := make([]bool, cols)
-	for _, item := range l.items {
+	for _, item := range l.shown() {
 		if !isInlineTrinket(item.Trinket) {
 			continue
 		}
@@ -369,15 +389,24 @@ func (l *GridLayout) columnGaps(cols int, metrics core.CellMetrics, q core.Unit)
 	}
 
 	gaps := make([]core.Unit, cols-1)
-	for c := 0; c < cols-1; c++ {
-		left, right := endsInline[c], startsInline[c+1]
+	prior := -1
+	for c, live := range liveTracks(cols, l.columns, l.columnsStoodIn()) {
+		if !live {
+			continue
+		}
+		if prior < 0 {
+			prior = c
+			continue
+		}
+		left, right := endsInline[prior], startsInline[c]
+		prior = c
 		switch {
 		case left && right:
-			gaps[c] = -metrics.UnitsPerCellWidth
+			gaps[c-1] = -metrics.UnitsPerCellWidth
 		case left || right:
-			gaps[c] = 0
+			gaps[c-1] = 0
 		default:
-			gaps[c] = l.cellSpacing(q)
+			gaps[c-1] = l.cellSpacing(q)
 		}
 	}
 	return gaps
@@ -400,9 +429,10 @@ func sumGaps(gaps []core.Unit) core.Unit {
 // them: a cell is where the child goes, bearings and all.
 func (l *GridLayout) columnFloors(cols int, gaps []core.Unit, size func(core.Trinket) core.Unit) []core.Unit {
 	floors := make([]core.Unit, cols)
+	items := l.shown()
 	for c := 0; c < cols; c++ {
 		floors[c] = bandAt(l.columns, c).Minimum
-		for _, item := range l.items {
+		for _, item := range items {
 			// A spanning child is not one column's to hold; it makes its claim
 			// on the run below, once every column has what is its own.
 			if item.Column == c && item.ColumnSpan == 1 {
@@ -419,9 +449,10 @@ func (l *GridLayout) columnFloors(cols int, gaps []core.Unit, size func(core.Tri
 // rowFloors is columnFloors down the other axis.
 func (l *GridLayout) rowFloors(rows int, gaps []core.Unit, size func(core.Trinket) core.Unit) []core.Unit {
 	floors := make([]core.Unit, rows)
+	items := l.shown()
 	for r := 0; r < rows; r++ {
 		floors[r] = bandAt(l.rows, r).Minimum
-		for _, item := range l.items {
+		for _, item := range items {
 			if item.Row == r && item.RowSpan == 1 {
 				if h := size(item.Trinket); h > floors[r] {
 					floors[r] = h
