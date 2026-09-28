@@ -387,6 +387,10 @@ type Editor struct {
 	// initial push has happened.
 	readOnlySent   bool
 	readOnlyPushed bool
+	// undoSent/redoSent/undoPushed: the last focused-buffer undo and redo
+	// availability pushed through Config.UndoState (see notifyUndoState).
+	undoSent, redoSent bool
+	undoPushed         bool
 	// unsavedSent/unsavedPushed: the last "is there modified work anywhere in
 	// this session" answer pushed through Config.UnsavedState (see
 	// notifyUnsavedState).
@@ -687,6 +691,12 @@ type Config struct {
 	// affordances that mutate — its Edit-menu Cut, say. Called only on
 	// transitions, from the editor loop.
 	EditState func(readOnly bool)
+
+	// UndoState, when set, is told whether the FOCUSED viewport's buffer has a
+	// change to undo and one to redo, once at the first render and thereafter
+	// on transitions, so a host can enable its Edit-menu Undo and Redo to match.
+	// Called from the editor loop.
+	UndoState func(canUndo, canRedo bool)
 
 	// UnsavedState, when set, is told whether ANY buffer this session holds
 	// open is modified — the active ones and the work stacked behind a link

@@ -542,6 +542,25 @@ func (e *Editor) notifyEditState() {
 	}
 }
 
+// notifyUndoState tells the host (via Config.UndoState) whether the FOCUSED
+// viewport's buffer can undo and redo, once at the first render and thereafter
+// on transitions, so it can enable its Edit menu's Undo and Redo to match.
+// Called from performRender, which runs after every state-changing event.
+func (e *Editor) notifyUndoState() {
+	if e.Config.UndoState == nil {
+		return
+	}
+	canUndo, canRedo := false, false
+	if w := e.ViewportManager.GetFocusedViewport(); w != nil && w.Buffer != nil {
+		canUndo, canRedo = w.Buffer.CanUndo(), w.Buffer.CanRedo()
+	}
+	if !e.undoPushed || canUndo != e.undoSent || canRedo != e.redoSent {
+		e.undoPushed = true
+		e.undoSent, e.redoSent = canUndo, canRedo
+		e.Config.UndoState(canUndo, canRedo)
+	}
+}
+
 // notifyHelpState tells the host (via Config.HelpState) whether the built-in
 // help viewport is open, once at the first render and thereafter on transitions,
 // so a host keeps a "Quick Help" menu checkmark in sync as help_toggle (or a

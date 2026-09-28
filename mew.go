@@ -356,6 +356,15 @@ func WithEditState(fn func(readOnly bool)) Option {
 	return func(cfg *editor.Config) { cfg.EditState = fn }
 }
 
+// WithUndoState wires the focused viewport's undo history to the host: fn is
+// told whether the focused buffer has a change to undo and one to redo, once at
+// the first render and thereafter on transitions, so the host can enable its
+// Edit-menu Undo and Redo to match. It reports what mew's own buffer_undo and
+// buffer_redo would find, and changes nothing about them.
+func WithUndoState(fn func(canUndo, canRedo bool)) Option {
+	return func(cfg *editor.Config) { cfg.UndoState = fn }
+}
+
 // WithUnsavedState wires the session's unsaved-work state to the host: fn is
 // told whether ANY buffer this session holds open is modified — the active
 // ones and the work stacked behind a link follow alike — once at the first

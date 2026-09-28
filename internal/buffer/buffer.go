@@ -1333,6 +1333,30 @@ func (b *Buffer) TakeDirtyLow() int {
 	return low
 }
 
+// CanUndo reports whether Undo has a revision to step back to: one before the
+// current revision in this fork, and not pruned away.
+func (b *Buffer) CanUndo() bool {
+	if b.garland == nil {
+		return false
+	}
+	rev := b.garland.CurrentRevision()
+	if rev <= 0 {
+		return false
+	}
+	fi, err := b.garland.GetForkInfo(b.garland.CurrentFork())
+	return err == nil && rev-1 >= fi.PrunedUpTo
+}
+
+// CanRedo reports whether Redo has a revision to step forward to: this fork
+// reaches past the current revision.
+func (b *Buffer) CanRedo() bool {
+	if b.garland == nil {
+		return false
+	}
+	fi, err := b.garland.GetForkInfo(b.garland.CurrentFork())
+	return err == nil && b.garland.CurrentRevision() < fi.HighestRevision
+}
+
 // Undo undoes the last change.
 func (b *Buffer) Undo() bool {
 	if b.garland == nil {
