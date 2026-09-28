@@ -3,8 +3,6 @@ package app
 
 import (
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/trinkets"
@@ -12,10 +10,11 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// Application is the main entry point for a TUI application.
-// It manages the event loop, windows, and global state.
-// Application implements the trinkets.ApplicationProvider interface
-// for integration with multi-application Desktop environments.
+// Application is the display's record of one running application: its
+// windows, menus, status bar and commands. The desktop runs the event loop
+// and owns the timers; an application runs neither. Application implements
+// the trinkets.ApplicationProvider interface for integration with
+// multi-application Desktop environments.
 type Application struct {
 	mu sync.RWMutex
 
@@ -51,23 +50,7 @@ type Application struct {
 	// Desktop trinket (behind all windows)
 	desktop core.Trinket
 
-	// Running state
-	running atomic.Bool
-
-	// Quit channel
-	quitChan chan struct{}
-
-	// Update request channel
-	updateChan chan struct{}
-
-	// Timer events
-	timers     []*Timer
-	timerMutex sync.Mutex
-
 	// Callbacks
-	onStartup    func()
-	onShutdown   func()
-	onIdle       func()
 	onActivate   func()
 	onDeactivate func()
 
@@ -79,9 +62,6 @@ type Application struct {
 	// window is torn off an SDL desktop; on the desktop bar the app menu
 	// carries the app name. Defaults to "≡".
 	menuName string
-
-	// Exit code
-	exitCode int
 
 	// Windows owned by this application (for ApplicationProvider interface)
 	windows []*window.Window
@@ -119,16 +99,6 @@ type Application struct {
 	savedStatusBarContent []trinkets.StatusSection
 }
 
-// Timer represents a scheduled timer callback.
-type Timer struct {
-	ID       int
-	Interval time.Duration
-	Repeat   bool
-	Callback func()
-	nextFire time.Time
-	stopped  bool
-}
-
 // New creates a new application instance.
 // Applications are containers for windows, menus, and status bar content.
 // Multiple applications can coexist on a single Desktop.
@@ -136,8 +106,6 @@ type Timer struct {
 func New(backend core.RenderBackend) *Application {
 	app := &Application{
 		objectID:             core.NextObjectID(),
-		quitChan:             make(chan struct{}),
-		updateChan:           make(chan struct{}, 100),
 		theme:                style.DefaultTheme(),
 		accessibilityManager: core.NewAccessibilityManager(),
 		commands:             core.NewCommandRegistry(),
@@ -146,10 +114,6 @@ func New(backend core.RenderBackend) *Application {
 	if backend != nil {
 		app.backend = backend
 		app.windowManager = window.NewWindowManager()
-		// Wire up repaint callback for window dragging/updates
-		app.windowManager.SetOnRepaintNeeded(func() {
-			app.RequestUpdate()
-		})
 		app.focusManager = core.NewGlobalFocusManager()
 
 		// Connect accessibility to focus manager
@@ -166,11 +130,9 @@ func New(backend core.RenderBackend) *Application {
 // Secondary apps share the desktop's WindowManager and don't have their own event loop.
 func NewSecondary() *Application {
 	return &Application{
-		objectID:   core.NextObjectID(),
-		quitChan:   make(chan struct{}),
-		updateChan: make(chan struct{}, 100),
-		theme:      style.DefaultTheme(),
-		commands:   core.NewCommandRegistry(),
+		objectID: core.NextObjectID(),
+		theme:    style.DefaultTheme(),
+		commands: core.NewCommandRegistry(),
 	}
 }
 
@@ -252,14 +214,6 @@ func (app *Application) Theme() *style.Theme {
 	return app.theme
 }
 
-// SetTheme sets the current theme.
-func (app *Application) SetTheme(theme *style.Theme) {
-	app.mu.Lock()
-	app.theme = theme
-	app.mu.Unlock()
-	app.RequestUpdate()
-}
-
 // SetDesktop sets the desktop trinket.
 func (app *Application) SetDesktop(desktop core.Trinket) {
 	app.mu.Lock()
@@ -311,87 +265,6 @@ func (app *Application) Desktop() core.Trinket {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.desktop
-}
-
-// SetOnStartup sets the startup callback.
-func (app *Application) SetOnStartup(handler func()) {
-	app.mu.Lock()
-	app.onStartup = handler
-	app.mu.Unlock()
-}
-
-// SetOnShutdown sets the shutdown callback.
-func (app *Application) SetOnShutdown(handler func()) {
-	app.mu.Lock()
-	app.onShutdown = handler
-	app.mu.Unlock()
-}
-
-// SetOnIdle sets the idle callback (called when no events are pending).
-func (app *Application) SetOnIdle(handler func()) {
-	app.mu.Lock()
-	app.onIdle = handler
-	app.mu.Unlock()
-}
-
-// RequestUpdate requests a screen update.
-func (app *Application) RequestUpdate() {
-	select {
-	case app.updateChan <- struct{}{}:
-	default:
-		// Channel full, update already pending
-	}
-}
-
-// Quit requests the application to quit.
-func (app *Application) Quit() {
-	app.QuitWithCode(0)
-}
-
-// QuitWithCode requests the application to quit with an exit code.
-func (app *Application) QuitWithCode(code int) {
-	app.mu.Lock()
-	app.exitCode = code
-	app.mu.Unlock()
-	app.running.Store(false)
-	close(app.quitChan)
-}
-
-// IsRunning returns whether the application is running.
-func (app *Application) IsRunning() bool {
-	return app.running.Load()
-}
-
-// StartTimer starts a single-shot timer.
-func (app *Application) StartTimer(interval time.Duration, callback func()) *Timer {
-	return app.startTimerInternal(interval, false, callback)
-}
-
-// StartRepeatingTimer starts a repeating timer.
-func (app *Application) StartRepeatingTimer(interval time.Duration, callback func()) *Timer {
-	return app.startTimerInternal(interval, true, callback)
-}
-
-func (app *Application) startTimerInternal(interval time.Duration, repeat bool, callback func()) *Timer {
-	app.timerMutex.Lock()
-	defer app.timerMutex.Unlock()
-
-	timer := &Timer{
-		ID:       len(app.timers) + 1,
-		Interval: interval,
-		Repeat:   repeat,
-		Callback: callback,
-		nextFire: time.Now().Add(interval),
-	}
-	app.timers = append(app.timers, timer)
-	return timer
-}
-
-// StopTimer stops a timer.
-func (app *Application) StopTimer(timer *Timer) {
-	if timer != nil {
-		timer.stopped = true
-	}
 }
 
 // Alert shows a simple message to the user.
