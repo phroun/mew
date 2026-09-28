@@ -4270,10 +4270,16 @@ func (t *TabTrinket) carryTab(x core.Unit) {
 			own = sp
 		}
 	}
+	to := over.owner
+	// Carried past the end of the run, the tab is out of view and has no
+	// width on the strip to wait for: the pointer coming back over a tab in
+	// view brings it straight to that tab's place, back where it can be seen.
 	if own.w == 0 {
+		if t.shiftTab(from, to) {
+			t.dragAwaitPaint = true
+		}
 		return
 	}
-	to := over.owner
 	if to > from && x < over.x+over.w-own.w || to < from && x >= over.x+own.w {
 		return
 	}

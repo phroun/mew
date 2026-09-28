@@ -204,6 +204,11 @@ func TestASideTabDraggedPastTheRowsGoesOneRowPast(t *testing.T) {
 			t.Errorf("below the rows at y=%d the tab stands at %d, want %d (%q)", y, got, want, tabOrder(tt))
 		}
 	}
+	// Back over a row in view before letting go, it comes back into view.
+	tt.HandleMouseMove(core.MouseMoveEvent{X: x, Y: m.UnitsPerCellHeight / 2, Buttons: 1})
+	if got := tt.CurrentIndex(); got != off {
+		t.Errorf("back over the first row the tab stands at %d, want %d (%q)", got, off, tabOrder(tt))
+	}
 	for _, y := range []core.Unit{-1, -5 * m.UnitsPerCellHeight} {
 		tt.HandleMouseMove(core.MouseMoveEvent{X: x, Y: y, Buttons: 1})
 		if got, want := tt.CurrentIndex(), off-1; got != want {
@@ -213,5 +218,40 @@ func TestASideTabDraggedPastTheRowsGoesOneRowPast(t *testing.T) {
 	tt.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
 	if cur := tt.CurrentIndex(); cur < tt.vertScrollOffset || cur >= tt.vertScrollOffset+2 {
 		t.Errorf("put down at %d with rows %d..%d in view", cur, tt.vertScrollOffset, tt.vertScrollOffset+1)
+	}
+}
+
+// A tab carried out of view is not lost: bringing the pointer back over a tab
+// in view, before letting go, brings it back to that tab's place.
+func TestATabCarriedOutOfViewComesBack(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	for _, dir := range []core.Direction{core.DirLTR, core.DirRTL} {
+		for _, trailing := range []bool{true, false} {
+			tt := longStrip(t, TabsTop, dir, 16, 4)
+			d := &dragger{t: t, tt: tt, y: 1, cols: 16, mirror: core.ChromeMirrored(tt)}
+			cw := tt.EffectiveCellMetrics().UnitsPerCellWidth
+			d.press(d.span(2).x + cw/2)
+			first, last, lo, hi, _ := tt.tabsInView()
+			if trailing {
+				d.to(hi)
+			} else {
+				d.to(lo - 1)
+			}
+			first, last, _, _, _ = tt.tabsInView()
+			if cur := tt.CurrentIndex(); cur >= first && cur <= last {
+				t.Fatalf("%v trailing=%v: the tab is still in view at %d", dir, trailing, cur)
+			}
+			// Back over the tab at the end it went out of.
+			back := d.span(last)
+			if !trailing {
+				back = d.span(first)
+			}
+			d.to(back.x + 1)
+			first, last, _, _, _ = tt.tabsInView()
+			if cur := tt.CurrentIndex(); cur < first || cur > last {
+				t.Errorf("%v trailing=%v: back over a tab in view, the tab stands at %d with %d..%d in view (%q)",
+					dir, trailing, cur, first, last, tabOrder(tt))
+			}
+		}
 	}
 }
