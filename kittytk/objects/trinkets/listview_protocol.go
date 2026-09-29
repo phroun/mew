@@ -31,7 +31,7 @@ func init() {
 				Field("at", "int", "The row whose box changed, for `row`; -1 otherwise.").
 				Field("key", "string", "That row's identity, for `row`; empty otherwise.").
 				Field("checked", "flag", "Whether that row's box is now ticked, for `row`."),
-			"activate": protocol.NewEventDesc("A row was activated — double-clicked, or Enter on the selection.").
+			"activate": protocol.NewEventDesc("A row was activated — double-clicked, or Return on the selection. In a list with checkboxes only Return activates; a double-click ticks the row.").
 				Field("trinket", "uint", "The list's object ID.").
 				Field("selected", "int", "Index of the activated row."),
 			"trouble": protocol.NewEventDesc("Something this list asked for was refused — a source it named, or a scope of it. The list goes on showing what it has.").

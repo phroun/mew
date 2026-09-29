@@ -7,8 +7,9 @@ package trinkets
 // the bar, what the arrows move and Return activates -- is a separate thing,
 // and ticking a box does not move it any more than moving it ticks a box.
 //
-// Space ticks the current row's box, a press on a box ticks that row's, and a
-// right-click offers Select All, Select None and Invert Selection. None of the
+// Space ticks the current row's box, a press on a box ticks that row's, a
+// double-click anywhere else on a row ticks it too, and a right-click offers
+// Select All, Select None and Invert Selection. Return still activates. None of the
 // three names a row: all of them are the "everything except" shape turned one
 // way or the other, so they cost the same on a million rows as on three.
 

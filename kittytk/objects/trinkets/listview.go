@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/style"
 	"github.com/phroun/serval"
 )
@@ -106,6 +107,7 @@ type ListView struct {
 	showIcons bool
 
 	// Mouse state
+	clicks                window.DoubleClickTracker
 	isDragging            bool
 	scrollbarDragging     bool // Whether scrollbar thumb is being dragged
 	scrollbarThumbHovered bool // Whether the pointer is over the thumb
@@ -392,7 +394,9 @@ func (l *ListView) SetOnCurrentChanged(handler func(index int)) {
 	l.onCurrentChanged = handler
 }
 
-// SetOnItemActivated sets the item activated callback (double-click or Enter).
+// SetOnItemActivated sets the item activated callback: a double-click or
+// Return, or only Return in a list with checkboxes, where a double-click ticks
+// the row instead.
 func (l *ListView) SetOnItemActivated(handler func(index int)) {
 	l.onItemActivated = handler
 }
@@ -1089,12 +1093,24 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		// Start content drag - clear scrollbar drag flag
 		l.isDragging = true
 		l.scrollbarDragging = false
+		double := l.clicks.Press(event.X, event.Y, l.EffectiveCellMetrics())
 		l.SetCurrentIndex(clickedIndex)
-		// A press on the row's box ticks it as well: the bar comes to the
-		// row, as it does for a press anywhere on it, and the box turns over.
-		if l.onCheckbox(event.X) {
+		switch {
+		case l.onCheckbox(event.X):
+			// A press on the row's box ticks it as well: the bar comes to
+			// the row, as it does for a press anywhere on it, and the box
+			// turns over -- each press, so a double-click on the box turns
+			// it twice and adds nothing of its own.
 			l.isDragging = false
 			l.toggleCurrent()
+		case double && l.checkboxes:
+			// A double-click anywhere else on the row ticks it too, as a
+			// convenience; Return is what activates a list with boxes.
+			l.toggleCurrent()
+		case double:
+			if l.onItemActivated != nil {
+				l.onItemActivated(l.currentIndex)
+			}
 		}
 		return true
 	}
@@ -1239,6 +1255,9 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 // containers broadcast releases to every child, so an unconditional
 // true here would starve sibling trinkets of their release.
 func (l *ListView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if event.Button == core.LeftButton {
+		l.clicks.Release()
+	}
 	if l.isDragging || l.scrollbarDragging {
 		l.isDragging = false
 		l.scrollbarDragging = false

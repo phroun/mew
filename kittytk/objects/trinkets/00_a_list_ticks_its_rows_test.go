@@ -229,6 +229,16 @@ func TestAPressOnABoxTicksItsRow(t *testing.T) {
 	if ticked(l) != "[2]" {
 		t.Errorf("a press on the arrow's cell ticked %s", ticked(l))
 	}
+	// A press on a box ticks and is done: dragging on from it does not carry
+	// the bar down the rows.
+	y := row(2)
+	l.HandleMousePress(core.MousePressEvent{Button: core.LeftButton, X: m.UnitsPerCellWidth, Y: y})
+	l.HandleMouseMove(core.MouseMoveEvent{X: m.UnitsPerCellWidth, Y: row(3), Buttons: core.LeftButton})
+	l.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton, X: m.UnitsPerCellWidth, Y: row(3)})
+	if l.CurrentIndex() != 2 {
+		t.Errorf("dragging on from a box moved the bar to %d, want it left at 2", l.CurrentIndex())
+	}
+	press(m.UnitsPerCellWidth, 2)   // back as it was
 	press(4*m.UnitsPerCellWidth, 1) // the space after the box
 	if ticked(l) != "[2]" {
 		t.Errorf("a press just after the box ticked %s", ticked(l))
@@ -381,5 +391,73 @@ func TestOnlySelectAllReachesAList(t *testing.T) {
 	d, _ := editMenuOver(t, l)
 	if d.PerformEdit(ItemIDCopy) || l.SelectsEverything() {
 		t.Error("Copy on a list with checkboxes did something")
+	}
+}
+
+// A double-click on a row ticks it in a list with checkboxes, and activates it
+// in one without -- which is what activation always said it was. On the box
+// itself each press ticks, so a double-click there turns it twice and adds
+// nothing. A press, a press with no release between, is not a double-click.
+func TestADoubleClickTicksOrActivates(t *testing.T) {
+	l := ticking(4)
+	paintList(t, l, 20, 4)
+	m := l.EffectiveCellMetrics()
+	activated := -1
+	l.SetOnItemActivated(func(i int) { activated = i })
+	at := func(x core.Unit, row int) (core.MousePressEvent, core.MouseReleaseEvent) {
+		y := core.Unit(row)*m.UnitsPerCellHeight + m.UnitsPerCellHeight/2
+		return core.MousePressEvent{Button: core.LeftButton, X: x, Y: y},
+			core.MouseReleaseEvent{Button: core.LeftButton, X: x, Y: y}
+	}
+	click := func(x core.Unit, row int) {
+		p, r := at(x, row)
+		l.HandleMousePress(p)
+		l.HandleMouseRelease(r)
+	}
+	text := 10 * m.UnitsPerCellWidth
+
+	click(text, 1)
+	click(text, 1)
+	if ticked(l) != "[1]" || activated != -1 {
+		t.Errorf("a double-click on row 1's text ticked %s and activated %d; want [1] and nothing", ticked(l), activated)
+	}
+	click(text, 1)
+	click(text, 1)
+	if ticked(l) != "[]" {
+		t.Errorf("a second double-click leaves %s ticked", ticked(l))
+	}
+
+	click(2*m.UnitsPerCellWidth, 2)
+	click(2*m.UnitsPerCellWidth, 2)
+	if ticked(l) != "[]" {
+		t.Errorf("a double-click on row 2's box leaves %s ticked, want it turned twice", ticked(l))
+	}
+
+	// A press delivered twice with no release is one click.
+	p, r := at(text, 3)
+	l.HandleMousePress(p)
+	l.HandleMousePress(p)
+	l.HandleMouseRelease(r)
+	if ticked(l) != "[]" {
+		t.Errorf("a press repeated without a release ticked %s", ticked(l))
+	}
+
+	// Only the left button's release makes the next press a second click: a
+	// right-button release between two left presses does not.
+	p, r = at(text, 2) // a row away, so the click above is not its first half
+	l.HandleMousePress(p)
+	l.HandleMouseRelease(core.MouseReleaseEvent{Button: core.RightButton, X: p.X, Y: p.Y})
+	l.HandleMousePress(p)
+	l.HandleMouseRelease(r)
+	if ticked(l) != "[]" {
+		t.Errorf("a right-button release between two presses made a double-click: %s ticked", ticked(l))
+	}
+
+	// Without checkboxes it activates.
+	l.SetCheckboxes(false)
+	click(text, 0)
+	click(text, 0)
+	if activated != 0 {
+		t.Errorf("without checkboxes a double-click activated %d, want row 0", activated)
 	}
 }
