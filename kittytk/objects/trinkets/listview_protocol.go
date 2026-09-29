@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/protocol"
-	"github.com/phroun/serval"
+	"github.com/phroun/kittytk/wire"
 )
 
 // Wire registration for ListView.
@@ -28,8 +28,8 @@ func init() {
 			"check": protocol.NewEventDesc("The ticked boxes changed, in a list with checkboxes. Each event is one change; applying them in turn keeps the same record of the ticks the list does, and none of them lists every row.").
 				Field("trinket", "uint", "The list's object ID.").
 				Field("change", "word", "`row` for one box, `all` for every box ticked, `none` for every box unticked, `invert` for every box turned over.").
-				Field("at", "int", "The row whose box changed, for `row`; -1 otherwise.").
-				Field("key", "string", "That row's identity, for `row`; empty otherwise.").
+				Field("at", "int", "The row whose box changed, for `row`, or -1 for every row or for one the list has not placed yet.").
+				Field("id", "value", "That row's record identity, for `row`, spelled as a result spells one -- what `do <list> check id=` names it by.").
 				Field("checked", "flag", "Whether that row's box is now ticked, for `row`."),
 			"activate": protocol.NewEventDesc("A row was activated — double-clicked, or Return on the selection. In a list with checkboxes only Return activates; a double-click ticks the row.").
 				Field("trinket", "uint", "The list's object ID.").
@@ -40,6 +40,22 @@ func init() {
 				Field("at", "int", "The row it was asking about, or -1 where it was asking about none.").
 				Field(protocol.DecisionField, "uint", "The decision to answer about THIS refusal: `do <id> deny` and the list draws no line, because you have shown the reader yourself; `do <id> allow` and it draws its own. Answer promptly — the line waits, and appears anyway shortly if nothing comes. `trouble=false` is the same thing said once about every refusal.").
 				Field(protocol.DecisionWithinField, "uint", "How many milliseconds the list will wait for the answer before drawing its own line. Short: this is a line on a screen, not a question for a person."),
+		},
+		Does: map[string]protocol.DoDesc{
+			"check_all":    protocol.NewDoDesc("Tick every row's box, without naming any row. Refused by a list without checkboxes."),
+			"check_none":   protocol.NewDoDesc("Untick every row's box. Refused by a list without checkboxes."),
+			"check_invert": protocol.NewDoDesc("Turn every row's box over, without naming any row it did not name already. Refused by a list without checkboxes."),
+			"check": protocol.NewDoDesc("Tick one row's box, or untick it, by its record's identity -- placed yet or not. Refused by a list without checkboxes.").
+				Arg("id", "value", "The record's identity, spelled as a result spells one.").
+				Arg("checked", "flag", "Whether the box is ticked afterwards; ticked when not said."),
+		},
+		Asks: map[string]protocol.AskDesc{
+			AskChecked: protocol.NewAskDesc(
+				"What is ticked, in the selection's own shape: one answer per row it " +
+					"names, `id=` each, and a completion carrying `count` and, when set, " +
+					"`all` -- meaning the rows named are the ones spared out of every row " +
+					"rather than the ones ticked. A list without checkboxes answers " +
+					"`count=0`."),
 		},
 		New: func() any { return NewListView() },
 		ID: func(t any) uint64 {
@@ -57,11 +73,9 @@ func init() {
 					WithUint("trinket", id).
 					WithWord("change", string(c.What)).
 					WithInt("at", c.Row)
-				key := ""
 				if c.ID != nil {
-					key = serval.Key(c.ID)
+					ev.Fields = append(ev.Fields, &protocol.Arg{Name: wire.IDArg, Value: wire.AsWire(c.ID)})
 				}
-				ev = ev.WithString("key", key)
 				if c.What == CheckRow {
 					state := protocol.FlagFalse
 					if c.Checked {
