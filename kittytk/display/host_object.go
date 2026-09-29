@@ -166,7 +166,10 @@ func (h *hostObject) Do(action string, args []*protocol.Arg) error {
 		d.ActivatePassNextKeyToTrinket()
 		return nil
 	case DoUndo, DoRedo, DoCut, DoCopy, DoPaste, DoSelectAll:
-		editAction(d.FocusedTrinket(), action)
+		// The Edit menu's own acts, on what it would act on: a tree's row
+		// editor while one is open, and a concealed field's refusal said
+		// aloud rather than kept quiet.
+		d.PerformEdit(action)
 		return nil
 	case DoRelay:
 		return h.relay(args)

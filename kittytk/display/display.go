@@ -1080,37 +1080,6 @@ func namedDesktopFont(name string) *core.Font {
 	return nil
 }
 
-// editAction invokes one of the standard edit operations on a trinket
-// that supports them (text inputs, edit boxes); a nil or non-editing
-// trinket is a no-op.
-func editAction(w core.Trinket, verb string) {
-	ea, ok := w.(interface {
-		Undo()
-		Redo()
-		Cut()
-		Copy()
-		Paste()
-		SelectAll()
-	})
-	if !ok {
-		return
-	}
-	switch verb {
-	case "undo":
-		ea.Undo()
-	case "redo":
-		ea.Redo()
-	case "cut":
-		ea.Cut()
-	case "copy":
-		ea.Copy()
-	case "paste":
-		ea.Paste()
-	case "selectall":
-		ea.SelectAll()
-	}
-}
-
 // setTerminalTheme puts the display in the dark or the light terminal theme and
 // repaints; embedded terminals follow via their own palette.
 func setTerminalTheme(d *trinkets.Desktop, dark bool) {
