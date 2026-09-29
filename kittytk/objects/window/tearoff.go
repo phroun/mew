@@ -1002,6 +1002,12 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		}
 	case core.MouseMoveEvent:
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
+			// A popup took the move, so the pointer is over it: the cursor
+			// is still decided here, or whatever the content last asked for
+			// (an I-beam, from the field the menu opened over) stays on.
+			if e.Buttons == 0 {
+				h.updateHoverAndCursor(e.X, e.Y)
+			}
 			handled = true
 			break
 		}

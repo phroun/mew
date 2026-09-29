@@ -891,11 +891,16 @@ func (s *Scheme) GetHoveredButton() CellStyle {
 // GetButtonMnemonic is the style of a button's mnemonic letter drawn on top of
 // over, the style the rest of its caption is in: the mnemonic's foreground and
 // attributes, over's background -- red and underlined, by default, on whatever
-// the button's face already is.
-func (s *Scheme) GetButtonMnemonic(over CellStyle) CellStyle {
+// the button's face already is. A lit face (hovered or pressed) has a colour of
+// its own that the mnemonic's foreground would clash with, so there the letter
+// keeps over's foreground and takes only the mnemonic's attributes.
+func (s *Scheme) GetButtonMnemonic(over CellStyle, lit bool) CellStyle {
 	m := s.ButtonMnemonic
 	if m == nil {
 		m = ptr(DefaultStyle().WithFg(ColorRed).Underline())
+	}
+	if lit {
+		return over.WithAttrs(over.Attrs | m.Attrs)
 	}
 	return over.WithFg(m.Fg).WithAttrs(over.Attrs | m.Attrs)
 }

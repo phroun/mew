@@ -228,13 +228,59 @@ func TestAScreenReaderIsToldTheLetter(t *testing.T) {
 // background the caption is already on.
 func TestTheMnemonicStyleKeepsTheFace(t *testing.T) {
 	face := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan).WithAttrs(style.StyleBold)
-	got := style.DefaultScheme().GetButtonMnemonic(face)
+	got := style.DefaultScheme().GetButtonMnemonic(face, false)
 	if got.Fg != style.ColorRed || got.Bg != style.ColorCyan ||
 		got.Attrs&style.StyleUnderline == 0 || got.Attrs&style.StyleBold == 0 {
 		t.Errorf("mnemonic over the face = %+v", got)
 	}
-	if got := (&style.Scheme{}).GetButtonMnemonic(face); got.Fg != style.ColorRed || got.Attrs&style.StyleUnderline == 0 {
+	if got := (&style.Scheme{}).GetButtonMnemonic(face, false); got.Fg != style.ColorRed || got.Attrs&style.StyleUnderline == 0 {
 		t.Errorf("a scheme that says nothing gives %+v, want red and underlined", got)
+	}
+}
+
+// On a hovered or pressed face the letter keeps the face's own foreground --
+// red on the press colour is a clash -- and is told apart by the underline
+// alone.
+func TestALitFaceKeepsItsOwnColourForTheLetter(t *testing.T) {
+	face := style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorMagenta).WithAttrs(style.StyleBold)
+	got := style.DefaultScheme().GetButtonMnemonic(face, true)
+	if got.Fg != style.ColorWhite || got.Bg != style.ColorMagenta ||
+		got.Attrs&style.StyleUnderline == 0 || got.Attrs&style.StyleBold == 0 {
+		t.Errorf("mnemonic over a lit face = %+v, want the face underlined", got)
+	}
+}
+
+// Painted: a pressed button's letter is underlined in the pressed caption's
+// colour, while its neighbours' letters stay red.
+func TestAPressedButtonsLetterIsInThePressedColour(t *testing.T) {
+	mb := exitQuestion(t)
+	var yes *Button
+	for _, btn := range mb.content.buttonTrinkets {
+		if btn.Text() == "Yes" {
+			yes = btn
+		}
+	}
+	mb.content.SetFocus()
+	yes.spacePressed = true
+	g := paintContent(t, mb)
+	if got := underlined(g); strings.ContainsRune(got, 'Y') || !strings.ContainsRune(got, 'N') {
+		t.Errorf("red underlined letters are %q; the pressed Yes should not be among them, No should", got)
+	}
+	pressed := mb.content.GetScheme().GetButtonState(true, false, false, true)
+	found := false
+	for y := range g.rows {
+		for x, r := range g.rows[y] {
+			s := g.styles[[2]int{x, y}]
+			if r == 'Y' && s.Attrs&style.StyleUnderline != 0 {
+				found = true
+				if s.Fg != pressed.Fg {
+					t.Errorf("the pressed Y is drawn in %v, want the pressed caption's %v", s.Fg, pressed.Fg)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("the pressed Yes has no underlined letter")
 	}
 }
 

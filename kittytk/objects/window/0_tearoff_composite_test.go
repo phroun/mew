@@ -322,3 +322,40 @@ func TestTearOffHostMenuDropdownSuppressesIBeam(t *testing.T) {
 		t.Fatalf("over the menu dropdown (%d,%d), applied cursor = %v, want CursorDefault (arrow)", x, y, applied)
 	}
 }
+
+// A move a popup takes still sets the cursor: over a context menu opened on a
+// text field, the arrow, not the field's I-beam left over from before the
+// pointer crossed into the menu.
+func TestTearOffHostPopupThatTakesTheMoveShowsTheArrow(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
+	win := NewWindow("torn")
+	win.SetDetached(true)
+	content := &ibeamContent{}
+	content.TrinketBase = *core.NewTrinketBase()
+	content.Init(content)
+	win.SetContent(content)
+	win.SetBounds(core.UnitRect{Width: 200, Height: 100})
+	win.Layout()
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+	var applied core.CursorShape = -1
+	h.SetCursorSetter(func(s core.CursorShape) { applied = s })
+
+	menu := core.UnitRect{X: 40, Y: 30, Width: 60, Height: 40}
+	h.RegisterPopup(&core.PopupRequest{
+		ID:     "menu",
+		Bounds: menu,
+		Paint:  func(*core.Painter) {},
+		HandleMouseMove: func(e core.MouseMoveEvent) bool {
+			return menu.Contains(core.UnitPoint{X: e.X, Y: e.Y})
+		},
+	})
+	x, y := menu.X+menu.Width/2, menu.Y+menu.Height/2
+	if win.CursorShapeAt(x, y) != core.CursorText {
+		t.Fatal("setup: the content under the menu does not want the I-beam")
+	}
+	h.applyCursor(core.CursorText) // arriving from the field
+	h.Event(core.MouseMoveEvent{X: x, Y: y})
+	if applied != core.CursorDefault {
+		t.Errorf("over the popup, cursor = %v, want the arrow", applied)
+	}
+}

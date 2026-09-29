@@ -406,6 +406,7 @@ func (b *Button) Paint(p *core.Painter) {
 	// Determine style - always apply inherited background. GetButtonState
 	// bakes in the precedence pressed > focus > hover > normal.
 	var s style.CellStyle
+	lit := false // the face shows hover or press, in colours of its own
 	if !b.IsEnabled() {
 		s = style.DefaultStyle().WithFg(scheme.GetDisabledButtonFG()).WithBg(inheritedBg)
 	} else {
@@ -413,6 +414,7 @@ func (b *Button) Paint(p *core.Painter) {
 		// free mouse-move events, so a hover set during a drag could never be
 		// cleared and would stick. Only honor it on graphical surfaces.
 		hover := b.mouseOver && p.Graphical()
+		lit = hover || showPressed
 		// TODO: pass actual window active state instead of true.
 		s = scheme.GetButtonState(true, focused, hover, showPressed)
 		if b.isDefault && !showPressed && !focused && !hover {
@@ -551,7 +553,7 @@ func (b *Button) Paint(p *core.Painter) {
 		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
 		if pos := b.liveMnemonic(); pos >= 0 && b.IsEnabled() {
 			drawTextSegments(p, textX, yOffset, font, metrics,
-				accelSegments(shown, core.FindEffectiveDirection(b.Self()), pos, s, scheme.GetButtonMnemonic(s))...)
+				accelSegments(shown, core.FindEffectiveDirection(b.Self()), pos, s, scheme.GetButtonMnemonic(s, lit))...)
 		} else {
 			p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
 		}
