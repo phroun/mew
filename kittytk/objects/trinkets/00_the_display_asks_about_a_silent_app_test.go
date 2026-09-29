@@ -82,7 +82,7 @@ func TestTheAnswerComesBackAsItWasGiven(t *testing.T) {
 	}{
 		{"yes", ResultYes, true},
 		{"no", ResultNo, false},
-		// Dismissed without choosing -- Escape, or the dialog's own [x]. The safe
+		// Dismissed without choosing -- the dialog's own [x]. The safe
 		// half, the same as the close it is about.
 		{"dismissed", ResultNone, false},
 	} {
@@ -104,8 +104,8 @@ func TestTheAnswerComesBackAsItWasGiven(t *testing.T) {
 	}
 }
 
-// Answered once. A dialog that finishes twice -- a click landing as Escape is
-// handled -- must not force a close the person declined.
+// Answered once. A dialog that finishes twice -- a click landing as the dialog
+// is dismissed -- must not force a close the person declined.
 func TestTheQuestionIsAnsweredOnce(t *testing.T) {
 	d, win := deskWithApp(t, "Ledger", "Quarterly Figures")
 	var answers []bool

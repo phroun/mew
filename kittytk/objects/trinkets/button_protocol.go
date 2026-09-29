@@ -16,7 +16,6 @@ func init() {
 			// answered to while a trinket above the button holds the focus
 			// (see core.Mnemonic); otherwise the button paints as before.
 			"caption": stringProp("caption", (*Button).SetText).Tip(`Display text. "&" marks a mnemonic letter (not shown; "&&" is an ampersand), answered by a bare keypress while a container above the button holds the focus.`),
-			"default": boolProp("default", (*Button).SetDefault).Tip("Default-button styling and Enter behavior.").Def("false"),
 			// action is OPTIONAL: when set, clicking dispatches the
 			// command ID (via BindContext.FireAction in the click
 			// wiring below).

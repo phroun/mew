@@ -38,8 +38,6 @@ type Button struct {
 	// timer goroutine while the paint path reads it — see AnimatePress.
 	animatingPress atomic.Bool
 	flat           bool // No border when not focused/hovered
-	isDefault      bool // Default button (shown bold when not focused)
-	isCancel       bool // Cancel button (activated by Escape)
 
 	onClick  func()
 	onToggle func(checked bool)
@@ -189,27 +187,6 @@ func (b *Button) IsFlat() bool {
 func (b *Button) SetFlat(flat bool) {
 	b.flat = flat
 	b.Update()
-}
-
-// IsDefault returns whether this is the default button.
-func (b *Button) IsDefault() bool {
-	return b.isDefault
-}
-
-// SetDefault makes this the default button (shown bold when not focused).
-func (b *Button) SetDefault(isDefault bool) {
-	b.isDefault = isDefault
-	b.Update()
-}
-
-// IsCancel returns whether this is the cancel button.
-func (b *Button) IsCancel() bool {
-	return b.isCancel
-}
-
-// SetCancel makes this the cancel button (activated by Escape key).
-func (b *Button) SetCancel(isCancel bool) {
-	b.isCancel = isCancel
 }
 
 // AnimatePress shows the pressed state briefly (250ms) then triggers click.
@@ -413,10 +390,6 @@ func (b *Button) Paint(p *core.Painter) {
 		lit = hover || showPressed
 		// TODO: pass actual window active state instead of true.
 		s = scheme.GetButtonState(true, focused, hover, showPressed)
-		if b.isDefault && !showPressed && !focused && !hover {
-			// Default button gets bold text in its resting state.
-			s = s.WithAttrs(style.StyleBold)
-		}
 	}
 
 	// Use custom style if set
@@ -580,11 +553,6 @@ func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
 		if b.spacePressed {
 			b.spacePressed = false
 			b.Update()
-			return true
-		}
-		// If this is a cancel button, activate it
-		if b.isCancel {
-			b.AnimatePress()
 			return true
 		}
 	}

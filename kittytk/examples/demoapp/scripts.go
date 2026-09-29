@@ -335,7 +335,7 @@ dn=new tab caption="Denomination" children={
 			dnx=new textinput min_width=160 text="8" max_length=2
 			new label caption="Y:"
 			dny=new textinput min_width=160 text="16" max_length=2
-			dnap=new button caption="Apply" default
+			dnap=new button caption="Apply"
 		}
 		new label caption="Type in either field and press Return, or use Apply. Presets:"
 		dnpre=new panel layout=hbox spacing=8 children={
