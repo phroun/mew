@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/serval"
 )
 
 // Wire registration for ListView.
@@ -24,6 +25,12 @@ func init() {
 			"change": protocol.NewEventDesc("The selection moved.").
 				Field("trinket", "uint", "The list's object ID.").
 				Field("selected", "int", "Index of the newly selected row, or -1 for none."),
+			"check": protocol.NewEventDesc("The ticked boxes changed, in a list with checkboxes. Each event is one change; applying them in turn keeps the same record of the ticks the list does, and none of them lists every row.").
+				Field("trinket", "uint", "The list's object ID.").
+				Field("change", "word", "`row` for one box, `all` for every box ticked, `none` for every box unticked, `invert` for every box turned over.").
+				Field("at", "int", "The row whose box changed, for `row`; -1 otherwise.").
+				Field("key", "string", "That row's identity, for `row`; empty otherwise.").
+				Field("checked", "flag", "Whether that row's box is now ticked, for `row`."),
 			"activate": protocol.NewEventDesc("A row was activated — double-clicked, or Enter on the selection.").
 				Field("trinket", "uint", "The list's object ID.").
 				Field("selected", "int", "Index of the activated row."),
@@ -44,6 +51,25 @@ func init() {
 			l.SetOnCurrentChanged(func(index int) {
 				ctx.EmitEvent(protocol.NewEvent("change").
 					WithUint("trinket", id).WithInt("selected", index))
+			})
+			l.SetOnCheck(func(c CheckChange) {
+				ev := protocol.NewEvent("check").
+					WithUint("trinket", id).
+					WithWord("change", string(c.What)).
+					WithInt("at", c.Row)
+				key := ""
+				if c.ID != nil {
+					key = serval.Key(c.ID)
+				}
+				ev = ev.WithString("key", key)
+				if c.What == CheckRow {
+					state := protocol.FlagFalse
+					if c.Checked {
+						state = protocol.FlagTrue
+					}
+					ev = ev.WithFlag("checked", state)
+				}
+				ctx.EmitEvent(ev)
 			})
 			l.SetOnItemActivated(func(index int) {
 				ctx.EmitEvent(protocol.NewEvent("activate").
@@ -112,6 +138,8 @@ func init() {
 			"trouble": boolProp("trouble", (*ListView).SetShowsTrouble).
 				Tip("Draw a refusal as a line of its own, above the rows.").Def("true"),
 			"ledger": boolProp("ledger", (*ListView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
+			"checkboxes": boolProp("checkboxes", (*ListView).SetCheckboxes).
+				Tip("A box on every row: Space or a press ticks it, and a right-click offers Select All, Select None and Invert Selection. What is ticked is reported by `check` events.").Def("false"),
 			"items": protocol.NewCollection(func(parent, child any) error {
 				l, ok := parent.(*ListView)
 				if !ok {

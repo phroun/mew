@@ -11,11 +11,9 @@ import (
 
 func multi(n int) *ListView {
 	l := filled(n)
-	l.SetSelectionMode(MultiSelection)
-	// A list chooses its first row as it gets it -- AddItem sets the current
-	// row, and in single selection that is a choice. These are about choosing,
-	// so they start from nothing chosen.
-	l.ClearSelection()
+	// Checkboxes, which is how more than one row is chosen; turning them on
+	// starts from nothing ticked.
+	l.SetCheckboxes(true)
 	l.extent(0, n)
 	return l
 }
@@ -80,7 +78,7 @@ func TestChoosingEverythingNamesNothing(t *testing.T) {
 			serval.Record{serval.Named(rowDisplay, "x")})
 	}
 	l := NewListView()
-	l.SetSelectionMode(MultiSelection)
+	l.SetCheckboxes(true)
 	l.SetSource(serval.NewListSource(rows))
 	l.extent(0, 30) // thirty rows of a hundred thousand
 
@@ -136,7 +134,7 @@ func TestABlankRowIsChosenOnlyWhenEverythingIs(t *testing.T) {
 			serval.Record{serval.Named(rowDisplay, "x")})
 	}
 	l := NewListView()
-	l.SetSelectionMode(MultiSelection)
+	l.SetCheckboxes(true)
 	l.SetSource(serval.NewListSource(rows))
 	l.extent(0, 10)
 
@@ -161,7 +159,7 @@ func TestWhatIsChosenSurvivesScrollingAway(t *testing.T) {
 			serval.Record{serval.Named(rowDisplay, "x")})
 	}
 	l := NewListView()
-	l.SetSelectionMode(MultiSelection)
+	l.SetCheckboxes(true)
 	l.SetSource(serval.NewListSource(rows))
 
 	l.extent(0, 20)
@@ -226,7 +224,7 @@ func TestRemovingAChosenRowUnchoosesIt(t *testing.T) {
 func TestNoSelectionChoosesNothing(t *testing.T) {
 	l := filled(5)
 	l.extent(0, 5)
-	l.SetSelectionMode(MultiSelection)
+	l.SetCheckboxes(true)
 	l.SetSelected(2, true)
 
 	l.SetSelectionMode(NoSelection)
@@ -264,7 +262,7 @@ func TestSelectedIDsComeBackInOrder(t *testing.T) {
 				serval.Record{serval.Named(rowDisplay, "x")})
 		}
 		l := NewListView()
-		l.SetSelectionMode(MultiSelection)
+		l.SetCheckboxes(true)
 		l.SetSource(serval.NewListSource(rows))
 		l.extent(0, 40)
 		for _, at := range []int{31, 2, 17, 5, 28} {

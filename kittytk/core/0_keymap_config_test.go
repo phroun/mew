@@ -152,7 +152,7 @@ var referenceDefaultBindings = []Binding{
 	{"S-Tab", []string{CmdFocusPrior}},
 
 	{"Esc", []string{CmdWindowCancelResize, CmdTrinketCancel}},
-	{"Space", []string{CmdTrinketTypeSpace, CmdTrinketActivate}},
+	{"Space", []string{CmdTrinketTypeSpace, CmdTrinketCheck, CmdTrinketActivate}},
 	{"Return", []string{CmdTrinketEdit, CmdTrinketActivate}},
 
 	{"Up", []string{CmdWindowMoveFineUp, CmdWindowSizeFineUp, CmdTrinketItemUp, CmdTrinketItemPrior}},

@@ -92,8 +92,14 @@ type ListView struct {
 
 	// Selection mode, and which rows are chosen -- by IDENTITY, because a
 	// position means nothing once the rows move. See listchoice.go.
+	//
+	// Without checkboxes the one chosen row is the current one, and the two
+	// move together. With them, chosen is the rows whose boxes are ticked,
+	// and it has nothing to do with where the bar is.
 	selectionMode SelectionMode
+	checkboxes    bool
 	chosen        selection
+	onCheck       func(CheckChange)
 
 	// Appearance
 	ledger    bool
@@ -123,13 +129,13 @@ type ListView struct {
 	onSelectionChanged func()
 }
 
-// SelectionMode determines how items can be selected.
+// SelectionMode determines whether the list has a current row to select. More
+// than one row at a time is chosen with checkboxes (SetCheckboxes), which tick
+// rows independently of the current one.
 type SelectionMode int
 
 const (
 	SingleSelection SelectionMode = iota
-	MultiSelection
-	ExtendedSelection
 	NoSelection
 )
 
@@ -140,14 +146,7 @@ func NewListView() *ListView {
 		selectionMode: SingleSelection,
 	}
 	l.TrinketBase = *core.NewTrinketBase()
-	l.SetCommands(
-		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
-		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
-		core.CmdTrinketScrollUp, core.CmdTrinketScrollDown,
-		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
-		core.CmdTrinketBeg, core.CmdTrinketEnd,
-		core.CmdTrinketActivate, core.CmdTrinketSelectAll,
-	)
+	l.offerCommands()
 	l.Init(l) // Enable polymorphic focus handling
 	l.SetFocusPolicy(core.StrongFocus)
 	l.SetAccessibleRole(core.RoleList)
@@ -314,7 +313,7 @@ func (l *ListView) SetCurrentIndex(index int) {
 		l.ScrollRectIntoView(itemRect)
 	}
 
-	if l.selectionMode == SingleSelection {
+	if l.mirrorsCurrent() {
 		// The row is read first, because choosing one means NAMING it. Without
 		// this the selection quietly does not record: the current row moves, and
 		// nothing is chosen, because the list had not yet been told what stands
@@ -489,7 +488,7 @@ func (l *ListView) Paint(p *core.Painter) {
 		var s style.CellStyle
 		if !item.Enabled {
 			s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetListBG())
-		} else if l.IsSelected(itemIndex) {
+		} else if l.barOn(itemIndex) {
 			if focused {
 				s = scheme.GetFocusedListItem()
 			} else {
@@ -532,6 +531,20 @@ func (l *ListView) Paint(p *core.Painter) {
 			p.DrawCell(core.LeadingX(l, bounds.Width, x, metrics.UnitsPerCellWidth), itemY, arrow, s)
 		}
 		x += metrics.UnitsPerCellWidth
+
+		// The row's box, after the arrow: three cells in the row's own
+		// colours, the brackets kept in order whichever way the list reads.
+		if l.checkboxes {
+			mark := ' '
+			if l.IsSelected(itemIndex) {
+				mark = 'x'
+			}
+			bx := core.LeadingX(l, bounds.Width, x, 3*metrics.UnitsPerCellWidth)
+			p.DrawCell(bx, itemY, '[', s)
+			p.DrawCell(bx+metrics.UnitsPerCellWidth, itemY, mark, s)
+			p.DrawCell(bx+2*metrics.UnitsPerCellWidth, itemY, ']', s)
+			x += l.checkboxWidth()
+		}
 
 		// Draw icon if present
 		if l.showIcons && item.Icon != "" {
@@ -900,6 +913,10 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
+	case core.CmdTrinketCheck:
+		l.toggleCurrent()
+		return true
+
 	case core.CmdTrinketSelectAll:
 		l.SelectAll()
 		return true
@@ -975,6 +992,11 @@ func (l *ListView) HandleResize(oldSize, newSize core.UnitSize) {
 
 // HandleMousePress handles mouse clicks.
 func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
+	if event.Button == core.RightButton && l.checkboxes && l.rowUnder(event.Y) >= 0 {
+		l.SetFocusWithoutScroll()
+		l.showContextMenu(core.UnitPoint{X: event.X, Y: event.Y})
+		return true
+	}
 	if event.Button != core.LeftButton {
 		return false
 	}
@@ -1068,6 +1090,12 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		l.isDragging = true
 		l.scrollbarDragging = false
 		l.SetCurrentIndex(clickedIndex)
+		// A press on the row's box ticks it as well: the bar comes to the
+		// row, as it does for a press anywhere on it, and the box turns over.
+		if l.onCheckbox(event.X) {
+			l.isDragging = false
+			l.toggleCurrent()
+		}
 		return true
 	}
 
@@ -1288,7 +1316,7 @@ func (l *ListView) AccessibleInfo() core.AccessibleInfo {
 		}
 	}
 
-	if l.selectionMode == MultiSelection || l.selectionMode == ExtendedSelection {
+	if l.checkboxes {
 		info.State |= core.StateMultiSelectable
 	}
 

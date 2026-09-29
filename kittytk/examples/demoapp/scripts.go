@@ -163,6 +163,7 @@ s=new tab caption="Selection" children={
 li=new tab caption="Lists" children={
 	liv=new panel layout=vbox spacing=8 children={
 	lirtl=new checkbox caption="direction=rtl on the LIST -- its bar takes the left, and each item still reads its own language" halign=textnatural fill=none
+	licheck=new checkbox caption="checkboxes=true on the LIST -- Space or a press ticks a row, and a right-click offers Select All, Select None and Invert Selection" halign=textnatural fill=none
 	lisp=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		lilp=new panel layout=vbox children={
 			new label caption="ListView:"
@@ -828,6 +829,7 @@ slc=w.t.sl.slv.slc
 pgrtl=w.t.pg.pgv.pgrtl
 pgc=w.t.pg.pgv.pgc
 lirtl=w.t.li.liv.lirtl
+licheck=w.t.li.liv.licheck
 lilv=w.t.li.liv.lisp.lilp.lilv
 lirefused=w.t.li.liv.lirefused
 litrouble=w.t.li.liv.litrouble

@@ -77,12 +77,14 @@ Esc = window_cancel_resize
 Esc = trinket_cancel
 
 ; Return edits where a trinket offers an edit and activates otherwise; Space
-; types a space where the trinket takes text and activates otherwise. Space is
-; written before Return so menus advertise Return for activation.
+; types a space where the trinket takes text, ticks a row's box where the
+; trinket has rows to tick, and activates otherwise. Space is written before
+; Return so menus advertise Return for activation.
 ;
 ; Return is the home row's key, not the keypad's. Bind Enter too to give the
 ; keypad the same meaning.
 Space = trinket_type_space
+Space = trinket_check
 Space = trinket_activate
 Return = trinket_edit
 Return = trinket_activate
