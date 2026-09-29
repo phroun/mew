@@ -39,10 +39,14 @@ M-^X = desktop_exit
 ; host_suspend hands the terminal back to the shell and stops until fg. It is
 ; bound to nothing here: which key stops a whole session is the user's call.
 
-; The clipboard, on whatever has the keyboard.
+; The clipboard, on whatever has the keyboard. The (mac) hints put the Command
+; keys first on a Mac, where the Edit menu advertises them.
 ^X = trinket_cut
 ^C = trinket_copy
 ^V = trinket_paste
+(mac) s-x = trinket_cut
+(mac) s-c = trinket_copy
+(mac) s-v = trinket_paste
 
 ; Undo. ^_ is the plain undo, and is what ^/ sends from a terminal. ^Z is simple
 ; undo: it redoes when there is something to redo and undoes once otherwise, and
