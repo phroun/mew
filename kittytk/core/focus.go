@@ -22,6 +22,10 @@ type FocusManager struct {
 	// Currently focused trinket
 	focusedTrinket Trinket
 
+	// resting marks the empty rest stop: nothing focused, and on purpose
+	// (see FocusRest). Any change of focus ends it.
+	resting bool
+
 	// Focus chain (ordered list of focusable trinkets)
 	focusChain []Trinket
 
@@ -89,6 +93,7 @@ func (fm *FocusManager) SetFocusedTrinket(trinket Trinket) bool {
 	}
 
 	fm.mu.Lock()
+	fm.resting = false
 	if fm.focusedTrinket == trinket {
 		fm.mu.Unlock()
 		return true
@@ -107,7 +112,7 @@ func (fm *FocusManager) SetFocusedTrinket(trinket Trinket) bool {
 
 	// Set focus on new trinket (this sets focused=true and calls HandleFocusIn)
 	if trinket != nil {
-		trinket.SetFocus()
+		fm.giveFocus(trinket)
 	}
 
 	// Announce focus change for accessibility
@@ -131,6 +136,7 @@ func (fm *FocusManager) SetFocusedTrinketWithoutScroll(trinket Trinket) bool {
 	}
 
 	fm.mu.Lock()
+	fm.resting = false
 	if fm.focusedTrinket == trinket {
 		fm.mu.Unlock()
 		return true
@@ -149,7 +155,11 @@ func (fm *FocusManager) SetFocusedTrinketWithoutScroll(trinket Trinket) bool {
 
 	// Set focus on new trinket without scrolling
 	if trinket != nil {
-		trinket.SetFocusWithoutScroll()
+		if trinket == fm.restRoot() {
+			fm.giveFocus(trinket)
+		} else {
+			trinket.SetFocusWithoutScroll()
+		}
 	}
 
 	// Announce focus change for accessibility
@@ -174,6 +184,7 @@ func (fm *FocusManager) setFocusedTrinketInternal(trinket Trinket) bool {
 	}
 
 	fm.mu.Lock()
+	fm.resting = false
 	if fm.focusedTrinket == trinket {
 		fm.mu.Unlock()
 		return true
@@ -211,10 +222,107 @@ func (fm *FocusManager) ClearFocus() {
 	fm.SetFocusedTrinket(nil)
 }
 
+// The REST STOP is where a window's focus goes when it is on nothing in
+// particular: the ring runs title bar, rest, then the trinkets in order, and
+// wraps back to the rest. Only a stop, never where a window opens.
+//
+// When the root holds other trinkets, the root itself is the rest: a
+// container holding the focus is focus on none of its children, and whatever
+// answers to a letter below it is offered (see Mnemonic). A root whose own
+// policy already puts it first in the chain -- a message box's area -- serves
+// as it is; any other is put at the front of the chain for the purpose. A
+// root with nothing inside it (a lone field or list) has an EMPTY rest
+// instead: nothing focused, with the manager noting that it is on purpose.
+
+// hasChildren reports whether t holds any trinket.
+func hasChildren(t Trinket) bool {
+	c, ok := t.(interface{ Children() []Trinket })
+	return ok && len(c.Children()) > 0
+}
+
+// tabPolicy reports whether a policy puts a trinket in the chain by itself.
+func tabPolicy(p FocusPolicy) bool { return p == StrongFocus || p == TabFocus }
+
+// restRoot is the root when it is the rest stop only for the purpose: a
+// container whose own policy keeps it out of the chain.
+func (fm *FocusManager) restRoot() Trinket {
+	fm.mu.RLock()
+	root := fm.root
+	fm.mu.RUnlock()
+	if root == nil || !hasChildren(root) || tabPolicy(root.FocusPolicy()) {
+		return nil
+	}
+	return root
+}
+
+// hasRest reports whether the ring has a rest stop to wrap through: it does
+// whenever it has anything in it to come to rest from (FocusRest says which).
+func (fm *FocusManager) hasRest(chain []Trinket) bool {
+	fm.mu.RLock()
+	root := fm.root
+	fm.mu.RUnlock()
+	return root != nil && len(chain) > 0
+}
+
+// FocusRest moves the focus to the rest stop, and reports whether there was
+// one to move to.
+func (fm *FocusManager) FocusRest() bool {
+	fm.mu.RLock()
+	root := fm.root
+	fm.mu.RUnlock()
+	if root == nil {
+		return false
+	}
+	if hasChildren(root) {
+		return fm.SetFocusedTrinket(root)
+	}
+	if !fm.hasRest(fm.buildFocusChain(root)) {
+		return false
+	}
+	fm.SetFocusedTrinket(nil)
+	fm.mu.Lock()
+	fm.resting = true
+	fm.mu.Unlock()
+	return true
+}
+
+// AtRest reports whether the focus is at the rest stop.
+func (fm *FocusManager) AtRest() bool {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+	if fm.resting {
+		return true
+	}
+	return fm.focusedTrinket != nil && fm.focusedTrinket == fm.root && hasChildren(fm.root)
+}
+
+// NeedsFocus reports whether nothing is focused and not on purpose: what a
+// window being activated checks before it focuses its first trinket, so that
+// a window left at an empty rest is still at rest when it comes back.
+func (fm *FocusManager) NeedsFocus() bool {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+	return fm.focusedTrinket == nil && !fm.resting
+}
+
+// giveFocus sets the focus on trinket. The rest root takes it past its own
+// policy, which would otherwise refuse it.
+func (fm *FocusManager) giveFocus(trinket Trinket) {
+	if r, ok := trinket.(interface{ takeRestFocus() }); ok && trinket == fm.restRoot() {
+		r.takeRestFocus()
+		return
+	}
+	trinket.SetFocus()
+}
+
 // canFocus checks if a trinket can receive focus.
 func (fm *FocusManager) canFocus(trinket Trinket) bool {
 	if trinket == nil {
 		return false
+	}
+	// The root as the rest stop takes the focus whatever its policy says.
+	if trinket == fm.restRoot() {
+		return trinket.IsEnabled() && trinket.IsVisible()
 	}
 
 	// Check enabled
@@ -273,6 +381,9 @@ func (fm *FocusManager) FocusNext() bool {
 	for i := 1; i <= len(chain); i++ {
 		nextIdx := currentIdx + i
 		if nextIdx >= len(chain) {
+			if wrap && current != nil && fm.hasRest(chain) {
+				return fm.FocusRest()
+			}
 			if wrap {
 				nextIdx = nextIdx % len(chain)
 			} else {
@@ -314,6 +425,9 @@ func (fm *FocusManager) FocusPrior() bool {
 	for i := 1; i <= len(chain); i++ {
 		priorIdx := currentIdx - i
 		if priorIdx < 0 {
+			if wrap && current != nil && fm.hasRest(chain) {
+				return fm.FocusRest()
+			}
 			if wrap {
 				priorIdx = len(chain) + priorIdx
 			} else {
@@ -337,8 +451,9 @@ func (fm *FocusManager) FocusFirst() bool {
 	fm.mu.RUnlock()
 
 	chain := fm.buildFocusChain(root)
+	rest := fm.restRoot()
 	for _, w := range chain {
-		if fm.canFocus(w) {
+		if w != rest && fm.canFocus(w) {
 			return fm.SetFocusedTrinket(w)
 		}
 	}
@@ -353,8 +468,9 @@ func (fm *FocusManager) FocusFirstWithoutScroll() bool {
 	fm.mu.RUnlock()
 
 	chain := fm.buildFocusChain(root)
+	rest := fm.restRoot()
 	for _, w := range chain {
-		if fm.canFocus(w) {
+		if w != rest && fm.canFocus(w) {
 			return fm.SetFocusedTrinketWithoutScroll(w)
 		}
 	}
@@ -370,14 +486,15 @@ func (fm *FocusManager) FocusFirstNonFurtive() bool {
 	fm.mu.RUnlock()
 
 	chain := fm.buildFocusChain(root)
+	rest := fm.restRoot() // a stop, never where a window opens
 	for _, w := range chain {
-		if fm.canFocus(w) && !w.Furtive() {
+		if w != rest && fm.canFocus(w) && !w.Furtive() {
 			return fm.SetFocusedTrinket(w)
 		}
 	}
 	// Fall back to any focusable trinket if all are furtive
 	for _, w := range chain {
-		if fm.canFocus(w) {
+		if w != rest && fm.canFocus(w) {
 			return fm.SetFocusedTrinket(w)
 		}
 	}
@@ -407,6 +524,9 @@ func (fm *FocusManager) buildFocusChain(root Trinket) []Trinket {
 	}
 
 	var chain []Trinket
+	if rest := fm.restRoot(); rest != nil {
+		chain = append(chain, rest)
+	}
 	fm.collectFocusable(root, &chain)
 	return chain
 }

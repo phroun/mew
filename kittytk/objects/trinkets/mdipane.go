@@ -390,7 +390,7 @@ func (m *MDIPane) RemoveWindow(win *window.Window) {
 			newActive.SetActive(true)
 			// Focus the new active window's first trinket
 			if fm := newActive.FocusManager(); fm != nil {
-				if fm.FocusedTrinket() == nil {
+				if fm.NeedsFocus() {
 					fm.FocusFirst()
 				}
 			}
@@ -522,7 +522,7 @@ func (m *MDIPane) activate(win *window.Window, reorderCycle bool) {
 			// Use FocusFirstWithoutScroll since ActivateWindow is typically
 			// called from mouse handlers where visibility is already proven.
 			if fm := win.FocusManager(); fm != nil {
-				if fm.FocusedTrinket() == nil {
+				if fm.NeedsFocus() {
 					fm.FocusFirstWithoutScroll()
 				}
 			}
@@ -573,7 +573,7 @@ func (m *MDIPane) FocusWindow(win *window.Window) {
 		// Use FocusFirstWithoutScroll since this is called from mouse handlers
 		// and visibility is already proven by the click.
 		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedTrinket() == nil {
+			if fm.NeedsFocus() {
 				fm.FocusFirstWithoutScroll()
 			}
 		}
@@ -1313,7 +1313,7 @@ func (m *MDIPane) HandleFocusIn() {
 	// Ensure active window has a focused trinket
 	if active != nil && !active.IsMinimized() {
 		if fm := active.FocusManager(); fm != nil {
-			if fm.FocusedTrinket() == nil {
+			if fm.NeedsFocus() {
 				fm.FocusFirst()
 			}
 		}
@@ -1515,7 +1515,7 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 		// focused, the first key press should establish focus.
 		// BUT: don't do this if the title bar has focus (e.g., during window move/resize).
 		if fm := active.FocusManager(); fm != nil {
-			if fm.FocusedTrinket() == nil && !active.HasTitleFocus() {
+			if fm.NeedsFocus() && !active.HasTitleFocus() {
 				fm.FocusFirst()
 			}
 		}

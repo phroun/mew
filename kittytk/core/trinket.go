@@ -823,6 +823,14 @@ func (w *TrinketBase) SetFocusFromMouse() {
 	w.setFocusInternal(false) // No scroll needed for mouse clicks
 }
 
+// takeRestFocus gives the trinket the focus as its window's rest stop (see
+// FocusManager.FocusRest), which a container takes whatever its own policy:
+// the focus manager has already decided it may.
+func (w *TrinketBase) takeRestFocus() {
+	w.mu.Lock()
+	w.takeFocusLocked(false)
+}
+
 // setFocusInternal is the common implementation for SetFocus variants.
 func (w *TrinketBase) setFocusInternal(scrollIntoView bool) {
 	w.mu.Lock()
@@ -830,6 +838,12 @@ func (w *TrinketBase) setFocusInternal(scrollIntoView bool) {
 		w.mu.Unlock()
 		return
 	}
+	w.takeFocusLocked(scrollIntoView)
+}
+
+// takeFocusLocked is setFocusInternal past its policy check, entered with w.mu
+// held.
+func (w *TrinketBase) takeFocusLocked(scrollIntoView bool) {
 	app := w.app
 	parent := w.parent
 	self := w.self // Get the outer trinket reference
