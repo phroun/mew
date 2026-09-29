@@ -530,6 +530,11 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 		if focused.HandleKeyPress(event) {
 			return true
 		}
+		// A letter the focused trinket had no use for may name a control
+		// below it (see Mnemonic).
+		if AnswerMnemonic(focused, event) {
+			return true
+		}
 	}
 
 	// Trinket didn't handle it - walk the focus chain. Which key does that is

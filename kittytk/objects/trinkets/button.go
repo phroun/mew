@@ -19,7 +19,7 @@ type Button struct {
 	// text is the caption as shown, with any "&" markup taken out, and raw is
 	// the caption as it was given. mnemonics are the letters raw marked, in the
 	// order written: a preference list, like a menu title's, of which the
-	// container the button sits in picks one (see mnemonicHost).
+	// focused trinket above the button settles on one (see core.Mnemonic).
 	text      string
 	raw       string
 	mnemonics []acceleratorCandidate
@@ -90,15 +90,12 @@ func (b *Button) RawText() string {
 // SetText sets the button's caption. An "&" marks the letter after it as one
 // the button would answer to, as a menu title's does: "&Yes" offers Y, several
 // marks are a preference list ("&Ap&ply" offers A, then P), and "&&" is an
-// ampersand. The marks are not shown; whether a letter is drawn out and
-// answered to is up to what the button sits in (see mnemonicHost).
+// ampersand. The marks are not shown; the letter is drawn out and answered to
+// while something above the button holds the focus (see core.Mnemonic).
 func (b *Button) SetText(text string) {
 	b.raw = text
 	b.text, b.mnemonics = parseAcceleratorTitle(text)
 	b.SetAccessibleName(b.text)
-	if h, ok := b.Parent().(interface{ assignMnemonics() }); ok {
-		h.assignMnemonics()
-	}
 	b.Update()
 	b.InvalidateLayout()
 }
@@ -113,28 +110,27 @@ func (b *Button) Mnemonics() []rune {
 	return out
 }
 
-// A mnemonicHost is a container whose buttons answer to a single bare letter:
-// it settles which letter each button gets, when its buttons offer the same
-// one, and says whether the letters are live right now. A button with no host
-// never draws a mnemonic, whatever its caption marks, and paints as it always
-// has.
-type mnemonicHost interface {
-	// buttonMnemonic reports where in b's caption its letter stands, and
-	// whether the host is offering its buttons by letter at the moment.
-	buttonMnemonic(b *Button) (pos int, live bool)
+// MnemonicChoices implements core.Mnemonic: the letters the caption marks.
+func (b *Button) MnemonicChoices() []core.MnemonicChoice {
+	out := make([]core.MnemonicChoice, len(b.mnemonics))
+	for i, m := range b.mnemonics {
+		out[i] = core.MnemonicChoice{Char: m.Char, Pos: m.Pos}
+	}
+	return out
 }
 
-// liveMnemonic is where the button's letter stands in its caption, when the
-// container it sits in is offering its buttons by letter; -1 otherwise.
+// MnemonicPress implements core.Mnemonic: the letter presses the button as
+// Space would.
+func (b *Button) MnemonicPress() { b.AnimatePress() }
+
+// MnemonicPressing implements core.Mnemonic: a press shown and not yet
+// clicked.
+func (b *Button) MnemonicPressing() bool { return b.animatingPress.Load() }
+
+// liveMnemonic is where the button's letter stands in its caption while it is
+// offered (see core.Mnemonic); -1 otherwise.
 func (b *Button) liveMnemonic() int {
-	h, ok := b.Parent().(mnemonicHost)
-	if !ok {
-		return -1
-	}
-	if pos, live := h.buttonMnemonic(b); live {
-		return pos
-	}
-	return -1
+	return core.LiveMnemonic(b)
 }
 
 // Icon returns the name of the button's icon.

@@ -1,8 +1,8 @@
 package trinkets
 
 // A button's caption marks the letter it would answer to with "&", as a menu
-// title does. A message box's area offers its buttons by that letter while it
-// holds the focus -- which it does when the dialog opens -- drawing each
+// title does. A message box's area, holding the focus when the dialog opens,
+// offers its buttons by that letter (see core.Mnemonic) -- drawing each
 // button's letter out and answering a single bare keypress of it, so Y or N
 // answers a yes-or-no question without a Tab first. Once a button has the
 // focus, the buttons paint as they always have and the letters do nothing.
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
@@ -25,6 +26,17 @@ func exitQuestion(t *testing.T) *MessageBox {
 		ButtonYes|ButtonNo|ButtonPopOut)
 	mb.SetButtonText(ResultPopOut, "&Pop It Out")
 	return mb
+}
+
+// wonBy is the letter btn answers to while the message area holds the focus,
+// with Pos -1 when it won none. It leaves the area focused.
+func wonBy(mb *MessageBox, btn *Button) core.MnemonicChoice {
+	mb.content.SetFocus()
+	pos := btn.liveMnemonic()
+	if pos < 0 {
+		return core.MnemonicChoice{Pos: -1}
+	}
+	return core.MnemonicChoice{Char: unicode.ToLower([]rune(btn.Text())[pos]), Pos: pos}
 }
 
 // paintContent draws a message box's area into a cell grid, so what each cell
@@ -73,7 +85,7 @@ func TestTheStockButtonsAnswerToTheirFirstLetters(t *testing.T) {
 			t.Errorf("a button shows %q, which is not one of the captions", btn.Text())
 			continue
 		}
-		if got := mb.content.letters[btn]; got.Char != letter || got.Pos != 0 {
+		if got := wonBy(mb, btn); got.Char != letter || got.Pos != 0 {
 			t.Errorf("%q answers to %q at %d, want %q at 0", btn.Text(), got.Char, got.Pos, letter)
 		}
 	}
@@ -179,7 +191,7 @@ func TestAClashGoesToTheFirstButton(t *testing.T) {
 	mb := NewMessageBox("Apply", "Apply the changes?", ButtonAbort|ButtonApply)
 	letters := map[string]rune{}
 	for _, btn := range mb.content.buttonTrinkets {
-		letters[btn.Text()] = mb.content.letters[btn].Char
+		letters[btn.Text()] = wonBy(mb, btn).Char
 	}
 	if letters["Abort"] != 'a' || letters["Apply"] != 'p' {
 		t.Errorf("Abort answers to %q and Apply to %q, want a and p", letters["Abort"], letters["Apply"])
@@ -189,15 +201,15 @@ func TestAClashGoesToTheFirstButton(t *testing.T) {
 	mb.SetButtonText(ResultDiscard, "&Scrap")
 	for _, btn := range mb.content.buttonTrinkets {
 		if btn.Text() == "Scrap" {
-			if _, ok := mb.content.letters[btn]; ok {
+			if wonBy(mb, btn).Pos >= 0 {
 				t.Error("Scrap has a letter after Save took its only one")
 			}
 		}
 	}
 }
 
-// A button anywhere else shows its caption without the markup and draws no
-// letter; "&&" is an ampersand.
+// A button with nothing focused above it shows its caption without the markup
+// and draws no letter; "&&" is an ampersand.
 func TestAButtonElsewhereDrawsNoLetter(t *testing.T) {
 	b := NewButton("&Save && Exit")
 	if b.Text() != "Save & Exit" || b.RawText() != "&Save && Exit" {
@@ -318,7 +330,7 @@ func TestACaptionTakesItsFirstFreeLetter(t *testing.T) {
 	mb.SetButtonText(ResultNo, "N&ever")
 	for _, btn := range mb.content.buttonTrinkets {
 		want := map[string]rune{"Yes": 'y', "Never": 'e'}[btn.Text()]
-		if got := mb.content.letters[btn].Char; got != want {
+		if got := wonBy(mb, btn).Char; got != want {
 			t.Errorf("%q answers to %q, want %q", btn.Text(), got, want)
 		}
 	}
