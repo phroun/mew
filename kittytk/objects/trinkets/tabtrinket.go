@@ -4206,6 +4206,23 @@ func (t *TabTrinket) pickUpTab(x core.Unit, scrolled bool) {
 	t.dragTab, t.dragAwaitPaint, t.dragFrom = t.tabs[sp.owner], false, sp.owner
 }
 
+// carryingTab reports a tab picked up and not yet put down: a press on a
+// movable strip, on either kind.
+func (t *TabTrinket) carryingTab() bool {
+	return t.dragTab != nil || t.vertTabDragging && t.movable
+}
+
+// CursorShape implements core.CursorProvider: the closed hand while a tab is
+// carried. The pointer is resolved when the press that picks it up goes down
+// and again when it comes up, and left alone in between, so the hand stays on
+// for the whole drag wherever the pointer goes.
+func (t *TabTrinket) CursorShape() core.CursorShape {
+	if t.carryingTab() {
+		return core.CursorGrabbing
+	}
+	return core.CursorDefault
+}
+
 // tabsInView is the run of tabs the strip last drew, by index, and where in
 // RUN coordinates that run starts and ends. A tab the run was cut short at is
 // in view. ok is false where no tab was drawn at all.

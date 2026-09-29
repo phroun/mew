@@ -5177,7 +5177,13 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if d.hostMoveBegin(e) {
 			return true
 		}
-		return wm.HandleMousePress(e)
+		// The cursor is decided again once the press has landed: a press can
+		// pick something up that shows a cursor of its own for as long as it
+		// is held (a tab being carried shows the closed hand), and the moves
+		// while it is held leave the cursor as the press set it.
+		handled := wm.HandleMousePress(e)
+		d.updateCursor(e.X, e.Y)
+		return handled
 
 	case core.MouseMoveEvent:
 		core.WheelPointerMoved()
@@ -5230,7 +5236,10 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if d.hostMoveEnd(e) {
 			return true
 		}
-		return wm.HandleMouseRelease(e)
+		// ...and again when it comes up, when whatever it was holding lets go.
+		handled := wm.HandleMouseRelease(e)
+		d.updateCursor(e.X, e.Y)
+		return handled
 
 	case core.MouseWheelEvent:
 		// Stamp the screen position once; translations preserve it.

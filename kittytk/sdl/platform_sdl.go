@@ -3069,7 +3069,11 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	if !ok {
 		// SDL3 reports creation failure; a nil cursor is cached so the
 		// lookup is not retried every frame.
-		cur, _ = sdl3.CreateSystemCursor(systemCursorID(shape))
+		if shape == core.CursorGrabbing {
+			cur = createGrabCursor()
+		} else {
+			cur, _ = sdl3.CreateSystemCursor(systemCursorID(shape))
+		}
 		p.cursors[shape] = cur
 	}
 	if cur == nil {
@@ -3077,6 +3081,31 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	}
 	_ = sdl3.SetCursor(cur)
 	p.cursorSet = true
+}
+
+// createGrabCursor builds the closed hand SDL has no system cursor for (see
+// grab_cursor.go): the picture at one pixel to the point, with a double-size
+// version for displays with two. nil when SDL cannot make it; the cursor then
+// stays as it was.
+func createGrabCursor() *sdl3.Cursor {
+	pix, w, h := grabHandPixels(1)
+	base, err := sdl3.CreateSurfaceFrom(w, h, sdl3.PIXELFORMAT_RGBA32, pix, w*4)
+	if err != nil {
+		return nil
+	}
+	defer base.Destroy()
+	pix2, w2, h2 := grabHandPixels(2)
+	if hi, err := sdl3.CreateSurfaceFrom(w2, h2, sdl3.PIXELFORMAT_RGBA32, pix2, w2*4); err == nil {
+		_ = sdl3.AddSurfaceAlternateImage(base, hi)
+		hi.Destroy() // the base holds its own reference
+	}
+	cur, err := sdl3.CreateColorCursor(base, grabHandHotX, grabHandHotY)
+	runtime.KeepAlive(pix)
+	runtime.KeepAlive(pix2)
+	if err != nil {
+		return nil
+	}
+	return cur
 }
 
 func (p *Platform) reassertCursor() {

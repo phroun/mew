@@ -17,6 +17,9 @@ const (
 	CursorResizeNWSE
 	// CursorResizeNESW is the top-right/bottom-left diagonal resize cursor.
 	CursorResizeNESW
+	// CursorGrabbing is the closed hand: something is held and being carried,
+	// such as a tab being dragged to a new place on its strip.
+	CursorGrabbing
 )
 
 // CursorProvider is an optional trinket capability: a trinket that wants a

@@ -359,3 +359,51 @@ func TestTearOffHostPopupThatTakesTheMoveShowsTheArrow(t *testing.T) {
 		t.Errorf("over the popup, cursor = %v, want the arrow", applied)
 	}
 }
+
+// holdContent asks for the closed hand while a press on it is held, as a tab
+// being carried does.
+type holdContent struct {
+	core.TrinketBase
+	held bool
+}
+
+func (c *holdContent) HandleMousePress(core.MousePressEvent) bool     { c.held = true; return true }
+func (c *holdContent) HandleMouseRelease(core.MouseReleaseEvent) bool { c.held = false; return true }
+func (c *holdContent) CursorShape() core.CursorShape {
+	if c.held {
+		return core.CursorGrabbing
+	}
+	return core.CursorDefault
+}
+
+// A torn window decides the cursor again when a press lands and when it comes
+// up, so what the press picked up shows its cursor for as long as it is held.
+func TestTearOffHostCursorFollowsWhatAPressHolds(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
+	win := NewWindow("torn")
+	win.SetDetached(true)
+	content := &holdContent{}
+	content.TrinketBase = *core.NewTrinketBase()
+	content.Init(content)
+	win.SetContent(content)
+	win.SetBounds(core.UnitRect{Width: 200, Height: 100})
+	win.Layout()
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+	var applied core.CursorShape = -1
+	h.SetCursorSetter(func(s core.CursorShape) { applied = s })
+
+	cb := win.contentBounds()
+	x, y := cb.X+cb.Width/2, cb.Y+cb.Height/2
+	h.Event(core.MousePressEvent{X: x, Y: y, Button: core.LeftButton})
+	if applied != core.CursorGrabbing {
+		t.Fatalf("after the press the cursor is %v, want the closed hand", applied)
+	}
+	h.Event(core.MouseMoveEvent{X: x + 4, Y: y, Buttons: core.LeftButton})
+	if applied != core.CursorGrabbing {
+		t.Errorf("while held the cursor became %v", applied)
+	}
+	h.Event(core.MouseReleaseEvent{X: x + 4, Y: y, Button: core.LeftButton})
+	if applied != core.CursorDefault {
+		t.Errorf("after the release the cursor is %v, want the arrow", applied)
+	}
+}
