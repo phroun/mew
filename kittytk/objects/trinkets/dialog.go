@@ -136,7 +136,70 @@ type messageBoxContent struct {
 	buttonTrinkets []*Button
 	buttonResults  []DialogResult
 	onDone         func(result DialogResult)
+	// letters is the letter each button won (see assignMnemonics), and where
+	// it stands in the button's caption; a button that won none is absent.
+	letters map[*Button]acceleratorCandidate
 }
+
+// assignMnemonics settles which letter each button answers to. Left to right,
+// each takes the first letter its caption offers that no earlier button has
+// taken -- the rule a menu's items follow -- so a clash goes to the button
+// written first and the other falls back to its next choice, or to none.
+func (c *messageBoxContent) assignMnemonics() {
+	c.letters = map[*Button]acceleratorCandidate{}
+	taken := map[rune]bool{}
+	for _, btn := range c.buttonTrinkets {
+		for _, m := range btn.mnemonics {
+			if !taken[m.Char] {
+				taken[m.Char] = true
+				c.letters[btn] = m
+				break
+			}
+		}
+	}
+	c.Update()
+}
+
+// buttonMnemonic implements mnemonicHost: the buttons are offered by letter
+// while the message area holds the focus, which it does when the dialog opens,
+// so Y or N answers a yes-or-no question without a Tab first. Once a button
+// has the focus they paint as they always have.
+func (c *messageBoxContent) buttonMnemonic(b *Button) (int, bool) {
+	m, ok := c.letters[b]
+	if !ok {
+		return -1, false
+	}
+	return m.Pos, c.HasFocus()
+}
+
+// HandleKeyPress answers a single bare letter, while the message area has the
+// focus, by activating the button that won it -- no modifier: this is a
+// letter pressed on its own, not an accelerator chord. A disabled button's
+// press does nothing, as its click would.
+func (c *messageBoxContent) HandleKeyPress(event core.KeyPressEvent) bool {
+	if !c.HasFocus() {
+		return false
+	}
+	letter := []rune(event.Key)
+	if len(letter) != 1 {
+		return false
+	}
+	want := []rune(strings.ToLower(event.Key))[0]
+	for _, btn := range c.buttonTrinkets {
+		if m, ok := c.letters[btn]; ok && m.Char == want {
+			btn.AnimatePress()
+			return true
+		}
+	}
+	return false
+}
+
+// HandleFocusIn and HandleFocusOut repaint the buttons, whose letters show
+// only while the message area holds the focus.
+func (c *messageBoxContent) HandleFocusIn() { c.Update() }
+
+// HandleFocusOut: see HandleFocusIn.
+func (c *messageBoxContent) HandleFocusOut() { c.Update() }
 
 // Children returns the button trinkets as children.
 func (c *messageBoxContent) Children() []core.Trinket {
@@ -219,18 +282,21 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 		text   string
 		result DialogResult
 	}{
-		{ButtonOK, "OK", ResultOK},
-		{ButtonCancel, "Cancel", ResultCancel},
-		{ButtonYes, "Yes", ResultYes},
-		{ButtonNo, "No", ResultNo},
-		{ButtonRetry, "Retry", ResultRetry},
-		{ButtonIgnore, "Ignore", ResultIgnore},
-		{ButtonAbort, "Abort", ResultAbort},
-		{ButtonSave, "Save", ResultSave},
-		{ButtonDiscard, "Discard", ResultDiscard},
-		{ButtonApply, "Apply", ResultApply},
-		{ButtonHelp, "Help", ResultHelp},
-		{ButtonPopOut, "Pop Out", ResultPopOut},
+		// Each answers to its own first letter. Abort and Apply both want A,
+		// so Apply offers P as well -- which it gives up in turn to Pop Out,
+		// should all three ever share a dialog.
+		{ButtonOK, "&OK", ResultOK},
+		{ButtonCancel, "&Cancel", ResultCancel},
+		{ButtonYes, "&Yes", ResultYes},
+		{ButtonNo, "&No", ResultNo},
+		{ButtonRetry, "&Retry", ResultRetry},
+		{ButtonIgnore, "&Ignore", ResultIgnore},
+		{ButtonAbort, "&Abort", ResultAbort},
+		{ButtonSave, "&Save", ResultSave},
+		{ButtonDiscard, "&Discard", ResultDiscard},
+		{ButtonApply, "&Ap&ply", ResultApply},
+		{ButtonHelp, "&Help", ResultHelp},
+		{ButtonPopOut, "&Pop Out", ResultPopOut},
 	}
 
 	for _, def := range buttonDefs {
@@ -247,6 +313,7 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 			c.buttonResults = append(c.buttonResults, def.result)
 		}
 	}
+	c.assignMnemonics()
 }
 
 // SetButtonText renames one of the dialog's buttons, named by what it answers.
@@ -255,6 +322,9 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 // terms: "Pop It Out" reads as an offer about one application where "Pop Out" reads as
 // a setting. Call it before the dialog is shown -- it changes the button's width, and
 // ResizeToFitContent is what takes account of that.
+//
+// The text takes "&" markup as any button caption does: "&Pop It Out" keeps the
+// P the stock caption answered to.
 func (m *MessageBox) SetButtonText(answers DialogResult, text string) {
 	for i, r := range m.content.buttonResults {
 		if r == answers {

@@ -2,6 +2,7 @@
 package trinkets
 
 import (
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,7 +16,13 @@ type Button struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	text string
+	// text is the caption as shown, with any "&" markup taken out, and raw is
+	// the caption as it was given. mnemonics are the letters raw marked, in the
+	// order written: a preference list, like a menu title's, of which the
+	// container the button sits in picks one (see mnemonicHost).
+	text      string
+	raw       string
+	mnemonics []acceleratorCandidate
 	// icon is the NAME of a registered icon (style.RegisterIcon), not a
 	// picture. A name nothing has registered draws nothing.
 	icon         string
@@ -46,16 +53,15 @@ var buttonCommands = []string{
 }
 
 func NewButton(text string) *Button {
-	b := &Button{
-		text:     text,
-		iconSize: style.IconSmall,
-	}
+	b := &Button{iconSize: style.IconSmall}
+	b.raw = text
+	b.text, b.mnemonics = parseAcceleratorTitle(text)
 	b.TrinketBase = *core.NewTrinketBase()
 	b.SetCommands(buttonCommands...)
 	b.Init(b) // Enable polymorphic focus handling
 	b.SetFocusPolicy(core.StrongFocus)
 	b.SetAccessibleRole(core.RoleButton)
-	b.SetAccessibleName(text)
+	b.SetAccessibleName(b.text)
 	// A cap is one row of text and as wide as its caption; neither grows. Given
 	// a row three deep it sits in it rather than becoming a three-row slab, and
 	// a layout asked to fill has nothing here to fill.
@@ -71,17 +77,64 @@ func NewIconButton(icon string) *Button {
 	return b
 }
 
-// Text returns the button text.
+// Text returns the button's caption as it is shown, without "&" markup.
 func (b *Button) Text() string {
 	return b.text
 }
 
-// SetText sets the button text.
+// RawText returns the caption as it was given, "&" markup and all.
+func (b *Button) RawText() string {
+	return b.raw
+}
+
+// SetText sets the button's caption. An "&" marks the letter after it as one
+// the button would answer to, as a menu title's does: "&Yes" offers Y, several
+// marks are a preference list ("&Ap&ply" offers A, then P), and "&&" is an
+// ampersand. The marks are not shown; whether a letter is drawn out and
+// answered to is up to what the button sits in (see mnemonicHost).
 func (b *Button) SetText(text string) {
-	b.text = text
-	b.SetAccessibleName(text)
+	b.raw = text
+	b.text, b.mnemonics = parseAcceleratorTitle(text)
+	b.SetAccessibleName(b.text)
+	if h, ok := b.Parent().(interface{ assignMnemonics() }); ok {
+		h.assignMnemonics()
+	}
 	b.Update()
 	b.InvalidateLayout()
+}
+
+// Mnemonics returns the letters the caption offers, lowercased, in the order
+// written.
+func (b *Button) Mnemonics() []rune {
+	out := make([]rune, len(b.mnemonics))
+	for i, m := range b.mnemonics {
+		out[i] = m.Char
+	}
+	return out
+}
+
+// A mnemonicHost is a container whose buttons answer to a single bare letter:
+// it settles which letter each button gets, when its buttons offer the same
+// one, and says whether the letters are live right now. A button with no host
+// never draws a mnemonic, whatever its caption marks, and paints as it always
+// has.
+type mnemonicHost interface {
+	// buttonMnemonic reports where in b's caption its letter stands, and
+	// whether the host is offering its buttons by letter at the moment.
+	buttonMnemonic(b *Button) (pos int, live bool)
+}
+
+// liveMnemonic is where the button's letter stands in its caption, when the
+// container it sits in is offering its buttons by letter; -1 otherwise.
+func (b *Button) liveMnemonic() int {
+	h, ok := b.Parent().(mnemonicHost)
+	if !ok {
+		return -1
+	}
+	if pos, live := h.buttonMnemonic(b); live {
+		return pos
+	}
+	return -1
 }
 
 // Icon returns the name of the button's icon.
@@ -491,10 +544,17 @@ func (b *Button) Paint(p *core.Painter) {
 	// Draw left bracket/space (decorative - use DrawCell, not DrawText)
 	p.DrawCell(xOffset, yOffset, leftBracket, s)
 
-	// Draw text using font
+	// Draw text using font. The mnemonic letter, while the button's container
+	// offers it and the button can be pressed, is drawn in its own style over
+	// the face's background; a letter the elision cut off is simply not drawn.
 	if shown != "" {
 		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
-		p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
+		if pos := b.liveMnemonic(); pos >= 0 && b.IsEnabled() {
+			drawTextSegments(p, textX, yOffset, font, metrics,
+				accelSegments(shown, core.FindEffectiveDirection(b.Self()), pos, s, scheme.GetButtonMnemonic(s))...)
+		} else {
+			p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
+		}
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)
@@ -707,6 +767,10 @@ func (b *Button) AccessibleInfo() core.AccessibleInfo {
 	info := b.AccessibleTrinket.AccessibleInfo()
 	info.Role = core.RoleButton
 	info.Name = b.text
+	// The letter the button answers to, while it answers to one.
+	if pos := b.liveMnemonic(); pos >= 0 && pos < len([]rune(b.text)) {
+		info.KeyboardShortcut = strings.ToUpper(string([]rune(b.text)[pos]))
+	}
 	if b.checkable {
 		if b.checked {
 			info.State |= core.StateChecked

@@ -2406,7 +2406,7 @@ func (d *Desktop) ExitDesktop() {
 		"Exiting the desktop will quit %d running %s.\n\nAre you sure?", n, word), buttons)
 	mb.SetIcon(IconWarning)
 	if popOut {
-		mb.SetButtonText(ResultPopOut, "Pop "+it+" Out")
+		mb.SetButtonText(ResultPopOut, "&Pop "+it+" Out")
 	}
 	mb.SetOnFinished(func(r DialogResult) {
 		d.mu.Lock()
