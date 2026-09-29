@@ -216,14 +216,18 @@ func (m *MenuItem) ShortcutDisplay() string {
 // composer's resolver where there is one, else the registry, which is the best
 // a menu nobody composed can do.
 func (m *MenuItem) resolveCommandKey() string {
-	key := m.keyFor(m.Command)
-	if m.alsoAdvertises == "" {
-		return key
-	}
-	// A second command that means the same item here: whichever of the two
-	// keys the keymap ranks higher is the one shown (see alsoAdvertises).
-	if alt := m.keyFor(m.alsoAdvertises); alt != "" &&
-		(key == "" || core.DefaultKeyRegistry().Outranks(alt, m.alsoAdvertises, key, m.Command)) {
+	return advertisedKey(m.keyFor, m.Command, m.alsoAdvertises)
+}
+
+// advertisedKey is the key an item naming command shows, asked through
+// resolve. An item that may also show a second command's key -- the Undo item,
+// which shows simple undo's where the keymap ranks it higher -- shows whichever
+// of the two the keymap ranks higher. One rule for the Edit menu and the
+// context menus, so the two never show different keys for the same act.
+func advertisedKey(resolve func(string) string, command, also string) string {
+	key := resolve(command)
+	if alt := resolve(also); alt != "" &&
+		(key == "" || core.DefaultKeyRegistry().Outranks(alt, also, key, command)) {
 		return alt
 	}
 	return key

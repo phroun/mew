@@ -2863,14 +2863,22 @@ func (t *TextInput) contextMenuItems() []termMenuItem {
 	// as selecting its text with the mouse, which one can.
 	//
 	// A field that conceals its content offers neither Cut nor Copy.
+	//
+	// Undo and Redo lead, as they lead the Edit menu, and are offered only
+	// while there is something to undo or redo. Each item shows the key the Edit
+	// menu shows for it.
 	edits := t.AcceptsTextInput()
 	conceals := t.Conceals()
 	return []termMenuItem{
-		{label: "Cut", action: t.Cut, disabled: !edits || conceals},
-		{label: "Copy", action: t.Copy, disabled: conceals},
-		{label: "Paste", action: t.Paste, disabled: !edits},
+		{label: "Undo", action: t.Undo, disabled: !t.UndoEnabled(),
+			command: core.CmdTrinketUndo, also: core.CmdTrinketSimpleUndo},
+		{label: "Redo", action: t.Redo, disabled: !t.RedoEnabled(), command: core.CmdTrinketRedo},
 		{separator: true},
-		{label: "Select All", action: t.SelectAll},
+		{label: "Cut", action: t.Cut, disabled: !edits || conceals, command: core.CmdTrinketCut},
+		{label: "Copy", action: t.Copy, disabled: conceals, command: core.CmdTrinketCopy},
+		{label: "Paste", action: t.Paste, disabled: !edits, command: core.CmdTrinketPaste},
+		{separator: true},
+		{label: "Select All", action: t.SelectAll, command: core.CmdTrinketSelectAll},
 	}
 }
 
@@ -2913,7 +2921,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 	if pc == nil {
 		return
 	}
-	items := t.contextMenuItems()
+	items := withShortcuts(t.Self(), t.contextMenuItems())
 	// The same menu PurfecTerm opens, measured by the same function.
 	lay := termMenuLayoutFrom(core.FindGraphicalFrames(t), t.EffectiveFont(),
 		termMenuScreenMetrics(pc), items)
@@ -2986,18 +2994,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 					pos += lay.sepH
 					continue
 				}
-				st := bg
-				if it.disabled {
-					st = bg.WithFg(style.RGB(150, 150, 150))
-				} else if i == t.menuHover {
-					st = hover
-					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
-				}
-				// Explicit bg: transparent resolves to the terminal's dark
-				// default on the text backend (dark boxes behind the labels);
-				// the explicit bg equals the fill/hover color, so the
-				// graphical look is unchanged.
-				p.DrawText(menuBounds.X+lay.indent, pos+lay.yOff, termMenuLabel(it), st, lay.font)
+				paintTermMenuItem(p, menuBounds, pos, lay, it, i == t.menuHover, bg, hover)
 				pos += lay.rowH
 			}
 		},
