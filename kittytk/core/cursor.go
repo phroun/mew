@@ -20,6 +20,9 @@ const (
 	// CursorGrabbing is the closed hand: something is held and being carried,
 	// such as a tab being dragged to a new place on its strip.
 	CursorGrabbing
+	// CursorGrab is the open hand: something under the pointer can be picked
+	// up, such as a tab a press would start carrying.
+	CursorGrab
 )
 
 // CursorProvider is an optional trinket capability: a trinket that wants a

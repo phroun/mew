@@ -8,23 +8,28 @@ import (
 	"image/png"
 )
 
-// The closed hand shown while something is carried (core.CursorGrabbing).
-// SDL has no system cursor for it, so it is this picture: 32 by 32 at one
-// pixel to the point, and the one file to replace to change it.
-//
-//go:embed grab_hand.png
-var grabHandPNG []byte
+// The hands SDL has no system cursors for, as pictures: 32 by 32 at one pixel
+// to the point, each the one file to replace to change it. The open hand is
+// over something a press would pick up (core.CursorGrab), the closed one while
+// it is carried (core.CursorGrabbing). The two share a wrist, so the fingers
+// are all that move between them.
+var (
+	//go:embed hand_cursor.png
+	openHandPNG []byte
+	//go:embed grab_hand.png
+	grabHandPNG []byte
+)
 
-// grabHandHot is the pointer's position in the picture at one pixel to the
+// handHot is the pointer's position in either picture at one pixel to the
 // point: its exact center. Twice that at two.
-const grabHandHot = 16
+const handHot = 16
 
-// grabHandPixels is the hand as RGBA bytes at scale pixels to the point, with
-// its width and height; ok is false if the picture will not decode. Every
-// pixel of the drawing becomes a scale-by-scale block of exactly its colour:
-// nothing is smoothed, so the drawing stays as sharp as it was drawn.
-func grabHandPixels(scale int) (pix []byte, w, h int, ok bool) {
-	img, err := png.Decode(bytes.NewReader(grabHandPNG))
+// cursorPixels is a picture as RGBA bytes at scale pixels to the point, with
+// its width and height; ok is false if it will not decode. Every pixel of the
+// drawing becomes a scale-by-scale block of exactly its colour: nothing is
+// smoothed, so the drawing stays as sharp as it was drawn.
+func cursorPixels(picture []byte, scale int) (pix []byte, w, h int, ok bool) {
+	img, err := png.Decode(bytes.NewReader(picture))
 	if err != nil || scale < 1 {
 		return nil, 0, 0, false
 	}
