@@ -90,6 +90,32 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### The v0.1.37 sync (record)
+
+Up again, from [mew#16](https://github.com/phroun/mew/pull/16) (undo and redo
+in text fields and the Edit menu). This one carried fork-only files in the same
+commit as shared ones -- `go.mod`, `go.sum`, `editor_mew.go` and its test, since
+the Editor needs a new mew option -- so the patch was cut with them excluded by
+pathspec rather than taken whole:
+
+    git format-patch -1 <commit> --relative=kittytk -o <dir> -- kittytk \
+      ':(exclude)kittytk/go.mod' ':(exclude)kittytk/go.sum' \
+      ':(exclude)kittytk/objects/trinkets/editor_mew.go' \
+      ':(exclude)kittytk/objects/trinkets/0_editor_mew_undo_test.go'
+
+It went up as [#57](https://github.com/phroun/kittytk/pull/57), applied with
+`git am -3` onto v0.1.36-alpha cleanly, with its commit message stripped of the
+mew-only paragraph. The shared `editActor` interface gained four methods, which
+the cover note says so upstream can sweep its test doubles. No dependency bumps.
+
+The release PR carried `Build = 37`, and upstream tagged **v0.1.37-alpha**
+there. Here the vendored `Build` went 36 -> 37 and the root and app kittytk pins
+v0.1.36-alpha -> v0.1.37-alpha. The `kittytk/go.mod` mew require stays on the
+pseudo-version of the commit that added `WithUndoState` until a mew release
+gives it a tag to move to. Every shared file is byte-identical to the tag except
+the three standing mew-side edits. All three modules build with `GOWORK=off`,
+`kittytk` under `-tags mew` included, and `app`'s tests pass there.
+
 ### The v0.1.36 sync (record)
 
 Up again, the same way as v0.1.34. The work was made here as
