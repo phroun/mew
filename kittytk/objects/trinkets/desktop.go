@@ -3763,6 +3763,49 @@ func (d *Desktop) focusedEditActor() (editActor, bool) {
 	return nil, false
 }
 
+// PerformEdit does one of the standard Edit acts on whatever holds the focus,
+// named by its item role (ItemIDUndo, ItemIDCut, ...): what the system Edit
+// menu's items do, and what the display's do verbs do, so a click and a
+// request from an application are one act.
+//
+// It acts where the menu would: on a provider's inner editor while one is up,
+// else on the focused trinket. Cut and Copy on a field that conceals its text
+// say so rather than copying it, and on one with nothing selected say that
+// rather than doing nothing silently. It reports false when nothing focused
+// takes part in editing, or the verb is not one of these.
+func (d *Desktop) PerformEdit(verb string) bool {
+	ea, ok := d.focusedEditActor()
+	if !ok {
+		return false
+	}
+	switch verb {
+	case ItemIDUndo:
+		ea.Undo()
+	case ItemIDRedo:
+		ea.Redo()
+	case ItemIDCut, ItemIDCopy:
+		switch {
+		case concealed(ea):
+			d.NotifyPassive(concealedNotice)
+		case !hasSelection(ea) && verb == ItemIDCut:
+			d.NotifyPassive("Nothing was selected to cut.")
+		case !hasSelection(ea):
+			d.NotifyPassive("Nothing was selected to copy.")
+		case verb == ItemIDCut:
+			ea.Cut()
+		default:
+			ea.Copy()
+		}
+	case ItemIDPaste:
+		ea.Paste()
+	case ItemIDSelectAll:
+		ea.SelectAll()
+	default:
+		return false
+	}
+	return true
+}
+
 // appendStandardEditItems adds the system Edit items - Undo, Redo, separator,
 // Cut, Copy, Paste, separator, Select All - each wired to whatever trinket
 // holds focus when it fires. It returns a closure that recomputes their enabled
@@ -3802,19 +3845,11 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	undo := claim(ItemIDUndo, "&Undo")
 	shortcut(undo, core.CmdTrinketUndo)
 	undo.alsoAdvertises = core.CmdTrinketSimpleUndo
-	undo.SetOnTriggered(func() {
-		if ea, ok := d.focusedEditActor(); ok {
-			ea.Undo()
-		}
-	})
+	undo.SetOnTriggered(func() { d.PerformEdit(ItemIDUndo) })
 
 	redo := claim(ItemIDRedo, "&Redo")
 	shortcut(redo, core.CmdTrinketRedo)
-	redo.SetOnTriggered(func() {
-		if ea, ok := d.focusedEditActor(); ok {
-			ea.Redo()
-		}
-	})
+	redo.SetOnTriggered(func() { d.PerformEdit(ItemIDRedo) })
 
 	// Separators fall between the groups the synthesized block still holds
 	// items in on both sides: the history, the clipboard trio, Select All.
@@ -3822,49 +3857,21 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 
 	cut := claim(ItemIDCut, "Cu&t")
 	shortcut(cut, core.CmdTrinketCut)
-	cut.SetOnTriggered(func() {
-		if ea, ok := d.focusedEditActor(); ok {
-			if concealed(ea) {
-				d.NotifyPassive(concealedNotice)
-			} else if hasSelection(ea) {
-				ea.Cut()
-			} else {
-				d.NotifyPassive("Nothing was selected to cut.")
-			}
-		}
-	})
+	cut.SetOnTriggered(func() { d.PerformEdit(ItemIDCut) })
 
 	copyIt := claim(ItemIDCopy, "&Copy")
 	shortcut(copyIt, core.CmdTrinketCopy)
-	copyIt.SetOnTriggered(func() {
-		if ea, ok := d.focusedEditActor(); ok {
-			if concealed(ea) {
-				d.NotifyPassive(concealedNotice)
-			} else if hasSelection(ea) {
-				ea.Copy()
-			} else {
-				d.NotifyPassive("Nothing was selected to copy.")
-			}
-		}
-	})
+	copyIt.SetOnTriggered(func() { d.PerformEdit(ItemIDCopy) })
 
 	pasteIt := claim(ItemIDPaste, "&Paste")
 	shortcut(pasteIt, core.CmdTrinketPaste)
-	pasteIt.SetOnTriggered(func() {
-		if ea, ok := d.focusedEditActor(); ok {
-			ea.Paste()
-		}
-	})
+	pasteIt.SetOnTriggered(func() { d.PerformEdit(ItemIDPaste) })
 
 	trio := len(synthesized)
 
 	selectAll := claim(ItemIDSelectAll, "Select &All")
 	shortcut(selectAll, core.CmdTrinketSelectAll)
-	selectAll.SetOnTriggered(func() {
-		if ea, ok := d.focusedEditActor(); ok {
-			ea.SelectAll()
-		}
-	})
+	selectAll.SetOnTriggered(func() { d.PerformEdit(ItemIDSelectAll) })
 
 	for i, it := range synthesized {
 		if i > 0 && (i == history || i == trio) {
