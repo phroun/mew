@@ -1,31 +1,48 @@
 package sdl
 
-// The grab cursor is drawn from a mask, since SDL offers none: every row the
-// same width, its hot spot on the palm, and the picture the same at each
-// scale it is built at.
+// The grab cursor is a picture, since SDL offers none: 32 by 32 at one pixel
+// to the point, exactly as drawn, and each pixel doubled for a denser display.
 
-import "testing"
+import (
+	"bytes"
+	"image"
+	"image/draw"
+	"image/png"
+	"testing"
+)
 
-func TestTheGrabHandMaskIsSquare(t *testing.T) {
-	for i, row := range grabHandMask {
-		if len(row) != len(grabHandMask) {
-			t.Errorf("row %d is %d wide, want %d", i, len(row), len(grabHandMask))
-		}
+func px(pix []byte, w, x, y int) [4]byte {
+	i := (y*w + x) * 4
+	return [4]byte{pix[i], pix[i+1], pix[i+2], pix[i+3]}
+}
+
+func TestTheGrabHandIsThePictureAsDrawn(t *testing.T) {
+	pix, w, h, ok := grabHandPixels(1)
+	if !ok || w != 32 || h != 32 || len(pix) != w*h*4 {
+		t.Fatalf("scale 1 is %dx%d (ok %v), want the 32x32 picture", w, h, ok)
 	}
-	if grabHandMask[grabHandHotY][grabHandHotX] != 'o' {
-		t.Error("the hot spot is not on the palm")
+	img, err := png.Decode(bytes.NewReader(grabHandPNG))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	draw.Draw(want, want.Bounds(), img, img.Bounds().Min, draw.Src)
+	if !bytes.Equal(pix, want.Pix) {
+		t.Error("scale 1 is not the picture pixel for pixel")
+	}
+	if px(pix, w, 0, 0)[3] != 0 {
+		t.Error("the corner of the picture is not clear")
+	}
+	if px(pix, w, grabHandHot, grabHandHot)[3] != 0xff {
+		t.Error("the hot spot, the picture's center, is not on the hand")
 	}
 }
 
-func TestTheGrabHandScales(t *testing.T) {
-	one, w1, h1 := grabHandPixels(1)
-	two, w2, h2 := grabHandPixels(2)
-	if w2 != 2*w1 || h2 != 2*h1 || len(two) != w2*h2*4 || len(one) != w1*h1*4 {
-		t.Fatalf("sizes %dx%d and %dx%d", w1, h1, w2, h2)
-	}
-	px := func(pix []byte, w, x, y int) [4]byte {
-		i := (y*w + x) * 4
-		return [4]byte{pix[i], pix[i+1], pix[i+2], pix[i+3]}
+func TestTheGrabHandDoublesSharply(t *testing.T) {
+	one, w1, h1, _ := grabHandPixels(1)
+	two, w2, h2, ok := grabHandPixels(2)
+	if !ok || w2 != 2*w1 || h2 != 2*h1 || len(two) != w2*h2*4 {
+		t.Fatalf("scale 2 is %dx%d, want %dx%d", w2, h2, 2*w1, 2*h1)
 	}
 	for y := 0; y < h1; y++ {
 		for x := 0; x < w1; x++ {
@@ -34,22 +51,6 @@ func TestTheGrabHandScales(t *testing.T) {
 				if got := px(two, w2, 2*x+d[0], 2*y+d[1]); got != want {
 					t.Fatalf("scale 2 at (%d,%d) is %v, want %v", 2*x+d[0], 2*y+d[1], got, want)
 				}
-			}
-		}
-	}
-	// Outline opaque black, fill opaque white, the rest clear.
-	for y, row := range grabHandMask {
-		for x, c := range row {
-			got := px(one, w1, x, y)
-			var want [4]byte
-			switch c {
-			case 'X':
-				want = [4]byte{0, 0, 0, 0xff}
-			case 'o':
-				want = [4]byte{0xff, 0xff, 0xff, 0xff}
-			}
-			if got != want {
-				t.Fatalf("(%d,%d) %q is %v, want %v", x, y, c, got, want)
 			}
 		}
 	}

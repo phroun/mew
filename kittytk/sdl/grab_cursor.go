@@ -1,51 +1,42 @@
 package sdl
 
+import (
+	"bytes"
+	_ "embed"
+	"image"
+	"image/draw"
+	"image/png"
+)
+
 // The closed hand shown while something is carried (core.CursorGrabbing).
-// SDL has no system cursor for it, so it is drawn here: X is the outline, o
-// the fill, anything else transparent. It is KittyTK's own picture rather
-// than the system theme's, and this table is the one place to replace it.
-var grabHandMask = [...]string{
-	"................",
-	"................",
-	"................",
-	"....XX.XX.XX....",
-	"...XooXooXooXX..",
-	"...XooooooooXoX.",
-	"....XoooooooooX.",
-	"...XXoooooooooX.",
-	"..XooooooooooX..",
-	"..XooooooooooX..",
-	"...XoooooooooX..",
-	"....XooooooooX..",
-	".....XoooooooX..",
-	"......XooooooX..",
-	"......XooooooX..",
-	"......XXXXXXXX..",
-}
+// SDL has no system cursor for it, so it is this picture: 32 by 32 at one
+// pixel to the point, and the one file to replace to change it.
+//
+//go:embed grab_hand.png
+var grabHandPNG []byte
 
-// grabHandHotX and grabHandHotY are the point of the mask that is the
-// pointer's position: the middle of the palm.
-const grabHandHotX, grabHandHotY = 8, 9
+// grabHandHot is the pointer's position in the picture at one pixel to the
+// point: its exact center. Twice that at two.
+const grabHandHot = 16
 
-// grabHandPixels is the mask as RGBA bytes, each mask pixel drawn scale
-// pixels square, with its width and height. Scale 2 is the picture SDL shows
-// on a display with two device pixels to the point.
-func grabHandPixels(scale int) (pix []byte, w, h int) {
-	w, h = len(grabHandMask[0])*scale, len(grabHandMask)*scale
+// grabHandPixels is the hand as RGBA bytes at scale pixels to the point, with
+// its width and height; ok is false if the picture will not decode. Every
+// pixel of the drawing becomes a scale-by-scale block of exactly its colour:
+// nothing is smoothed, so the drawing stays as sharp as it was drawn.
+func grabHandPixels(scale int) (pix []byte, w, h int, ok bool) {
+	img, err := png.Decode(bytes.NewReader(grabHandPNG))
+	if err != nil || scale < 1 {
+		return nil, 0, 0, false
+	}
+	b := img.Bounds()
+	src := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(src, src.Bounds(), img, b.Min, draw.Src)
+	w, h = b.Dx()*scale, b.Dy()*scale
 	pix = make([]byte, w*h*4)
 	for y := 0; y < h; y++ {
-		row := grabHandMask[y/scale]
 		for x := 0; x < w; x++ {
-			var r, g, b, a byte
-			switch row[x/scale] {
-			case 'X':
-				a = 0xff
-			case 'o':
-				r, g, b, a = 0xff, 0xff, 0xff, 0xff
-			}
-			i := (y*w + x) * 4
-			pix[i], pix[i+1], pix[i+2], pix[i+3] = r, g, b, a
+			copy(pix[(y*w+x)*4:], src.Pix[src.PixOffset(x/scale, y/scale):][:4])
 		}
 	}
-	return pix, w, h
+	return pix, w, h, true
 }
