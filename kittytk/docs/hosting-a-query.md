@@ -34,8 +34,9 @@ end can find out. See *Saying what stopped being true*, below.
 ## Running one
 
 No display opens queries yet, so there is a stand-in that does — it listens,
-does the handshake, opens one query against a named source, and prints the
-statements as they cross:
+does the handshake, waits for the application to build what shows its sources,
+opens one query against a named source, and prints the statements as they
+cross:
 
 ```
 go run ./cmd/kittytk-queryprobe &
@@ -52,6 +53,13 @@ and what it prints is this:
 <- hello version=1 app="queryapp"
 -> welcome version=1 session=1
 -> init app=1 store=2 host=3
+<- w=new window title="queryapp" children={
+	new panel layout=hbox children={
+		new listview source="source:colours" display="name"
+		new listview source="source:files" display="name"
+	}
+}
+-> reply
 -> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } count=3
 <- reply q=1
 <- result 1 ordered id=2 record={ name "build.sh"; size 310 }
@@ -72,6 +80,13 @@ and what it prints is this:
 -> destroy 2
 -> destroy 3
 ```
+
+**A display asks about a source only once it has been told the name.**
+Registering a source says nothing on the wire, and an application can provide
+one at any point in its session; what the display hears is a trinket naming it
+(`source="source:files"`). So the probe waits for the application's build before
+it asks, as a display would: asked straight after the handshake, its query
+would race the application's own setup and could be refused as naming nothing.
 
 **A query is asked once and answered once.** Nothing addresses one that already
 exists: `complete` ends the answer, `destroy` ends the interest, and neither is
