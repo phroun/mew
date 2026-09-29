@@ -33,10 +33,11 @@ end can find out. See *Saying what stopped being true*, below.
 
 ## Running one
 
-No display opens queries yet, so there is a stand-in that does — it listens,
-does the handshake, waits for the application to build what shows its sources,
-opens one query against a named source, and prints the statements as they
-cross:
+A ListView or TreeView given `source=` opens its own queries against that
+source. To watch the statements rather than the rows, there is a stand-in
+display that listens, does the handshake, waits for the application to build
+what shows its sources, opens one query against a named source, and prints
+the statements as they cross:
 
 ```
 go run ./cmd/kittytk-queryprobe &
@@ -214,8 +215,8 @@ src, _ := conn.ProvideSource("files", func(f *client.Fill) {
 ```
 
 Registering a source says nothing on the wire: **a source is a name, not an
-object**. The application tells whatever trinket is to show it `data="files"`,
-and the display opens queries against that name.
+object**. The application tells whatever trinket is to show it
+`source="source:files"`, and the display opens queries against that name.
 
 `Record` says these are all the fields there are. `Subset` — `f.Subset(id, has,
 …)`, `f.subset(id, named=…, …)`, `kt_fill_subset` — says they are the ones this

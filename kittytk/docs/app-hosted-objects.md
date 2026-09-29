@@ -2,9 +2,10 @@
 
 > **Status: settled in shape, and half built.** The direction and the rules
 > below are decided. The first hosted type — a query — is implemented in all
-> three client libraries (`hosting-a-query.md`); the display side that speaks
-> to it is not. See `live-data-negotiation.md` for what it is for, and
-> `bundles.md` for the layering underneath.
+> three client libraries (`hosting-a-query.md`), and a ListView or TreeView
+> given `source=` is the display side that asks it. See
+> `live-data-negotiation.md` for what it is for, and `bundles.md` for the
+> layering underneath.
 
 Everything so far runs one way. An application says `new`, `set`, `ask`, `do`,
 `destroy`; the display owns the objects those verbs address and answers with
@@ -78,9 +79,9 @@ Through a property, like any other value — and for a query, the value is a
 **name** rather than an id:
 
 ```
-set <treeview> data="files"       (app -> display: these rows are mine, under this name)
-q=new query source="files" ...    (display -> app: then serve me this sequence)
-reply q=9                         (app -> display: which I am calling 9)
+set <treeview> source="source:files"  (app -> display: these rows are mine, under this name)
+q=new query source="files" ...       (display -> app: then serve me this sequence)
+reply q=9                            (app -> display: which I am calling 9)
 ```
 
 So nothing is created until there is something to show, and the application
