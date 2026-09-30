@@ -208,7 +208,8 @@ func TestTheOSMenuBarFollowsTheDesktopsBar(t *testing.T) {
 		last = plat.sets[len(plat.sets)-1]
 		// The menus it pushed read the bar the desktop has now.
 		for i, m := range last {
-			if got, want := len(m.Items()), len(nativeItems(d.nativeBar()[i].menu)); got != want {
+			bar, _ := d.nativeBar()
+			if got, want := len(m.Items()), len(nativeItems(bar[i].menu)); got != want {
 				t.Errorf("the native %q reads %d items, the desktop's %d", m.Title, got, want)
 			}
 		}
@@ -237,7 +238,8 @@ func TestTheOSMenuBarIsTheFocusedWindowsBar(t *testing.T) {
 
 	titles := func() string {
 		var t []string
-		for _, e := range r.d.nativeBar() {
+		bar, _ := r.d.nativeBar()
+		for _, e := range bar {
 			t = append(t, e.title)
 		}
 		return strings.Join(t, " ")
@@ -264,5 +266,210 @@ func TestTheOSMenuBarIsTheFocusedWindowsBar(t *testing.T) {
 	r.d.windowFocusChanged(docked)
 	if got, want := titles(), desktopBarTitles(r.d.menuBar); got != want || strings.Contains(got, "File") {
 		t.Errorf("with a docked window focused, the bar is %q, want the desktop's %q", got, want)
+	}
+}
+
+// The host application -- the one the process is named for -- has its leading
+// menu folded into the application menu while it has the focus: the desktop's
+// groups, then its own items less the desktop's items it repeats, then Exit
+// Desktop beside its Quit. It stands in the bar after that like any other app
+// when it is not the host.
+func TestTheHostApplicationsMenuJoinsTheApplicationMenu(t *testing.T) {
+	d, _ := desktopWithApps(t, "mew")
+	plat := &nativeBarPlatform{}
+	plat.script = func() {
+		mew := d.ActiveApplication()
+		bar, host := d.nativeBar()
+		if host != nil {
+			t.Fatal("an app not declared the host was folded in")
+		}
+		if len(bar) == 0 || bar[0].title != "mew" {
+			t.Fatalf("undeclared, mew's menu is not first in the bar: %+v", bar)
+		}
+
+		d.SetHostApplication(mew)
+		if got := d.HostApplication(); got != mew {
+			t.Fatalf("the host application is %v", got)
+		}
+		bar, host = d.nativeBar()
+		if host == nil {
+			t.Fatal("declared the host, mew's menu was not folded in")
+		}
+		for _, e := range bar {
+			if e.title == "mew" {
+				t.Error("declared the host, mew's menu still stands in the bar")
+			}
+		}
+		last := plat.sets[len(plat.sets)-1]
+		if strings.Contains(titlesOf(last), "mew") {
+			t.Errorf("the OS bar after the application menu holds %q", titlesOf(last))
+		}
+
+		got := spellNative(plat.apps[len(plat.apps)-1].Items())
+		if n := strings.Count(strings.Join(got, "\n"), "Narration"); n != 1 {
+			t.Errorf("Narration appears %d times in\n%s", n, strings.Join(got, "\n"))
+		}
+		joined := strings.Join(got, "\n")
+		for _, want := range []string{"About Desktop", "Hide mew", "Show All", "Quit mew"} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("the merged application menu has no %q:\n%s", want, joined)
+			}
+		}
+		if n := len(got); n < 2 || !strings.HasPrefix(got[n-2], "Quit mew") || !strings.HasPrefix(got[n-1], "Exit Desktop") {
+			t.Errorf("the merged menu does not end with Quit mew then Exit Desktop:\n%s", joined)
+		}
+		if strings.HasPrefix(got[0], "-----") || strings.Contains(joined, "-----\n-----") {
+			t.Errorf("the merged menu has a stray separator:\n%s", joined)
+		}
+		d.ForceQuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
+
+// The merge, item by item, with the desktop's own menu and an application
+// menu as the desktop builds them.
+func TestMergingTheHostsMenuIntoTheDesktops(t *testing.T) {
+	r := newFocusRig(t)
+	sys := NewMenu("Ψ")
+	sys.AddItem(NewMenuItem("About Desktop"))
+	sys.AddItem(NewMenuItem("Narration").SetWellKnownID(ItemIDNarration))
+	sys.AddSeparator()
+	sys.AddItem(NewMenuItem("Event Viewer"))
+	sys.AddSeparator()
+	sys.AddItem(NewMenuItem("Exit Desktop"))
+
+	host := r.d.createStandardAppMenu("mew")
+	got := strings.Join(spellNative(mergedAppMenuItems(sys, host)), "\n")
+	want := strings.Join([]string{
+		"About Desktop",
+		"Narration",
+		"-----",
+		"Event Viewer",
+		"-----",
+		"Hide mew [^H]",
+		"Hide Others [M-^H]",
+		"Show All",
+		"-----",
+		"Quit mew [^Q]",
+		"Exit Desktop",
+	}, "\n")
+	if got != want {
+		t.Errorf("merged, the application menu reads\n%s\nwant\n%s", got, want)
+	}
+
+	// A host menu of nothing but the desktop's own items adds nothing.
+	dup := NewMenu("mew")
+	dup.AddItem(NewMenuItem("Narration").SetWellKnownID(ItemIDNarration))
+	if got, want := len(mergedAppMenuItems(sys, dup)), len(nativeItems(sys)); got != want {
+		t.Errorf("a host menu of duplicates gives %d items, the desktop's alone %d", got, want)
+	}
+	// A desktop menu of one group puts the host's items before it all.
+	one := NewMenu("Ψ")
+	one.AddItem(NewMenuItem("Exit Desktop"))
+	mine := NewMenu("mew")
+	mine.AddItem(NewMenuItem("Quit mew"))
+	if got := strings.Join(spellNative(mergedAppMenuItems(one, mine)), "\n"); got != "Quit mew\nExit Desktop" {
+		t.Errorf("merged with a one-group desktop menu:\n%s", got)
+	}
+}
+
+// A torn host application's own bar -- as the desktop builds it, with the
+// app's declared leading menu or the one it synthesizes -- folds its first
+// menu in too; a first menu that is not the application menu stays put.
+func TestATornHostApplicationsMenuJoinsTheApplicationMenu(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		menus []*Menu
+	}{
+		{"declared", []*Menu{NewMenu("&mew").SetWellKnownID(MenuIDApp), NewMenu("&View")}},
+		{"synthesized", []*Menu{NewMenu("&View")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newFocusRig(t)
+			main := r.torn("main")
+			app := &mockApp{name: "mew", main: main, windows: []*window.Window{main}, menus: tc.menus}
+			r.d.AddApplication(app)
+			r.d.attachMainWindowChrome(main)
+			r.d.SetHostApplication(app)
+			r.d.windowFocusChanged(main)
+			bar, host := r.d.nativeBar()
+			if host == nil {
+				t.Fatal("the torn host's first menu was not folded in")
+			}
+			for _, e := range bar {
+				if e.menu == host {
+					t.Error("the folded menu is still in the bar")
+				}
+			}
+		})
+	}
+
+	r := newFocusRig(t)
+	main := r.torn("main")
+	own := NewMenuBar()
+	own.AddMenu(NewMenu("View"))
+	main.SetWindowMenuBar(own)
+	app := &mockApp{name: "mew", main: main, windows: []*window.Window{main}}
+	r.d.AddApplication(app)
+	r.d.SetHostApplication(app)
+	r.d.windowFocusChanged(main)
+	if bar, host := r.d.nativeBar(); host != nil || len(bar) != 1 {
+		t.Errorf("a first menu that is not the application menu was folded in (bar %+v)", bar)
+	}
+}
+
+// The host application's declared leading menu, on the desktop's bar, is
+// folded in as the synthesized one is.
+func TestADeclaredHostMenuJoinsTheApplicationMenu(t *testing.T) {
+	d, wins := desktopWithApps(t, "mew")
+	plat := &nativeBarPlatform{}
+	plat.script = func() {
+		mew := d.ActiveApplication().(*mockApp)
+		own := NewMenu("&mew").SetWellKnownID(MenuIDApp)
+		own.AddItem(NewMenuItem("About mew"))
+		mew.menus = []*Menu{own}
+		mew.windows = wins
+		d.SetHostApplication(mew)
+		_, host := d.nativeBar()
+		if host == nil {
+			t.Fatal("the declared leading menu was not folded in")
+		}
+		if got := strings.Join(spellNative(mergedAppMenuItems(d.systemMenu, host)), "\n"); !strings.Contains(got, "About mew") {
+			t.Errorf("the merged menu has no About mew:\n%s", got)
+		}
+		d.ForceQuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
+
+// Both menus are brought up to date before they are merged, as each would be
+// before being shown.
+func TestBothMenusAreRefreshedBeforeTheMerge(t *testing.T) {
+	sys := NewMenu("Ψ")
+	sys.SetOnAboutToShow(func() { sys.Clear(); sys.AddItem(NewMenuItem("fresh desktop")) })
+	host := NewMenu("mew")
+	host.SetOnAboutToShow(func() { host.Clear(); host.AddItem(NewMenuItem("fresh host")) })
+	got := strings.Join(spellNative(mergedAppMenuItems(sys, host)), "\n")
+	if got != "fresh host\nfresh desktop" {
+		t.Errorf("merged before refreshing:\n%s", got)
+	}
+}
+
+// Leaving items out leaves no separator at either end or doubled.
+func TestTidyingSeparators(t *testing.T) {
+	spell := func(items []*MenuItem) string {
+		var out []string
+		for _, it := range items {
+			if it.Separator {
+				out = append(out, "-")
+			} else {
+				out = append(out, it.Text)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	in := []*MenuItem{NewSeparator(), NewMenuItem("a"), NewSeparator(), NewSeparator(), NewMenuItem("b"), NewSeparator()}
+	if got := spell(tidySeparators(in)); got != "a - b" {
+		t.Errorf("tidied: %q, want %q", got, "a - b")
 	}
 }

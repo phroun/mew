@@ -26,7 +26,11 @@ import (
 // The desktop's own menu, Ψ, becomes the OS's application menu -- the one the
 // OS titles with the process's name -- since what it holds is about the whole
 // desktop, as that menu is about the whole process. It is there whichever
-// window has the focus, and is not repeated in the bar after it. The OS's
+// window has the focus, and is not repeated in the bar after it. While the
+// HOST application has the focus (see SetHostApplication) -- the one the
+// process is named for, so the one the OS's title already names -- its own
+// leading menu is folded into the application menu as well, rather than
+// standing after it under the same name. The OS's
 // defaults there go (the desktop gives the OS the whole bar), so every key in
 // the bar acts through the desktop's own items and its own keymap.
 //
@@ -54,7 +58,7 @@ func (d *Desktop) syncNativeMenuBar() {
 	if host == nil {
 		return
 	}
-	bar := d.nativeBar()
+	bar, _ := d.nativeBar()
 	titles := make([]string, len(bar))
 	for i, e := range bar {
 		titles[i] = e.title
@@ -77,8 +81,9 @@ func (d *Desktop) syncNativeMenuBar() {
 	host.SetNativeMenus(d.nativeAppMenu(), out)
 }
 
-// nativeAppMenu is the OS's application menu: the desktop's own menu, read
-// each time the OS asks.
+// nativeAppMenu is the OS's application menu, read each time the OS asks: the
+// desktop's own menu, with the host application's leading menu folded in
+// while that application has the focus.
 func (d *Desktop) nativeAppMenu() platform.NativeMenu {
 	return platform.NativeMenu{
 		Title: "Ψ",
@@ -86,9 +91,75 @@ func (d *Desktop) nativeAppMenu() platform.NativeMenu {
 			d.mu.RLock()
 			sys := d.systemMenu
 			d.mu.RUnlock()
-			return nativeItems(sys)
+			_, host := d.nativeBar()
+			return mergedAppMenuItems(sys, host)
 		},
 	}
+}
+
+// mergedAppMenuItems is the desktop's own menu with host -- the host
+// application's leading menu, or nil -- folded into it: the desktop's groups
+// but its last, then the host's items, then the desktop's last group (Exit
+// Desktop) joining the host's last (its Quit), so the two ways of leaving
+// stand together at the end. An item of the host's that is the desktop's own,
+// already above (Narration, Connections), is left out, and a group it leaves
+// empty goes with it -- so a host menu with nothing of its own changes nothing.
+func mergedAppMenuItems(sys, host *Menu) []platform.NativeMenuItem {
+	if host == nil {
+		return nativeItems(sys)
+	}
+	if refresh := sys.OnAboutToShow(); refresh != nil {
+		refresh()
+	}
+	if refresh := host.OnAboutToShow(); refresh != nil {
+		refresh()
+	}
+	own := map[string]bool{}
+	for _, it := range sys.Items() {
+		if id := it.WellKnownID(); id != "" {
+			own[id] = true
+		}
+	}
+	var hostItems []*MenuItem
+	for _, it := range host.Items() {
+		if id := it.WellKnownID(); id != "" && own[id] {
+			continue
+		}
+		hostItems = append(hostItems, it)
+	}
+
+	// The desktop's last group starts after its last separator -- or is the
+	// whole of it, when it has none.
+	sysItems := sys.Items()
+	last := -1
+	for i := len(sysItems) - 1; i >= 0; i-- {
+		if sysItems[i].Separator {
+			last = i
+			break
+		}
+	}
+	var merged []*MenuItem
+	merged = append(merged, sysItems[:max(last, 0)]...)
+	merged = append(merged, NewSeparator())
+	merged = append(merged, hostItems...)
+	merged = append(merged, sysItems[last+1:]...)
+	return nativeItemsOf(tidySeparators(merged))
+}
+
+// tidySeparators drops a separator at either end or next to another, which
+// is what leaving items out of a menu can leave behind.
+func tidySeparators(items []*MenuItem) []*MenuItem {
+	var out []*MenuItem
+	for _, it := range items {
+		if it.Separator && (len(out) == 0 || out[len(out)-1].Separator) {
+			continue
+		}
+		out = append(out, it)
+	}
+	for len(out) > 0 && out[len(out)-1].Separator {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 // nativeBarMenu is the menu at position i of the focused window's bar, read
@@ -98,7 +169,7 @@ func (d *Desktop) nativeBarMenu(i int, title string) platform.NativeMenu {
 	return platform.NativeMenu{
 		Title: title,
 		Items: func() []platform.NativeMenuItem {
-			bar := d.nativeBar()
+			bar, _ := d.nativeBar()
 			if i >= len(bar) || bar[i].title != title {
 				return nil
 			}
@@ -113,40 +184,53 @@ func (d *Desktop) nativeBarMenu(i int, title string) platform.NativeMenu {
 // carries one -- else the desktop's, less the desktop's own menu. A torn bar's
 // first menu goes under the application's name rather than its menu name
 // (the "≡" that reads well in a bar of ours and not beside the OS's own).
-func (d *Desktop) nativeBar() []nativeBarEntry {
+//
+// When the bar is the host application's, its leading menu is not in the bar
+// at all: it is handed back as host, to be folded into the application menu.
+func (d *Desktop) nativeBar() (bar []nativeBarEntry, host *Menu) {
 	d.mu.RLock()
 	torn := d.tornFocusOwner
-	bar := d.menuBar
+	desk := d.menuBar
 	sys := d.systemMenu
+	active := d.activeApp
+	hostApp := d.hostApp
 	d.mu.RUnlock()
+
+	var menus []*Menu
+	var app ApplicationProvider
 	if torn != nil {
-		if app := d.findApplicationForWindow(torn); app != nil {
-			if main := app.MainWindow(); main != nil {
+		if a := d.findApplicationForWindow(torn); a != nil {
+			if main := a.MainWindow(); main != nil {
 				if mb := windowMenuBarOf(main); mb != nil {
-					var out []nativeBarEntry
-					for i, m := range mb.Menus() {
-						title := m.Title()
-						if i == 0 && title == app.MenuName() {
-							title = app.Name()
-						}
-						out = append(out, nativeBarEntry{menu: m, title: title})
-					}
-					return out
+					menus, app = mb.Menus(), a
 				}
 			}
 		}
 	}
-	if bar == nil {
-		return nil
+	if app == nil {
+		if desk == nil {
+			return nil, nil
+		}
+		for _, m := range desk.Menus() {
+			if m != sys {
+				menus = append(menus, m)
+			}
+		}
+		app = active
 	}
-	var out []nativeBarEntry
-	for _, m := range bar.Menus() {
-		if m == sys {
+
+	for i, m := range menus {
+		if i == 0 && app != nil && app == hostApp && m.WellKnownID() == MenuIDApp {
+			host = m
 			continue
 		}
-		out = append(out, nativeBarEntry{menu: m, title: m.Title()})
+		title := m.Title()
+		if i == 0 && app != nil && title == app.MenuName() {
+			title = app.Name()
+		}
+		bar = append(bar, nativeBarEntry{menu: m, title: title})
 	}
-	return out
+	return bar, host
 }
 
 func windowMenuBarOf(w *window.Window) *MenuBar {
@@ -160,8 +244,13 @@ func nativeItems(m *Menu) []platform.NativeMenuItem {
 	if refresh := m.OnAboutToShow(); refresh != nil {
 		refresh()
 	}
+	return nativeItemsOf(m.Items())
+}
+
+// nativeItemsOf is items as native items.
+func nativeItemsOf(items []*MenuItem) []platform.NativeMenuItem {
 	var out []platform.NativeMenuItem
-	for _, it := range m.Items() {
+	for _, it := range items {
 		switch {
 		case it.Separator:
 			out = append(out, platform.NativeMenuItem{Separator: true})

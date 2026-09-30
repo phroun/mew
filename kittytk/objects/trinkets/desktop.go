@@ -283,6 +283,10 @@ type Desktop struct {
 	nativeMenuHost platform.NativeMenuBarHost
 	nativeMenuSig  string
 
+	// hostApp is the application that IS this host, if one was declared: the
+	// one the process goes by (see SetHostApplication).
+	hostApp ApplicationProvider
+
 	// Backend for rendering (optional - used when Desktop.Run() is called)
 	backend core.RenderBackend
 
@@ -614,7 +618,7 @@ func (d *Desktop) createSystemMenu() *Menu {
 	// the desktop rather than to whichever app is in front -- there is one
 	// announcement handler and announcements come from everywhere -- so the Ψ
 	// menu is where it is turned on.
-	narration := NewMenuItem("&Narration").SetCheckable(true)
+	narration := NewMenuItem("&Narration").SetCheckable(true).SetWellKnownID(ItemIDNarration)
 	narration.SetOnTriggered(func() { d.SetNarration(!d.Narration()) })
 	menu.AddItem(narration)
 
@@ -623,7 +627,7 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.SetOnAboutToShow(func() { narration.SetChecked(d.Narration()) })
 
 	if open := d.connectionsOpener(); open != nil {
-		menu.AddItem(NewMenuItem("&Connections...").
+		menu.AddItem(NewMenuItem("&Connections...").SetWellKnownID(ItemIDConnections).
 			SetCommand(core.CmdDesktopConnections).SetOnTriggered(open))
 	}
 	menu.AddItem(NewSeparator())
@@ -2957,6 +2961,28 @@ func (d *Desktop) appShowsConnections() bool {
 	return d.activeApp != nil && d.activeApp.ShowConnections()
 }
 
+// SetHostApplication declares the application that IS this host: the one the
+// process goes by, as mew's own application is in mew's host. There is at most
+// one, and nil declares none.
+//
+// Where the host has something that stands for the process as a whole, the
+// host application is treated as that thing's own: on macOS its leading menu
+// joins the OS's application menu, titled with the process's name, rather
+// than standing after it under the same name (see desktop_nativemenu.go).
+func (d *Desktop) SetHostApplication(app ApplicationProvider) {
+	d.mu.Lock()
+	d.hostApp = app
+	d.mu.Unlock()
+	d.updateMenuBarContent()
+}
+
+// HostApplication is the application declared to be this host, or nil.
+func (d *Desktop) HostApplication() ApplicationProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.hostApp
+}
+
 // SetSoleAppChromeSuppression enables the sole-app chrome suppression (Ψ menu,
 // status bar, and - with SetHideMenuBarForSoleApp - the menu bar). Off by
 // default; a TUI host enables it, the graphical host does not.
@@ -3210,7 +3236,7 @@ func (d *Desktop) updateMenuBarContent() {
 // app items (Hide, Hide Others, Show All, Quit) appended.
 func (d *Desktop) createAppMenuWithStandardItems(original *Menu, appName string) *Menu {
 	// Create a new menu with the same title
-	merged := NewMenu(original.Title())
+	merged := NewMenu(original.Title()).SetWellKnownID(MenuIDApp)
 
 	// Copy all items from the original menu
 	for _, item := range original.Items() {
@@ -3228,7 +3254,7 @@ func (d *Desktop) createAppMenuWithStandardItems(original *Menu, appName string)
 func (d *Desktop) createStandardAppMenu(appName string) *Menu {
 	// Create menu with app name, first letter as accelerator
 	menuTitle := "&" + appName
-	appMenu := NewMenu(menuTitle)
+	appMenu := NewMenu(menuTitle).SetWellKnownID(MenuIDApp)
 
 	// Add standard app items
 	d.appendStandardAppItems(appMenu, appName)
@@ -3289,7 +3315,7 @@ func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
 	if len(menu.Items()) > 0 {
 		menu.AddSeparator()
 	}
-	narration := NewMenuItem("&Narration").SetCheckable(true)
+	narration := NewMenuItem("&Narration").SetCheckable(true).SetWellKnownID(ItemIDNarration)
 	narration.SetChecked(d.Narration())
 	narration.SetOnTriggered(func() { d.SetNarration(!d.Narration()) })
 	menu.AddItem(narration)
@@ -3306,7 +3332,7 @@ func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
 	})
 
 	if open := d.connectionsOpener(); open != nil && d.appShowsConnections() {
-		menu.AddItem(NewMenuItem("&Connections...").SetOnTriggered(open))
+		menu.AddItem(NewMenuItem("&Connections...").SetWellKnownID(ItemIDConnections).SetOnTriggered(open))
 	}
 	if len(menu.Items()) > 0 {
 		menu.AddSeparator()
@@ -3324,7 +3350,7 @@ func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
 // title comes from the app's menu name so it reads "≡" (or a developer
 // override) rather than the app-named desktop menu.
 func (d *Desktop) createAppMenuWithQuitOnly(original *Menu, title, appName string) *Menu {
-	merged := NewMenu(title)
+	merged := NewMenu(title).SetWellKnownID(MenuIDApp)
 	for _, item := range original.Items() {
 		merged.AddItem(item)
 	}
@@ -3373,7 +3399,7 @@ func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
 	if b.app != nil {
 		mb.AddMenu(d.createAppMenuWithQuitOnly(b.app, menuName, appName))
 	} else {
-		m := NewMenu(menuName)
+		m := NewMenu(menuName).SetWellKnownID(MenuIDApp)
 		d.appendQuitSection(m, appName)
 		mb.AddMenu(m)
 	}

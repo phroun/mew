@@ -108,6 +108,9 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	desktop.SetSoleAppChromeSuppression(!graphical)
 	desktop.SetHideMenuBarForSoleApp(hideMenuBarSoleApp)
 	desktop.AddApplication(application)
+	// mew's own application is the host itself: the one the process is named
+	// for, so on macOS its leading menu joins the OS's application menu.
+	desktop.SetHostApplication(application)
 
 	var root *window.Window
 	forceMulti := false // set by show_desktop on the TUI (see below)

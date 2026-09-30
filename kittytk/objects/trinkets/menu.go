@@ -402,6 +402,15 @@ const (
 	ItemIDSelectAll = "selectall" // Select the focused trinket's whole content
 )
 
+// The desktop's own items that appear in more than one of its menus -- Ψ and
+// every application's leading menu -- tagged so a place that shows both menus
+// at once, as the macOS application menu does for the host application, can
+// tell the second copy for what it is.
+const (
+	ItemIDNarration   = "narration"   // turn the desktop's narration on or off
+	ItemIDConnections = "connections" // open the desktop's Connections window
+)
+
 // standardEditItemRole reports whether id is a well-known edit-item role the
 // system supplies behaviour for.
 func standardEditItemRole(id string) bool {

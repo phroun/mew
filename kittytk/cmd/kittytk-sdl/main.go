@@ -227,6 +227,9 @@ func main() {
 	application.SetName("KittyTK (SDL)")
 	application.SetContextOnly(true)
 	desktop.AddApplication(application)
+	// It is the host itself, so whatever it shows of its own goes where the OS
+	// shows the process's (see Desktop.SetHostApplication).
+	desktop.SetHostApplication(application)
 
 	// Start the display service: applications appear as they connect.
 	desktop.SetOnStartup(func() {
