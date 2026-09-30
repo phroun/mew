@@ -151,9 +151,8 @@ type DockMenuHost interface {
 type DockMark int
 
 const (
-	DockMarkNone      DockMark = iota
-	DockMarkCheck              // the current window, as a Window menu ticks it
-	DockMarkMinimized          // a minimized window, as a Window menu marks it
+	DockMarkNone  DockMark = iota
+	DockMarkCheck          // the current window, as a Window menu ticks it
 )
 
 // DockMenuItem is one line of a Dock menu.

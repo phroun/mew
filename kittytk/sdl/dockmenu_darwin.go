@@ -59,21 +59,12 @@ static uintptr_t kt_dock_new_menu(void) {
 	return (uintptr_t)m;
 }
 
-// kt_minimized_image is the image a minimized window's item shows in its
-// state column: a filled diamond, as the Window menu marks one. The symbol
-// images arrived in macOS 11; before that the item shows the mixed state's
-// dash instead.
-static id kt_minimized_image(void) {
-	id cls = (id)objc_getClass("NSImage");
-	SEL sym = sel_registerName("imageWithSystemSymbolName:accessibilityDescription:");
-	signed char has = ((signed char (*)(id, SEL, SEL))objc_msgSend)(cls, sel_registerName("respondsToSelector:"), sym);
-	if (!has) return 0;
-	return ((id (*)(id, SEL, id, id))objc_msgSend)(cls, sym, kt_nsstring("diamond.fill"), kt_nsstring("minimized"));
-}
-
 // kt_dock_add_item appends an item to menu and returns it. A tag above zero
-// makes the item send its action to the shared target; mark is 1 for a tick
-// and 2 for a minimized window's diamond.
+// makes the item send its action to the shared target; mark 1 is a tick.
+//
+// The Dock draws the menu itself, from what AppKit hands it, and draws the
+// standard tick but not a state image of ours -- a diamond set that way never
+// appeared -- so a tick is the only mark there is.
 static uintptr_t kt_dock_add_item(uintptr_t menu, const char *title, long tag, int enabled, int mark, long indent) {
 	SEL action = tag > 0 ? sel_registerName("kittytkDockItem:") : (SEL)0;
 	id item = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSMenuItem"), sel_registerName("alloc"));
@@ -87,14 +78,6 @@ static uintptr_t kt_dock_add_item(uintptr_t menu, const char *title, long tag, i
 	((void (*)(id, SEL, long))objc_msgSend)(item, sel_registerName("setIndentationLevel:"), indent);
 	if (mark == 1) {
 		((void (*)(id, SEL, long))objc_msgSend)(item, sel_registerName("setState:"), 1);
-	} else if (mark == 2) {
-		id img = kt_minimized_image();
-		if (img) {
-			((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setOnStateImage:"), img);
-			((void (*)(id, SEL, long))objc_msgSend)(item, sel_registerName("setState:"), 1);
-		} else {
-			((void (*)(id, SEL, long))objc_msgSend)(item, sel_registerName("setState:"), -1);
-		}
 	}
 	((void (*)(id, SEL, id))objc_msgSend)((id)menu, sel_registerName("addItem:"), item);
 	// The menu holds the item now; the reference alloc gave us is ours to drop.

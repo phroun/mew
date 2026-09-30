@@ -2,7 +2,7 @@ package trinkets
 
 // On macOS every application this display hosts shares the one Dock icon, so
 // the icon's menu is where they are told apart: each by name, its windows
-// beneath it (the current one ticked, a minimized one marked), the name
+// beneath it (the current one ticked, a minimized one in parentheses), the name
 // opening Show, Hide and Quit for the application, and last the desktop
 // itself, shown or hidden.
 
@@ -27,8 +27,6 @@ func spellDock(items []platform.DockMenuItem) []string {
 		switch it.Mark {
 		case platform.DockMarkCheck:
 			line += "✓ "
-		case platform.DockMarkMinimized:
-			line += "◆ "
 		}
 		line += it.Title
 		if it.Disabled {
@@ -92,7 +90,7 @@ func TestTheDockMenuListsEachApplicationAndItsWindows(t *testing.T) {
 		"  ✓ KittyTK Demo",
 		"  Ask for a Name",
 		"mew >",
-		"  ◆ notes.txt",
+		"  (notes.txt)",
 		"-----",
 		"Hide Desktop",
 	}, "\n")
@@ -121,7 +119,7 @@ func TestAWindowsDockItemBringsItForward(t *testing.T) {
 	if got := r.d.windowManager.ActiveWindow(); got != r.ask {
 		t.Errorf("choosing Ask for a Name activated %v", got)
 	}
-	findDock(t, r.d.dockMenu(), "notes.txt").Action()
+	findDock(t, r.d.dockMenu(), "(notes.txt)").Action()
 	if r.notesSurf.minimized {
 		t.Error("choosing a minimized torn window left it minimized")
 	}
@@ -218,7 +216,7 @@ func TestUntitledAndHiddenWindows(t *testing.T) {
 	closed.Close()
 	r.d.AddApplication(&mockApp{name: "App", main: blank, windows: []*window.Window{blank, gone, shelved, closed}})
 	got := strings.Join(spellDock(r.d.dockMenu()), "\n")
-	want := "App >\n  Untitled\n  ◆ shelved\n-----\nHide Desktop"
+	want := "App >\n  Untitled\n  (shelved)\n-----\nHide Desktop"
 	if got != want {
 		t.Errorf("the menu reads\n%s\nwant\n%s", got, want)
 	}

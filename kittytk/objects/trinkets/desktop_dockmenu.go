@@ -10,7 +10,8 @@ import (
 // **One icon stands for every application**, because on macOS one process
 // has one Dock icon and every application this display hosts lives in it. So
 // the menu is where they are told apart: each application by name, its
-// windows listed beneath it, one click from coming forward, and the name
+// windows listed beneath it -- the current one ticked, a minimized one in
+// parentheses -- one click from coming forward, and the name
 // opening what can be done to the application as a whole. Then the desktop
 // itself, shown or hidden.
 //
@@ -18,7 +19,7 @@ import (
 //	    ✓ KittyTK Demo
 //	      Ask for a Name
 //	mew                   >
-//	    ◆ notes.txt
+//	      (notes.txt)
 //	-----
 //	Hide Desktop
 //
@@ -45,14 +46,18 @@ func (d *Desktop) dockMenu() []platform.DockMenuItem {
 		for _, w := range wins {
 			w := w
 			mark := platform.DockMarkNone
+			title := dockWindowTitle(w)
 			switch {
 			case d.dockWindowMinimized(w):
-				mark = platform.DockMarkMinimized
+				// In parentheses: the Dock draws a menu itself, and draws the
+				// tick but not an image of ours, so a minimized window is told
+				// by its name.
+				title = "(" + title + ")"
 			case d.isCurrentTopLevel(w):
 				mark = platform.DockMarkCheck
 			}
 			items = append(items, platform.DockMenuItem{
-				Title:  dockWindowTitle(w),
+				Title:  title,
 				Indent: 1,
 				Mark:   mark,
 				Action: func() { d.activateWindowFromMenu(w) },
