@@ -166,6 +166,40 @@ type DockMenuItem struct {
 	Action    func()         // nil for an item that only heads or opens
 }
 
+// NativeMenuBarHost is an optional Platform capability: the OS's own menu bar
+// (macOS), mirroring the menus the desktop draws in its own. The host shows
+// the menus it is given after whatever it keeps of its own (the application
+// menu), replacing the last set. Each menu's items are asked for when the
+// menu is set and again whenever the OS is about to show it or look through
+// it for a key, so they are as current as the desktop's own menus.
+type NativeMenuBarHost interface {
+	SetNativeMenus(menus []NativeMenu)
+}
+
+// NativeMenu is one menu in the OS menu bar, or a submenu of one.
+type NativeMenu struct {
+	Title string
+	Items func() []NativeMenuItem
+}
+
+// NativeMenuItem is one line of a native menu.
+type NativeMenuItem struct {
+	Title     string
+	Separator bool // a dividing line; everything else is ignored
+	Checked   bool
+	// Key is the key that invokes the item, in KittyTK's own spelling (s-c,
+	// ^X, M-S-F4). The host binds it where the OS can, and shows it; a key
+	// the OS has no way to say is left off.
+	Key     string
+	Submenu *NativeMenu
+	Action  func() // runs on the main thread, after the menu has closed
+	// Enabled is asked when the OS validates the item -- before showing it,
+	// and before letting its key invoke it. A key the item can no longer be
+	// invoked by here should answer false, so the key goes on to whatever has
+	// the focus. Nil means enabled.
+	Enabled func() bool
+}
+
 // BorderToggler is an optional NativeSurface capability: toggle the OS
 // window's title bar / border at runtime. Solo mode removes the border
 // from the primary window so the app's own chrome is the only title bar.

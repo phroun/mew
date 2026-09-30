@@ -71,6 +71,19 @@ func parseKeyName(key string) (mods KeyModifiers, caret bool, name string) {
 	}
 }
 
+// KeyParts splits a key spelling into the modifiers it presses and the bare
+// key name, with Shift folded in where the notation implies it -- an uppercase
+// letter (M-A is Option+Shift+A), except after the caret (^X is Control+X) --
+// the same reading the macOS rendering makes. It is what a host needs to hand
+// a key to a native menu.
+func KeyParts(key string) (KeyModifiers, string) {
+	mods, caret, name := parseKeyName(key)
+	if len(name) == 1 && name[0] >= 'A' && name[0] <= 'Z' && !caret {
+		mods |= ShiftModifier
+	}
+	return mods, name
+}
+
 // DisplayKey returns what a key spelling should look like in a menu or a
 // tooltip: the compact notation unchanged, or — when macOS-native rendering is
 // on — the native modifier glyphs.

@@ -278,6 +278,11 @@ type Desktop struct {
 	// nextFocus). Closed windows are pruned as it is read.
 	focusHistory []*window.Window
 
+	// The OS menu bar mirroring ours, on a platform that has one, and which
+	// set of menus was last put there (see desktop_nativemenu.go).
+	nativeMenuHost platform.NativeMenuBarHost
+	nativeMenuSig  string
+
 	// Backend for rendering (optional - used when Desktop.Run() is called)
 	backend core.RenderBackend
 
@@ -3125,6 +3130,8 @@ func (d *Desktop) SetHideMenuBarForSoleApp(hide bool) {
 // The first menu after the system menu automatically gets standard app items
 // (Hide, Hide Others, Show All, Quit) appended.
 func (d *Desktop) updateMenuBarContent() {
+	// Whatever the bar ends up holding, the OS menu bar follows it.
+	defer d.syncNativeMenuBar()
 	if d.menuBar == nil {
 		return
 	}
@@ -4742,6 +4749,14 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		if dm, ok := pf.(platform.DockMenuHost); ok {
 			dm.SetDockMenu(d.dockMenu)
 		}
+		// And its menu bar, on a platform with one of its own: the menus the
+		// desktop draws, put there as well (see desktop_nativemenu.go).
+		if nh, ok := pf.(platform.NativeMenuBarHost); ok {
+			d.mu.Lock()
+			d.nativeMenuHost = nh
+			d.mu.Unlock()
+			d.syncNativeMenuBar()
+		}
 
 		size := surface.Size()
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -6165,6 +6180,9 @@ func (d *Desktop) refreshDetachedMenuBar(app ApplicationProvider) {
 		}
 	}
 	win.Layout()
+	// A torn window's own bar was just rebuilt, and may be the one the OS
+	// menu bar mirrors.
+	d.syncNativeMenuBar()
 	if host := d.hostForWindow(win); host != nil {
 		host.Invalidate()
 		return

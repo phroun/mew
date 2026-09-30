@@ -532,6 +532,14 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	if haveDockMenu {
 		installDockMenu()
 	}
+	// Likewise the native menu bar: menus set before the application was up
+	// are written now; menus set later write themselves.
+	nativeMenus.mu.Lock()
+	haveNativeMenus := nativeMenus.haveSet
+	nativeMenus.mu.Unlock()
+	if haveNativeMenus {
+		applyNativeMenus()
+	}
 
 	// (Text input is started per window in createWindow — SDL3 scopes it
 	// to a window rather than the process.)
