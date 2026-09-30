@@ -18,11 +18,6 @@ extern void kittytkMenuItemChosen(long tag);
 extern int kittytkMenuItemValid(long tag);
 extern void kittytkMenuNeedsUpdate(uintptr_t menu);
 
-// The tag every top-level item of ours carries in the main menu, so the last
-// set can be found and taken out again. Items inside our menus use tags from
-// 1 up, which name their entries.
-#define KT_BAR_TAG 0x4B54544B
-
 static id kt_str(const char *s) {
 	return ((id (*)(id, SEL, const char *))objc_msgSend)(
 		(id)objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), s);
@@ -135,18 +130,47 @@ static id kt_main_menu(void) {
 	return ((id (*)(id, SEL))objc_msgSend)(app, sel_registerName("mainMenu"));
 }
 
-// kt_menu_bar_clear takes out the menus put in the bar last time.
+// kt_menu_bar_clear takes out everything after the application menu: the
+// menus put there last time, and the ones SDL put there to begin with (its
+// Window menu, with keys of its own), since every key in the bar is to act
+// through the desktop's items and no other way.
 static void kt_menu_bar_clear(void) {
 	id main = kt_main_menu();
 	if (!main) return;
 	long n = ((long (*)(id, SEL))objc_msgSend)(main, sel_registerName("numberOfItems"));
-	for (long i = n - 1; i >= 0; i--) {
-		id it = ((id (*)(id, SEL, long))objc_msgSend)(main, sel_registerName("itemAtIndex:"), i);
-		long tag = ((long (*)(id, SEL))objc_msgSend)(it, sel_registerName("tag"));
-		if (tag == KT_BAR_TAG) {
-			((void (*)(id, SEL, long))objc_msgSend)(main, sel_registerName("removeItemAtIndex:"), i);
-		}
+	for (long i = n - 1; i >= 1; i--) {
+		((void (*)(id, SEL, long))objc_msgSend)(main, sel_registerName("removeItemAtIndex:"), i);
 	}
+}
+
+// kt_app_menu is the application menu -- the first in the bar, which the OS
+// titles with the process's name -- given our delegate so its items are
+// written from the desktop's whenever AppKit asks. 0 while there is no bar.
+static uintptr_t kt_app_menu(void) {
+	id main = kt_main_menu();
+	if (!main) return 0;
+	long n = ((long (*)(id, SEL))objc_msgSend)(main, sel_registerName("numberOfItems"));
+	if (n < 1) return 0;
+	id first = ((id (*)(id, SEL, long))objc_msgSend)(main, sel_registerName("itemAtIndex:"), 0);
+	id menu = ((id (*)(id, SEL))objc_msgSend)(first, sel_registerName("submenu"));
+	if (!menu) return 0;
+	((void (*)(id, SEL, id))objc_msgSend)(menu, sel_registerName("setDelegate:"), kt_menu_delegate());
+	return (uintptr_t)menu;
+}
+
+// kt_menu_add_services appends a Services item holding the OS's own Services
+// menu, when the application has one.
+static void kt_menu_add_services(uintptr_t menu) {
+	id app = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+	if (!app) return;
+	id services = ((id (*)(id, SEL))objc_msgSend)(app, sel_registerName("servicesMenu"));
+	if (!services) return;
+	id item = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSMenuItem"), sel_registerName("alloc"));
+	item = ((id (*)(id, SEL, id, SEL, id))objc_msgSend)(item,
+		sel_registerName("initWithTitle:action:keyEquivalent:"), kt_str("Services"), (SEL)0, kt_str(""));
+	((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setSubmenu:"), services);
+	((void (*)(id, SEL, id))objc_msgSend)((id)menu, sel_registerName("addItem:"), item);
+	((void (*)(id, SEL))objc_msgSend)(item, sel_registerName("release"));
 }
 
 // kt_menu_bar_add puts menu in the bar at position index among ours, after
@@ -160,7 +184,6 @@ static void kt_menu_bar_add(uintptr_t menu, const char *title, long index) {
 	id item = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSMenuItem"), sel_registerName("alloc"));
 	item = ((id (*)(id, SEL, id, SEL, id))objc_msgSend)(item,
 		sel_registerName("initWithTitle:action:keyEquivalent:"), kt_str(title), (SEL)0, kt_str(""));
-	((void (*)(id, SEL, long))objc_msgSend)(item, sel_registerName("setTag:"), (long)KT_BAR_TAG);
 	((void (*)(id, SEL, id))objc_msgSend)((id)menu, sel_registerName("setTitle:"), kt_str(title));
 	((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setSubmenu:"), (id)menu);
 	((void (*)(id, SEL))objc_msgSend)((id)menu, sel_registerName("release"));
@@ -182,6 +205,7 @@ import (
 // brings its own autorelease pool.
 func applyNativeMenus() {
 	nativeMenus.mu.Lock()
+	app := nativeMenus.app
 	menus := nativeMenus.set
 	have := nativeMenus.haveSet
 	nativeMenus.mu.Unlock()
@@ -190,7 +214,7 @@ func applyNativeMenus() {
 	}
 	pool := C.kt_pool_push()
 	defer C.kt_pool_pop(pool)
-	setNativeBar(cocoaMenuSink{}, menus)
+	setNativeBar(cocoaMenuSink{}, app, menus)
 }
 
 // cocoaMenuSink writes the native menu bar into AppKit.
@@ -221,6 +245,10 @@ func (cocoaMenuSink) addSeparator(menu uintptr) { C.kt_menu_add_separator(C.uint
 func (cocoaMenuSink) setSubmenu(item, submenu uintptr) {
 	C.kt_menu_set_submenu(C.uintptr_t(item), C.uintptr_t(submenu))
 }
+
+func (cocoaMenuSink) appMenu() uintptr { return uintptr(C.kt_app_menu()) }
+
+func (cocoaMenuSink) addServices(menu uintptr) { C.kt_menu_add_services(C.uintptr_t(menu)) }
 
 func (cocoaMenuSink) setBar(menus []uintptr, titles []string) {
 	// With no bar, kt_menu_bar_add lets each menu go rather than keep it.

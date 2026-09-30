@@ -31,8 +31,10 @@ type nativeEntry struct {
 
 var nativeMenus struct {
 	mu       sync.Mutex
-	set      []platform.NativeMenu // the latest menus, applied once the bar exists
+	app      platform.NativeMenu   // the latest application menu, applied once the bar exists
+	set      []platform.NativeMenu // and the menus after it
 	haveSet  bool
+	appMenu  uintptr // the OS's application menu, while this bar fills it
 	post     func(func())
 	models   map[uintptr]platform.NativeMenu // each native menu's source
 	tags     map[uintptr][]int               // the tags each native menu's items hold
@@ -42,8 +44,9 @@ var nativeMenus struct {
 }
 
 // SetNativeMenus implements platform.NativeMenuBarHost.
-func (p *Platform) SetNativeMenus(menus []platform.NativeMenu) {
+func (p *Platform) SetNativeMenus(app platform.NativeMenu, menus []platform.NativeMenu) {
 	nativeMenus.mu.Lock()
+	nativeMenus.app = app
 	nativeMenus.set = menus
 	nativeMenus.haveSet = true
 	nativeMenus.post = p.Post
@@ -63,19 +66,34 @@ type nativeMenuSink interface {
 	addItem(menu uintptr, title string, tag int, checked bool, equiv string, mods uint) uintptr
 	addSeparator(menu uintptr)
 	setSubmenu(item, submenu uintptr)
-	// setBar puts menus in the OS menu bar, after what the host keeps of its
-	// own, in place of the ones put there last time.
+	// appMenu is the OS's application menu, for the bar to fill, or 0 when
+	// there is none yet.
+	appMenu() uintptr
+	// addServices appends the OS's Services submenu, where it has one.
+	addServices(menu uintptr)
+	// setBar puts menus in the OS menu bar after the application menu, in
+	// place of everything that followed it before.
 	setBar(menus []uintptr, titles []string)
 }
 
-// setNativeBar writes menus into s from nothing and puts them in the bar.
-func setNativeBar(s nativeMenuSink, menus []platform.NativeMenu) {
+// setNativeBar writes the application menu and menus into s from nothing and
+// puts them in the bar.
+func setNativeBar(s nativeMenuSink, app platform.NativeMenu, menus []platform.NativeMenu) {
 	nativeMenus.mu.Lock()
 	nativeMenus.models = map[uintptr]platform.NativeMenu{}
 	nativeMenus.tags = map[uintptr][]int{}
 	nativeMenus.children = map[uintptr][]uintptr{}
 	nativeMenus.entries = map[int]nativeEntry{}
+	nativeMenus.appMenu = 0
 	nativeMenus.mu.Unlock()
+
+	if h := s.appMenu(); h != 0 {
+		nativeMenus.mu.Lock()
+		nativeMenus.models[h] = app
+		nativeMenus.appMenu = h
+		nativeMenus.mu.Unlock()
+		fillNativeMenu(s, h)
+	}
 
 	handles := make([]uintptr, 0, len(menus))
 	titles := make([]string, 0, len(menus))
@@ -100,6 +118,7 @@ func fillNativeMenu(s nativeMenuSink, menu uintptr) {
 	if ok {
 		forgetNativeContentsLocked(menu)
 	}
+	isApp := menu == nativeMenus.appMenu
 	nativeMenus.mu.Unlock()
 	if !ok {
 		return
@@ -108,8 +127,25 @@ func fillNativeMenu(s nativeMenuSink, menu uintptr) {
 	if model.Items != nil {
 		items = model.Items()
 	}
+	// The application menu carries the OS's Services too, where people look
+	// for them: in a group of their own before the last group, the one that
+	// ends the session -- or at the end, when the menu is all one group.
+	services := -1
+	if isApp {
+		services = len(items)
+		for i := len(items) - 1; i >= 0; i-- {
+			if items[i].Separator {
+				services = i
+				break
+			}
+		}
+	}
 	s.clear(menu)
-	for _, it := range items {
+	for i, it := range items {
+		if i == services {
+			s.addSeparator(menu)
+			s.addServices(menu)
+		}
 		if it.Separator {
 			s.addSeparator(menu)
 			continue
@@ -133,6 +169,12 @@ func fillNativeMenu(s nativeMenuSink, menu uintptr) {
 		nativeMenus.mu.Unlock()
 		equiv, mods, _ := macKeyEquivalent(it.Key)
 		s.addItem(menu, it.Title, tag, it.Checked, equiv, mods)
+	}
+	if services == len(items) {
+		if len(items) > 0 {
+			s.addSeparator(menu)
+		}
+		s.addServices(menu)
 	}
 }
 

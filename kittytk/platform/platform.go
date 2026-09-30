@@ -167,13 +167,15 @@ type DockMenuItem struct {
 }
 
 // NativeMenuBarHost is an optional Platform capability: the OS's own menu bar
-// (macOS), mirroring the menus the desktop draws in its own. The host shows
-// the menus it is given after whatever it keeps of its own (the application
-// menu), replacing the last set. Each menu's items are asked for when the
-// menu is set and again whenever the OS is about to show it or look through
-// it for a key, so they are as current as the desktop's own menus.
+// (macOS), mirroring the menus the desktop draws in its own. app becomes the
+// OS's application menu -- the one the OS titles with the process's name --
+// and menus follow it; together they replace everything in the bar, the
+// host's own defaults included, so no key there acts except through the
+// desktop's items. Each menu's items are asked for when the bar is set and
+// again whenever the OS is about to show the menu or look through it for a
+// key, so they are as current as the desktop's own menus.
 type NativeMenuBarHost interface {
-	SetNativeMenus(menus []NativeMenu)
+	SetNativeMenus(app NativeMenu, menus []NativeMenu)
 }
 
 // NativeMenu is one menu in the OS menu bar, or a submenu of one.

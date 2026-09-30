@@ -120,6 +120,7 @@ var referenceDefaultBindings = []Binding{
 	{"M-F10", []string{CmdWindowMaximizeToggle}},
 	{"M-F4", []string{CmdAppQuit}},
 	{"^Q", []string{CmdAppQuit}},
+	{"(mac) s-q", []string{CmdAppQuit}},
 	{"^F4", []string{CmdWindowClose}},
 	{"^W", []string{CmdWindowClose}},
 	{"F2", []string{CmdAppMenu}},

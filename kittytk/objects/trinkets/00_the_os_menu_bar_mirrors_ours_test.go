@@ -7,7 +7,8 @@ package trinkets
 // no longer means the item where the focus is, the item says it may not run,
 // so the key goes on to the focus. Items are rebuilt from ours each time they
 // are asked for, about-to-show first; the set of menus is pushed only when it
-// changes.
+// changes. The desktop's own menu, Ψ, is the OS's application menu, and is
+// not repeated after it.
 
 import (
 	"strings"
@@ -138,9 +139,11 @@ func TestANativeMenuIsReadAfterItsAboutToShow(t *testing.T) {
 type nativeBarPlatform struct {
 	msPlatform
 	sets [][]platform.NativeMenu
+	apps []platform.NativeMenu
 }
 
-func (p *nativeBarPlatform) SetNativeMenus(menus []platform.NativeMenu) {
+func (p *nativeBarPlatform) SetNativeMenus(app platform.NativeMenu, menus []platform.NativeMenu) {
+	p.apps = append(p.apps, app)
 	p.sets = append(p.sets, menus)
 }
 
@@ -156,10 +159,14 @@ func titlesOf(menus []platform.NativeMenu) string {
 	return strings.Join(t, " ")
 }
 
+// desktopBarTitles is the desktop's bar as the OS bar shows it after the
+// application menu: without Ψ.
 func desktopBarTitles(mb *MenuBar) string {
 	var t []string
 	for _, m := range mb.Menus() {
-		t = append(t, m.Title())
+		if m.Title() != "Ψ" {
+			t = append(t, m.Title())
+		}
 	}
 	return strings.Join(t, " ")
 }
@@ -178,6 +185,13 @@ func TestTheOSMenuBarFollowsTheDesktopsBar(t *testing.T) {
 		if got, want := titlesOf(last), desktopBarTitles(d.MenuBar()); got != want || got == "" {
 			t.Errorf("the OS menu bar holds %q, the desktop's %q", got, want)
 		}
+		if strings.Contains(titlesOf(last), "Ψ") {
+			t.Error("Ψ is repeated after the application menu")
+		}
+		app := plat.apps[len(plat.apps)-1]
+		if got, want := len(app.Items()), len(nativeItems(d.systemMenu)); got != want || got == 0 {
+			t.Errorf("the application menu reads %d items, Ψ has %d", got, want)
+		}
 		pushes := len(plat.sets)
 		d.updateMenuBarContent()
 		d.updateMenuBarContent()
@@ -185,8 +199,8 @@ func TestTheOSMenuBarFollowsTheDesktopsBar(t *testing.T) {
 			t.Errorf("rebuilding the same bar pushed it %d more times", len(plat.sets)-pushes)
 		}
 		// A bar whose titles change is pushed again.
-		app := d.ActiveApplication().(*mockApp)
-		app.menus = []*Menu{NewMenu("&Reports")}
+		active := d.ActiveApplication().(*mockApp)
+		active.menus = []*Menu{NewMenu("&Reports")}
 		d.updateMenuBarContent()
 		if len(plat.sets) != pushes+1 || !strings.Contains(titlesOf(plat.sets[len(plat.sets)-1]), "Reports") {
 			t.Errorf("after the app's menus changed, %d more pushes, last %q", len(plat.sets)-pushes, titlesOf(plat.sets[len(plat.sets)-1]))
@@ -194,7 +208,7 @@ func TestTheOSMenuBarFollowsTheDesktopsBar(t *testing.T) {
 		last = plat.sets[len(plat.sets)-1]
 		// The menus it pushed read the bar the desktop has now.
 		for i, m := range last {
-			if got, want := len(m.Items()), len(nativeItems(d.MenuBar().Menus()[i])); got != want {
+			if got, want := len(m.Items()), len(nativeItems(d.nativeBar()[i].menu)); got != want {
 				t.Errorf("the native %q reads %d items, the desktop's %d", m.Title, got, want)
 			}
 		}
@@ -223,8 +237,8 @@ func TestTheOSMenuBarIsTheFocusedWindowsBar(t *testing.T) {
 
 	titles := func() string {
 		var t []string
-		for _, m := range r.d.nativeBarMenus() {
-			t = append(t, m.Title())
+		for _, e := range r.d.nativeBar() {
+			t = append(t, e.title)
 		}
 		return strings.Join(t, " ")
 	}
@@ -236,6 +250,16 @@ func TestTheOSMenuBarIsTheFocusedWindowsBar(t *testing.T) {
 	if got := titles(); got != "File Edit" {
 		t.Errorf("with the app's torn dialog focused, the bar is %q, want its main window's", got)
 	}
+	// A torn bar's first menu, titled with the app's menu name, goes under
+	// the app's own name.
+	hamburger := NewMenuBar()
+	hamburger.AddMenu(NewMenu("≡"))
+	hamburger.AddMenu(NewMenu("View"))
+	main.SetWindowMenuBar(hamburger)
+	if got := titles(); got != "App View" {
+		t.Errorf("with the torn bar's first menu named ≡, the bar is %q, want App View", got)
+	}
+
 	docked := r.docked("docked")
 	r.d.windowFocusChanged(docked)
 	if got, want := titles(), desktopBarTitles(r.d.menuBar); got != want || strings.Contains(got, "File") {

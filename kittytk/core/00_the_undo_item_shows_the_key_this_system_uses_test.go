@@ -75,3 +75,23 @@ func TestTheClipboardShowsTheKeysThisSystemUses(t *testing.T) {
 		})
 	}
 }
+
+// Quit advertises the Command key on a Mac, where the menu bar shows it, and
+// the Control one everywhere else.
+func TestQuitShowsTheKeyThisSystemUses(t *testing.T) {
+	for _, c := range []struct {
+		os   string
+		want string
+	}{
+		{"darwin", "s-q"},
+		{"linux", "^Q"},
+		{"windows", "^Q"},
+	} {
+		withEnvironment(t, KeymapEnvironment{OS: c.os}, func() {
+			r := NewKeyRegistry("t", ParseKeymap(DefaultKeymapConfig))
+			if got := r.KeyForCommand(CmdAppQuit); got != c.want {
+				t.Errorf("%s: Quit shows %q, want %q", c.os, got, c.want)
+			}
+		})
+	}
+}

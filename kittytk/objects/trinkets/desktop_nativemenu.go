@@ -23,6 +23,13 @@ import (
 // that takes the keyboard on its own terms -- the answer is no, and the key
 // goes on to the focus as it would have without a native menu.
 //
+// The desktop's own menu, Ψ, becomes the OS's application menu -- the one the
+// OS titles with the process's name -- since what it holds is about the whole
+// desktop, as that menu is about the whole process. It is there whichever
+// window has the focus, and is not repeated in the bar after it. The OS's
+// defaults there go (the desktop gives the OS the whole bar), so every key in
+// the bar acts through the desktop's own items and its own keymap.
+//
 // Items are rebuilt from our menus whenever the OS asks (about to show a menu,
 // or looking through the bar for a key), running each menu's about-to-show
 // first as our own bar does, and reading the bar as it is at that moment: a
@@ -30,6 +37,13 @@ import (
 // Menu object, since the desktop builds its bar afresh on every change. So
 // nothing needs telling when an item changes, and only the titles in the bar
 // are pushed, when they change.
+
+// nativeBarEntry is one menu of the focused window's bar as the OS menu bar
+// shows it: the menu, and the title it goes under there.
+type nativeBarEntry struct {
+	menu  *Menu
+	title string
+}
 
 // syncNativeMenuBar puts the bar for the focused window into the OS menu bar,
 // when there is one and its titles have changed since the last time.
@@ -40,10 +54,10 @@ func (d *Desktop) syncNativeMenuBar() {
 	if host == nil {
 		return
 	}
-	menus := d.nativeBarMenus()
-	titles := make([]string, len(menus))
-	for i, m := range menus {
-		titles[i] = m.Title()
+	bar := d.nativeBar()
+	titles := make([]string, len(bar))
+	for i, e := range bar {
+		titles[i] = e.title
 	}
 	sig := strings.Join(titles, "\x00")
 	d.mu.Lock()
@@ -56,11 +70,25 @@ func (d *Desktop) syncNativeMenuBar() {
 	d.nativeMenuSig = sig
 	d.mu.Unlock()
 
-	out := make([]platform.NativeMenu, 0, len(menus))
+	out := make([]platform.NativeMenu, 0, len(bar))
 	for i, title := range titles {
 		out = append(out, d.nativeBarMenu(i, title))
 	}
-	host.SetNativeMenus(out)
+	host.SetNativeMenus(d.nativeAppMenu(), out)
+}
+
+// nativeAppMenu is the OS's application menu: the desktop's own menu, read
+// each time the OS asks.
+func (d *Desktop) nativeAppMenu() platform.NativeMenu {
+	return platform.NativeMenu{
+		Title: "Ψ",
+		Items: func() []platform.NativeMenuItem {
+			d.mu.RLock()
+			sys := d.systemMenu
+			d.mu.RUnlock()
+			return nativeItems(sys)
+		},
+	}
 }
 
 // nativeBarMenu is the menu at position i of the focused window's bar, read
@@ -70,28 +98,40 @@ func (d *Desktop) nativeBarMenu(i int, title string) platform.NativeMenu {
 	return platform.NativeMenu{
 		Title: title,
 		Items: func() []platform.NativeMenuItem {
-			menus := d.nativeBarMenus()
-			if i >= len(menus) || menus[i].Title() != title {
+			bar := d.nativeBar()
+			if i >= len(bar) || bar[i].title != title {
 				return nil
 			}
-			return nativeItems(menus[i])
+			return nativeItems(bar[i].menu)
 		},
 	}
 }
 
-// nativeBarMenus is the bar the focused window reads its menus from: when a
-// torn window has the focus, its application's main window's own bar -- only
-// a torn main window carries one -- else the desktop's.
-func (d *Desktop) nativeBarMenus() []*Menu {
+// nativeBar is the bar the focused window reads its menus from, as the OS
+// menu bar shows it after the application menu: when a torn window has the
+// focus, its application's main window's own bar -- only a torn main window
+// carries one -- else the desktop's, less the desktop's own menu. A torn bar's
+// first menu goes under the application's name rather than its menu name
+// (the "≡" that reads well in a bar of ours and not beside the OS's own).
+func (d *Desktop) nativeBar() []nativeBarEntry {
 	d.mu.RLock()
 	torn := d.tornFocusOwner
 	bar := d.menuBar
+	sys := d.systemMenu
 	d.mu.RUnlock()
 	if torn != nil {
 		if app := d.findApplicationForWindow(torn); app != nil {
 			if main := app.MainWindow(); main != nil {
 				if mb := windowMenuBarOf(main); mb != nil {
-					return mb.Menus()
+					var out []nativeBarEntry
+					for i, m := range mb.Menus() {
+						title := m.Title()
+						if i == 0 && title == app.MenuName() {
+							title = app.Name()
+						}
+						out = append(out, nativeBarEntry{menu: m, title: title})
+					}
+					return out
 				}
 			}
 		}
@@ -99,7 +139,14 @@ func (d *Desktop) nativeBarMenus() []*Menu {
 	if bar == nil {
 		return nil
 	}
-	return bar.Menus()
+	var out []nativeBarEntry
+	for _, m := range bar.Menus() {
+		if m == sys {
+			continue
+		}
+		out = append(out, nativeBarEntry{menu: m, title: m.Title()})
+	}
+	return out
 }
 
 func windowMenuBarOf(w *window.Window) *MenuBar {

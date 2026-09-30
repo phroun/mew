@@ -69,6 +69,7 @@ type menuRecorder struct {
 	items  map[uintptr][2]uintptr // item -> menu, line
 	bar    []string
 	fills  int
+	app    uintptr // the application menu, 0 for a host without one
 }
 
 func newMenuRecorder() *menuRecorder {
@@ -106,6 +107,10 @@ func (r *menuRecorder) setSubmenu(item, submenu uintptr) {
 	at := r.items[item]
 	r.menus[at[0]][at[1]] += " > " + r.titles[submenu]
 }
+
+func (r *menuRecorder) appMenu() uintptr { return r.app }
+
+func (r *menuRecorder) addServices(menu uintptr) { r.menus[menu] = append(r.menus[menu], "Services >") }
 
 func (r *menuRecorder) setBar(menus []uintptr, titles []string) {
 	r.bar = nil
@@ -153,7 +158,7 @@ func TestTheNativeMenuBarIsWrittenAsGiven(t *testing.T) {
 	edit := platform.NativeMenu{Title: "Edit", Items: func() []platform.NativeMenuItem { return nil }}
 
 	r := newMenuRecorder()
-	setNativeBar(r, []platform.NativeMenu{file, edit})
+	setNativeBar(r, platform.NativeMenu{}, []platform.NativeMenu{file, edit})
 	if got := strings.Join(r.bar, " "); got != "File:File Edit:Edit" {
 		t.Errorf("the bar holds %q", got)
 	}
@@ -222,11 +227,11 @@ func TestSettingTheNativeBarAgainForgetsTheLast(t *testing.T) {
 		return []platform.NativeMenuItem{{Title: "x", Action: func() {}}}
 	}}
 	r := newMenuRecorder()
-	setNativeBar(r, []platform.NativeMenu{one})
+	setNativeBar(r, platform.NativeMenu{}, []platform.NativeMenu{one})
 	if !nativeItemEnabled(1) {
 		t.Fatal("the first bar's item is not enabled")
 	}
-	setNativeBar(r, nil)
+	setNativeBar(r, platform.NativeMenu{}, nil)
 	if nativeItemEnabled(1) {
 		t.Error("an item from the last bar still names an entry")
 	}
@@ -243,17 +248,103 @@ func TestNativeMenusSetEarlyAreKept(t *testing.T) {
 		nativeMenus.mu.Unlock()
 	})
 	p := &Platform{}
-	p.SetNativeMenus([]platform.NativeMenu{{Title: "Early"}})
+	p.SetNativeMenus(platform.NativeMenu{Title: "App"}, []platform.NativeMenu{{Title: "Early"}})
 	nativeMenus.mu.Lock()
-	have, n := nativeMenus.haveSet, len(nativeMenus.set)
+	have, n, app := nativeMenus.haveSet, len(nativeMenus.set), nativeMenus.app.Title
 	nativeMenus.mu.Unlock()
-	if !have || n != 1 {
-		t.Errorf("set before Run, kept %v with %d menus", have, n)
+	if !have || n != 1 || app != "App" {
+		t.Errorf("set before Run, kept %v with %d menus and application menu %q", have, n, app)
 	}
 	nativeMenus.mu.Lock()
 	post := nativeMenus.post
 	nativeMenus.mu.Unlock()
 	if post == nil {
 		t.Error("the platform's Post was not kept for running what is chosen")
+	}
+}
+
+// The OS's application menu is filled from the one given, with the OS's
+// Services in a group of their own before the last group; and written again
+// when the OS asks, like any menu of the bar's.
+func TestTheApplicationMenuIsTheDesktopsOwn(t *testing.T) {
+	postedInto(t)
+	desk := platform.NativeMenu{Title: "Ψ", Items: func() []platform.NativeMenuItem {
+		return []platform.NativeMenuItem{
+			{Title: "About Desktop", Action: func() {}},
+			{Separator: true},
+			{Title: "Event Viewer", Action: func() {}},
+			{Separator: true},
+			{Title: "Exit Desktop", Key: "M-^X", Action: func() {}},
+		}
+	}}
+	r := newMenuRecorder()
+	r.app = r.newMenu("KittyTK")
+	setNativeBar(r, desk, []platform.NativeMenu{{Title: "Demo"}})
+	want := strings.Join([]string{
+		"About Desktop tag=1",
+		"-----",
+		"Event Viewer tag=2",
+		"-----",
+		"Services >",
+		"-----",
+		fmt.Sprintf("Exit Desktop tag=3 key=%q/%#x", "x", macControlFlag|macOptionFlag),
+	}, "\n")
+	if got := r.read(r.app); got != want {
+		t.Errorf("the application menu reads\n%s\nwant\n%s", got, want)
+	}
+	if got := strings.Join(r.bar, " "); got != "Demo:Demo" {
+		t.Errorf("after the application menu the bar holds %q", got)
+	}
+	fillNativeMenu(r, r.app)
+	if got := strings.Count(r.read(r.app), "Services"); got != 1 {
+		t.Errorf("written again, the application menu holds Services %d times", got)
+	}
+	if nativeItemEnabled(1) || !nativeItemEnabled(4) {
+		t.Error("written again, the application menu's old tags still name entries, or its new ones do not")
+	}
+
+	// A menu of one group takes Services at its end; an empty one, alone.
+	for _, tc := range []struct {
+		items []platform.NativeMenuItem
+		want  string
+	}{
+		{[]platform.NativeMenuItem{{Title: "About", Action: func() {}}}, "About tag=7\n-----\nServices >"},
+		{nil, "Services >"},
+	} {
+		items := tc.items
+		r := newMenuRecorder()
+		r.app = r.newMenu("KittyTK")
+		setNativeBar(r, platform.NativeMenu{Items: func() []platform.NativeMenuItem { return items }}, nil)
+		if got := r.read(r.app); got != tc.want {
+			t.Errorf("the application menu reads\n%s\nwant\n%s", got, tc.want)
+		}
+	}
+
+	// A menu in the bar is not the application menu, and gets no Services.
+	for h, title := range r.titles {
+		if title == "Demo" && strings.Contains(r.read(h), "Services") {
+			t.Error("a menu in the bar took the Services")
+		}
+	}
+}
+
+// A bar set where there is no application menu forgets the last one: a menu
+// the OS later hands out at the same address is an ordinary menu, not the
+// application menu, and gets no Services.
+func TestTheApplicationMenuIsForgottenWithItsBar(t *testing.T) {
+	postedInto(t)
+	grouped := func() []platform.NativeMenuItem {
+		return []platform.NativeMenuItem{{Title: "a", Action: func() {}}, {Separator: true}, {Title: "b", Action: func() {}}}
+	}
+	r := newMenuRecorder()
+	r.app = r.newMenu("KittyTK")
+	reused := r.app
+	setNativeBar(r, platform.NativeMenu{Items: grouped}, nil)
+
+	r.app = 0
+	r.next = reused - 1 // the next menu made lands where the application menu was
+	setNativeBar(r, platform.NativeMenu{}, []platform.NativeMenu{{Title: "Demo", Items: grouped}})
+	if got := r.read(reused); strings.Contains(got, "Services") {
+		t.Errorf("a menu at the old application menu's address reads\n%s", got)
 	}
 }
