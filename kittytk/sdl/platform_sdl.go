@@ -657,6 +657,9 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 	// The screen's content scale is only knowable once a window exists, and
 	// only from SDL. Learn it here, before anything paints.
 	p.adoptWindowDensity(w.window)
+	// The desktop lists its windows itself, by what they hold, in its Window
+	// menu and the Dock's; the OS's own list would name the surfaces.
+	excludeFromWindowsMenu(w.window)
 
 	// The WebGPU presentation chain binds directly to the native window.
 	// The software renderer presents through SDL textures instead

@@ -82,8 +82,7 @@ func (d *Desktop) syncNativeMenuBar() {
 	out := make([]platform.NativeMenu, 0, len(bar))
 	for i, title := range titles {
 		m := d.nativeBarMenu(i, title)
-		// The bar's Window menu is the OS's Window menu too, where the OS
-		// lists the windows it knows of below the menu's own items.
+		// The bar's Window menu is the OS's Window menu too.
 		m.Windows = bar[i].menu.WellKnownID() == MenuIDWindow
 		out = append(out, m)
 	}

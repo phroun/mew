@@ -183,8 +183,9 @@ type NativeMenu struct {
 	Title string
 	Items func() []NativeMenuItem
 	// Windows marks the bar's Window menu, which the host tells the OS is
-	// its Window menu: the OS may add items of its own there (a list of the
-	// OS windows, arranging them), which stay below the menu's own.
+	// its Window menu. Whatever the OS adds there of its own (its list of
+	// OS windows, its ways of arranging them) is taken out again, since the
+	// desktop's windows are not the OS's and the menu lists them already.
 	Windows bool
 }
 

@@ -337,6 +337,17 @@ static void kittytk_enable_miniaturize(void *nswindow) {
 	((void (*)(id, SEL, unsigned long))objc_msgSend)(
 		win, sel_registerName("setStyleMask:"), mask|(1UL<<2));
 }
+
+// kittytk_exclude_from_windows_menu keeps an NSWindow out of AppKit's own
+// lists of the application's windows: the Window menu's and the Dock's.
+static void kittytk_exclude_from_windows_menu(void *nswindow) {
+	id win = (id)nswindow;
+	if (!win) {
+		return;
+	}
+	((void (*)(id, SEL, signed char))objc_msgSend)(
+		win, sel_registerName("setExcludedFromWindowsMenu:"), 1);
+}
 */
 import "C"
 
@@ -434,6 +445,13 @@ func reassertWindowAlpha(win *sdl3.Window) {
 func makeWindowMiniaturizable(win *sdl3.Window) {
 	if cocoa := cocoaWindow(win); cocoa != nil {
 		C.kittytk_enable_miniaturize(cocoa)
+	}
+}
+
+// excludeFromWindowsMenu keeps the window out of the OS's window lists.
+func excludeFromWindowsMenu(win *sdl3.Window) {
+	if cocoa := cocoaWindow(win); cocoa != nil {
+		C.kittytk_exclude_from_windows_menu(cocoa)
 	}
 }
 

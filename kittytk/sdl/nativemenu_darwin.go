@@ -41,6 +41,15 @@ static void kt_menu_needs_update_imp(id self, SEL _cmd, id menu) {
 	kittytkMenuNeedsUpdate((uintptr_t)menu);
 }
 
+static int kt_is_windows_menu(id menu);
+static void kt_windows_menu_sweep(id menu);
+
+// menuWillOpen: comes after menuNeedsUpdate:, and after AppKit has added
+// whatever it adds to a Window menu on its way to being shown.
+static void kt_menu_will_open_imp(id self, SEL _cmd, id menu) {
+	if (kt_is_windows_menu(menu)) kt_windows_menu_sweep(menu);
+}
+
 static id kt_new_object(const char *className, void (*define)(Class)) {
 	Class cls = objc_getClass(className);
 	if (!cls) {
@@ -60,6 +69,7 @@ static void kt_define_target(Class cls) {
 
 static void kt_define_delegate(Class cls) {
 	class_addMethod(cls, sel_registerName("menuNeedsUpdate:"), (IMP)kt_menu_needs_update_imp, "v@:@");
+	class_addMethod(cls, sel_registerName("menuWillOpen:"), (IMP)kt_menu_will_open_imp, "v@:@");
 }
 
 // The one object every item's action goes to, and the one delegate every
@@ -76,9 +86,10 @@ static id kt_menu_delegate(void) {
 	return d;
 }
 
-// Every item of ours carries this marker as its represented object, so a
-// menu can be rewritten without disturbing items the OS put there itself --
-// the Window menu's list of windows. Ours stand together at the top.
+// Every item of ours carries this marker as its represented object, so the
+// items the OS puts in a menu of ours can be told from ours: in the Window
+// menu, where AppKit adds its window list and its tiling commands, they are
+// swept out. Ours stand together at the top.
 static id kt_marker(void) {
 	static id m = 0;
 	if (!m) {
@@ -107,6 +118,26 @@ static void kt_insert_ours(uintptr_t menu, id item) {
 	((void (*)(id, SEL, id, long))objc_msgSend)((id)menu, sel_registerName("insertItem:atIndex:"), item, at);
 }
 
+static int kt_is_windows_menu(id menu) {
+	id app = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+	if (!app || !menu) return 0;
+	return ((id (*)(id, SEL))objc_msgSend)(app, sel_registerName("windowsMenu")) == menu;
+}
+
+// kt_windows_menu_sweep takes out every item AppKit added to the Window
+// menu. Its list names our surfaces rather than the desktop's windows, which
+// ours lists already, and its tiling commands have no window of ours they
+// could act on.
+static void kt_windows_menu_sweep(id menu) {
+	long n = ((long (*)(id, SEL))objc_msgSend)(menu, sel_registerName("numberOfItems"));
+	for (long i = n - 1; i >= 0; i--) {
+		id it = ((id (*)(id, SEL, long))objc_msgSend)(menu, sel_registerName("itemAtIndex:"), i);
+		if (!kt_is_ours(it)) {
+			((void (*)(id, SEL, long))objc_msgSend)(menu, sel_registerName("removeItemAtIndex:"), i);
+		}
+	}
+}
+
 static void *kt_pool_push(void) { return objc_autoreleasePoolPush(); }
 static void kt_pool_pop(void *p) { objc_autoreleasePoolPop(p); }
 
@@ -119,8 +150,10 @@ static uintptr_t kt_menu_new(const char *title) {
 	return (uintptr_t)m;
 }
 
-// kt_menu_clear takes out the items of ours, leaving any the OS added.
+// kt_menu_clear takes out the items of ours, leaving any the OS added --
+// except in the Window menu, which is left with none of either.
 static void kt_menu_clear(uintptr_t menu) {
+	if (kt_is_windows_menu((id)menu)) kt_windows_menu_sweep((id)menu);
 	long n = ((long (*)(id, SEL))objc_msgSend)((id)menu, sel_registerName("numberOfItems"));
 	for (long i = n - 1; i >= 0; i--) {
 		id it = ((id (*)(id, SEL, long))objc_msgSend)((id)menu, sel_registerName("itemAtIndex:"), i);
@@ -215,12 +248,13 @@ static void kt_menu_add_services(uintptr_t menu) {
 }
 
 // kt_set_windows_menu tells AppKit which menu is the Window menu (0 for
-// none), where it lists the application's windows and adds its own ways of
-// arranging them, below the menu's own items.
+// none). AppKit adds items of its own there, which the sweep takes out again:
+// now, and each time the menu is brought up to date or opened.
 static void kt_set_windows_menu(uintptr_t menu) {
 	id app = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
 	if (!app) return;
 	((void (*)(id, SEL, id))objc_msgSend)(app, sel_registerName("setWindowsMenu:"), (id)menu);
+	if (menu) kt_windows_menu_sweep((id)menu);
 }
 
 // kt_menu_bar_add puts menu in the bar at position index among ours, after

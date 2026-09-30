@@ -20,3 +20,6 @@ func makeWindowMiniaturizable(*sdl3.Window) {}
 // setWindowShadow is a no-op on X11: there is no portable OS drop shadow to
 // toggle from here (the window manager owns whatever shadow a window gets).
 func setWindowShadow(*sdl3.Window, bool) {}
+
+// excludeFromWindowsMenu is the non-macOS stub: only macOS keeps such a list.
+func excludeFromWindowsMenu(*sdl3.Window) {}

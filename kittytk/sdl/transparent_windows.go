@@ -27,3 +27,6 @@ func makeWindowMiniaturizable(*sdl3.Window) {}
 // while leaving the extended frame for the shadow); that is the deliberate
 // follow-up. Doing nothing keeps the window's size exact in the meantime.
 func setWindowShadow(*sdl3.Window, bool) {}
+
+// excludeFromWindowsMenu is the Windows stub: only macOS keeps such a list.
+func excludeFromWindowsMenu(*sdl3.Window) {}
