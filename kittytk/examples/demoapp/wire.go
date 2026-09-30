@@ -46,6 +46,9 @@ func (a *app) wireMainWindow() {
 
 	// Basic Trinkets: the text input narrates changes to the status bar.
 	ui.TextInput("binput").OnChange(func(s string) { a.setStatus("Text: " + s) })
+	// ...and a button asks for a name with an input dialog, offering the one
+	// given last time.
+	ui.Button("bask").OnClick(a.askForName)
 
 	// Lists: the list's checkboxes switch on and off, and each change to what
 	// is ticked is narrated as the list reports it -- one row, or every row

@@ -97,6 +97,10 @@ b=new tab caption="Basic Trinkets" children={
 			new button caption="Cancel" action=demo.basic.cancel
 			new button caption="Apply" action=demo.basic.apply
 		}
+		baskrow=new panel layout=hbox spacing=8 children={
+			bask=new button caption="Ask for a Name..."
+			bname=new label caption="No name given yet." stretch=1
+		}
 		new button caption="Disabled" !enabled
 	}
 }
@@ -791,6 +795,8 @@ dns=w.t.dn.dnp.dnpre.dns
 dnn=w.t.dn.dnp.dnpre.dnn
 dnecho=w.t.dn.dnp.dnecho
 binput=w.t.b.bw.brow.input
+bask=w.t.b.bw.baskrow.bask
+bname=w.t.b.bw.baskrow.bname
 wfont=w.t.s.sev.o.sp.c.wfont
 dfont=w.t.s.sev.o.sp.c.dfont
 grid=w.t.s.sev.o.sp.c.grid
