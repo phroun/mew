@@ -3363,7 +3363,7 @@ func (d *Desktop) createAppMenuWithQuitOnly(original *Menu, title, appName strin
 // merged Hide section (Hide App, Hide Others, Show All). The real system
 // Psi menu is shown separately, unchanged.
 func (d *Desktop) buildAppHideMenu(appName string) *Menu {
-	menu := NewMenu("&" + appName)
+	menu := NewMenu("&" + appName).SetWellKnownID(MenuIDApp)
 	d.appendHideSection(menu, appName, false)
 	return menu
 }

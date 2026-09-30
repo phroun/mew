@@ -550,3 +550,31 @@ func (n *nativeBarRecorder) last() string {
 	}
 	return titlesOf(n.sets[len(n.sets)-1])
 }
+
+// The desktop's surface focused while the host application's main window is
+// torn off: the desktop's abbreviated bar carries an app-named menu of its
+// own (just the Hide section), and that menu is folded in like any other of
+// the host's.
+func TestTheAbbreviatedBarsHostMenuJoinsTheApplicationMenu(t *testing.T) {
+	r := newFocusRig(t)
+	main := r.torn("main")
+	app := &mockApp{name: "mew", main: main, windows: []*window.Window{main}}
+	r.d.AddApplication(app)
+	r.d.attachMainWindowChrome(main)
+	r.d.SetHostApplication(app)
+	r.focusTorn(main)
+	r.focusDesktop()
+
+	bar, host := r.d.nativeBar()
+	if host == nil {
+		t.Fatalf("the abbreviated bar's mew menu was not folded in (bar %+v)", bar)
+	}
+	for _, e := range bar {
+		if e.title == "mew" {
+			t.Error("the abbreviated bar's mew menu still stands in the bar")
+		}
+	}
+	if got := strings.Join(spellNative(mergedAppMenuItems(r.d.systemMenu, host)), "\n"); !strings.Contains(got, "Hide mew") {
+		t.Errorf("the merged menu has no Hide mew:\n%s", got)
+	}
+}
