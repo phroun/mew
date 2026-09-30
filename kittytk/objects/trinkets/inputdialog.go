@@ -42,6 +42,10 @@ type InputDialog struct {
 func NewInputDialog(title, prompt, value string) *InputDialog {
 	d := &InputDialog{result: ResultNone}
 	d.Window = *window.NewWindow(title)
+	// The copy still names the window NewWindow allocated as itself, so
+	// its Update would mark that orphan and a title-bar change would reach
+	// the screen only when something else repainted. Name the copy.
+	d.Window.Init(&d.Window)
 	d.SetType(window.WindowTypeModal)
 	d.SetFlags(window.WindowFlagNoResize)
 

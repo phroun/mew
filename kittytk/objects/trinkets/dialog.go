@@ -181,6 +181,10 @@ func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 		result:  ResultNone,
 	}
 	m.Window = *window.NewWindow(title)
+	// The copy still names the window NewWindow allocated as itself, so
+	// its Update would mark that orphan and a title-bar change would reach
+	// the screen only when something else repainted. Name the copy.
+	m.Window.Init(&m.Window)
 	m.SetType(window.WindowTypeModal)
 	m.SetFlags(window.WindowFlagNoResize)
 
@@ -631,6 +635,10 @@ func NewFileDialog(mode FileDialogMode) *FileDialog {
 	}
 
 	f.Window = *window.NewWindow(title)
+	// The copy still names the window NewWindow allocated as itself, so
+	// its Update would mark that orphan and a title-bar change would reach
+	// the screen only when something else repainted. Name the copy.
+	f.Window.Init(&f.Window)
 	f.SetType(window.WindowTypeModal)
 	f.setupUI()
 	f.SetCommands(core.CmdTrinketEnclosing)
