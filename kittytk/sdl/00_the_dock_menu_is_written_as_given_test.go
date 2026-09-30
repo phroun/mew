@@ -85,7 +85,7 @@ func TestTheDockMenuIsWrittenAsGiven(t *testing.T) {
 				{Title: "Quit Demo", Action: do("quit")},
 			}},
 			{Title: "Main", Indent: 1, Mark: platform.DockMarkCheck, Action: do("main")},
-			{Title: "(Tucked)", Indent: 1, Action: do("tucked")},
+			{Title: "◇ Tucked", Indent: 1, Action: do("tucked")},
 			{Title: "Label"},
 			{Separator: true},
 			{Title: "Hide Desktop", Disabled: true, Action: do("hide")},
@@ -99,7 +99,7 @@ func TestTheDockMenuIsWrittenAsGiven(t *testing.T) {
 	top := strings.Join([]string{
 		"Demo tag=0 > menu2",
 		"  Main tag=3 mark=1",
-		"  (Tucked) tag=4",
+		"  ◇ Tucked tag=4",
 		"Label tag=0 off",
 		"-----",
 		"Hide Desktop tag=0 off",
