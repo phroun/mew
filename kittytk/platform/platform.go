@@ -182,6 +182,10 @@ type NativeMenuBarHost interface {
 type NativeMenu struct {
 	Title string
 	Items func() []NativeMenuItem
+	// Windows marks the bar's Window menu, which the host tells the OS is
+	// its Window menu: the OS may add items of its own there (a list of the
+	// OS windows, arranging them), which stay below the menu's own.
+	Windows bool
 }
 
 // NativeMenuItem is one line of a native menu.

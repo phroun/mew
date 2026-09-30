@@ -578,3 +578,51 @@ func TestTheAbbreviatedBarsHostMenuJoinsTheApplicationMenu(t *testing.T) {
 		t.Errorf("the merged menu has no Hide mew:\n%s", got)
 	}
 }
+
+// The bar's Window menu goes to the OS as its Window menu, the abbreviated
+// bar's Tile/Cascade menu included; nothing else does.
+func TestTheWindowMenuGoesToTheOSAsItsWindowMenu(t *testing.T) {
+	r := newFocusRig(t)
+	pushed := &nativeBarRecorder{}
+	r.d.mu.Lock()
+	r.d.nativeMenuHost = pushed
+	r.d.mu.Unlock()
+
+	main := r.torn("main")
+	app := &mockApp{name: "App", main: main, windows: []*window.Window{main}}
+	r.d.AddApplication(app)
+	r.d.attachMainWindowChrome(main)
+	r.focusTorn(main)
+	r.focusDesktop() // the abbreviated bar, with its Tile/Cascade menu
+
+	windows := func() []string {
+		var out []string
+		for _, m := range pushed.sets[len(pushed.sets)-1] {
+			if m.Windows {
+				out = append(out, m.Title)
+			}
+		}
+		return out
+	}
+	if got := windows(); len(got) != 1 || got[0] != "Window" {
+		t.Errorf("the menus sent as the Window menu: %q, want [Window]", got)
+	}
+
+	// A bar whose Window menu comes or goes is pushed again, though no title
+	// changed.
+	pushes := len(pushed.sets)
+	before := r.d.menuBar.Menus()
+	r.d.menuBar.Clear()
+	for _, m := range before {
+		if m == r.d.systemMenu {
+			r.d.menuBar.AddMenu(m)
+			continue
+		}
+		r.d.menuBar.AddMenu(NewMenu(m.RawTitle())) // same titles, none a Window menu
+	}
+	r.d.syncNativeMenuBar()
+	if len(pushed.sets) != pushes+1 || len(windows()) != 0 {
+		t.Errorf("a Window menu that stopped being one was pushed %d more times, windows %q",
+			len(pushed.sets)-pushes, windows())
+	}
+}

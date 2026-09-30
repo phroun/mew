@@ -128,6 +128,8 @@ var referenceDefaultBindings = []Binding{
 	{"F1", []string{CmdAppHelp}},
 	{"^H", []string{CmdAppHide}},
 	{"M-^H", []string{CmdAppHideOthers}},
+	{"(mac) s-h", []string{CmdAppHide}},
+	{"(mac) M-s-h", []string{CmdAppHideOthers}},
 	{"M-^X", []string{CmdDesktopExit}},
 	{"^X", []string{CmdTrinketCut}},
 	{"^C", []string{CmdTrinketCopy}},

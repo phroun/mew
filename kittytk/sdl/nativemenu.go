@@ -74,6 +74,9 @@ type nativeMenuSink interface {
 	// setBar puts menus in the OS menu bar after the application menu, in
 	// place of everything that followed it before.
 	setBar(menus []uintptr, titles []string)
+	// setWindowsMenu tells the OS which menu is the Window menu, or that
+	// none is, for 0.
+	setWindowsMenu(menu uintptr)
 }
 
 // setNativeBar writes the application menu and menus into s from nothing and
@@ -97,6 +100,7 @@ func setNativeBar(s nativeMenuSink, app platform.NativeMenu, menus []platform.Na
 
 	handles := make([]uintptr, 0, len(menus))
 	titles := make([]string, 0, len(menus))
+	var windows uintptr
 	for _, m := range menus {
 		h := s.newMenu(m.Title)
 		nativeMenus.mu.Lock()
@@ -105,8 +109,14 @@ func setNativeBar(s nativeMenuSink, app platform.NativeMenu, menus []platform.Na
 		fillNativeMenu(s, h)
 		handles = append(handles, h)
 		titles = append(titles, m.Title)
+		if m.Windows && windows == 0 {
+			windows = h
+		}
 	}
 	s.setBar(handles, titles)
+	// Named every time, none included: the OS must not go on listing windows
+	// in a menu that has left the bar.
+	s.setWindowsMenu(windows)
 }
 
 // fillNativeMenu writes a native menu's items afresh from its source, letting

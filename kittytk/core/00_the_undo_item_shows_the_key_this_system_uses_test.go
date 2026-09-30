@@ -76,21 +76,25 @@ func TestTheClipboardShowsTheKeysThisSystemUses(t *testing.T) {
 	}
 }
 
-// Quit advertises the Command key on a Mac, where the menu bar shows it, and
-// the Control one everywhere else.
-func TestQuitShowsTheKeyThisSystemUses(t *testing.T) {
+// Quit, Hide and Hide Others advertise the Command keys on a Mac, where the
+// menu bar shows them, and the Control ones everywhere else.
+func TestQuitAndHideShowTheKeysThisSystemUses(t *testing.T) {
 	for _, c := range []struct {
-		os   string
-		want string
+		os                     string
+		quit, hide, hideOthers string
 	}{
-		{"darwin", "s-q"},
-		{"linux", "^Q"},
-		{"windows", "^Q"},
+		{"darwin", "s-q", "s-h", "M-s-h"},
+		{"linux", "^Q", "^H", "M-^H"},
+		{"windows", "^Q", "^H", "M-^H"},
 	} {
 		withEnvironment(t, KeymapEnvironment{OS: c.os}, func() {
 			r := NewKeyRegistry("t", ParseKeymap(DefaultKeymapConfig))
-			if got := r.KeyForCommand(CmdAppQuit); got != c.want {
-				t.Errorf("%s: Quit shows %q, want %q", c.os, got, c.want)
+			for _, k := range []struct{ command, want string }{
+				{CmdAppQuit, c.quit}, {CmdAppHide, c.hide}, {CmdAppHideOthers, c.hideOthers},
+			} {
+				if got := r.KeyForCommand(k.command); got != k.want {
+					t.Errorf("%s: %s shows %q, want %q", c.os, k.command, got, k.want)
+				}
 			}
 		})
 	}

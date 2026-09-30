@@ -70,6 +70,8 @@ type menuRecorder struct {
 	bar    []string
 	fills  int
 	app    uintptr // the application menu, 0 for a host without one
+	window uintptr // the menu last named the Window menu
+	named  int     // how many times one was named
 }
 
 func newMenuRecorder() *menuRecorder {
@@ -109,6 +111,8 @@ func (r *menuRecorder) setSubmenu(item, submenu uintptr) {
 }
 
 func (r *menuRecorder) appMenu() uintptr { return r.app }
+
+func (r *menuRecorder) setWindowsMenu(menu uintptr) { r.window, r.named = menu, r.named+1 }
 
 func (r *menuRecorder) addServices(menu uintptr) { r.menus[menu] = append(r.menus[menu], "Services >") }
 
@@ -346,5 +350,24 @@ func TestTheApplicationMenuIsForgottenWithItsBar(t *testing.T) {
 	setNativeBar(r, platform.NativeMenu{}, []platform.NativeMenu{{Title: "Demo", Items: grouped}})
 	if got := r.read(reused); strings.Contains(got, "Services") {
 		t.Errorf("a menu at the old application menu's address reads\n%s", got)
+	}
+}
+
+// The bar's Window menu is named to the OS as its Window menu; a bar without
+// one names none, so the OS stops listing windows in a menu that has left it.
+func TestTheWindowMenuIsNamedToTheOS(t *testing.T) {
+	postedInto(t)
+	r := newMenuRecorder()
+	setNativeBar(r, platform.NativeMenu{}, []platform.NativeMenu{
+		{Title: "File"},
+		{Title: "Window", Windows: true},
+		{Title: "Other Window", Windows: true},
+	})
+	if r.window == 0 || r.titles[r.window] != "Window" {
+		t.Errorf("the Window menu named is %q, want Window", r.titles[r.window])
+	}
+	setNativeBar(r, platform.NativeMenu{}, []platform.NativeMenu{{Title: "File"}})
+	if r.window != 0 || r.named != 2 {
+		t.Errorf("without a Window menu, %d is named (after %d namings), want none", r.window, r.named)
 	}
 }

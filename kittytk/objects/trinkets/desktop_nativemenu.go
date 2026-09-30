@@ -60,10 +60,15 @@ func (d *Desktop) syncNativeMenuBar() {
 	}
 	bar, _ := d.nativeBar()
 	titles := make([]string, len(bar))
+	marks := make([]string, len(bar))
 	for i, e := range bar {
 		titles[i] = e.title
+		marks[i] = e.title
+		if e.menu.WellKnownID() == MenuIDWindow {
+			marks[i] += "\x01"
+		}
 	}
-	sig := strings.Join(titles, "\x00")
+	sig := strings.Join(marks, "\x00")
 	d.mu.Lock()
 	if sig == d.nativeMenuSig {
 		// The same titles, or still none: nothing to push, since the native
@@ -76,7 +81,11 @@ func (d *Desktop) syncNativeMenuBar() {
 
 	out := make([]platform.NativeMenu, 0, len(bar))
 	for i, title := range titles {
-		out = append(out, d.nativeBarMenu(i, title))
+		m := d.nativeBarMenu(i, title)
+		// The bar's Window menu is the OS's Window menu too, where the OS
+		// lists the windows it knows of below the menu's own items.
+		m.Windows = bar[i].menu.WellKnownID() == MenuIDWindow
+		out = append(out, m)
 	}
 	host.SetNativeMenus(d.nativeAppMenu(), out)
 }

@@ -4254,7 +4254,7 @@ func (d *Desktop) activateWindowFromMenu(win *window.Window) {
 // It repopulates on every open so the window list and the enabled state
 // stay current.
 func (d *Desktop) buildWindowTileCascadeMenu() *Menu {
-	menu := NewMenu("&Window")
+	menu := NewMenu("&Window").SetWellKnownID(MenuIDWindow)
 
 	populate := func() {
 		menu.Clear()

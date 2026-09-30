@@ -36,6 +36,8 @@ F1 = app_help
 
 ^H = app_hide
 M-^H = app_hide_others
+(mac) s-h = app_hide
+(mac) M-s-h = app_hide_others
 M-^X = desktop_exit
 ; host_suspend hands the terminal back to the shell and stops until fg. It is
 ; bound to nothing here: which key stops a whole session is the user's call.

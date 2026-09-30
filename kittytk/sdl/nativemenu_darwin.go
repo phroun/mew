@@ -76,6 +76,37 @@ static id kt_menu_delegate(void) {
 	return d;
 }
 
+// Every item of ours carries this marker as its represented object, so a
+// menu can be rewritten without disturbing items the OS put there itself --
+// the Window menu's list of windows. Ours stand together at the top.
+static id kt_marker(void) {
+	static id m = 0;
+	if (!m) {
+		m = kt_str("kittytk");
+		((id (*)(id, SEL))objc_msgSend)(m, sel_registerName("retain"));
+	}
+	return m;
+}
+
+static int kt_is_ours(id item) {
+	id rep = ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("representedObject"));
+	return rep == kt_marker();
+}
+
+// kt_insert_ours marks item as ours and puts it after the items of ours
+// already at the top of menu.
+static void kt_insert_ours(uintptr_t menu, id item) {
+	((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setRepresentedObject:"), kt_marker());
+	long n = ((long (*)(id, SEL))objc_msgSend)((id)menu, sel_registerName("numberOfItems"));
+	long at = 0;
+	while (at < n) {
+		id it = ((id (*)(id, SEL, long))objc_msgSend)((id)menu, sel_registerName("itemAtIndex:"), at);
+		if (!kt_is_ours(it)) break;
+		at++;
+	}
+	((void (*)(id, SEL, id, long))objc_msgSend)((id)menu, sel_registerName("insertItem:atIndex:"), item, at);
+}
+
 static void *kt_pool_push(void) { return objc_autoreleasePoolPush(); }
 static void kt_pool_pop(void *p) { objc_autoreleasePoolPop(p); }
 
@@ -88,8 +119,15 @@ static uintptr_t kt_menu_new(const char *title) {
 	return (uintptr_t)m;
 }
 
+// kt_menu_clear takes out the items of ours, leaving any the OS added.
 static void kt_menu_clear(uintptr_t menu) {
-	((void (*)(id, SEL))objc_msgSend)((id)menu, sel_registerName("removeAllItems"));
+	long n = ((long (*)(id, SEL))objc_msgSend)((id)menu, sel_registerName("numberOfItems"));
+	for (long i = n - 1; i >= 0; i--) {
+		id it = ((id (*)(id, SEL, long))objc_msgSend)((id)menu, sel_registerName("itemAtIndex:"), i);
+		if (kt_is_ours(it)) {
+			((void (*)(id, SEL, long))objc_msgSend)((id)menu, sel_registerName("removeItemAtIndex:"), i);
+		}
+	}
 }
 
 // kt_menu_add_item appends an item and returns it (the menu holds it). A tag
@@ -108,14 +146,14 @@ static uintptr_t kt_menu_add_item(uintptr_t menu, const char *title, long tag, i
 	if (checked) {
 		((void (*)(id, SEL, long))objc_msgSend)(item, sel_registerName("setState:"), 1);
 	}
-	((void (*)(id, SEL, id))objc_msgSend)((id)menu, sel_registerName("addItem:"), item);
+	kt_insert_ours(menu, item);
 	((void (*)(id, SEL))objc_msgSend)(item, sel_registerName("release"));
 	return (uintptr_t)item;
 }
 
 static void kt_menu_add_separator(uintptr_t menu) {
 	id sep = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSMenuItem"), sel_registerName("separatorItem"));
-	((void (*)(id, SEL, id))objc_msgSend)((id)menu, sel_registerName("addItem:"), sep);
+	kt_insert_ours(menu, sep);
 }
 
 // kt_menu_set_submenu hangs submenu from item; the item holds it from here.
@@ -154,6 +192,9 @@ static uintptr_t kt_app_menu(void) {
 	id first = ((id (*)(id, SEL, long))objc_msgSend)(main, sel_registerName("itemAtIndex:"), 0);
 	id menu = ((id (*)(id, SEL))objc_msgSend)(first, sel_registerName("submenu"));
 	if (!menu) return 0;
+	// From empty: what SDL put there first (its About, Hide and Quit, with
+	// keys of their own) goes, and only ours are written back.
+	((void (*)(id, SEL))objc_msgSend)(menu, sel_registerName("removeAllItems"));
 	((void (*)(id, SEL, id))objc_msgSend)(menu, sel_registerName("setDelegate:"), kt_menu_delegate());
 	return (uintptr_t)menu;
 }
@@ -169,8 +210,17 @@ static void kt_menu_add_services(uintptr_t menu) {
 	item = ((id (*)(id, SEL, id, SEL, id))objc_msgSend)(item,
 		sel_registerName("initWithTitle:action:keyEquivalent:"), kt_str("Services"), (SEL)0, kt_str(""));
 	((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setSubmenu:"), services);
-	((void (*)(id, SEL, id))objc_msgSend)((id)menu, sel_registerName("addItem:"), item);
+	kt_insert_ours(menu, item);
 	((void (*)(id, SEL))objc_msgSend)(item, sel_registerName("release"));
+}
+
+// kt_set_windows_menu tells AppKit which menu is the Window menu (0 for
+// none), where it lists the application's windows and adds its own ways of
+// arranging them, below the menu's own items.
+static void kt_set_windows_menu(uintptr_t menu) {
+	id app = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+	if (!app) return;
+	((void (*)(id, SEL, id))objc_msgSend)(app, sel_registerName("setWindowsMenu:"), (id)menu);
 }
 
 // kt_menu_bar_add puts menu in the bar at position index among ours, after
@@ -249,6 +299,8 @@ func (cocoaMenuSink) setSubmenu(item, submenu uintptr) {
 func (cocoaMenuSink) appMenu() uintptr { return uintptr(C.kt_app_menu()) }
 
 func (cocoaMenuSink) addServices(menu uintptr) { C.kt_menu_add_services(C.uintptr_t(menu)) }
+
+func (cocoaMenuSink) setWindowsMenu(menu uintptr) { C.kt_set_windows_menu(C.uintptr_t(menu)) }
 
 func (cocoaMenuSink) setBar(menus []uintptr, titles []string) {
 	// With no bar, kt_menu_bar_add lets each menu go rather than keep it.
