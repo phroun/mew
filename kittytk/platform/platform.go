@@ -138,6 +138,35 @@ type CursorController interface {
 	SetCursor(shape core.CursorShape)
 }
 
+// DockMenuHost is an optional Platform capability: a menu of the host's own
+// on its icon in the Dock (macOS). The host asks build for the menu each
+// time the Dock is about to show it, so what it lists is never stale, and
+// runs a chosen item's Action on the main thread once the menu has closed.
+// Platforms without a Dock simply don't implement it.
+type DockMenuHost interface {
+	SetDockMenu(build func() []DockMenuItem)
+}
+
+// DockMark is what a Dock menu item shows in its state column.
+type DockMark int
+
+const (
+	DockMarkNone      DockMark = iota
+	DockMarkCheck              // the current window, as a Window menu ticks it
+	DockMarkMinimized          // a minimized window, as a Window menu marks it
+)
+
+// DockMenuItem is one line of a Dock menu.
+type DockMenuItem struct {
+	Title     string
+	Separator bool // a dividing line; everything else is ignored
+	Disabled  bool
+	Mark      DockMark
+	Indent    int            // levels of indentation, for items under a heading
+	Submenu   []DockMenuItem // makes the item open a submenu
+	Action    func()         // nil for an item that only heads or opens
+}
+
 // BorderToggler is an optional NativeSurface capability: toggle the OS
 // window's title bar / border at runtime. Solo mode removes the border
 // from the primary window so the app's own chrome is the only title bar.

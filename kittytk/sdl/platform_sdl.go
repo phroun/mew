@@ -524,6 +524,14 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	if macAboutHandler != nil {
 		installAboutMenuHandler()
 	}
+	// A Dock menu set before the window existed is installed now; one set
+	// later (the desktop sets it from Run's init) installs itself.
+	dockMenu.mu.Lock()
+	haveDockMenu := dockMenu.build != nil
+	dockMenu.mu.Unlock()
+	if haveDockMenu {
+		installDockMenu()
+	}
 
 	// (Text input is started per window in createWindow — SDL3 scopes it
 	// to a window rather than the process.)

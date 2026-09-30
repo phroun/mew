@@ -4737,6 +4737,11 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		if rg, ok := pf.(interface{ SetRotationTriggerGate(func() bool) }); ok {
 			rg.SetRotationTriggerGate(d.aboutBoxFocused)
 		}
+		// The Dock icon's menu, on a platform that has a Dock: it tells apart
+		// the applications the one icon stands for (see desktop_dockmenu.go).
+		if dm, ok := pf.(platform.DockMenuHost); ok {
+			dm.SetDockMenu(d.dockMenu)
+		}
 
 		size := surface.Size()
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
