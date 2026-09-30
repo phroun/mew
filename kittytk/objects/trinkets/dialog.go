@@ -91,6 +91,7 @@ type MessageBox struct {
 
 	// Callbacks
 	onFinished func(result DialogResult)
+	finished   bool // done has run; later answers are ignored
 
 	// waiters are callers waiting on the one answer this dialog will get, for a
 	// question more than one of them asked: two close attempts on the same window
@@ -395,8 +396,15 @@ func (m *MessageBox) Result() DialogResult {
 	return m.result
 }
 
-// done completes the dialog with the given result.
+// done completes the dialog with the given result, once. The first answer is
+// the one given: a second button whose press was already under way -- a key
+// on one button, then a click on another before the first press finished
+// animating -- finds the dialog finished and changes nothing.
 func (m *MessageBox) done(result DialogResult) {
+	if m.finished {
+		return
+	}
+	m.finished = true
 	m.result = result
 	if m.onFinished != nil {
 		m.onFinished(result)
