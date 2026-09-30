@@ -5239,6 +5239,9 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 			// window still carrying a lit/heavy style goes inactive.
 			d.quasiActivateExclusive(owner)
 		}
+		// The OS menu bar follows the focus between the desktop's surface
+		// and a torn window's (see nativeBar).
+		d.syncNativeMenuBar()
 		return true
 
 	case core.MousePressEvent:

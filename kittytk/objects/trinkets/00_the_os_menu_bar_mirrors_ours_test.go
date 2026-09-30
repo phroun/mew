@@ -244,11 +244,11 @@ func TestTheOSMenuBarIsTheFocusedWindowsBar(t *testing.T) {
 		}
 		return strings.Join(t, " ")
 	}
-	r.d.windowFocusChanged(main)
+	r.focusTorn(main)
 	if got := titles(); got != "File Edit" {
 		t.Errorf("with the torn main window focused, the bar is %q", got)
 	}
-	r.d.windowFocusChanged(dialog)
+	r.focusTorn(dialog)
 	if got := titles(); got != "File Edit" {
 		t.Errorf("with the app's torn dialog focused, the bar is %q, want its main window's", got)
 	}
@@ -263,6 +263,7 @@ func TestTheOSMenuBarIsTheFocusedWindowsBar(t *testing.T) {
 	}
 
 	docked := r.docked("docked")
+	r.focusDesktop()
 	r.d.windowFocusChanged(docked)
 	if got, want := titles(), desktopBarTitles(r.d.menuBar); got != want || strings.Contains(got, "File") {
 		t.Errorf("with a docked window focused, the bar is %q, want the desktop's %q", got, want)
@@ -391,7 +392,7 @@ func TestATornHostApplicationsMenuJoinsTheApplicationMenu(t *testing.T) {
 			r.d.AddApplication(app)
 			r.d.attachMainWindowChrome(main)
 			r.d.SetHostApplication(app)
-			r.d.windowFocusChanged(main)
+			r.focusTorn(main)
 			bar, host := r.d.nativeBar()
 			if host == nil {
 				t.Fatal("the torn host's first menu was not folded in")
@@ -412,7 +413,7 @@ func TestATornHostApplicationsMenuJoinsTheApplicationMenu(t *testing.T) {
 	app := &mockApp{name: "mew", main: main, windows: []*window.Window{main}}
 	r.d.AddApplication(app)
 	r.d.SetHostApplication(app)
-	r.d.windowFocusChanged(main)
+	r.focusTorn(main)
 	if bar, host := r.d.nativeBar(); host != nil || len(bar) != 1 {
 		t.Errorf("a first menu that is not the application menu was folded in (bar %+v)", bar)
 	}
@@ -472,4 +473,80 @@ func TestTidyingSeparators(t *testing.T) {
 	if got := spell(tidySeparators(in)); got != "a - b" {
 		t.Errorf("tidied: %q, want %q", got, "a - b")
 	}
+}
+
+// focusTorn gives a torn window the OS's focus: the desktop's own surface
+// loses it first, as it does on the screen.
+func (r *focusRig) focusTorn(w *window.Window) {
+	(&desktopSurfaceHandler{d: r.d}).Event(core.FocusEvent{Focused: false})
+	r.d.windowFocusChanged(w)
+}
+
+// focusDesktop gives the desktop's own surface the OS's focus back.
+func (r *focusRig) focusDesktop() {
+	(&desktopSurfaceHandler{d: r.d}).Event(core.FocusEvent{Focused: true})
+}
+
+// The desktop's own surface, focused again after a torn window, puts the
+// desktop's bar -- the abbreviated one it draws while an app's main window is
+// torn off -- in the OS menu bar; the torn window focused again puts its own
+// back. In solo mode the desktop's surface is the solo app's, so its bar stays.
+func TestTheDesktopsOwnSurfaceBringsItsBar(t *testing.T) {
+	r := newFocusRig(t)
+	pushed := &nativeBarRecorder{}
+	r.d.mu.Lock()
+	r.d.nativeMenuHost = pushed
+	r.d.mu.Unlock()
+
+	main := r.torn("main")
+	own := NewMenuBar()
+	own.AddMenu(NewMenu("File"))
+	main.SetWindowMenuBar(own)
+	r.d.AddApplication(&mockApp{name: "App", main: main, windows: []*window.Window{main}})
+	titles := func() string {
+		var t []string
+		bar, _ := r.d.nativeBar()
+		for _, e := range bar {
+			t = append(t, e.title)
+		}
+		return strings.Join(t, " ")
+	}
+
+	r.focusTorn(main)
+	if got := titles(); got != "File" {
+		t.Fatalf("with the torn window focused, the bar is %q", got)
+	}
+	r.focusDesktop()
+	if got, want := titles(), desktopBarTitles(r.d.menuBar); got == "File" || got != want {
+		t.Errorf("with the desktop's surface focused, the bar is %q, want the desktop's %q", got, want)
+	}
+	if last := pushed.last(); last != titles() {
+		t.Errorf("focusing the desktop's surface pushed %q, want %q", last, titles())
+	}
+	r.focusTorn(main)
+	if got := titles(); got != "File" {
+		t.Errorf("with the torn window focused again, the bar is %q", got)
+	}
+
+	r.d.mu.Lock()
+	r.d.solo = true
+	r.d.hostUnfocused = false
+	r.d.mu.Unlock()
+	if got := titles(); got != "File" {
+		t.Errorf("in solo mode, with the primary surface focused, the bar is %q, want the solo app's", got)
+	}
+}
+
+// nativeBarRecorder is a NativeMenuBarHost that keeps what it is given.
+type nativeBarRecorder struct{ sets [][]platform.NativeMenu }
+
+func (n *nativeBarRecorder) SetNativeMenus(_ platform.NativeMenu, menus []platform.NativeMenu) {
+	n.sets = append(n.sets, menus)
+}
+
+func (n *nativeBarRecorder) last() string {
+	if len(n.sets) == 0 {
+		return "(nothing)"
+	}
+	return titlesOf(n.sets[len(n.sets)-1])
 }

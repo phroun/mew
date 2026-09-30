@@ -181,7 +181,15 @@ func (d *Desktop) nativeBarMenu(i int, title string) platform.NativeMenu {
 // nativeBar is the bar the focused window reads its menus from, as the OS
 // menu bar shows it after the application menu: when a torn window has the
 // focus, its application's main window's own bar -- only a torn main window
-// carries one -- else the desktop's, less the desktop's own menu. A torn bar's
+// carries one -- else the desktop's, less the desktop's own menu.
+//
+// A torn window HAS the focus while its own surface holds the OS's. The
+// desktop keeps naming the torn window it last handed the focus to when its
+// own surface gets the focus back -- so as not to re-light a docked window
+// the person did not click -- but the surface in front is then the desktop's,
+// and so is its bar: the one the desktop is drawing, abbreviated or not.
+// Solo mode is the exception: the desktop's surface is then the solo
+// application's, and shows no desktop of its own. A torn bar's
 // first menu goes under the application's name rather than its menu name
 // (the "≡" that reads well in a bar of ours and not beside the OS's own).
 //
@@ -190,6 +198,9 @@ func (d *Desktop) nativeBarMenu(i int, title string) platform.NativeMenu {
 func (d *Desktop) nativeBar() (bar []nativeBarEntry, host *Menu) {
 	d.mu.RLock()
 	torn := d.tornFocusOwner
+	if !d.solo && !d.hostUnfocused {
+		torn = nil
+	}
 	desk := d.menuBar
 	sys := d.systemMenu
 	active := d.activeApp
