@@ -1031,21 +1031,16 @@ func (d *Desktop) dropTornHost(host *window.TearOffHost) {
 	}
 }
 
-// refocusAfterTornClose gives OS focus (and desktop/app focus) back to the
-// window a just-closed torn window floated over: its owner if it has one, else
-// the solo primary window, else the top remaining torn window. It raises that
-// window's OS surface - its own torn surface if it has one, otherwise the
-// desktop's primary surface (a docked window, or the solo primary host) - and
-// re-points desktop focus at it.
+// refocusAfterTornClose gives the focus back when a torn window that held it
+// closes: to the window that held it before (see nextFocus), else the solo
+// primary window, else the top remaining torn window.
 func (d *Desktop) refocusAfterTornClose(closing *window.Window) {
-	d.mu.RLock()
-	primary := d.soloPrimaryHost
-	surf := d.surface
-	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
-	d.mu.RUnlock()
-
-	target := closing.Owner()
+	target := d.nextFocus(closing)
 	if target == nil {
+		d.mu.RLock()
+		primary := d.soloPrimaryHost
+		hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
+		d.mu.RUnlock()
 		switch {
 		case primary != nil:
 			target = primary.Window()
@@ -1056,23 +1051,7 @@ func (d *Desktop) refocusAfterTornClose(closing *window.Window) {
 	if target == nil {
 		return
 	}
-
-	raised := false
-	for _, h := range hosts {
-		if h.Window() == target {
-			if ns, ok := h.Surface().(platform.NativeSurface); ok {
-				ns.Raise()
-				raised = true
-			}
-			break
-		}
-	}
-	if !raised {
-		if ns, ok := surf.(platform.NativeSurface); ok {
-			ns.Raise()
-		}
-	}
-	d.windowFocusChanged(target)
+	d.giveFocusTo(target)
 }
 
 // globalToDesktopUnits converts a global pixel position to desktop

@@ -271,6 +271,13 @@ type Desktop struct {
 	// bar line). Cleared when an in-surface window is actually activated.
 	tornFocusOwner *window.Window
 
+	// focusHistory is every window that has held the focus, in the order it
+	// last took it, most recent last -- docked and torn alike, since the
+	// person moves between them as between any windows. When a window
+	// closes, the focus goes back to the most recent one still there (see
+	// nextFocus). Closed windows are pruned as it is read.
+	focusHistory []*window.Window
+
 	// Backend for rendering (optional - used when Desktop.Run() is called)
 	backend core.RenderBackend
 
@@ -1276,6 +1283,7 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	d.windowManager.SetOnActiveChanged(func(win *window.Window) {
 		d.windowFocusChanged(win)
 	})
+	d.windowManager.SetNextActiveChooser(d.chooseNextActive)
 	d.focusManager = core.NewGlobalFocusManager()
 	d.accessibilityManager = core.NewAccessibilityManager()
 	d.focusManager.SetAccessibilityManager(d.accessibilityManager)
@@ -1998,6 +2006,7 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 	// quasi-active torn window it named must go fully inactive, since the
 	// desktop now has a real active window rather than merely holding
 	// focus on the torn window's behalf.
+	d.noteFocusedLocked(w)
 	previousTorn := d.tornFocusOwner
 	if w.IsDetached() {
 		d.tornFocusOwner = w

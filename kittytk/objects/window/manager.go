@@ -133,6 +133,11 @@ type WindowManager struct {
 	onRepaintNeeded   func()
 	onWindowMinimized func(*Window) // Called when a window is minimized
 	onWindowRestored  func(*Window) // Called when a window is restored
+
+	// nextActive names the window the focus goes back to when the active
+	// window closes. Unset, or answering nil, the topmost remaining window
+	// takes it. See SetNextActiveChooser.
+	nextActive func(closing *Window) *Window
 	// onBlockedClick fires when a modally-blocked window is clicked, so the
 	// desktop can surface (raise/restore, incl. OS-restore of a torn one) the
 	// modal blocking it - a convenience that also works across applications.
@@ -1067,6 +1072,17 @@ func stampPopupController(trinket core.Trinket, pc core.PopupController) {
 
 // RemoveWindow removes a window from the manager.
 func (m *WindowManager) RemoveWindow(win *Window) {
+	// Asked before the lock: the chooser reads this manager's windows and
+	// modal stacks, which take the lock themselves.
+	m.mu.RLock()
+	choose := m.nextActive
+	closingActive := m.activeWindow == win && win.IsClosed()
+	m.mu.RUnlock()
+	var chosen *Window
+	if choose != nil && closingActive {
+		chosen = choose(win)
+	}
+
 	m.mu.Lock()
 	for i, w := range m.windows {
 		if w == win {
@@ -1093,7 +1109,20 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 	var newActive *Window
 	if wasActive {
 		m.activeWindow = nil
-		if len(m.windows) > 0 {
+		switch {
+		case chosen != nil && chosen != win:
+			// The window that held the focus before, if it is one of ours.
+			// If it is not, nothing here is active: it is on a surface of its
+			// own, and the chooser brings it forward.
+			for _, w := range m.windows {
+				if w == chosen {
+					newActive = chosen
+					m.activeWindow = newActive
+					m.raiseWithOverlaysLocked(newActive)
+					break
+				}
+			}
+		case len(m.windows) > 0:
 			newActive = m.windows[len(m.windows)-1]
 			m.activeWindow = newActive
 		}
@@ -3483,6 +3512,22 @@ func (m *WindowManager) GetPopups() []interface{} {
 func (m *WindowManager) SetOnWindowAdded(handler func(*Window)) {
 	m.mu.Lock()
 	m.onWindowAdded = handler
+	m.mu.Unlock()
+}
+
+// SetNextActiveChooser sets what names the window the focus goes back to when
+// the active window closes -- the desktop, which knows which window held the
+// focus before it, on this surface or on one of its own. A window it names
+// that this manager holds is activated and raised; one it does not hold (a
+// torn window) leaves no window here active, and bringing that one forward is
+// the chooser's business. Nil, or a nil answer, keeps the old rule: the
+// topmost remaining window.
+//
+// It is asked only about a window that CLOSED. Removing a window also happens
+// when it is torn off, and then the torn window keeps the focus.
+func (m *WindowManager) SetNextActiveChooser(choose func(closing *Window) *Window) {
+	m.mu.Lock()
+	m.nextActive = choose
 	m.mu.Unlock()
 }
 
