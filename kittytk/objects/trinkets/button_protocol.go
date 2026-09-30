@@ -11,11 +11,11 @@ func init() {
 	regTrinket("button",
 		func() core.Trinket { return NewButton("") },
 		map[string]protocol.Property{
-			// No "&" mnemonic markup here. That belongs to Menu and
-			// MenuItem, which strip it when they parse a title; a button
-			// paints its caption verbatim, so "&Save" shows the ampersand.
-			"caption": stringProp("caption", (*Button).SetText).Tip("Display text."),
-			"default": boolProp("default", (*Button).SetDefault).Tip("Default-button styling and Enter behavior.").Def("false"),
+			// "&" marks a mnemonic letter, as in a menu title: it is not
+			// shown, and "&&" is an ampersand. The letter is drawn out and
+			// answered to while a trinket above the button holds the focus
+			// (see core.Mnemonic); otherwise the button paints as before.
+			"caption": stringProp("caption", (*Button).SetText).Tip(`Display text. "&" marks a mnemonic letter (not shown; "&&" is an ampersand), answered by a bare keypress while a container above the button holds the focus.`),
 			// action is OPTIONAL: when set, clicking dispatches the
 			// command ID (via BindContext.FireAction in the click
 			// wiring below).

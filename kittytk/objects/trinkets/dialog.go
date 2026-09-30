@@ -84,7 +84,6 @@ const (
 // MessageBox displays a message with buttons.
 type MessageBox struct {
 	window.Window
-	core.TrinketKeys
 
 	content *messageBoxContent
 	buttons DialogButton
@@ -92,6 +91,7 @@ type MessageBox struct {
 
 	// Callbacks
 	onFinished func(result DialogResult)
+	finished   bool // done has run; later answers are ignored
 
 	// waiters are callers waiting on the one answer this dialog will get, for a
 	// question more than one of them asked: two close attempts on the same window
@@ -197,7 +197,6 @@ func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 	// Set as window content
 	m.SetContent(m.content)
 	m.calculateSize()
-	m.SetCommands(core.CmdTrinketActivate, core.CmdTrinketCancel)
 	return m
 }
 
@@ -219,18 +218,21 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 		text   string
 		result DialogResult
 	}{
-		{ButtonOK, "OK", ResultOK},
-		{ButtonCancel, "Cancel", ResultCancel},
-		{ButtonYes, "Yes", ResultYes},
-		{ButtonNo, "No", ResultNo},
-		{ButtonRetry, "Retry", ResultRetry},
-		{ButtonIgnore, "Ignore", ResultIgnore},
-		{ButtonAbort, "Abort", ResultAbort},
-		{ButtonSave, "Save", ResultSave},
-		{ButtonDiscard, "Discard", ResultDiscard},
-		{ButtonApply, "Apply", ResultApply},
-		{ButtonHelp, "Help", ResultHelp},
-		{ButtonPopOut, "Pop Out", ResultPopOut},
+		// Each answers to its own first letter. Abort and Apply both want A,
+		// so Apply offers P as well -- which it gives up in turn to Pop Out,
+		// should all three ever share a dialog.
+		{ButtonOK, "&OK", ResultOK},
+		{ButtonCancel, "&Cancel", ResultCancel},
+		{ButtonYes, "&Yes", ResultYes},
+		{ButtonNo, "&No", ResultNo},
+		{ButtonRetry, "&Retry", ResultRetry},
+		{ButtonIgnore, "&Ignore", ResultIgnore},
+		{ButtonAbort, "&Abort", ResultAbort},
+		{ButtonSave, "&Save", ResultSave},
+		{ButtonDiscard, "&Discard", ResultDiscard},
+		{ButtonApply, "&Ap&ply", ResultApply},
+		{ButtonHelp, "&Help", ResultHelp},
+		{ButtonPopOut, "&Pop Out", ResultPopOut},
 	}
 
 	for _, def := range buttonDefs {
@@ -255,6 +257,9 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 // terms: "Pop It Out" reads as an offer about one application where "Pop Out" reads as
 // a setting. Call it before the dialog is shown -- it changes the button's width, and
 // ResizeToFitContent is what takes account of that.
+//
+// The text takes "&" markup as any button caption does: "&Pop It Out" keeps the
+// P the stock caption answered to.
 func (m *MessageBox) SetButtonText(answers DialogResult, text string) {
 	for i, r := range m.content.buttonResults {
 		if r == answers {
@@ -391,8 +396,15 @@ func (m *MessageBox) Result() DialogResult {
 	return m.result
 }
 
-// done completes the dialog with the given result.
+// done completes the dialog with the given result, once. The first answer is
+// the one given: a second button whose press was already under way -- a key
+// on one button, then a click on another before the first press finished
+// animating -- finds the dialog finished and changes nothing.
 func (m *MessageBox) done(result DialogResult) {
+	if m.finished {
+		return
+	}
+	m.finished = true
 	m.result = result
 	if m.onFinished != nil {
 		m.onFinished(result)
@@ -531,29 +543,6 @@ func (c *messageBoxContent) HandleMouseRelease(event core.MouseReleaseEvent) boo
 	return false
 }
 
-// HandleKeyPress handles keyboard input.
-func (m *MessageBox) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch m.KeyCommand(event.Key) {
-	case core.CmdTrinketCancel:
-		if m.buttons&ButtonCancel != 0 {
-			m.done(ResultCancel)
-		} else if m.buttons&ButtonNo != 0 {
-			m.done(ResultNo)
-		}
-		return true
-
-	case core.CmdTrinketActivate:
-		if m.buttons&ButtonOK != 0 {
-			m.done(ResultOK)
-		} else if m.buttons&ButtonYes != 0 {
-			m.done(ResultYes)
-		}
-		return true
-	}
-
-	return m.Window.HandleKeyPress(event)
-}
-
 // Information shows an information message box.
 func Information(title, text string) DialogResult {
 	mb := NewMessageBox(title, text, ButtonOK)
@@ -644,7 +633,7 @@ func NewFileDialog(mode FileDialogMode) *FileDialog {
 	f.Window = *window.NewWindow(title)
 	f.SetType(window.WindowTypeModal)
 	f.setupUI()
-	f.SetCommands(core.CmdTrinketActivate, core.CmdTrinketCancel, core.CmdTrinketEnclosing)
+	f.SetCommands(core.CmdTrinketEnclosing)
 	return f
 }
 
@@ -968,20 +957,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (f *FileDialog) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch f.KeyCommand(event.Key) {
-	case core.CmdTrinketCancel:
-		f.reject()
-		return true
-
-	case core.CmdTrinketActivate:
-		if f.fileList.HasFocus() && f.fileList.CurrentIndex() >= 0 {
-			f.itemActivated(f.fileList.CurrentIndex())
-			return true
-		}
-		f.accept()
-		return true
-
-	case core.CmdTrinketEnclosing:
+	if f.KeyCommand(event.Key) == core.CmdTrinketEnclosing {
 		if !f.pathInput.HasFocus() && (f.fileNameInput == nil || !f.fileNameInput.HasFocus()) {
 			f.navigateTo(filepath.Dir(f.directory))
 			return true
@@ -1015,151 +991,4 @@ func SelectDirectory(startDir string) string {
 	dialog := NewFileDialog(FileDialogSelectDirectory)
 	dialog.SetDirectory(startDir)
 	return ""
-}
-
-// InputDialog shows a simple input dialog.
-type InputDialog struct {
-	window.Window
-	core.TrinketKeys
-
-	labelText    string
-	input        *TextInput
-	okButton     *Button
-	cancelButton *Button
-
-	result   string
-	accepted bool
-
-	onFinished func(text string, accepted bool)
-}
-
-// NewInputDialog creates a new input dialog.
-func NewInputDialog(title, label, defaultValue string) *InputDialog {
-	d := &InputDialog{
-		labelText: label,
-	}
-	d.Window = *window.NewWindow(title)
-	d.SetType(window.WindowTypeModal)
-	d.SetFlags(window.WindowFlagNoResize)
-
-	metrics := d.EffectiveCellMetrics()
-
-	d.input = NewTextInput()
-	d.input.SetText(defaultValue)
-	d.input.SelectAll()
-
-	d.okButton = NewButton("OK")
-	d.okButton.SetOnClick(func() {
-		d.result = d.input.Text()
-		d.accepted = true
-		if d.onFinished != nil {
-			d.onFinished(d.result, true)
-		}
-		d.Close()
-	})
-
-	d.cancelButton = NewButton("Cancel")
-	d.cancelButton.SetOnClick(func() {
-		d.accepted = false
-		if d.onFinished != nil {
-			d.onFinished("", false)
-		}
-		d.Close()
-	})
-
-	d.SetBounds(core.UnitRect{
-		Width:  metrics.UnitsPerCellWidth * 40,
-		Height: metrics.UnitsPerCellHeight * 6,
-	})
-
-	d.SetCommands(core.CmdTrinketActivate, core.CmdTrinketCancel)
-	return d
-}
-
-// Result returns the input result.
-func (d *InputDialog) Result() string {
-	return d.result
-}
-
-// Accepted returns whether OK was pressed.
-func (d *InputDialog) Accepted() bool {
-	return d.accepted
-}
-
-// SetOnFinished sets the finished callback.
-func (d *InputDialog) SetOnFinished(handler func(text string, accepted bool)) {
-	d.onFinished = handler
-}
-
-// Paint renders the input dialog.
-func (d *InputDialog) Paint(p *core.Painter) {
-	d.Window.Paint(p)
-
-	bounds := d.Bounds()
-	metrics := d.EffectiveCellMetrics()
-	theme := d.Theme()
-
-	// Label
-	y := metrics.UnitsPerCellHeight * 2
-	p.DrawText(metrics.UnitsPerCellWidth*2, y, d.CellRun(d.labelText), theme.Normal, nil)
-
-	// Input
-	y += metrics.UnitsPerCellHeight
-	d.input.SetBounds(core.UnitRect{
-		X:      metrics.UnitsPerCellWidth * 2,
-		Y:      y,
-		Width:  bounds.Width - metrics.UnitsPerCellWidth*4,
-		Height: metrics.UnitsPerCellHeight,
-	})
-	d.input.Paint(p)
-
-	// Buttons
-	buttonY := bounds.Height - metrics.UnitsPerCellHeight*2
-	buttonWidth := metrics.UnitsPerCellWidth * 10
-
-	d.okButton.SetBounds(core.UnitRect{
-		X:      snapCellX(d.Self(), metrics, bounds.Width/2-buttonWidth-metrics.UnitsPerCellWidth),
-		Y:      buttonY,
-		Width:  buttonWidth,
-		Height: metrics.UnitsPerCellHeight * 2, // buttons are two rows: face + shadow
-	})
-	d.okButton.Paint(p)
-
-	d.cancelButton.SetBounds(core.UnitRect{
-		X:      snapCellX(d.Self(), metrics, bounds.Width/2+metrics.UnitsPerCellWidth),
-		Y:      buttonY,
-		Width:  buttonWidth,
-		Height: metrics.UnitsPerCellHeight * 2, // buttons are two rows: face + shadow
-	})
-	d.cancelButton.Paint(p)
-}
-
-// HandleKeyPress handles keyboard input.
-func (d *InputDialog) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch d.KeyCommand(event.Key) {
-	case core.CmdTrinketCancel:
-		d.accepted = false
-		if d.onFinished != nil {
-			d.onFinished("", false)
-		}
-		d.Close()
-		return true
-
-	case core.CmdTrinketActivate:
-		d.result = d.input.Text()
-		d.accepted = true
-		if d.onFinished != nil {
-			d.onFinished(d.result, true)
-		}
-		d.Close()
-		return true
-	}
-
-	return d.Window.HandleKeyPress(event)
-}
-
-// GetText shows an input dialog and returns the text.
-func GetText(title, label, defaultValue string) (string, bool) {
-	_ = NewInputDialog(title, label, defaultValue)
-	return "", false
 }

@@ -40,9 +40,8 @@ func main() {
 	defer conn.Close()
 
 	// Registering a source says nothing on the wire: a source is a name, not
-	// an object. A real application would also tell whatever trinket is to
-	// show these rows `data="files"`, and the display would open its queries
-	// against that name when somebody scrolled.
+	// an object. The display learns of it when a trinket is told to show it
+	// (below), and opens its queries against that name when somebody scrolls.
 	if _, err := conn.ProvideSource("colours", serveEverything); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -60,6 +59,20 @@ func main() {
 	files.OnDropped(func(q *client.Query) {
 		fmt.Fprintf(os.Stderr, "query %d: let go\n", q.ID())
 	})
+
+	// And the trinkets that show them, which is how the display learns the
+	// names: a display asks about a source only once something it holds has
+	// named it. A source provided later, mid-session, is learned of the same
+	// way, when whatever shows it is built.
+	if _, err := conn.Build(`w=new window title="queryapp" children={
+	new panel layout=hbox children={
+		new listview source="source:colours" display="name"
+		new listview source="source:files" display="name"
+	}
+}`); err != nil {
+		fmt.Fprintln(os.Stderr, "build:", err)
+		os.Exit(1)
+	}
 
 	fmt.Fprintln(os.Stderr, "serving; ^C to stop")
 	<-conn.Closed()

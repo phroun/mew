@@ -75,7 +75,7 @@ template Wrapped=label wrap
 root=new panel layout=vbox border children={
 	new Wrapped C="hello world"
 	cb=new checkbox C="tri" tristate ?checked
-	btn=new button C="Go" action=do.it default
+	btn=new button C="Go" action=do.it
 }
 grab=root.cb
 press=root.btn

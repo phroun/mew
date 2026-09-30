@@ -2,6 +2,7 @@
 package trinkets
 
 import (
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,7 +16,13 @@ type Button struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	text string
+	// text is the caption as shown, with any "&" markup taken out, and raw is
+	// the caption as it was given. mnemonics are the letters raw marked, in the
+	// order written: a preference list, like a menu title's, of which the
+	// focused trinket above the button settles on one (see core.Mnemonic).
+	text      string
+	raw       string
+	mnemonics []acceleratorCandidate
 	// icon is the NAME of a registered icon (style.RegisterIcon), not a
 	// picture. A name nothing has registered draws nothing.
 	icon         string
@@ -31,8 +38,6 @@ type Button struct {
 	// timer goroutine while the paint path reads it — see AnimatePress.
 	animatingPress atomic.Bool
 	flat           bool // No border when not focused/hovered
-	isDefault      bool // Default button (shown bold when not focused)
-	isCancel       bool // Cancel button (activated by Escape)
 
 	onClick  func()
 	onToggle func(checked bool)
@@ -46,16 +51,15 @@ var buttonCommands = []string{
 }
 
 func NewButton(text string) *Button {
-	b := &Button{
-		text:     text,
-		iconSize: style.IconSmall,
-	}
+	b := &Button{iconSize: style.IconSmall}
+	b.raw = text
+	b.text, b.mnemonics = parseAcceleratorTitle(text)
 	b.TrinketBase = *core.NewTrinketBase()
 	b.SetCommands(buttonCommands...)
 	b.Init(b) // Enable polymorphic focus handling
 	b.SetFocusPolicy(core.StrongFocus)
 	b.SetAccessibleRole(core.RoleButton)
-	b.SetAccessibleName(text)
+	b.SetAccessibleName(b.text)
 	// A cap is one row of text and as wide as its caption; neither grows. Given
 	// a row three deep it sits in it rather than becoming a three-row slab, and
 	// a layout asked to fill has nothing here to fill.
@@ -71,17 +75,60 @@ func NewIconButton(icon string) *Button {
 	return b
 }
 
-// Text returns the button text.
+// Text returns the button's caption as it is shown, without "&" markup.
 func (b *Button) Text() string {
 	return b.text
 }
 
-// SetText sets the button text.
+// RawText returns the caption as it was given, "&" markup and all.
+func (b *Button) RawText() string {
+	return b.raw
+}
+
+// SetText sets the button's caption. An "&" marks the letter after it as one
+// the button would answer to, as a menu title's does: "&Yes" offers Y, several
+// marks are a preference list ("&Ap&ply" offers A, then P), and "&&" is an
+// ampersand. The marks are not shown; the letter is drawn out and answered to
+// while something above the button holds the focus (see core.Mnemonic).
 func (b *Button) SetText(text string) {
-	b.text = text
-	b.SetAccessibleName(text)
+	b.raw = text
+	b.text, b.mnemonics = parseAcceleratorTitle(text)
+	b.SetAccessibleName(b.text)
 	b.Update()
 	b.InvalidateLayout()
+}
+
+// Mnemonics returns the letters the caption offers, lowercased, in the order
+// written.
+func (b *Button) Mnemonics() []rune {
+	out := make([]rune, len(b.mnemonics))
+	for i, m := range b.mnemonics {
+		out[i] = m.Char
+	}
+	return out
+}
+
+// MnemonicChoices implements core.Mnemonic: the letters the caption marks.
+func (b *Button) MnemonicChoices() []core.MnemonicChoice {
+	out := make([]core.MnemonicChoice, len(b.mnemonics))
+	for i, m := range b.mnemonics {
+		out[i] = core.MnemonicChoice{Char: m.Char, Pos: m.Pos}
+	}
+	return out
+}
+
+// MnemonicPress implements core.Mnemonic: the letter presses the button as
+// Space would.
+func (b *Button) MnemonicPress() { b.AnimatePress() }
+
+// MnemonicPressing implements core.Mnemonic: a press shown and not yet
+// clicked.
+func (b *Button) MnemonicPressing() bool { return b.animatingPress.Load() }
+
+// liveMnemonic is where the button's letter stands in its caption while it is
+// offered (see core.Mnemonic); -1 otherwise.
+func (b *Button) liveMnemonic() int {
+	return core.LiveMnemonic(b)
 }
 
 // Icon returns the name of the button's icon.
@@ -140,27 +187,6 @@ func (b *Button) IsFlat() bool {
 func (b *Button) SetFlat(flat bool) {
 	b.flat = flat
 	b.Update()
-}
-
-// IsDefault returns whether this is the default button.
-func (b *Button) IsDefault() bool {
-	return b.isDefault
-}
-
-// SetDefault makes this the default button (shown bold when not focused).
-func (b *Button) SetDefault(isDefault bool) {
-	b.isDefault = isDefault
-	b.Update()
-}
-
-// IsCancel returns whether this is the cancel button.
-func (b *Button) IsCancel() bool {
-	return b.isCancel
-}
-
-// SetCancel makes this the cancel button (activated by Escape key).
-func (b *Button) SetCancel(isCancel bool) {
-	b.isCancel = isCancel
 }
 
 // AnimatePress shows the pressed state briefly (250ms) then triggers click.
@@ -353,6 +379,7 @@ func (b *Button) Paint(p *core.Painter) {
 	// Determine style - always apply inherited background. GetButtonState
 	// bakes in the precedence pressed > focus > hover > normal.
 	var s style.CellStyle
+	lit := false // the face shows hover or press, in colours of its own
 	if !b.IsEnabled() {
 		s = style.DefaultStyle().WithFg(scheme.GetDisabledButtonFG()).WithBg(inheritedBg)
 	} else {
@@ -360,12 +387,9 @@ func (b *Button) Paint(p *core.Painter) {
 		// free mouse-move events, so a hover set during a drag could never be
 		// cleared and would stick. Only honor it on graphical surfaces.
 		hover := b.mouseOver && p.Graphical()
+		lit = hover || showPressed
 		// TODO: pass actual window active state instead of true.
 		s = scheme.GetButtonState(true, focused, hover, showPressed)
-		if b.isDefault && !showPressed && !focused && !hover {
-			// Default button gets bold text in its resting state.
-			s = s.WithAttrs(style.StyleBold)
-		}
 	}
 
 	// Use custom style if set
@@ -491,10 +515,17 @@ func (b *Button) Paint(p *core.Painter) {
 	// Draw left bracket/space (decorative - use DrawCell, not DrawText)
 	p.DrawCell(xOffset, yOffset, leftBracket, s)
 
-	// Draw text using font
+	// Draw text using font. The mnemonic letter, while the button's container
+	// offers it and the button can be pressed, is drawn in its own style over
+	// the face's background; a letter the elision cut off is simply not drawn.
 	if shown != "" {
 		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
-		p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
+		if pos := b.liveMnemonic(); pos >= 0 && b.IsEnabled() {
+			drawTextSegments(p, textX, yOffset, font, metrics,
+				accelSegments(shown, core.FindEffectiveDirection(b.Self()), pos, s, scheme.GetButtonMnemonic(s, lit))...)
+		} else {
+			p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
+		}
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)
@@ -522,11 +553,6 @@ func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
 		if b.spacePressed {
 			b.spacePressed = false
 			b.Update()
-			return true
-		}
-		// If this is a cancel button, activate it
-		if b.isCancel {
-			b.AnimatePress()
 			return true
 		}
 	}
@@ -707,6 +733,10 @@ func (b *Button) AccessibleInfo() core.AccessibleInfo {
 	info := b.AccessibleTrinket.AccessibleInfo()
 	info.Role = core.RoleButton
 	info.Name = b.text
+	// The letter the button answers to, while it answers to one.
+	if pos := b.liveMnemonic(); pos >= 0 && pos < len([]rune(b.text)) {
+		info.KeyboardShortcut = strings.ToUpper(string([]rune(b.text)[pos]))
+	}
 	if b.checkable {
 		if b.checked {
 			info.State |= core.StateChecked

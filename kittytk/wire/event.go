@@ -104,6 +104,16 @@ func (e *Event) Word(name string) (string, bool) {
 	return a.Value.Word, true
 }
 
+// Value reads a field as the value it is, whatever kind: a record's identity,
+// which may be spelled as a number, a string or a list, is read this way and
+// can be written straight back into a statement. Nil where absent or a flag.
+func (e *Event) Value(name string) *Value {
+	if a := e.field(name); a != nil {
+		return a.Value
+	}
+	return nil
+}
+
 // Flag reads a flag field; FlagNone means absent (unsaid).
 func (e *Event) Flag(name string) FlagState {
 	a := e.field(name)

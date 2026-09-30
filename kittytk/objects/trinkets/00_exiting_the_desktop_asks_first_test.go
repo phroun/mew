@@ -121,7 +121,7 @@ func TestSayingNoLeavesEverythingRunning(t *testing.T) {
 		answer DialogResult
 	}{
 		{"no", ResultNo},
-		// Dismissed without choosing: Escape, or the dialog's own [x].
+		// Dismissed without choosing: the dialog's own [x].
 		{"dismissed", ResultNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

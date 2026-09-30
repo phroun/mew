@@ -6,9 +6,11 @@
 // display does that yet, so nothing would ever ask an application anything and
 // an example would sit idle. This asks.
 //
-// It listens, does the handshake, opens one query against a named source, and
-// prints what comes back -- the statements as they crossed, so what is on
-// screen is the protocol rather than a rendering of it.
+// It listens, does the handshake, waits for the application to build what shows
+// its sources -- a display asks about a source only once something it holds has
+// named it -- then opens one query against a named source, and prints what
+// comes back: the statements as they crossed, so what is on screen is the
+// protocol rather than a rendering of it.
 //
 //	kittytk-queryprobe &
 //	KITTYTK_DISPLAY=/tmp/kittytk-queryprobe.sock go run ./examples/queryapp
@@ -59,6 +61,10 @@ func main() {
 	p := &probe{nc: nc, scanner: wire.NewScanner(nc), deadline: *wait}
 	if err := p.handshake(); err != nil {
 		fmt.Fprintln(os.Stderr, "handshake:", err)
+		os.Exit(1)
+	}
+	if err := p.told(); err != nil {
+		fmt.Fprintln(os.Stderr, "waiting to be told what the application shows:", err)
 		os.Exit(1)
 	}
 
@@ -145,6 +151,34 @@ func (p *probe) handshake() error {
 	p.line("welcome version=1 session=1")
 	p.line("init app=1 store=2 host=3")
 	return nil
+}
+
+// told reads the application's first batch -- what it builds, which is how a
+// display learns the names of the sources it serves -- and answers it.
+//
+// **A display asks about a source only once it has been told the name.** A
+// source is a name, not an object: registering one says nothing on the wire,
+// and an application can provide one at any point in its session. So asking
+// straight after the handshake would race the application's own setup, and a
+// query that got there first would be refused as naming nothing. The probe
+// holds none of what is built; the reply only says it arrived.
+func (p *probe) told() error {
+	_ = p.nc.SetReadDeadline(time.Now().Add(p.deadline))
+	defer p.nc.SetReadDeadline(time.Time{})
+	for {
+		text, err := p.scanner.Next()
+		if err != nil {
+			return err
+		}
+		trimmed := strings.TrimSpace(text)
+		script, err := wire.Parse(text)
+		if err == nil && len(script.Statements) > 0 && script.Statements[0].Verb == "end" {
+			fmt.Fprint(p.nc, "reply\nend\n")
+			p.trace("->", "reply")
+			return nil
+		}
+		p.trace("<-", trimmed)
+	}
 }
 
 // line writes one statement on its own, the way a display writes an event.

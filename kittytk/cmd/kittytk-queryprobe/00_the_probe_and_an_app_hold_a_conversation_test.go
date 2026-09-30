@@ -97,6 +97,12 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 		// one statement, because a display never wants one without the other.
 		`<- hello version=1 app="queryapp"`,
 		`-> welcome version=1`,
+		// What the application shows, which is how the display learns the
+		// names it may ask about: a display asks about a source only once
+		// something it holds has named it.
+		`<- w=new window title="queryapp"`,
+		`source="source:files"`,
+		"-> reply",
 		`-> q=new query source="files" filter={ not { starts name "." } } sort={ name natural } count=3`,
 		// The application names it, and the reply carries the name before
 		// anything that uses it.
@@ -137,6 +143,9 @@ func TestTheProbeAndAnAppHoldAConversation(t *testing.T) {
 func TestTheSimplestSourceOverServesAndSaysSo(t *testing.T) {
 	trace := converse(t, "-source", "colours", "-need", "2")
 	inOrder(t, trace, []string{
+		// Asked only once the application has named it.
+		`source="source:colours"`,
+		"-> reply",
 		`-> q=new query source="colours" sort={ name natural } count=2`,
 		`<- result 1 id=0 record={ name "amber" }`,
 		`<- result 1 id=4 record={ name "vermilion" } complete exhausted`,

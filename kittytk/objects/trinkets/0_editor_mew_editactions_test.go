@@ -109,6 +109,9 @@ func TestMewEditorContextMenuItems(t *testing.T) {
 		label     string
 		separator bool
 	}{
+		{"Undo", false},
+		{"Redo", false},
+		{"", true},
 		{"Cut", false},
 		{"Copy", false},
 		{"Paste", false},

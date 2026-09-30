@@ -123,6 +123,10 @@ type Scheme struct {
 	DefaultPaneButtonShadowFG *CellStyle // dim blue, used when inherited BG is ansi 49 (FG only)
 	DarkPaneButtonShadowFG    *CellStyle // dark gray, used when inherited BG is black (FG only)
 	ButtonShadowFG            *CellStyle // black, used in all other cases (FG only)
+	// ButtonMnemonic is the letter a button answers to, while its container
+	// offers the buttons by letter: its foreground and attributes are laid over
+	// whatever the button is drawn in, which keeps its background (FG + attrs).
+	ButtonMnemonic *CellStyle
 
 	// EditBox / TextInput
 	EditBox                       *CellStyle // regular white on black
@@ -454,6 +458,7 @@ func DefaultScheme() *Scheme {
 
 		// Button
 		Button:                    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		ButtonMnemonic:            ptr(DefaultStyle().WithFg(ColorRed).Underline()),
 		DisabledButtonFG:          nil, // DisabledTextFG
 		DisabledButtonBG:          nil, // inherit
 		FocusedButton:             ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
@@ -881,6 +886,23 @@ func (s *Scheme) GetHoveredButton() CellStyle {
 		return *s.HoveredButton
 	}
 	return s.hover()
+}
+
+// GetButtonMnemonic is the style of a button's mnemonic letter drawn on top of
+// over, the style the rest of its caption is in: the mnemonic's foreground and
+// attributes, over's background -- red and underlined, by default, on whatever
+// the button's face already is. A lit face (hovered or pressed) has a colour of
+// its own that the mnemonic's foreground would clash with, so there the letter
+// keeps over's foreground and takes only the mnemonic's attributes.
+func (s *Scheme) GetButtonMnemonic(over CellStyle, lit bool) CellStyle {
+	m := s.ButtonMnemonic
+	if m == nil {
+		m = ptr(DefaultStyle().WithFg(ColorRed).Underline())
+	}
+	if lit {
+		return over.WithAttrs(over.Attrs | m.Attrs)
+	}
+	return over.WithFg(m.Fg).WithAttrs(over.Attrs | m.Attrs)
 }
 
 // GetButtonState resolves a button's style with the precedence

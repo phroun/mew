@@ -266,9 +266,11 @@ Known residuals:
   Covered by `TestMDIPaneDenominationBoundary` (hit-testing agrees
   with paint position under an override; maximize fills the interior
   client area; toggle-off restores identity).
-- FileDialog/InputDialog paint content manually on the window painter
-  (outer space) with interior metrics — harmless until a dialog
-  carries an override; normalize when dialogs are reworked.
+- FileDialog paints its content manually on the window painter (outer
+  space) with interior metrics — harmless until it carries an override;
+  normalize when it is reworked. InputDialog was reworked into ordinary
+  child trinkets under a panel, so it lays out and paints like any
+  window's content.
 - Hardware cursor placement for focused text inputs, if routed outside
   MapToScreen, may still need auditing under overrides.
 

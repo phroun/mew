@@ -46,6 +46,35 @@ func (a *app) wireMainWindow() {
 
 	// Basic Trinkets: the text input narrates changes to the status bar.
 	ui.TextInput("binput").OnChange(func(s string) { a.setStatus("Text: " + s) })
+	// ...and a button asks for a name with an input dialog, offering the one
+	// given last time.
+	ui.Button("bask").OnClick(a.askForName)
+
+	// Lists: the list's checkboxes switch on and off, and each change to what
+	// is ticked is narrated as the list reports it -- one row, or every row
+	// at once, never a list of them.
+	list := ui.Object("lilv")
+	ui.Checkbox("licheck").OnToggle(func(s protocol.FlagState) {
+		_ = list.Set(fmt.Sprintf("checkboxes=%v", s == protocol.FlagTrue))
+	})
+	list.On("check", func(ev *protocol.Event) {
+		change, _ := ev.Word("change")
+		switch change {
+		case "row":
+			at, _ := ev.Int("at")
+			state := "unticked"
+			if ev.Flag("checked") == protocol.FlagTrue {
+				state = "ticked"
+			}
+			a.setStatus(fmt.Sprintf("List: row %d %s.", at+1, state))
+		case "all":
+			a.setStatus("List: every row ticked.")
+		case "none":
+			a.setStatus("List: every row unticked.")
+		case "invert":
+			a.setStatus("List: every row turned over.")
+		}
+	})
 
 	// Selection: font / denomination toggles are window and desktop
 	// properties, set over the wire.

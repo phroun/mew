@@ -131,6 +131,9 @@ var referenceDefaultBindings = []Binding{
 	{"^X", []string{CmdTrinketCut}},
 	{"^C", []string{CmdTrinketCopy}},
 	{"^V", []string{CmdTrinketPaste}},
+	{"(mac) s-x", []string{CmdTrinketCut}},
+	{"(mac) s-c", []string{CmdTrinketCopy}},
+	{"(mac) s-v", []string{CmdTrinketPaste}},
 	{"^_", []string{CmdTrinketUndo}},
 	{"^Z", []string{CmdTrinketSimpleUndo}},
 	{"(mac) s-z", []string{CmdTrinketUndo}},
@@ -149,7 +152,7 @@ var referenceDefaultBindings = []Binding{
 	{"S-Tab", []string{CmdFocusPrior}},
 
 	{"Esc", []string{CmdWindowCancelResize, CmdTrinketCancel}},
-	{"Space", []string{CmdTrinketTypeSpace, CmdTrinketActivate}},
+	{"Space", []string{CmdTrinketTypeSpace, CmdTrinketCheck, CmdTrinketActivate}},
 	{"Return", []string{CmdTrinketEdit, CmdTrinketActivate}},
 
 	{"Up", []string{CmdWindowMoveFineUp, CmdWindowSizeFineUp, CmdTrinketItemUp, CmdTrinketItemPrior}},

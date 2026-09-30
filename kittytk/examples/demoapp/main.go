@@ -65,6 +65,11 @@ type app struct {
 	dockSeq   int
 	closeAsks int
 
+	// The Basic Trinkets tab's input dialog: how many times it has asked, so
+	// each dialog has a name of its own, and the name it was given last.
+	nameAsks int
+	name     string
+
 	// Client-side PTYs backing this app's terminal surfaces, closed when
 	// the app quits.
 	drivers []*ptydriver.Driver

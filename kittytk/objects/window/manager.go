@@ -1113,7 +1113,7 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 		newActive.SetActive(true)
 		// Focus the window's first trinket if no trinket is focused
 		if fm := newActive.FocusManager(); fm != nil {
-			if fm.FocusedTrinket() == nil {
+			if fm.NeedsFocus() {
 				fm.FocusFirst()
 			}
 		}
@@ -1215,7 +1215,7 @@ func (m *WindowManager) activate(win *Window, reorderCycle bool) {
 		win.SetActive(true)
 		// Focus the window's first trinket if no trinket is focused
 		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedTrinket() == nil {
+			if fm.NeedsFocus() {
 				fm.FocusFirst()
 			}
 		}
@@ -1354,7 +1354,7 @@ func (m *WindowManager) FocusWindow(win *Window) {
 		win.SetActive(true)
 		// Focus the window's first trinket if no trinket is focused
 		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedTrinket() == nil {
+			if fm.NeedsFocus() {
 				fm.FocusFirst()
 			}
 		}

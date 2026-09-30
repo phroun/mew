@@ -886,6 +886,10 @@ func (c *conn) execute(batch []*protocol.Statement) {
 			if t.Window.Parent() == nil {
 				c.app.AddWindow(&t.Window)
 			}
+		case *trinkets.InputDialog:
+			if t.Window.Parent() == nil {
+				c.app.AddWindow(&t.Window)
+			}
 		case interface{ Menus() []*trinkets.Menu }:
 			c.app.SetMenuBarContent(t.Menus())
 		case interface {

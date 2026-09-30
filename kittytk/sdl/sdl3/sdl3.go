@@ -363,6 +363,25 @@ func CreateSystemCursor(id SystemCursor) (*Cursor, error) { return csdl.CreateSy
 func SetCursor(c *Cursor) error                           { return csdl.SetCursor(c) }
 func CaptureMouse(enabled bool) error                     { return csdl.CaptureMouse(enabled) }
 
+// PIXELFORMAT_RGBA32 is bytes in R, G, B, A order whatever the machine's
+// byte order: what a picture built byte by byte is in.
+const PIXELFORMAT_RGBA32 = csdl.PIXELFORMAT_RGBA32
+
+// CreateSurfaceFrom wraps pixels the caller keeps alive as a surface.
+func CreateSurfaceFrom(width, height int, format csdl.PixelFormat, pixels []byte, pitch int) (*Surface, error) {
+	return csdl.CreateSurfaceFrom(width, height, format, pixels, pitch)
+}
+
+// AddSurfaceAlternateImage gives a surface a higher-density version of
+// itself, which SDL shows on a display with more pixels to the point.
+func AddSurfaceAlternateImage(s, alt *Surface) error { return s.AddAlternateImage(alt) }
+
+// CreateColorCursor makes a cursor of a picture, hot spot in its pixels. SDL
+// copies the picture, so the surface may be freed afterwards.
+func CreateColorCursor(s *Surface, hotX, hotY int32) (*Cursor, error) {
+	return s.CreateColorCursor(hotX, hotY)
+}
+
 const (
 	BUTTON_LEFT   = 1
 	BUTTON_MIDDLE = 2

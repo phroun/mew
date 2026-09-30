@@ -138,9 +138,6 @@ type TextInput struct {
 	arrowExtend bool
 	arrowTimer  *DesktopTimer
 
-	// Context menu hover row (-1 = none).
-	menuHover int
-
 	// Multi-click selection: a quick second click on the same spot selects
 	// the word under the pointer, a third selects all. clickStreak counts
 	// consecutive fast clicks; lastClickTime gates the streak.
@@ -2863,14 +2860,22 @@ func (t *TextInput) contextMenuItems() []termMenuItem {
 	// as selecting its text with the mouse, which one can.
 	//
 	// A field that conceals its content offers neither Cut nor Copy.
+	//
+	// Undo and Redo lead, as they lead the Edit menu, and are offered only
+	// while there is something to undo or redo. Each item shows the key the Edit
+	// menu shows for it.
 	edits := t.AcceptsTextInput()
 	conceals := t.Conceals()
 	return []termMenuItem{
-		{label: "Cut", action: t.Cut, disabled: !edits || conceals},
-		{label: "Copy", action: t.Copy, disabled: conceals},
-		{label: "Paste", action: t.Paste, disabled: !edits},
+		{label: "Undo", action: t.Undo, disabled: !t.UndoEnabled(),
+			command: core.CmdTrinketUndo, also: core.CmdTrinketSimpleUndo},
+		{label: "Redo", action: t.Redo, disabled: !t.RedoEnabled(), command: core.CmdTrinketRedo},
 		{separator: true},
-		{label: "Select All", action: t.SelectAll},
+		{label: "Cut", action: t.Cut, disabled: !edits || conceals, command: core.CmdTrinketCut},
+		{label: "Copy", action: t.Copy, disabled: conceals, command: core.CmdTrinketCopy},
+		{label: "Paste", action: t.Paste, disabled: !edits, command: core.CmdTrinketPaste},
+		{separator: true},
+		{label: "Select All", action: t.SelectAll, command: core.CmdTrinketSelectAll},
 	}
 }
 
@@ -2913,19 +2918,6 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 	if pc == nil {
 		return
 	}
-	items := t.contextMenuItems()
-	// The same menu PurfecTerm opens, measured by the same function.
-	lay := termMenuLayoutFrom(core.FindGraphicalFrames(t), t.EffectiveFont(),
-		termMenuScreenMetrics(pc), items)
-	height := core.Unit(0)
-	for _, it := range items {
-		if it.separator {
-			height += lay.sepH
-		} else {
-			height += lay.rowH
-		}
-	}
-	height += 2 * lay.padTop
 	// Screen placement: an embedded input maps through its HOST (its
 	// own parentless bounds mean nothing to the controller).
 	local := core.UnitPoint{X: event.X, Y: event.Y}
@@ -2936,96 +2928,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 		local.Y += o.Y
 		target = t.embedHost
 	}
-	at := pc.MapToScreen(target, local)
-	screen := pc.ScreenBounds()
-	if at.X+lay.width > screen.X+screen.Width {
-		at.X = screen.X + screen.Width - lay.width
-	}
-	if at.Y+height > screen.Y+screen.Height {
-		at.Y = screen.Y + screen.Height - height
-	}
-	menuBounds := gridPopupRect(t.Self(), termMenuScreenMetrics(pc),
-		core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height})
-	t.menuHover = -1
-
-	itemAt := func(y core.Unit) int {
-		pos := lay.padTop
-		for i, it := range items {
-			h := lay.rowH
-			if it.separator {
-				h = lay.sepH
-			}
-			if y >= pos && y < pos+h {
-				if it.separator {
-					return -1
-				}
-				return i
-			}
-			pos += h
-		}
-		return -1
-	}
-
-	pc.RegisterPopup(&core.PopupRequest{
-		ID:     t.contextMenuID(),
-		Bounds: menuBounds,
-		Paint: func(p *core.Painter) {
-			bg := style.DefaultStyle().WithFg(style.RGB(32, 32, 32)).WithBg(style.RGB(238, 238, 238))
-			hover := style.DefaultStyle().WithFg(style.RGB(255, 255, 255)).WithBg(style.RGB(56, 120, 220))
-			p.FillRect(core.UnitRect{X: menuBounds.X, Y: menuBounds.Y, Width: menuBounds.Width, Height: menuBounds.Height}, ' ', bg)
-			// The 1-pixel outer frame every popup gets, in the padded
-			// margin just outside the bounds (graphical only).
-			if p.Graphical() {
-				lineStyle := style.DefaultStyle().WithBg(t.GetScheme().GetMenuSeparator().Fg)
-				paintPopupOuterStroke(p, menuBounds, p.DeviceScale(), lineStyle, 0, 0, false)
-			}
-			pos := menuBounds.Y + lay.padTop
-			for i, it := range items {
-				if it.separator {
-					paintTermMenuSeparator(p, menuBounds, pos, lay)
-					pos += lay.sepH
-					continue
-				}
-				st := bg
-				if it.disabled {
-					st = bg.WithFg(style.RGB(150, 150, 150))
-				} else if i == t.menuHover {
-					st = hover
-					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
-				}
-				// Explicit bg: transparent resolves to the terminal's dark
-				// default on the text backend (dark boxes behind the labels);
-				// the explicit bg equals the fill/hover color, so the
-				// graphical look is unchanged.
-				p.DrawText(menuBounds.X+lay.indent, pos+lay.yOff, termMenuLabel(it), st, lay.font)
-				pos += lay.rowH
-			}
-		},
-		HandleMouseMove: func(event core.MouseMoveEvent) bool {
-			if !menuBounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
-				return false
-			}
-			idx := itemAt(event.Y - menuBounds.Y)
-			if idx >= 0 && items[idx].disabled {
-				idx = -1
-			}
-			if idx != t.menuHover {
-				t.menuHover = idx
-				t.Update()
-			}
-			return true
-		},
-		HandleMousePress: func(event core.MousePressEvent) bool {
-			idx := itemAt(event.Y - menuBounds.Y)
-			pc.UnregisterPopup(t.contextMenuID())
-			if idx >= 0 && !items[idx].disabled && items[idx].action != nil {
-				items[idx].action()
-			}
-			t.Update()
-			return true
-		},
-	})
-	t.Update()
+	openTermMenu(t.Self(), t.EffectiveFont(), pc, t.contextMenuID(), target, local, t.contextMenuItems())
 }
 
 // showingPlaceholder reports whether the field is standing empty and saying

@@ -1117,14 +1117,20 @@ func (e *Editor) postUI(fn func()) {
 
 // mewContextMenuItems builds the right-click menu — the same items, in the
 // same order, as the TextInput control's menu, each action the matching
-// Edit-menu action (routed through mew).
+// Edit-menu action (routed through mew), showing the key the Edit menu shows.
+// Undo and Redo are offered while mew says the focused buffer has something
+// to undo or redo.
 func (e *Editor) mewContextMenuItems() []termMenuItem {
 	return []termMenuItem{
-		{label: "Cut", action: e.Cut},
-		{label: "Copy", action: e.Copy},
-		{label: "Paste", action: e.Paste},
+		{label: "Undo", action: e.Undo, disabled: !e.UndoEnabled(),
+			command: core.CmdTrinketUndo, also: core.CmdTrinketSimpleUndo},
+		{label: "Redo", action: e.Redo, disabled: !e.RedoEnabled(), command: core.CmdTrinketRedo},
 		{separator: true},
-		{label: "Select All", action: e.SelectAll},
+		{label: "Cut", action: e.Cut, disabled: !e.CutEnabled(), command: core.CmdTrinketCut},
+		{label: "Copy", action: e.Copy, command: core.CmdTrinketCopy},
+		{label: "Paste", action: e.Paste, command: core.CmdTrinketPaste},
+		{separator: true},
+		{label: "Select All", action: e.SelectAll, command: core.CmdTrinketSelectAll},
 	}
 }
 

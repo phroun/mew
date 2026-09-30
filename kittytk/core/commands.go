@@ -240,4 +240,11 @@ const (
 	// the first of a key's meanings it is offered (see BuildContext): a text
 	// field offers both, and the one it wants is this.
 	CmdTrinketTypeSpace = "trinket_type_space"
+
+	// CmdTrinketCheck is the space bar ticking or unticking a row's box, for a
+	// trinket whose rows carry them (a list with checkboxes). Bound between
+	// trinket_type_space and trinket_activate on the same key, and offered only
+	// while there are boxes to tick, so Return still activates the row and a
+	// trinket without boxes keeps the space bar as its activation.
+	CmdTrinketCheck = "trinket_check"
 )

@@ -97,6 +97,10 @@ b=new tab caption="Basic Trinkets" children={
 			new button caption="Cancel" action=demo.basic.cancel
 			new button caption="Apply" action=demo.basic.apply
 		}
+		baskrow=new panel layout=hbox spacing=8 children={
+			bask=new button caption="Ask for a Name..."
+			bname=new label caption="No name given yet." stretch=1
+		}
 		new button caption="Disabled" !enabled
 	}
 }
@@ -163,6 +167,7 @@ s=new tab caption="Selection" children={
 li=new tab caption="Lists" children={
 	liv=new panel layout=vbox spacing=8 children={
 	lirtl=new checkbox caption="direction=rtl on the LIST -- its bar takes the left, and each item still reads its own language" halign=textnatural fill=none
+	licheck=new checkbox caption="checkboxes=true on the LIST -- Space or a press ticks a row, and a right-click offers Select All, Select None and Invert Selection" halign=textnatural fill=none
 	lisp=new splitter orientation=horizontal position=0.5 stretch=1 children={
 		lilp=new panel layout=vbox children={
 			new label caption="ListView:"
@@ -334,7 +339,7 @@ dn=new tab caption="Denomination" children={
 			dnx=new textinput min_width=160 text="8" max_length=2
 			new label caption="Y:"
 			dny=new textinput min_width=160 text="16" max_length=2
-			dnap=new button caption="Apply" default
+			dnap=new button caption="Apply"
 		}
 		new label caption="Type in either field and press Return, or use Apply. Presets:"
 		dnpre=new panel layout=hbox spacing=8 children={
@@ -790,6 +795,8 @@ dns=w.t.dn.dnp.dnpre.dns
 dnn=w.t.dn.dnp.dnpre.dnn
 dnecho=w.t.dn.dnp.dnecho
 binput=w.t.b.bw.brow.input
+bask=w.t.b.bw.baskrow.bask
+bname=w.t.b.bw.baskrow.bname
 wfont=w.t.s.sev.o.sp.c.wfont
 dfont=w.t.s.sev.o.sp.c.dfont
 grid=w.t.s.sev.o.sp.c.grid
@@ -828,6 +835,7 @@ slc=w.t.sl.slv.slc
 pgrtl=w.t.pg.pgv.pgrtl
 pgc=w.t.pg.pgv.pgc
 lirtl=w.t.li.liv.lirtl
+licheck=w.t.li.liv.licheck
 lilv=w.t.li.liv.lisp.lilp.lilv
 lirefused=w.t.li.liv.lirefused
 litrouble=w.t.li.liv.litrouble

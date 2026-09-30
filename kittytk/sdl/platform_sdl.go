@@ -3069,7 +3069,14 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	if !ok {
 		// SDL3 reports creation failure; a nil cursor is cached so the
 		// lookup is not retried every frame.
-		cur, _ = sdl3.CreateSystemCursor(systemCursorID(shape))
+		switch shape {
+		case core.CursorGrab:
+			cur = createPictureCursor(openHandPNG)
+		case core.CursorGrabbing:
+			cur = createPictureCursor(grabHandPNG)
+		default:
+			cur, _ = sdl3.CreateSystemCursor(systemCursorID(shape))
+		}
 		p.cursors[shape] = cur
 	}
 	if cur == nil {
@@ -3077,6 +3084,36 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	}
 	_ = sdl3.SetCursor(cur)
 	p.cursorSet = true
+}
+
+// createPictureCursor builds a cursor SDL has no system one for out of its
+// picture (see grab_cursor.go): as drawn at one pixel to the point, with each
+// pixel doubled for displays with two, hot spot at the center. nil when it
+// cannot be made; the cursor then stays as it was.
+func createPictureCursor(picture []byte) *sdl3.Cursor {
+	pix, w, h, ok := cursorPixels(picture, 1)
+	if !ok {
+		return nil
+	}
+	base, err := sdl3.CreateSurfaceFrom(w, h, sdl3.PIXELFORMAT_RGBA32, pix, w*4)
+	if err != nil {
+		return nil
+	}
+	defer base.Destroy()
+	pix2, w2, h2, ok2 := cursorPixels(picture, 2)
+	if ok2 {
+		if hi, err := sdl3.CreateSurfaceFrom(w2, h2, sdl3.PIXELFORMAT_RGBA32, pix2, w2*4); err == nil {
+			_ = sdl3.AddSurfaceAlternateImage(base, hi)
+			hi.Destroy() // the base holds its own reference
+		}
+	}
+	cur, err := sdl3.CreateColorCursor(base, handHot, handHot)
+	runtime.KeepAlive(pix)
+	runtime.KeepAlive(pix2)
+	if err != nil {
+		return nil
+	}
+	return cur
 }
 
 func (p *Platform) reassertCursor() {

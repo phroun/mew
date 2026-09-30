@@ -1404,8 +1404,8 @@ func (w *Window) SetWindowMenuBar(mb core.Trinket) {
 }
 
 // focusOutOfMenuBar moves focus off this window's own menu bar: Shift+Tab
-// (forward=false) back to the title bar, Tab forward to the first content
-// trinket. It mirrors where Tab lands when it walks off either end of the
+// (forward=false) back to the title bar, Tab forward to the content's rest
+// stop, or its first trinket when it has none. It mirrors where Tab lands when it walks off either end of the
 // content chain, so the bar sits between the title bar and the content in one
 // continuous cycle. Reports whether focus moved; a window with nothing
 // focusable to move to leaves the key alone rather than eating it.
@@ -1429,7 +1429,7 @@ func (w *Window) focusOutOfMenuBar(forward bool) bool {
 		return false
 	}
 	w.SetTitleFocus(TitleFocusNone)
-	if !fm.FocusFirst() {
+	if !fm.FocusRest() && !fm.FocusFirst() {
 		return false
 	}
 	w.Update()
@@ -3476,9 +3476,10 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 		// Move to next title element or exit to content
 		next := w.nextTitleFocus(titleFocus)
 		if next == TitleFocusNone {
-			// Exit title bar, focus first trinket in content
+			// Exit title bar to the rest stop, or the first trinket in
+			// content when there is none.
 			w.SetTitleFocus(TitleFocusNone)
-			if fm := w.FocusManager(); fm != nil {
+			if fm := w.FocusManager(); fm != nil && !fm.FocusRest() {
 				fm.FocusFirst()
 			}
 		} else {
@@ -4154,25 +4155,36 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 
 		// Focused trinket didn't handle it.
-		// For Shift+Tab at first trinket, enter title bar (blur item if enabled, otherwise title).
+		// For Shift+Tab at the rest stop (see core.FocusManager.FocusRest),
+		// or at the first trinket of a chain with none, enter the title bar
+		// (blur item if enabled, otherwise title).
 		if isShiftTab {
-			chain := fm.FocusChain()
-			for _, trinket := range chain {
-				if trinket.IsVisible() && trinket.IsEnabled() {
-					if trinket == focused {
-						// At first trinket, enter blur item if enabled, otherwise title bar
-						if w.hasKeyboardBlurEnabled() {
-							w.SetTitleFocus(TitleFocusBlur)
-						} else {
-							w.SetTitleFocus(TitleFocusTitle)
+			atFront := fm.AtRest()
+			if !atFront {
+				for _, trinket := range fm.FocusChain() {
+					if trinket.IsVisible() && trinket.IsEnabled() {
+						if trinket == focused {
+							// The first trinket: back to the rest stop
+							// when the chain has one in front of it.
+							if fm.FocusRest() {
+								return true
+							}
+							atFront = true
 						}
-						fm.ClearFocus()
-						return true
+						break
 					}
-					break // Not at first trinket
 				}
 			}
-			// Not at first trinket, move to prior
+			if atFront {
+				// Enter the blur item if enabled, otherwise the title bar.
+				if w.hasKeyboardBlurEnabled() {
+					w.SetTitleFocus(TitleFocusBlur)
+				} else {
+					w.SetTitleFocus(TitleFocusTitle)
+				}
+				fm.ClearFocus()
+				return true
+			}
 			return fm.FocusPrior()
 		}
 

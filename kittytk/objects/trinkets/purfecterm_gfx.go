@@ -3295,14 +3295,83 @@ type termMenuItem struct {
 	// actually perform is better shown and refused than offered and silently
 	// ignored -- the second teaches the reader the menu lies.
 	disabled bool
+	// command is the command the item carries out, and also a second one
+	// whose key it may show instead (see advertisedKey): the item shows the
+	// key the Edit menu shows for the same act. shortcut is that key as drawn,
+	// filled in when the menu opens (see withShortcuts).
+	command, also string
+	shortcut      string
+}
+
+// withShortcuts fills in the key each item shows, asked of t the way the Edit
+// menu asks of what has the focus: through t's context and up the chain above
+// it. (The desktop's own context is never asked: it deliberately carries none
+// of the edit commands.) An item nothing here binds shows no key, rather than
+// one that would not work.
+func withShortcuts(t core.Trinket, items []termMenuItem) []termMenuItem {
+	resolve := func(command string) string { return core.FindKeyForCommand(t, command) }
+	out := append([]termMenuItem(nil), items...)
+	for i := range out {
+		if out[i].command == "" {
+			continue
+		}
+		if key := advertisedKey(resolve, out[i].command, out[i].also); key != "" {
+			out[i].shortcut = core.DisplayKey(key)
+		}
+	}
+	return out
+}
+
+// termMenuShortcutGap is the room between an item's label and its key, in
+// cells: the dropdowns' three.
+const termMenuShortcutGap = 3
+
+// paintTermMenuItem draws one item row of a context menu: its label at the
+// indent, and its key right-aligned and dimmed, as a dropdown draws them. A
+// disabled item is greyed and never highlighted.
+//
+// One function for PurfecTerm's menu and TextInput's, which are the same menu.
+func paintTermMenuItem(p *core.Painter, menuBounds core.UnitRect, pos core.Unit, lay termMenuLayout,
+	it termMenuItem, hovered bool, bg, hover style.CellStyle) {
+	st := bg
+	switch {
+	case it.disabled:
+		st = bg.WithFg(style.RGB(150, 150, 150))
+	case hovered:
+		st = hover
+		p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
+	}
+	// Explicit bg: transparent resolves to the terminal's dark default on the
+	// text backend (dark boxes behind the labels); the explicit bg equals the
+	// fill/hover colour, so the graphical look is unchanged.
+	p.DrawText(menuBounds.X+lay.indent, pos+lay.yOff, termMenuLabel(it), st, lay.font)
+	if it.shortcut == "" {
+		return
+	}
+	keyStyle := st
+	if !it.disabled {
+		keyStyle = st.WithAttrs(style.StyleDim)
+	}
+	right := menuBounds.X + menuBounds.Width - lay.indent
+	if lay.graphical {
+		sf := shortcutFont(lay.mm.Font, true)
+		w := lay.mm.Width(it.shortcut, sf)
+		p.DrawText(right-w, pos+lay.mm.GlyphYOff(sf), it.shortcut, keyStyle, sf)
+		return
+	}
+	cells := 0
+	for _, r := range it.shortcut {
+		cells += core.CellWidth(r)
+	}
+	p.DrawText(right-core.Unit(cells)*lay.mm.CellW, pos, it.shortcut, keyStyle, nil)
 }
 
 func (t *PurfecTerm) contextMenuItems() []termMenuItem {
 	return []termMenuItem{
-		{label: "Copy", action: t.CopySelection},
-		{label: "Paste", action: t.PasteClipboard},
+		{label: "Copy", action: t.CopySelection, command: core.CmdTrinketCopy},
+		{label: "Paste", action: t.PasteClipboard, command: core.CmdTrinketPaste},
 		{separator: true},
-		{label: "Select All", action: t.SelectAll},
+		{label: "Select All", action: t.SelectAll, command: core.CmdTrinketSelectAll},
 		{separator: true},
 		{label: "Mouse Reporting", action: func() {
 			t.gfx.reportingDisabled = !t.gfx.reportingDisabled
@@ -3328,6 +3397,8 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 type termMenuLayout struct {
 	rowH, sepH, width, padTop, indent core.Unit
 	graphical                         bool
+	// mm is what the menu was measured with, which the keys are drawn by.
+	mm MenuMetrics
 
 	// font is the face the labels draw in, and yOff where they sit in a row.
 	// nil at menu scale 1.0, where the painter's own default face is what
@@ -3393,7 +3464,11 @@ func termMenuWidth(mm MenuMetrics, indent core.Unit, items []termMenuItem) core.
 		if it.separator {
 			continue
 		}
-		if w := mm.TextWidth(termMenuLabel(it)); w > widest {
+		w := mm.TextWidth(termMenuLabel(it))
+		if it.shortcut != "" {
+			w += mm.CellW*termMenuShortcutGap + mm.Width(it.shortcut, shortcutFont(mm.Font, true))
+		}
+		if w > widest {
 			widest = w
 		}
 	}
@@ -3430,6 +3505,7 @@ func termMenuLayoutFrom(graphical bool, font *core.Font, m core.CellMetrics, ite
 			padTop:    mm.RowH / 8,
 			indent:    indent,
 			graphical: true,
+			mm:        mm,
 		}
 		if mm.Scale != 1 {
 			// At 1.0 the labels keep drawing in the painter's own face, with
@@ -3440,11 +3516,19 @@ func termMenuLayoutFrom(graphical bool, font *core.Font, m core.CellMetrics, ite
 	}
 	cols := 12
 	for _, it := range items {
-		if n := len([]rune(it.label)) + 6; n > cols { // gutter + checkmark room
+		n := len([]rune(it.label)) + 6 // gutter + checkmark room
+		if it.shortcut != "" {
+			n += termMenuShortcutGap
+			for _, r := range it.shortcut {
+				n += core.CellWidth(r)
+			}
+		}
+		if n > cols {
 			cols = n
 		}
 	}
 	return termMenuLayout{
+		mm:     mm,
 		rowH:   m.UnitsPerCellHeight,
 		sepH:   m.UnitsPerCellHeight, // a separator needs a full character row
 		width:  core.Unit(cols) * m.UnitsPerCellWidth,
@@ -3493,6 +3577,7 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 	if pc == nil {
 		return
 	}
+	items = withShortcuts(t.Self(), items)
 	lay := t.termMenuLayoutFor(pc, items)
 	height := core.Unit(0)
 	for _, it := range items {
@@ -3559,18 +3644,7 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 					pos += lay.sepH
 					continue
 				}
-				st := bg
-				if i == t.gfx.menuHover {
-					st = hover
-					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
-				}
-				label := termMenuLabel(it)
-				// Draw with the style's EXPLICIT background: a transparent bg
-				// composites correctly on the graphical backend but resolves to
-				// the terminal's default (dark) background on the text backend,
-				// leaving dark boxes behind the labels. The explicit bg equals
-				// the fill (or hover) color, so the graphical look is unchanged.
-				p.DrawText(menuBounds.X+lay.indent, pos+lay.yOff, label, st, lay.font)
+				paintTermMenuItem(p, menuBounds, pos, lay, it, i == t.gfx.menuHover, bg, hover)
 				pos += lay.rowH
 			}
 		},
@@ -3579,6 +3653,9 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 				return false
 			}
 			idx := itemAt(event.Y - menuBounds.Y)
+			if idx >= 0 && items[idx].disabled {
+				idx = -1
+			}
 			if idx != t.gfx.menuHover {
 				t.gfx.menuHover = idx
 				t.Update()
@@ -3588,7 +3665,7 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 		HandleMousePress: func(event core.MousePressEvent) bool {
 			idx := itemAt(event.Y - menuBounds.Y)
 			pc.UnregisterPopup(t.contextMenuID())
-			if idx >= 0 && items[idx].action != nil {
+			if idx >= 0 && !items[idx].disabled && items[idx].action != nil {
 				items[idx].action()
 			}
 			t.Update()

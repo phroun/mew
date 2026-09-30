@@ -469,6 +469,29 @@ func (d *Desktop) bringToAttention(win *window.Window) {
 	}
 	closeTrace("bringToAttention: %s solo=%v", closeTraceWindow(win), d.IsSolo())
 
+	// **A window inside an MDI pane is the pane's, not the window manager's.**
+	// Its pane brings it forward, and it is the window holding the pane that is
+	// brought to attention here -- a pane inside a child of another pane being
+	// the same again. Handed to the window manager itself, the child became its
+	// active window: the real top-level one went inactive, and the next window
+	// to open deactivated the child as the one before it.
+	for {
+		pane, ok := win.Parent().(*MDIPane)
+		if !ok {
+			break
+		}
+		if win.IsMinimized() {
+			pane.RestoreWindow(win)
+		} else {
+			pane.ActivateWindow(win)
+		}
+		outer := windowHolding(pane)
+		if outer == nil {
+			return
+		}
+		win = outer
+	}
+
 	if h := d.tornHostForWindow(win); h != nil {
 		surf := h.Surface()
 		osMinimized := false
@@ -503,6 +526,16 @@ func (d *Desktop) bringToAttention(win *window.Window) {
 		wm.ActivateWindow(win)
 	}
 	d.raisePrimarySurface()
+}
+
+// windowHolding is the window a trinket sits in, or nil.
+func windowHolding(t core.Trinket) *window.Window {
+	for p := core.Trinket(t.Parent()); p != nil; p = p.Parent() {
+		if w, ok := p.(*window.Window); ok {
+			return w
+		}
+	}
+	return nil
 }
 
 // tearOffFollowers tears every non-tearable child of app (other than the

@@ -105,7 +105,7 @@ func (l *ListView) resolve() {
 	case l.currentIndex < 0 && l.currentID != nil:
 		if at, ok := l.bones.posOf(l.currentID); ok {
 			l.currentIndex = at
-			if l.selectionMode == SingleSelection {
+			if l.mirrorsCurrent() {
 				// The identity was known all along; it is the POSITION that
 				// just arrived, so the selection was already right and this
 				// only says so in the shape the rest of the list reads.

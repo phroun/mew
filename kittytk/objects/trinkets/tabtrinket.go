@@ -84,6 +84,10 @@ type TabTrinket struct {
 	// the leading end, +1 the trailing one, 0 neither -- which it does not do
 	// again until the pointer has come back over a tab (see carryTab).
 	dragPast int
+	// pointer is where the pointer last hovered, with no button held, in
+	// local coordinates. What it is over decides the cursor (see CursorShape),
+	// which is asked only while the pointer is over the strip.
+	pointer core.UnitPoint
 
 	// Where the parts of the horizontal strip landed the last time it was
 	// painted, in the strip's RUN coordinates (see the display list below).
@@ -4206,6 +4210,89 @@ func (t *TabTrinket) pickUpTab(x core.Unit, scrolled bool) {
 	t.dragTab, t.dragAwaitPaint, t.dragFrom = t.tabs[sp.owner], false, sp.owner
 }
 
+// carryingTab reports a tab picked up and not yet put down: a press on a
+// movable strip, on either kind.
+func (t *TabTrinket) carryingTab() bool {
+	return t.dragTab != nil || t.vertTabDragging && t.movable
+}
+
+// CursorShape implements core.CursorProvider: the closed hand while a tab is
+// carried, and the open hand over one a press would pick up. The cursor is
+// resolved when the press that picks it up goes down and again when it comes
+// up, and left alone in between, so the closed hand stays on for the whole
+// drag wherever the pointer goes.
+func (t *TabTrinket) CursorShape() core.CursorShape {
+	if t.carryingTab() {
+		return core.CursorGrabbing
+	}
+	if t.grabbableAt(t.pointer.X, t.pointer.Y) {
+		return core.CursorGrab
+	}
+	return core.CursorDefault
+}
+
+// grabbableAt reports whether a press at a local point would pick up a tab:
+// the question HandleMousePress answers, asked without pressing, and answered
+// by the same pieces. Along the top or bottom a press selects a tab and picks
+// it up in the same press when the tab under it is the one now selected --
+// never from a close or scroll button, nor from a tab shown only in part that
+// the press scrolls into view instead. Along a side, any enabled tab's row
+// starts a sweep that carries it.
+func (t *TabTrinket) grabbableAt(x, y core.Unit) bool {
+	if !t.movable {
+		return false
+	}
+	bounds := t.Bounds()
+	metrics := t.EffectiveCellMetrics()
+	switch edge := t.tabEdge(); edge {
+	case TabEdgeTop, TabEdgeBottom:
+		tabHeight := t.tabBarHeight()
+		if edge == TabEdgeTop && y >= tabHeight || edge == TabEdgeBottom && y < bounds.Height-tabHeight {
+			return false
+		}
+		rx := t.runX(x)
+		sp, ok := t.stripPartAt(rx)
+		if !ok || sp.owner < 0 || sp.owner >= len(t.tabs) || t.onStripClose(sp, rx) {
+			return false
+		}
+		selected := t.currentIndex
+		if sp.clipped {
+			if t.tabs[sp.owner].Enabled {
+				// Selected and scrolled into view; picked up only when there
+				// is no further to scroll it.
+				if t.fullyVisibleOffset(sp.owner) != t.tabScrollOffset {
+					return false
+				}
+				selected = sp.owner
+			}
+		} else if sel := t.pressSelects(sp, rx); sel >= 0 {
+			selected = sel
+		}
+		return sp.owner == selected
+	case TabEdgeLeft, TabEdgeRight:
+		tabWidth := t.calculateTabBarWidth()
+		slotX := core.Unit(0)
+		if edge == TabEdgeRight {
+			slotX = bounds.Width - tabWidth
+		}
+		if x < slotX || x >= slotX+tabWidth {
+			return false
+		}
+		if t.vertTabsNeedScrolling() {
+			scrollX := core.Unit(0)
+			if edge == TabEdgeRight {
+				scrollX = bounds.Width - metrics.UnitsPerCellWidth
+			}
+			if x >= scrollX && x < scrollX+metrics.UnitsPerCellWidth {
+				return false
+			}
+		}
+		idx := t.vertScrollOffset + int(y/metrics.UnitsPerCellHeight)
+		return idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled && !t.onSideClose(idx, slotX, tabWidth, x)
+	}
+	return false
+}
+
 // tabsInView is the run of tabs the strip last drew, by index, and where in
 // RUN coordinates that run starts and ends. A tab the run was cut short at is
 // in view. ok is false where no tab was drawn at all.
@@ -4328,7 +4415,6 @@ func (t *TabTrinket) carryTabPast(from int, x core.Unit) {
 }
 
 func (t *TabTrinket) handleTabBarPress(x core.Unit) {
-	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	bounds := t.Bounds()
 
 	// A press is turned back into the strip's RUN coordinates once, here,
@@ -4393,13 +4479,31 @@ func (t *TabTrinket) handleTabBarPress(x core.Unit) {
 		}
 		return
 	}
+	if sel := t.pressSelects(sp, x); sel >= 0 {
+		t.SetCurrentIndex(sel)
+	}
+}
+
+// pressSelects is the tab a press at x in RUN coordinates, on a whole tab's
+// part of the strip, selects, or -1 for none: the label's own tab, or across
+// the separator after it, whichever of the two the press fell nearer. A
+// disabled tab is never selected.
+func (t *TabTrinket) pressSelects(sp stripSpan, x core.Unit) int {
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
+	i := sp.owner
+	tab := t.tabs[i]
+	pick := func(j int) int {
+		if t.tabs[j].Enabled {
+			return j
+		}
+		return -1
+	}
 
 	// Past the label is the separator, which leads into the next tab: which of
 	// the two the press names is settled by where in it the press fell.
 	if x >= sp.labelEnd && i < len(t.tabs)-1 {
 		sepWidth := sp.x + sp.w - sp.labelEnd
 		into := x - sp.labelEnd
-		next := t.tabs[i+1]
 		if sepWidth == 3*cw {
 			// Three cells, so the slash between the two tabs has a cell of its
 			// own: it goes to whichever of them is already selected, and stays
@@ -4407,39 +4511,27 @@ func (t *TabTrinket) handleTabBarPress(x core.Unit) {
 			third := sepWidth / 3
 			switch {
 			case into < third:
-				if tab.Enabled {
-					t.SetCurrentIndex(i)
-				}
+				return pick(i)
 			case into < third*2:
 				if i+1 == t.currentIndex {
-					if next.Enabled {
-						t.SetCurrentIndex(i + 1)
-					}
-				} else if tab.Enabled {
-					t.SetCurrentIndex(i)
+					return pick(i + 1)
 				}
+				return pick(i)
 			default:
-				if next.Enabled {
-					t.SetCurrentIndex(i + 1)
-				}
+				return pick(i + 1)
 			}
-			return
 		}
 		// An even separator divides in half, each tab taking the side of it
 		// that it stands on.
 		if into < sepWidth/2 {
-			if tab.Enabled {
-				t.SetCurrentIndex(i)
-			}
-		} else if next.Enabled {
-			t.SetCurrentIndex(i + 1)
+			return pick(i)
 		}
-		return
+		return pick(i + 1)
 	}
-
 	if tab.Enabled {
-		t.SetCurrentIndex(i)
+		return i
 	}
+	return -1
 }
 
 // ensureTabFullyVisible scrolls to make the given tab fully visible.
@@ -4447,12 +4539,20 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 	if index < 0 || index >= len(t.tabs) {
 		return
 	}
+	t.tabScrollOffset = t.fullyVisibleOffset(index)
+	t.Update()
+}
 
+// fullyVisibleOffset is where the strip would be scrolled to show the tab at
+// index whole, as the selected tab (every caller has just selected it, or a
+// press is about to), without scrolling it: what a press on a tab shown only
+// in part does, asked beforehand. As near as it can when the tab will not fit
+// even as the first one shown.
+func (t *TabTrinket) fullyVisibleOffset(index int) int {
+	offset := t.tabScrollOffset
 	// If tab is before visible area, scroll left to show it
-	if index < t.tabScrollOffset {
-		t.tabScrollOffset = index
-		t.Update()
-		return
+	if index < offset {
+		return index
 	}
 
 	// Check if tab is fully visible
@@ -4470,9 +4570,9 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 	// Try scrolling right until the tab is fully visible.
 	// Use <= to also verify fit when current tab becomes the first visible tab,
 	// since the left ellipsis ("...") will appear and take up space.
-	for t.tabScrollOffset <= index {
+	for offset <= index {
 		leftEllipseWidth := core.Unit(0)
-		if t.tabScrollOffset > 0 {
+		if offset > 0 {
 			leftEllipseWidth = t.overflowEllipsisWidth()
 		}
 		// Available width is the absolute position where tabs must stop
@@ -4481,15 +4581,15 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 		// Calculate if tab at index fits
 		x := leftEllipseWidth
 		fits := true
-		for i := t.tabScrollOffset; i <= index; i++ {
+		for i := offset; i <= index; i++ {
 			tab := t.tabs[i]
-			isFirstVisible := i == t.tabScrollOffset
-			isSelected := i == t.currentIndex
+			isFirstVisible := i == offset
+			isSelected := i == index
 			isLastVisible := i == len(t.tabs)-1
-			nextIsSelected := !isLastVisible && i+1 == t.currentIndex
+			nextIsSelected := !isLastVisible && i+1 == index
 
 			// When the overflow mark is showing, the prefix drops its leading space
-			hasLeftEllipsis := t.tabScrollOffset > 0
+			hasLeftEllipsis := offset > 0
 			prefixWidth := 0
 			if isFirstVisible {
 				if isSelected {
@@ -4537,12 +4637,12 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 			break
 		}
 		// Can't scroll further when current tab is already the first visible
-		if t.tabScrollOffset >= index {
+		if offset >= index {
 			break
 		}
-		t.tabScrollOffset++
+		offset++
 	}
-	t.Update()
+	return offset
 }
 
 // HandleFocusIn is called when focus is gained.
@@ -4616,6 +4716,7 @@ func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
 	over := 0
 	if event.Buttons == 0 {
 		over = t.closeHoverAt(event.X, event.Y)
+		t.pointer = core.UnitPoint{X: event.X, Y: event.Y}
 	}
 	if over != t.closeHover {
 		t.closeHover = over

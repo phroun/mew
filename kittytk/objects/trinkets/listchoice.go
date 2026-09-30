@@ -113,6 +113,11 @@ func (s *selection) shift(at, by int) {
 	s.named = moved
 }
 
+// invert turns every choice over: what was chosen is not, and what was not
+// is. It names nothing new -- the names stay, and only what they mean flips --
+// so inverting a million rows costs what inverting three does.
+func (s *selection) invert() { s.all = !s.all }
+
 // drop forgets one identity outright, which is what a row being removed means
 // for a selection that named it.
 func (s *selection) drop(id *serval.Value) {
@@ -159,7 +164,7 @@ func (l *ListView) SetSelected(index int, selected bool) {
 	if !ok {
 		return
 	}
-	if l.selectionMode == SingleSelection && selected {
+	if l.mirrorsCurrent() && selected {
 		l.chosen.only(id)
 	} else {
 		l.chosen.set(id, selected)
@@ -167,6 +172,9 @@ func (l *ListView) SetSelected(index int, selected bool) {
 	l.Update()
 	if l.onSelectionChanged != nil {
 		l.onSelectionChanged()
+	}
+	if l.checkboxes {
+		l.tellCheck(CheckChange{What: CheckRow, Row: index, ID: id, Checked: selected})
 	}
 }
 
@@ -206,23 +214,54 @@ func (l *ListView) SelectedIndexes() []int {
 // across a scroll.
 func (l *ListView) SelectedIDs() []*serval.Value { return l.chosen.ids() }
 
-// SelectAll chooses every row, at no cost and without naming any of them.
+// SelectAll ticks every row's box, at no cost and without naming any of
+// them. A list without checkboxes has only its current row to choose, and a
+// list that chooses nothing chooses nothing: this does nothing in either.
 func (l *ListView) SelectAll() {
-	if l.selectionMode == SingleSelection || l.selectionMode == NoSelection {
+	if !l.SelectAllEnabled() {
 		return
 	}
 	l.chosen.everything()
+	l.changed(CheckChange{What: CheckAll, Row: -1})
+}
+
+// ClearSelection chooses nothing: every box unticked, or, without checkboxes,
+// no current row chosen.
+func (l *ListView) ClearSelection() {
+	l.chosen.clear()
+	l.changed(CheckChange{What: CheckNone, Row: -1})
+}
+
+// InvertSelection turns every row's box over, the ticked ones off and the rest
+// on, without naming any row it did not name already. Like SelectAll, it does
+// nothing without checkboxes or in a list that chooses nothing.
+func (l *ListView) InvertSelection() {
+	if !l.SelectAllEnabled() {
+		return
+	}
+	l.chosen.invert()
+	l.changed(CheckChange{What: CheckInvert, Row: -1})
+}
+
+// changed repaints and tells both kinds of listener what happened to the
+// selection.
+func (l *ListView) changed(c CheckChange) {
 	l.Update()
 	if l.onSelectionChanged != nil {
 		l.onSelectionChanged()
+	}
+	if l.checkboxes {
+		l.tellCheck(c)
 	}
 }
 
-// ClearSelection chooses nothing.
-func (l *ListView) ClearSelection() {
-	l.chosen.clear()
-	l.Update()
-	if l.onSelectionChanged != nil {
-		l.onSelectionChanged()
+// toggleCurrent ticks the current row's box, or unticks it: the space bar's
+// meaning in a list with checkboxes, and a press on the box's. Both reach it
+// only while there are boxes (offerCommands, onCheckbox). A row the list
+// cannot name yet is left alone, as SetSelected leaves it.
+func (l *ListView) toggleCurrent() {
+	if l.currentIndex < 0 {
+		return
 	}
+	l.SetSelected(l.currentIndex, !l.IsSelected(l.currentIndex))
 }

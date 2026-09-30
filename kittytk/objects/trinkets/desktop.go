@@ -2406,7 +2406,7 @@ func (d *Desktop) ExitDesktop() {
 		"Exiting the desktop will quit %d running %s.\n\nAre you sure?", n, word), buttons)
 	mb.SetIcon(IconWarning)
 	if popOut {
-		mb.SetButtonText(ResultPopOut, "Pop "+it+" Out")
+		mb.SetButtonText(ResultPopOut, "&Pop "+it+" Out")
 	}
 	mb.SetOnFinished(func(r DialogResult) {
 		d.mu.Lock()
@@ -3749,6 +3749,23 @@ type editActorProvider interface {
 // focusedEditActor returns the focused trinket as an editActor, if it is one.
 // A provider that currently hosts an inner editor supersedes the trinket's
 // own capabilities; a provider with no active editor falls through.
+// allSelector is a focused trinket that takes part in the Edit menu's Select
+// All and nothing else of it: a list with checkboxes selects every row, and
+// has nothing to cut, copy or paste. SelectAllEnabled says whether it can
+// right now.
+type allSelector interface {
+	SelectAll()
+	SelectAllEnabled() bool
+}
+
+var _ allSelector = (*ListView)(nil)
+
+// focusedAllSelector is the focused trinket as an allSelector, if it is one.
+func (d *Desktop) focusedAllSelector() (allSelector, bool) {
+	sa, ok := d.FocusedTrinket().(allSelector)
+	return sa, ok
+}
+
 func (d *Desktop) focusedEditActor() (editActor, bool) {
 	if fw := d.FocusedTrinket(); fw != nil {
 		if p, ok := fw.(editActorProvider); ok {
@@ -3776,6 +3793,12 @@ func (d *Desktop) focusedEditActor() (editActor, bool) {
 func (d *Desktop) PerformEdit(verb string) bool {
 	ea, ok := d.focusedEditActor()
 	if !ok {
+		// Something that is not an edit target can still have everything
+		// in it to select, such as a list with checkboxes.
+		if sa, ok := d.focusedAllSelector(); ok && verb == ItemIDSelectAll {
+			sa.SelectAll()
+			return true
+		}
 		return false
 	}
 	switch verb {
@@ -3886,7 +3909,8 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 		redo.SetEnabled(editable && ea.RedoEnabled())
 		copyIt.SetEnabled(editable)
 		pasteIt.SetEnabled(editable)
-		selectAll.SetEnabled(editable)
+		sa, selects := d.focusedAllSelector()
+		selectAll.SetEnabled(editable || selects && sa.SelectAllEnabled())
 
 		cutOK := editable
 		if editable {
@@ -5177,7 +5201,13 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if d.hostMoveBegin(e) {
 			return true
 		}
-		return wm.HandleMousePress(e)
+		// The cursor is decided again once the press has landed: a press can
+		// pick something up that shows a cursor of its own for as long as it
+		// is held (a tab being carried shows the closed hand), and the moves
+		// while it is held leave the cursor as the press set it.
+		handled := wm.HandleMousePress(e)
+		d.updateCursor(e.X, e.Y)
+		return handled
 
 	case core.MouseMoveEvent:
 		core.WheelPointerMoved()
@@ -5230,7 +5260,10 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if d.hostMoveEnd(e) {
 			return true
 		}
-		return wm.HandleMouseRelease(e)
+		// ...and again when it comes up, when whatever it was holding lets go.
+		handled := wm.HandleMouseRelease(e)
+		d.updateCursor(e.X, e.Y)
+		return handled
 
 	case core.MouseWheelEvent:
 		// Stamp the screen position once; translations preserve it.

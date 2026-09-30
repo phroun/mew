@@ -52,3 +52,26 @@ func TestOutranksComparesAcrossCommands(t *testing.T) {
 		}
 	})
 }
+
+// The clipboard commands advertise the Command keys on a Mac and the Control
+// ones everywhere else, as undo and select-all do.
+func TestTheClipboardShowsTheKeysThisSystemUses(t *testing.T) {
+	for _, c := range []struct {
+		os                  string
+		cut, copyKey, paste string
+	}{
+		{"darwin", "s-x", "s-c", "s-v"},
+		{"linux", "^X", "^C", "^V"},
+	} {
+		withEnvironment(t, KeymapEnvironment{OS: c.os}, func() {
+			r := NewKeyRegistry("t", ParseKeymap(DefaultKeymapConfig))
+			for cmd, want := range map[string]string{
+				CmdTrinketCut: c.cut, CmdTrinketCopy: c.copyKey, CmdTrinketPaste: c.paste,
+			} {
+				if got := r.KeyForCommand(cmd); got != want {
+					t.Errorf("%s: %s shows %q, want %q", c.os, cmd, got, want)
+				}
+			}
+		})
+	}
+}
