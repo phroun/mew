@@ -250,6 +250,36 @@ func TestAModalGivesTheFocusBackToTheWindowItBlocked(t *testing.T) {
 	}
 }
 
+// Two modals stacked over one owner: closing the top one gives the focus to
+// the one under it, which still blocks the owner, and not to the owner.
+func TestAModalGivesTheFocusToTheModalUnderIt(t *testing.T) {
+	r := newFocusRig(t)
+	wm := r.d.windowManager
+	owner := r.docked("owner")
+	wm.ActivateWindow(owner)
+	modal := func(title string) *window.Window {
+		m := window.NewWindow(title)
+		m.SetType(window.WindowTypeModal)
+		m.SetOwner(owner)
+		m.SetBounds(core.UnitRect{Width: 160, Height: 96})
+		wm.AddWindow(m)
+		wm.ActivateWindow(m)
+		return m
+	}
+	under := modal("under")
+	top := modal("top")
+
+	top.Close()
+
+	if got := wm.ActiveWindow(); got != under {
+		name := "nothing"
+		if got != nil {
+			name = got.Title()
+		}
+		t.Errorf("closing the top modal activated %s, want the modal under it", name)
+	}
+}
+
 // An owner that has gone, or a window that is hidden, cannot take the focus:
 // it goes to the next window back that can.
 func TestAGoneOwnerOrAHiddenWindowIsPassedOver(t *testing.T) {

@@ -78,10 +78,9 @@ func (d *Desktop) canTakeFocusBack(w *window.Window) bool {
 	return false
 }
 
-// unblocked is w, or the modal blocking it -- unless that modal has closed,
-// as the window just closing has, and blocks nothing.
+// unblocked is w, or the modal blocking it.
 func (d *Desktop) unblocked(w *window.Window) *window.Window {
-	if top := d.windowManager.TopModalBlocking(w); top != nil && !top.IsClosed() {
+	if top := d.windowManager.TopModalBlocking(w); top != nil {
 		return top
 	}
 	return w
