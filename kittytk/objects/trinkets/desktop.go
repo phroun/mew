@@ -7360,7 +7360,8 @@ func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
 // activateMenuCommand triggers the item that names cmd, looking where a menu
 // shortcut has always been looked for: the system menu first, then the active
 // application's own menus (its detached main window carries them itself, so
-// they are asked there when it has them).
+// they are asked there when it has them), and last the bar the desktop draws,
+// which holds the items it adds itself -- Hide, Hide Others and Show All.
 func (d *Desktop) activateMenuCommand(cmd string) bool {
 	if cmd == "" {
 		return false
@@ -7372,12 +7373,18 @@ func (d *Desktop) activateMenuCommand(cmd string) bool {
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
-	if activeApp == nil {
-		return false
+	if activeApp != nil {
+		for _, menu := range activeApp.MenuBarContent() {
+			if menuActivateCommand(menu, cmd) {
+				return true
+			}
+		}
 	}
-	for _, menu := range activeApp.MenuBarContent() {
-		if menuActivateCommand(menu, cmd) {
-			return true
+	if d.menuBar != nil {
+		for _, menu := range d.menuBar.Menus() {
+			if menuActivateCommand(menu, cmd) {
+				return true
+			}
 		}
 	}
 	return false
