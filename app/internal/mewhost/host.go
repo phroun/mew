@@ -870,7 +870,13 @@ func syncPlaceholderShortcuts(menus []*trinkets.Menu, application *app.Applicati
 			continue
 		}
 		menuItems := items // captured per menu
+		// A menu may already bring something else up to date when it opens
+		// (Help's Quick Help checkmark): that goes on happening, first.
+		already := m.OnAboutToShow()
 		m.SetOnAboutToShow(func() {
+			if already != nil {
+				already()
+			}
 			ed, ok := rootMewEditor(application)
 			if !ok {
 				return

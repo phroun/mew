@@ -267,3 +267,30 @@ func TestHostEndsWhenTheLastWindowGoes(t *testing.T) {
 		t.Error("the host did not end when its last window went")
 	}
 }
+
+// The Help menu has two things to bring up to date when it opens -- Quick
+// Help's checkmark and the keys of the items mew runs -- and each keeps the
+// other's: with no editor to ask, Quick Help is unticked.
+func TestTheHelpMenuRefreshesItsQuickHelpCheckmark(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New()
+	var help *trinkets.Menu
+	var quickHelp *trinkets.MenuItem
+	for _, m := range buildMenus(desktop, application, true) {
+		for _, it := range m.Items() {
+			if it.ID() == "mew.help.quickhelp" {
+				help, quickHelp = m, it
+			}
+		}
+	}
+	if quickHelp == nil {
+		t.Fatal("no Quick Help item")
+	}
+	quickHelp.SetChecked(true)
+	if refresh := help.OnAboutToShow(); refresh != nil {
+		refresh()
+	}
+	if quickHelp.Checked {
+		t.Error("opening Help left Quick Help ticked with no help window to show")
+	}
+}
