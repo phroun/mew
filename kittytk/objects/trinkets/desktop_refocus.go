@@ -18,16 +18,18 @@ import (
 // from, and the newest torn window, or a solo host's primary, is only where
 // windows happen to be.
 
-// noteFocusedLocked moves w to the most recent end of the focus history.
-// d.mu held.
+// noteFocusedLocked moves w to the most recent end of the focus history,
+// letting go of the windows in it that have closed: a history trimmed only
+// when the focus goes back would keep every window closed while another had
+// the focus. d.mu held.
 func (d *Desktop) noteFocusedLocked(w *window.Window) {
-	for i, h := range d.focusHistory {
-		if h == w {
-			d.focusHistory = append(d.focusHistory[:i], d.focusHistory[i+1:]...)
-			break
+	kept := d.focusHistory[:0]
+	for _, h := range d.focusHistory {
+		if h != w && !h.IsClosed() {
+			kept = append(kept, h)
 		}
 	}
-	d.focusHistory = append(d.focusHistory, w)
+	d.focusHistory = append(kept, w)
 }
 
 // nextFocus is the window the focus goes back to when closing goes, or nil

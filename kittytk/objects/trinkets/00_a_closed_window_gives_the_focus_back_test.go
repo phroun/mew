@@ -300,6 +300,39 @@ func TestAGoneOwnerOrAHiddenWindowIsPassedOver(t *testing.T) {
 	}
 }
 
+// A window that closes in the background leaves the history the next time
+// anything takes the focus, without waiting for the focus to go back.
+func TestTheHistoryLetsGoOfAWindowClosedBehind(t *testing.T) {
+	r := newFocusRig(t)
+	behind := r.docked("behind")
+	front := r.docked("front")
+	behind.Close()
+	last := r.docked("last")
+	r.d.windowManager.ActivateWindow(front)
+	r.d.windowManager.ActivateWindow(last)
+
+	r.d.mu.RLock()
+	history := append([]*window.Window(nil), r.d.focusHistory...)
+	r.d.mu.RUnlock()
+	for _, w := range history {
+		if w == behind {
+			t.Error("the history still holds a window closed behind the focus")
+		}
+	}
+	if n := len(history); n == 0 || history[n-1] != last {
+		t.Error("the window just focused is not the most recent in the history")
+	}
+	times := 0
+	for _, w := range history {
+		if w == last {
+			times++
+		}
+	}
+	if times != 1 {
+		t.Errorf("a window focused twice is in the history %d times, want once", times)
+	}
+}
+
 // A window closing that did not have the focus changes nobody's: the manager
 // asks where the focus goes only when the active window closes.
 func TestClosingAWindowInTheBackgroundAsksNothing(t *testing.T) {
