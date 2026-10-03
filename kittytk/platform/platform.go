@@ -195,15 +195,14 @@ type NativeMenuItem struct {
 	Separator bool // a dividing line; everything else is ignored
 	Checked   bool
 	// Key is the key that invokes the item, in KittyTK's own spelling (s-c,
-	// ^X, M-S-F4). The host binds it where the OS can, and shows it; a key
-	// the OS has no way to say is left off.
+	// ^X, M-S-F4), for the host to show where the OS can say it. It is shown
+	// and not bound: pressed, the key reaches the desktop as any key does.
+	// A key the OS has no way to say is left off.
 	Key     string
 	Submenu *NativeMenu
 	Action  func() // runs on the main thread, after the menu has closed
-	// Enabled is asked when the OS validates the item -- before showing it,
-	// and before letting its key invoke it. A key the item can no longer be
-	// invoked by here should answer false, so the key goes on to whatever has
-	// the focus. Nil means enabled.
+	// Enabled is asked when the OS validates the item, before showing it:
+	// false dims it. Nil means enabled.
 	Enabled func() bool
 }
 

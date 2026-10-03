@@ -28,21 +28,31 @@ static void kt_item_chosen_imp(id self, SEL _cmd, id sender) {
 	kittytkMenuItemChosen(tag);
 }
 
-// validateMenuItem: is asked before an item is shown and before its key
-// equivalent may fire; NO leaves the key to whatever has the focus.
+// validateMenuItem: is asked before an item is shown, and says whether it is
+// dimmed.
 static signed char kt_item_valid_imp(id self, SEL _cmd, id item) {
 	long tag = ((long (*)(id, SEL))objc_msgSend)(item, sel_registerName("tag"));
 	return kittytkMenuItemValid(tag) ? 1 : 0;
 }
 
-// menuNeedsUpdate: is asked before a menu is shown and before it is searched
-// for a key equivalent: the moment to write its items from the desktop's own.
+// menuNeedsUpdate: is asked before a menu is shown: the moment to write its
+// items from the desktop's own.
 static void kt_menu_needs_update_imp(id self, SEL _cmd, id menu) {
 	kittytkMenuNeedsUpdate((uintptr_t)menu);
 }
 
 static int kt_is_windows_menu(id menu);
 static void kt_windows_menu_sweep(id menu);
+
+// menuHasKeyEquivalent:forEvent:target:action: is asked in place of AppKit
+// searching the menu for a key. The answer is always no: SDL has already
+// sent the key on to the desktop, which acts on it through its own keymap,
+// as it does on a platform with no menu bar of its own -- so a key the menu
+// shows is acted on once, and the way it always is. Asked, AppKit neither
+// searches the menu nor brings it up to date.
+static signed char kt_menu_has_key_imp(id self, SEL _cmd, id menu, id event, id *target, SEL *action) {
+	return 0;
+}
 
 // menuWillOpen: comes after menuNeedsUpdate:, and after AppKit has added
 // whatever it adds to a Window menu on its way to being shown.
@@ -70,6 +80,7 @@ static void kt_define_target(Class cls) {
 static void kt_define_delegate(Class cls) {
 	class_addMethod(cls, sel_registerName("menuNeedsUpdate:"), (IMP)kt_menu_needs_update_imp, "v@:@");
 	class_addMethod(cls, sel_registerName("menuWillOpen:"), (IMP)kt_menu_will_open_imp, "v@:@");
+	class_addMethod(cls, sel_registerName("menuHasKeyEquivalent:forEvent:target:action:"), (IMP)kt_menu_has_key_imp, "c@:@@^@^:");
 }
 
 // The one object every item's action goes to, and the one delegate every
@@ -165,7 +176,7 @@ static void kt_menu_clear(uintptr_t menu) {
 
 // kt_menu_add_item appends an item and returns it (the menu holds it). A tag
 // above zero sends the item's action, and its validation, to the shared
-// target. equiv and mods are its key equivalent; an empty equiv binds none.
+// target. equiv and mods are the key equivalent it shows; an empty equiv shows none.
 static uintptr_t kt_menu_add_item(uintptr_t menu, const char *title, long tag, int checked, const char *equiv, unsigned long mods) {
 	SEL action = tag > 0 ? sel_registerName("kittytkMenuItem:") : (SEL)0;
 	id item = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSMenuItem"), sel_registerName("alloc"));
@@ -203,8 +214,8 @@ static id kt_main_menu(void) {
 
 // kt_menu_bar_clear takes out everything after the application menu: the
 // menus put there last time, and the ones SDL put there to begin with (its
-// Window menu, with keys of its own), since every key in the bar is to act
-// through the desktop's items and no other way.
+// Window menu, with keys of its own), since no key is to be taken by the
+// bar before the desktop's keymap sees it.
 static void kt_menu_bar_clear(void) {
 	id main = kt_main_menu();
 	if (!main) return;

@@ -2,10 +2,9 @@ package trinkets
 
 // On a platform with a menu bar of its own, the menus the desktop draws are
 // put there as well, for the window that has the focus. A native item is our
-// item: choosing it, or pressing the key it shows, triggers the very MenuItem
-// our menu would, and the key is the one our menu advertises. When that key
-// no longer means the item where the focus is, the item says it may not run,
-// so the key goes on to the focus. Items are rebuilt from ours each time they
+// item: choosing it triggers the very MenuItem our menu would, and the key it
+// shows is the one our menu advertises -- shown, and left to the desktop's
+// keymap when pressed. Items are rebuilt from ours each time they
 // are asked for, about-to-show first; the set of menus is pushed only when it
 // changes. The desktop's own menu, Ψ, is the OS's application menu, and is
 // not repeated after it.
@@ -88,8 +87,8 @@ func TestANativeMenuIsOurMenuItemForItem(t *testing.T) {
 	}
 }
 
-// The key is asked for where it is asked for in our own menu, and an item
-// whose key has moved on says it may not run.
+// The key is asked for where it is asked for in our own menu. It is only
+// shown, so an item whose key has moved on can still be chosen, as ours can.
 func TestANativeItemsKeyIsTheOneOurMenuShows(t *testing.T) {
 	key := "s-z"
 	m := NewMenu("&Edit")
@@ -102,8 +101,8 @@ func TestANativeItemsKeyIsTheOneOurMenuShows(t *testing.T) {
 		t.Fatalf("Undo is bound to %q, enabled %v; want s-z and enabled", items[0].Key, items[0].Enabled())
 	}
 	key = "" // something has taken the keyboard on its own terms
-	if items[0].Enabled() {
-		t.Error("with its key meaning nothing here, Undo still says it may run")
+	if !items[0].Enabled() {
+		t.Error("with its key meaning nothing here, Undo can no longer be chosen")
 	}
 	if again := nativeItems(m); again[0].Key != "" {
 		t.Errorf("asked again, Undo is bound to %q, want nothing", again[0].Key)

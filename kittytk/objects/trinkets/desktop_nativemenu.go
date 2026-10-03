@@ -15,13 +15,12 @@ import (
 // its main window's -- for a window of its on a surface of its own. The bar
 // the desktop draws stays where it is.
 //
-// **A native item does what ours does.** Choosing it, or pressing the key it
-// shows, triggers the very MenuItem our menu would have, so nothing new is
-// invoked anywhere. The key is the one our menu advertises, worked out the
-// same way at the same moment; when the OS asks whether the item may run and
-// that key no longer means the item here -- the focus has moved to something
-// that takes the keyboard on its own terms -- the answer is no, and the key
-// goes on to the focus as it would have without a native menu.
+// **A native item does what ours does.** Choosing it triggers the very
+// MenuItem our menu would have, so nothing new is invoked anywhere. The key
+// it shows is the one our menu advertises, worked out the same way at the
+// same moment, and is only shown: pressed, it reaches the desktop as every
+// key does, and is acted on by the desktop's keymap exactly as it is with no
+// native menu at all.
 //
 // The desktop's own menu, Ψ, becomes the OS's application menu -- the one the
 // OS titles with the process's name -- since what it holds is about the whole
@@ -31,11 +30,11 @@ import (
 // process is named for, so the one the OS's title already names -- its own
 // leading menu is folded into the application menu as well, rather than
 // standing after it under the same name. The OS's
-// defaults there go (the desktop gives the OS the whole bar), so every key in
-// the bar acts through the desktop's own items and its own keymap.
+// defaults there go (the desktop gives the OS the whole bar), so no key is
+// taken by an item the desktop did not put there.
 //
-// Items are rebuilt from our menus whenever the OS asks (about to show a menu,
-// or looking through the bar for a key), running each menu's about-to-show
+// Items are rebuilt from our menus whenever the OS is about to show a menu,
+// running each menu's about-to-show
 // first as our own bar does, and reading the bar as it is at that moment: a
 // native menu stands for a POSITION in the focused window's bar, not for a
 // Menu object, since the desktop builds its bar afresh on every change. So
@@ -289,14 +288,14 @@ func nativeItemsOf(items []*MenuItem) []platform.NativeMenuItem {
 				Checked: it.Checkable && it.Checked,
 				Key:     key,
 				Action:  it.Trigger,
-				Enabled: func() bool { return it.Enabled && nativeKey(it) == key },
+				Enabled: func() bool { return it.Enabled },
 			})
 		}
 	}
 	return out
 }
 
-// nativeKey is the key an item advertises, in KittyTK's own spelling: the one
+// nativeKey is the key an item shows, in KittyTK's own spelling: the one
 // its command resolves to where the focus is, or the shortcut it holds. Its
 // literal ShortcutText is for keys the toolkit does not handle, and is not a
 // key the OS could be told.

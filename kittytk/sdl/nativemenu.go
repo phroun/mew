@@ -14,10 +14,12 @@ import (
 // desktop hands over the menus its own bar shows; each is written into a
 // native menu, and every item that does something is given a tag naming its
 // entry -- the action to run and the question of whether it may run now.
-// Choosing the item, or pressing its key, comes back here with the tag.
+// Choosing the item comes back here with the tag. Its key is shown and not
+// bound: the key reaches the desktop as any key does, and its keymap acts on
+// it (see menuHasKeyEquivalent in nativemenu_darwin.go).
 //
 // A menu's items are written when the bar is set and written again each time
-// the OS asks (about to show the menu, or looking through it for a key), from
+// the OS is about to show the menu, from
 // the desktop's own menus at that moment, so the native bar is never staler
 // than the one the desktop draws.
 //
@@ -203,7 +205,7 @@ func forgetNativeContentsLocked(menu uintptr) {
 }
 
 // nativeItemEnabled answers the OS validating an item: whether the entry its
-// tag names may run now. A tag naming nothing -- left from items since
+// tag names may run now, or is dimmed. A tag naming nothing -- left from items since
 // replaced -- may not.
 func nativeItemEnabled(tag int) bool {
 	nativeMenus.mu.Lock()
@@ -261,8 +263,7 @@ var macNamedKeys = map[string]rune{
 // equivalent: the character and the modifier flags. ok is false for a key
 // the OS has no way to say -- a chord of several presses, a modifier the Mac
 // keyboard does not have -- and for one with no Command, Control or Option
-// that is not a function key, which bound in the menu bar would be taken
-// from under the person typing.
+// that is not a function key, which the OS's menus do not show.
 func macKeyEquivalent(key string) (equiv string, mods uint, ok bool) {
 	if key == "" {
 		return "", 0, false
