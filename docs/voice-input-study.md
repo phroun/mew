@@ -4,10 +4,25 @@ A brainstorming session's findings, written down so they outlast it. **Nothing
 here is a commitment.** Where something is a verified fact about the current
 tree it says so; where it is an opinion it is written as one.
 
-The motivating use case is operating mew with little or no typing — hands-free
-or hands-limited — and doing it in a way that uses what a long-time mew,
-WordStar or Joe user already knows, rather than asking them to learn a new
-vocabulary at the worst possible moment.
+## Why this exists, and why now
+
+In October 2026 I lost the ability to stand, went to the emergency room, and
+ended up in a rehabilitation facility. My legs are not currently working. My
+right arm has lost the ability to type. Both hands feel as though they are
+wearing a plastic glove all the time, and for a while my right leg had no
+feeling at all. The cause is not yet known and things are still changing.
+
+So this is not a hypothetical accessibility exercise. It is a study of how I
+keep working on, and with, the editor I have been writing for years — and it is
+written while the answer still matters to me personally.
+
+That circumstance points at one design principle harder than any other:
+**use what the user already knows.** Learning a new command vocabulary is
+expensive at the best of times. It is a great deal more expensive from a
+rehabilitation facility, with an uncertain prognosis and hands that report the
+world through a glove. A long-time mew, WordStar or Joe user already holds a
+complete command language in their head. The job is to let them speak it, not to
+teach them another one.
 
 ---
 
